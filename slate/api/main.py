@@ -70,7 +70,7 @@ async def telemetry_loop():
         try:
             if manager.active_connections:
                 try:
-                    appdata_dir = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), "UT_Central")
+                    appdata_dir = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), "Slate_Central")
                     config_path = os.path.join(appdata_dir, "slate_server_config.json")
                     port = 5440
                     if os.path.exists(config_path):
@@ -135,7 +135,7 @@ def get_admin_dashboard():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>UT_Central API Gateway</title>
+        <title>Slate_Central API Gateway</title>
         <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
         <style>
             :root {
@@ -347,7 +347,7 @@ def get_admin_dashboard():
     </head>
     <body>
         <div class="navbar">
-            <div class="logo">UT_Central Gateway</div>
+            <div class="logo">Slate_Central Gateway</div>
             <div class="status-badge" id="conn-status">Gateway Online</div>
         </div>
         
@@ -420,7 +420,7 @@ def get_admin_dashboard():
                     <div class="log-window" id="logs">
                         <div class="log-entry">
                             <span class="log-time">System</span>
-                            <span class="log-info">Connecting to UT_Central Gateway Telemetry...</span>
+                            <span class="log-info">Connecting to Slate_Central Gateway Telemetry...</span>
                         </div>
                     </div>
                 </div>

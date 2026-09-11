@@ -394,7 +394,7 @@ class SQLiteManager:
             if local_app:
                 db_dir = Path(local_app) / "Slate"
             else:
-                db_dir = Path.home() / ".utvfx"
+                db_dir = Path.home() / ".slate"
             db_dir.mkdir(parents=True, exist_ok=True)
             return str((db_dir / "slate.db").resolve())
         except Exception as e:
@@ -403,7 +403,7 @@ class SQLiteManager:
         if local_app:
             db_dir = Path(local_app) / "Slate"
         else:
-            db_dir = Path.home() / ".utvfx"
+            db_dir = Path.home() / ".slate"
         db_dir.mkdir(parents=True, exist_ok=True)
         return str(db_dir / "slate.db")
 

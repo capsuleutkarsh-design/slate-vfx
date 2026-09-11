@@ -35,24 +35,24 @@ def build_single_target(target="vfx", project_root=None):
         zip_filename = f"UT_{target.upper()}_Update"
     elif target == "server":
         print("\nStep 1: Running Server build...")
-        subprocess.run([sys.executable, "-m", "PyInstaller", "UT_Server.spec", "--noconfirm"])
+        subprocess.run([sys.executable, "-m", "PyInstaller", "Slate_Server.spec", "--noconfirm"])
         
-        dist_dir = project_root / "dist" / "UT_Server_Update"
+        dist_dir = project_root / "dist" / "Slate_Server_Update"
         if dist_dir.exists():
             shutil.rmtree(dist_dir)
         dist_dir.mkdir(parents=True)
         
-        server_exe = project_root / "dist" / "UT_Server.exe"
+        server_exe = project_root / "dist" / "Slate_Server.exe"
         if not server_exe.exists():
-            print("ERROR: UT_Server.exe not found. Did the build fail?")
+            print("ERROR: Slate_Server.exe not found. Did the build fail?")
             sys.exit(1)
-        shutil.copy2(server_exe, dist_dir / "UT_Server.exe")
+        shutil.copy2(server_exe, dist_dir / "Slate_Server.exe")
         
         bin_dir = project_root / "slate_server" / "bin"
         if bin_dir.exists():
             shutil.copytree(bin_dir, dist_dir / "bin")
             
-        zip_filename = "UT_Server_Update"
+        zip_filename = "Slate_Server_Update"
     else:
         print(f"ERROR: Unknown target '{target}'")
         sys.exit(1)

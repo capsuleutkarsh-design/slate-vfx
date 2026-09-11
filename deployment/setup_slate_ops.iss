@@ -6,7 +6,7 @@
 #define MyAppVersion "BETA 2.0.22"
 #define MyAppPublisher "UT Studio"
 #define MyAppURL "https://github.com/slateutkarsh-design/slate-vfx"
-#define MyAppExeName "UT_Studio_Ops.exe"
+#define MyAppExeName "Slate_Ops.exe"
 #define MyAppIconFileName "app_icon_128.ico"
 
 ; Build-path overrides (can be passed from ISCC CLI via /DName=Value)
@@ -38,7 +38,7 @@ PrivilegesRequired=lowest
 CloseApplications=yes
 RestartApplications=no
 OutputDir={#InstallerOutputDir}
-OutputBaseFilename=setup_UT_Studio_Ops_v{#MyAppVersion}
+OutputBaseFilename=setup_Slate_Ops_v{#MyAppVersion}
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
@@ -63,7 +63,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 ; Install the shared runtime folder EXCEPT server and VFX executables
-Source: "{#SourceDistDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "UT_Server.exe,slate_server\*,Slate_Studio.exe,OpenRV\*,OpenRV"
+Source: "{#SourceDistDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "Slate_Server.exe,slate_server\*,Slate_Studio.exe,OpenRV\*,OpenRV"
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppExeName}"; Components: main_ops
@@ -89,18 +89,18 @@ var
 procedure InitializeWizard;
 begin
   ServerPathPage := CreateInputDirPage(wpSelectDir,
-    'Select UT_Central Shared Folder', 'Where is the UT_Central shared folder located on your network?',
+    'Select Slate_Central Shared Folder', 'Where is the Slate_Central shared folder located on your network?',
     'Select the network folder where the shared databases and caches will be stored, then click Next.'#13#10#13#10'For best compatibility with studio tools, mapping your server to a Drive Letter (like Z:\) is recommended.',
     False, 'New Folder');
-  ServerPathPage.Add('Server Root Path (e.g., Z:\UT_Central or \\Server\Shared\UT_Central):');
-  ServerPathPage.Values[0] := 'X:\Extra\UT_Central';
+  ServerPathPage.Add('Server Root Path (e.g., Z:\Slate_Central or \\Server\Shared\Slate_Central):');
+  ServerPathPage.Values[0] := 'X:\Extra\Slate_Central';
 end;
 
 procedure ForceKillSlateProcesses();
 var
   ResultCode: Integer;
 begin
-  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM "UT_Studio_Ops.exe"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM "Slate_Ops.exe"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM "Slate.exe"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 

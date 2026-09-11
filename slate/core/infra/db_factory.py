@@ -35,7 +35,7 @@ def _get_sqlite_path() -> str:
     except Exception:
         import os
         local_app = os.getenv("LOCALAPPDATA")
-        db_dir = Path(local_app) / "Slate" if local_app else Path.home() / ".utvfx"
+        db_dir = Path(local_app) / "Slate" if local_app else Path.home() / ".slate"
         db_dir.mkdir(parents=True, exist_ok=True)
         return str(db_dir / "slate.db")
 

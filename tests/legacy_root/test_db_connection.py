@@ -22,7 +22,7 @@ try:
         print(f"Developer Mode: {is_dev}")
         
         # Check abstract_path functionality (to verify fix)
-        # Assuming server root is X:/Extra/UT_Central
+        # Assuming server root is X:/Extra/Slate_Central
         test_path = str(server_root / "Assets/test.mov")
         abstract = GlobalConfig.abstract_path(test_path)
         print(f"Abstract Path Test: '{test_path}' -> '{abstract}'")

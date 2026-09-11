@@ -305,7 +305,7 @@ class TestApplyingTheVerdict:
 
     def test_the_annotation_image_is_named_in_the_note(self):
         feedback = RVFeedback(status="rejected", frame=7, note="see this",
-                              annotation_path=r"C:\Users\me\.utvfx\annotations\SH010_x_7.jpg",
+                              annotation_path=r"C:\Users\me\.slate\annotations\SH010_x_7.jpg",
                               media_path=r"D:\P\SH010\07_Comp\a.mov")
 
         assert "SH010_x_7.jpg" in note_text(feedback)

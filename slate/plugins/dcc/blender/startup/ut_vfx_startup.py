@@ -34,7 +34,7 @@ def get_shot_data():
 
 class Slate_OT_LoadPlate(bpy.types.Operator):
     """Load the Scan Plate as a Background Image in the Camera"""
-    bl_idname = "utvfx.load_plate"
+    bl_idname = "slate.load_plate"
     bl_label = "Load Scan Plate"
 
     def execute(self, context):
@@ -83,7 +83,7 @@ class Slate_OT_LoadPlate(bpy.types.Operator):
 
 class Slate_OT_SaveVersion(bpy.types.Operator):
     """Save strict version controlled script"""
-    bl_idname = "utvfx.save_version"
+    bl_idname = "slate.save_version"
     bl_label = "Save CG Version"
 
     def execute(self, context):
@@ -152,8 +152,8 @@ class Slate_PT_Panel(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
-        layout.operator("utvfx.load_plate")
-        layout.operator("utvfx.save_version")
+        layout.operator("slate.load_plate")
+        layout.operator("slate.save_version")
 
 classes = (
     Slate_OT_LoadPlate,

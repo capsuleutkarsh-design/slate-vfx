@@ -204,7 +204,7 @@ class FirstRunSetupDialog(QDialog):
         server_row = QHBoxLayout(server_wrap)
         server_row.setContentsMargins(0, 0, 0, 0)
         self.server_root_input = QLineEdit(str(GlobalConfig.get("SERVER_ROOT", "")))
-        self.server_root_input.setPlaceholderText("e.g. X:/Extra/UT_Central")
+        self.server_root_input.setPlaceholderText("e.g. X:/Extra/Slate_Central")
         browse_server_btn = QPushButton("Browse")
         browse_server_btn.clicked.connect(self._browse_server_root)
         server_row.addWidget(self.server_root_input, 1)
@@ -239,7 +239,7 @@ class FirstRunSetupDialog(QDialog):
 
     def _browse_server_root(self):
         start_dir = self.server_root_input.text().strip() or str(Path.home())
-        selected = QFileDialog.getExistingDirectory(self, "Select UT_Central Root", start_dir)
+        selected = QFileDialog.getExistingDirectory(self, "Select Slate_Central Root", start_dir)
         if selected:
             self.server_root_input.setText(selected)
 

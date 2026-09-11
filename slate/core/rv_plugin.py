@@ -2,7 +2,7 @@
 The Slate menu inside OpenRV.
 
 This runs *inside* RV, not in the main application, so it can only use RV's own
-Python. It writes what the supervisor did to ~/.utvfx/rv_feedback.json, which
+Python. It writes what the supervisor did to ~/.slate/rv_feedback.json, which
 the software watches.
 
 What goes back is a verdict, the frame it was given on, whatever the supervisor
@@ -20,7 +20,7 @@ import json
 import time
 
 
-FEEDBACK_DIR = os.path.join(os.path.expanduser("~"), ".utvfx")
+FEEDBACK_DIR = os.path.join(os.path.expanduser("~"), ".slate")
 ANNOTATION_DIR = os.path.join(FEEDBACK_DIR, "annotations")
 
 

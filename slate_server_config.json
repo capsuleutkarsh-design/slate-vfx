@@ -1,5 +1,0 @@
-{
-    "db_path": "",
-    "port": 5440,
-    "_comment": "db_path is filled in by setup.bat with this machine's data directory."
-}

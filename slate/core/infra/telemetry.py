@@ -36,7 +36,7 @@ class TelemetryManager:
         self._writer_running = True
         self._writer_thread = threading.Thread(
             target=self._writer_loop,
-            name="utvfx-telemetry-writer",
+            name="slate-telemetry-writer",
             daemon=True,
         )
         self._writer_thread.start()

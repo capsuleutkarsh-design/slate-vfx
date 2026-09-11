@@ -53,7 +53,7 @@ class SystemLogViewer(QWidget):
         try:
             self.log_root = GlobalConfig.server_root() / "Logs"
         except Exception:
-            self.log_root = Path(os.environ.get("SLATE_STUDIO_ROOT", str(Path.home() / "RuntimeData" / "UT_Central"))) / "Logs" # Fallback
+            self.log_root = Path(os.environ.get("SLATE_STUDIO_ROOT", str(Path.home() / "RuntimeData" / "Slate_Central"))) / "Logs" # Fallback
             
         self.current_file = None
         self.cached_lines = []

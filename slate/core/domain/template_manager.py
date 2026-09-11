@@ -43,7 +43,7 @@ class TemplateManager:
     """Advanced template management system."""
     
     def __init__(self, templates_dir: Optional[Path] = None):
-        # 1. Use GlobalConfig to find the shared network path (X:/Extra/UT_Central/Templates)
+        # 1. Use GlobalConfig to find the shared network path (X:/Extra/Slate_Central/Templates)
         # If network path is invalid, it falls back to local AppData
         if templates_dir:
             self.templates_dir = templates_dir

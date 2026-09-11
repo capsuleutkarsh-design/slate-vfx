@@ -24,7 +24,7 @@ def create_client_config():
         "db_name": "ut_vfx",
         "db_user": "postgres",
         "db_password": _db_password(required=False),
-        "SERVER_ROOT": "X:/Extra/UT_Central"
+        "SERVER_ROOT": "X:/Extra/Slate_Central"
     }
     
     filename = "client_config.json"

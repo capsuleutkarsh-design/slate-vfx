@@ -14,7 +14,7 @@ class GlobalConfig:
     _instance = None
     
     DEFAULTS = {
-        "SERVER_ROOT": os.environ.get("SLATE_STUDIO_ROOT", str(Path.home() / "RuntimeData" / "UT_Central")),
+        "SERVER_ROOT": os.environ.get("SLATE_STUDIO_ROOT", str(Path.home() / "RuntimeData" / "Slate_Central")),
         "LOG_LEVEL": "INFO",
         "DEVELOPER_MODE": False,
         "db_mode": "sqlite",
@@ -213,7 +213,7 @@ class GlobalConfig:
                 except Exception as e:
                     logging.debug(f"Could not show network warning dialog: {e}")
             
-            local_root = Path.home() / "RuntimeData" / "UT_Central"
+            local_root = Path.home() / "RuntimeData" / "Slate_Central"
             local_root.mkdir(parents=True, exist_ok=True)
             return local_root
 
@@ -263,7 +263,7 @@ class GlobalConfig:
     def abstract_path(cls, path: str) -> str:
         """
         Convert an absolute path to an abstract path using environment variables/config.
-        Example: "X:/Extra/UT_Central/Assets/foo.mov" -> "$SERVER/Assets/foo.mov"
+        Example: "X:/Extra/Slate_Central/Assets/foo.mov" -> "$SERVER/Assets/foo.mov"
         """
         if not path:
             return ""
@@ -283,7 +283,7 @@ class GlobalConfig:
     def resolve_path(cls, path: str) -> str:
         """
         Convert an abstract path to an absolute path.
-        Example: "$SERVER/Assets/foo.mov" -> "X:/Extra/UT_Central/Assets/foo.mov"
+        Example: "$SERVER/Assets/foo.mov" -> "X:/Extra/Slate_Central/Assets/foo.mov"
         """
         if not path:
             return ""

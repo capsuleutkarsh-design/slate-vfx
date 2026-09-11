@@ -22,7 +22,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='UT_Server',
+    name='Slate_Server',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

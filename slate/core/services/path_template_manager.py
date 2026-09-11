@@ -137,12 +137,12 @@ class PathTemplateManager:
 
         self.templates['stock_library'] = lucidity.Template(
             'stock_library',
-            '{root}/Extra/UT_Central/Stock_Library/{category}'
+            '{root}/Extra/Slate_Central/Stock_Library/{category}'
         )
 
         self.templates['stock_cache'] = lucidity.Template(
             'stock_cache',
-            '{root}/Extra/UT_Central/Stock_Cache'
+            '{root}/Extra/Slate_Central/Stock_Cache'
         )
 
         logging.info(f"Initialized {len(self.templates)} path templates")

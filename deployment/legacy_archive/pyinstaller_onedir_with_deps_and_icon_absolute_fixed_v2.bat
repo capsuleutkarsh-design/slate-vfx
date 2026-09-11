@@ -50,7 +50,7 @@ echo    SUCCESS! BOTH APPS BUILT.
 echo ========================================================
 echo.
 echo    1. MAIN APP: dist\Slate\Slate.exe
-echo       (Put this entire folder on X:\Extra\UT_Central\Updates)
+echo       (Put this entire folder on X:\Extra\Slate_Central\Updates)
 echo.
 echo    2. LAUNCHER: dist\SlateLauncher\SlateLauncher.exe
 echo       (Distribute THIS file to Artist Desktops)

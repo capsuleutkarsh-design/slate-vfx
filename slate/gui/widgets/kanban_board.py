@@ -174,7 +174,7 @@ class KanbanCard(QWidget):
         layout.addLayout(footer_layout)
 
     def dragEnterEvent(self, event):
-        if event.mimeData().hasFormat("application/x-utvfx-user"):
+        if event.mimeData().hasFormat("application/x-slate-user"):
             event.accept()
             self._set_card_style(highlight=True)
         else:
@@ -185,8 +185,8 @@ class KanbanCard(QWidget):
         event.accept()
 
     def dropEvent(self, event):
-        if event.mimeData().hasFormat("application/x-utvfx-user"):
-            username_bytes = event.mimeData().data("application/x-utvfx-user")
+        if event.mimeData().hasFormat("application/x-slate-user"):
+            username_bytes = event.mimeData().data("application/x-slate-user")
             username = str(username_bytes, "utf-8")
             self.assign_requested.emit(self.task_id, username)
             event.accept()

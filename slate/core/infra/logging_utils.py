@@ -41,7 +41,7 @@ def setup_logging(app_name="App"):
     Configures Hybrid Logging:
     1. Console (Standard Output)
     2. Local File (%LOCALAPPDATA%/Slate/Logs/active.log)
-    3. Network File (X:/Extra/UT_Central/Logs/[Hostname]_[User].log)
+    3. Network File (X:/Extra/Slate_Central/Logs/[Hostname]_[User].log)
     """
     
     # 1. Define Log Level

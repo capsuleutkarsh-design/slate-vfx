@@ -135,8 +135,8 @@ def verify_build_and_launch_files():
         root_dir / "launch_console.bat",
         root_dir / "Slate.spec",
         root_dir / "deployment" / "setup_slate_client.iss",
-        root_dir / "deployment" / "setup_ut_studio_ops.iss",
-        root_dir / "deployment" / "setup_ut_central_server.iss",
+        root_dir / "deployment" / "setup_slate_ops.iss",
+        root_dir / "deployment" / "setup_slate_central_server.iss",
         root_dir / "tools" / "build_pipeline.py",
         root_dir / "tools" / "build_update_package.py",
         root_dir / "tools" / "slate_console" / "ui" / "build_tab.py",
@@ -148,8 +148,8 @@ def verify_build_and_launch_files():
     # Check spec contains all 3 targets
     spec_content = (root_dir / "Slate.spec").read_text(encoding="utf-8")
     assert "name='Slate_Studio'" in spec_content, "Slate_Studio missing from Slate.spec"
-    assert "name='UT_Studio_Ops'" in spec_content, "UT_Studio_Ops missing from Slate.spec"
-    assert "name='UT_Server'" in spec_content, "UT_Server missing from Slate.spec"
+    assert "name='Slate_Ops'" in spec_content, "Slate_Ops missing from Slate.spec"
+    assert "name='Slate_Server'" in spec_content, "Slate_Server missing from Slate.spec"
     assert "name='Slate'" in spec_content, "Slate fallback missing from Slate.spec"
 
     print("  [PASS] All build and installer configuration files verified.")

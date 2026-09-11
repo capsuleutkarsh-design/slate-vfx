@@ -28,7 +28,7 @@ class TestFfmpegIsAllowedToExplainItself:
 
     def test_the_pipe_is_emptied_on_its_own_thread(self, source):
         """A full pipe stops ffmpeg dead, which would be a worse bug."""
-        assert "utvfx-ffmpeg-stderr" in source
+        assert "slate-ffmpeg-stderr" in source
         assert "daemon=True" in source
 
     def test_the_last_message_is_kept_for_the_error_shown_to_the_user(self, source):

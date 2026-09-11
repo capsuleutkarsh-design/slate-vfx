@@ -13,8 +13,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DIST_DIR = PROJECT_ROOT / "dist" / "Slate"
 
 # Default shared path - can be overridden at runtime if missing
-DEFAULT_RELEASE_DIR = Path(r"X:\Extra\UT_Central\Updates\releases")
-DEFAULT_LATEST_POINTER = Path(r"X:\Extra\UT_Central\Updates\latest.json")
+DEFAULT_RELEASE_DIR = Path(r"X:\Extra\Slate_Central\Updates\releases")
+DEFAULT_LATEST_POINTER = Path(r"X:\Extra\Slate_Central\Updates\latest.json")
 
 def resolve_paths():
     """Resolve release paths, prompting if defaults are missing."""

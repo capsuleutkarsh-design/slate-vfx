@@ -167,7 +167,7 @@ def save_script_version(department):
     except Exception as e:
         app.message(f"Slate Error saving script: {e}")
 
-def create_utvfx_menu():
+def create_slate_menu():
     try:
         app = natron.getGuiInstance(0)
     except NameError:
@@ -200,4 +200,4 @@ def create_utvfx_menu():
 
 # Call menu creation
 if 'natron' in globals():
-    create_utvfx_menu()
+    create_slate_menu()

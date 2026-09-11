@@ -94,7 +94,7 @@ def test_network_path_requires_distributed_lock_when_db_unavailable():
     )
     handle = coordinator.acquire(
         "users_lock",
-        target_path=Path("X:/Extra/UT_Central/Config/users.json"),
+        target_path=Path("X:/Extra/Slate_Central/Config/users.json"),
         timeout_seconds=1.0,
     )
     assert handle is None
@@ -109,7 +109,7 @@ def test_db_lock_acquire_and_release():
     )
     handle = coordinator.acquire(
         "users_lock",
-        target_path=Path("X:/Extra/UT_Central/Config/users.json"),
+        target_path=Path("X:/Extra/Slate_Central/Config/users.json"),
         timeout_seconds=1.0,
     )
     assert handle is not None
@@ -124,7 +124,7 @@ def test_db_lock_acquire_and_release():
     )
     handle_b = coordinator_b.acquire(
         "users_lock",
-        target_path=Path("X:/Extra/UT_Central/Config/users.json"),
+        target_path=Path("X:/Extra/Slate_Central/Config/users.json"),
         timeout_seconds=1.0,
     )
     assert handle_b is not None

@@ -1,7 +1,7 @@
 import sqlite3
 import os
 
-db_path = r"X:\Extra\UT_Central\Database\slate.db"
+db_path = r"X:\Extra\Slate_Central\Database\slate.db"
 
 if not os.path.exists(db_path):
     print(f"DB not found at {db_path}")

@@ -122,9 +122,9 @@ class UsersListWidget(QWidget):
         if not widget: return
         
         mime = QMimeData()
-        # Custom format: application/x-utvfx-user
+        # Custom format: application/x-slate-user
         # Content: username
-        mime.setData("application/x-utvfx-user", widget.username.encode('utf-8'))
+        mime.setData("application/x-slate-user", widget.username.encode('utf-8'))
         mime.setText(widget.username) # Fallback
         
         drag = QDrag(self.list_widget)

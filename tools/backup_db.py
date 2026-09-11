@@ -15,7 +15,7 @@ from datetime import datetime
 import logging
 
 # Configuration
-BACKUP_DIR = r"X:\Extra\UT_Central\Backups"
+BACKUP_DIR = r"X:\Extra\Slate_Central\Backups"
 PG_DUMP_PATH = r"C:\Program Files\PostgreSQL\18\bin\pg_dump.exe"
 DB_HOST = "127.0.0.1"
 DB_PORT = "5432"

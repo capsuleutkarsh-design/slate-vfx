@@ -176,15 +176,15 @@ def save_script_version(department):
 # --- Setup Menu and Hotkeys ---
 
 toolbar = nuke.menu("Nodes")
-utvfx_menu = toolbar.addMenu("Slate", icon="CustomIcon.png") # Uses default icon if missing
+slate_menu = toolbar.addMenu("Slate", icon="CustomIcon.png") # Uses default icon if missing
 
-utvfx_menu.addCommand("Load Scan (Alt+1)", "load_plate('scan')", "Alt+1")
-utvfx_menu.addCommand("Load Prep (Alt+2)", "load_plate('prep')", "Alt+2")
-utvfx_menu.addCommand("Load Deage (Alt+3)", "load_plate('deage')", "Alt+3")
-utvfx_menu.addCommand("Load Slapcomp (Alt+4)", "load_plate('slapcomp')", "Alt+4")
+slate_menu.addCommand("Load Scan (Alt+1)", "load_plate('scan')", "Alt+1")
+slate_menu.addCommand("Load Prep (Alt+2)", "load_plate('prep')", "Alt+2")
+slate_menu.addCommand("Load Deage (Alt+3)", "load_plate('deage')", "Alt+3")
+slate_menu.addCommand("Load Slapcomp (Alt+4)", "load_plate('slapcomp')", "Alt+4")
 
-utvfx_menu.addSeparator()
+slate_menu.addSeparator()
 
-utvfx_menu.addCommand("Save New Comp Version", "save_script_version('Comp')")
-utvfx_menu.addCommand("Save New Prep Version", "save_script_version('Prep')")
-utvfx_menu.addCommand("Save New Deage Version", "save_script_version('Deage')")
+slate_menu.addCommand("Save New Comp Version", "save_script_version('Comp')")
+slate_menu.addCommand("Save New Prep Version", "save_script_version('Prep')")
+slate_menu.addCommand("Save New Deage Version", "save_script_version('Deage')")

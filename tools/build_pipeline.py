@@ -177,7 +177,7 @@ def build_server_release():
     
     args = [
         'slate_server/main.py',
-        '--name=UT_Server',
+        '--name=Slate_Server',
         '--onefile',
         '--windowed',
         
@@ -253,8 +253,8 @@ def build_installer(version=None, target="all"):
     project_root = Path.cwd().resolve()
     all_scripts = {
         "vfx": (project_root / "deployment" / "setup_slate_client.iss").resolve(),
-        "ops": (project_root / "deployment" / "setup_ut_studio_ops.iss").resolve(),
-        "server": (project_root / "deployment" / "setup_ut_central_server.iss").resolve()
+        "ops": (project_root / "deployment" / "setup_slate_ops.iss").resolve(),
+        "server": (project_root / "deployment" / "setup_slate_central_server.iss").resolve()
     }
 
     if target == "all":

@@ -267,7 +267,7 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         from pathlib import Path
         
         self.rv_watcher = QFileSystemWatcher(self)
-        rv_feedback_dir = Path(os.path.expanduser("~")) / ".utvfx"
+        rv_feedback_dir = Path(os.path.expanduser("~")) / ".slate"
         rv_feedback_dir.mkdir(parents=True, exist_ok=True)
         self.rv_feedback_file = str(rv_feedback_dir / "rv_feedback.json")
         

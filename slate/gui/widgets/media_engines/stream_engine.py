@@ -108,7 +108,7 @@ class StreamEngine(BaseMediaEngine):
         self.producer_thread = threading.Thread(
             target=self._producer_loop,
             args=(self.render_w, self.render_h, start_time),
-            name="utvfx-stream-producer",
+            name="slate-stream-producer",
             daemon=True
         )
         self.producer_thread.start()
@@ -208,7 +208,7 @@ class StreamEngine(BaseMediaEngine):
             except Exception as exc:
                 logging.debug("Async metadata probe failed for %s: %s", source_path, exc)
 
-        threading.Thread(target=_task, daemon=True, name="utvfx-metadata-probe").start()
+        threading.Thread(target=_task, daemon=True, name="slate-metadata-probe").start()
 
     def _launch_ffmpeg(self, start_time_sec=0):
         """Helper to launch FFmpeg process."""
@@ -262,7 +262,7 @@ class StreamEngine(BaseMediaEngine):
                     pass
 
         threading.Thread(target=_drain, args=(proc.stderr,), daemon=True,
-                         name="utvfx-ffmpeg-stderr").start()
+                         name="slate-ffmpeg-stderr").start()
         return subprocess_tracker.register(proc)
 
     def _restart_ffmpeg_at(self, start_time_sec):

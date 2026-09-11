@@ -48,8 +48,8 @@ class SettingsView(QWidget):
         
         # Database Path
         self.input_db_path = QLineEdit()
-        self.input_db_path.setPlaceholderText("e.g. X:\\Extra\\UT_Central\\Database")
-        self.input_db_path.setText("X:\\Extra\\UT_Central\\Database")
+        self.input_db_path.setPlaceholderText("e.g. X:\\Extra\\Slate_Central\\Database")
+        self.input_db_path.setText("X:\\Extra\\Slate_Central\\Database")
         
         lbl_db_path = QLabel("Database Root Path:")
         lbl_db_path.setStyleSheet(f"font-size: 14px; font-weight: {T.WEIGHT_SEMI}; color: {C.TEXT_SECONDARY};")

@@ -6,7 +6,7 @@
 #define MyAppVersion "BETA 2.0.22"
 #define MyAppPublisher "UT Studio"
 #define MyAppURL "https://github.com/slateutkarsh-design/slate-vfx"
-#define MyAppExeName "UT_Server.exe"
+#define MyAppExeName "Slate_Server.exe"
 #define MyAppIconFileName "server_icon.ico"
 
 ; Build-path overrides (can be passed from ISCC CLI via /DName=Value)
@@ -63,8 +63,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 ; --- MAIN APPLICATION COMPONENTS ---
-; We install the UT_Server executable
-Source: "{#SourceDistDir}\UT_Server.exe"; DestDir: "{app}"; Flags: ignoreversion
+; We install the Slate_Server executable
+Source: "{#SourceDistDir}\Slate_Server.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppExeName}"; Components: central_server
@@ -97,18 +97,18 @@ var
 procedure InitializeWizard;
 begin
   ServerPathPage := CreateInputDirPage(wpSelectDir,
-    'Select UT_Central Shared Folder', 'Where is the UT_Central shared folder located on your network?',
+    'Select Slate_Central Shared Folder', 'Where is the Slate_Central shared folder located on your network?',
     'Select the network folder where the shared databases and caches will be stored, then click Next.'#13#10#13#10'For best compatibility with older VFX tools, mapping your server to a Drive Letter (like Z:\) is recommended.',
     False, 'New Folder');
-  ServerPathPage.Add('Server Root Path (e.g., Z:\UT_Central or \\Server\Shared\UT_Central):');
-  ServerPathPage.Values[0] := 'X:\Extra\UT_Central';
+  ServerPathPage.Add('Server Root Path (e.g., Z:\Slate_Central or \\Server\Shared\Slate_Central):');
+  ServerPathPage.Values[0] := 'X:\Extra\Slate_Central';
 end;
 
 procedure ForceKillSlateProcesses();
 var
   ResultCode: Integer;
 begin
-  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM "UT_Server.exe"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM "Slate_Server.exe"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM "postgres.exe"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 

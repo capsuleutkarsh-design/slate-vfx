@@ -24,7 +24,7 @@ def test_load():
     if not users_file.exists():
         logging.error(f"ERROR: File not found at {users_file}")
         # Try local fallback manually just to see
-        local_fallback = Path.home() / "RuntimeData" / "UT_Central" / "Config" / "users.json"
+        local_fallback = Path.home() / "RuntimeData" / "Slate_Central" / "Config" / "users.json"
         logging.info(f"Checking fallback: {local_fallback} -> Exists: {local_fallback.exists()}")
         return
 

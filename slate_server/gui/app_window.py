@@ -95,10 +95,10 @@ class UTServerWindow(QMainWindow):
         # Initialize Database Engine
         # Store database using config file in a persistent location
         import json
-        appdata_dir = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), "UT_Central")
+        appdata_dir = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), "Slate_Central")
         os.makedirs(appdata_dir, exist_ok=True)
         self.config_path = os.path.join(appdata_dir, "slate_server_config.json")
-        default_path = r"X:\Extra\UT_Central\Database"
+        default_path = r"X:\Extra\Slate_Central\Database"
         default_port = 5440
         
         db_path = default_path

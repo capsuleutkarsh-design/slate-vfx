@@ -106,7 +106,7 @@ def run_audit():
 
     # 5. File System Access
     print("\n[5/5] Checking Server Mount Access...")
-    server_root = r"X:\Extra\UT_Central"
+    server_root = r"X:\Extra\Slate_Central"
     if os.path.exists(server_root):
         print(f"  [OK] Server Root Found: {server_root}")
     else:
