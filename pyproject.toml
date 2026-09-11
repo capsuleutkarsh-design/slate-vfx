@@ -22,6 +22,13 @@ cryptography = "^41.0.0"
 openpyxl = "^3.1.2"
 psycopg2-binary = "^2.9.9"
 
+# Imported unguarded by core infra and by every Alembic revision, and declared
+# nowhere until CI failed on a clean machine with ModuleNotFoundError. They
+# were only ever present because the workstations happened to have them.
+SQLAlchemy = "^2.0"
+alembic = "^1.13"
+keyring = "^25.0"
+
 # Multimedia
 opencv-python = "^4.8.0"
 Pillow = "^10.0.0"
