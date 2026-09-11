@@ -59,7 +59,7 @@ def get_database_url() -> str:
             config = GlobalConfig.get("db_config", {}) or {}
             host = config.get("host") or GlobalConfig.get("db_host") or "127.0.0.1"
             port = int(config.get("port") or GlobalConfig.get("db_port") or 5440)
-            dbname = config.get("name") or GlobalConfig.get("db_name") or "slate"
+            dbname = config.get("name") or GlobalConfig.get("db_name") or "ut_vfx"
             user = config.get("user") or GlobalConfig.get("db_user") or "postgres"
             
             # The password comes from the machine, never from source. There

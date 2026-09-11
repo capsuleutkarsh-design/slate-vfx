@@ -38,6 +38,43 @@ def _client_setting(key, default=""):
             continue
     return default
 from slate_server.core.network_broadcaster import NetworkBroadcaster
+def _settings_path(appdata_dir):
+    """
+    Where the server keeps its settings, carrying forward an older install's.
+
+    The folder and the file were both named after the product, so renaming the
+    product moved both at once. A machine that upgrades therefore finds no
+    settings at all - and the code below treats "no settings" as "first run",
+    falls back to a default path that is not there, falls back again to a local
+    one, and runs initdb. The result is a server that starts cleanly onto an
+    empty database while the real one sits untouched somewhere else, which is
+    the worst of both worlds: nothing errors, and nothing is there.
+
+    So before deciding this is a first run, look where the previous name kept
+    its settings and bring them across. The old file is copied, not moved, so
+    an older build on the same machine still finds what it expects.
+    """
+    import shutil
+
+    current = os.path.join(appdata_dir, "slate_server_config.json")
+    if os.path.exists(current):
+        return current
+
+    local = os.path.dirname(appdata_dir)
+    for folder, name in (("UT_Central", "ut_server_config.json"),):
+        previous = os.path.join(local, folder, name)
+        if os.path.exists(previous):
+            try:
+                shutil.copy2(previous, current)
+                print(f"Carried settings forward from {previous}")
+            except OSError as exc:
+                # Not fatal - the server can still be pointed at a database by
+                # hand in Settings. But say so, because the alternative is a
+                # silently empty one.
+                print(f"Could not carry settings forward from {previous}: {exc}")
+            return current
+    return current
+
 
 class DBWorker(QThread):
     progress = Signal(str)
@@ -97,7 +134,7 @@ class UTServerWindow(QMainWindow):
         import json
         appdata_dir = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), "Slate_Central")
         os.makedirs(appdata_dir, exist_ok=True)
-        self.config_path = os.path.join(appdata_dir, "slate_server_config.json")
+        self.config_path = _settings_path(appdata_dir)
         default_path = r"X:\Extra\Slate_Central\Database"
         default_port = 5440
         
@@ -457,7 +494,7 @@ class UTServerWindow(QMainWindow):
                 total_assets = res5[0] if res5 else 0
                 
                 # 6. Database Size
-                cur.execute("SELECT pg_size_pretty(pg_database_size('slate'))")
+                cur.execute("SELECT pg_size_pretty(pg_database_size(current_database()))")
                 res6 = cur.fetchone()
                 db_size = res6[0] if res6 else "Unknown"
                 

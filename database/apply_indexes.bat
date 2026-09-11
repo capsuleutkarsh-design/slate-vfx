@@ -33,7 +33,7 @@ echo.
 echo Creating performance indexes...
 echo.
 
-psql -h 172.16.1.45 -U postgres -d slate -f database\create_indexes.sql
+psql -h 172.16.1.45 -U postgres -d ut_vfx -f database\create_indexes.sql
 
 if errorlevel 1 (
     echo.

@@ -20,7 +20,7 @@ try:
             EXTRACT(EPOCH FROM (NOW() - query_start)) as seconds_running,
             query
         FROM pg_stat_activity
-        WHERE datname = 'slate'
+        WHERE datname = 'ut_vfx'
         AND state = 'active'
         AND query NOT LIKE '%pg_stat_activity%'
     """)

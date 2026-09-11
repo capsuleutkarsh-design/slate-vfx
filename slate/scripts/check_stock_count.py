@@ -7,7 +7,7 @@ import keyring
 
 pw = keyring.get_password("Slate", "db_password")
 
-conn = psycopg2.connect(dbname="slate", user="postgres", password=pw,
+conn = psycopg2.connect(dbname="ut_vfx", user="postgres", password=pw,
                         host="172.16.1.45", port=5432, connect_timeout=5)
 cur = conn.cursor()
 

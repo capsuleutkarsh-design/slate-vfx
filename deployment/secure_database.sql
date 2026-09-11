@@ -28,7 +28,7 @@
 --   From the folder holding this file, on the server:
 --
 --     slate_server\bin\pgsql\bin\psql.exe -h 127.0.0.1 -p 5440 -U postgres ^
---         -d slate -f deployment\secure_database.sql
+--         -d ut_vfx -f deployment\secure_database.sql
 --
 --   Run it while the old "no password needed" settings are still in place,
 --   or it will not be able to connect. Change pg_hba.conf afterwards.

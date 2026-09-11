@@ -24,7 +24,7 @@ class AsyncPostgresManager:
         
         self.host = "127.0.0.1"
         self.port = 5440
-        self.dbname = "slate"
+        self.dbname = "ut_vfx"
         self.user = "postgres"
         
         # Load configuration
@@ -34,7 +34,7 @@ class AsyncPostgresManager:
             self.host = config.get('host') or "127.0.0.1"
             p = config.get('port')
             self.port = int(p) if p else 5440
-            self.dbname = config.get('name') or "slate"
+            self.dbname = config.get('name') or "ut_vfx"
             self.user = config.get('user') or "postgres"
         except Exception as e:
             logging.debug(f"AsyncPostgresManager: Could not load GlobalConfig: {e}")

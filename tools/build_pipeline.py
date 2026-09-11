@@ -10,7 +10,25 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
+
+
+def find_spec(name):
+    """
+    Locate a PyInstaller spec by filename.
+
+    They live in deployment/ since the project root was tidied. PyInstaller
+    runs a spec with the working directory set to the spec's own folder, so each
+    spec steps back to the project root itself before its relative paths
+    resolve - see the preamble at the top of any of them.
+    """
+    for folder in ("deployment", "."):
+        candidate = os.path.join(folder, name)
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
 
 def build_quick():
     """Quick debug build for testing (includes console for debugging)"""
@@ -206,10 +224,15 @@ def build_onedir():
     
     # USE THE OFFICIAL SPEC FILE
     # This ensures consistent results with bundled config and dependencies
-    spec_file = 'Slate.spec'
-    
-    if not os.path.exists(spec_file):
-        print(f"ERROR: Spec file not found: {spec_file}")
+    #
+    # The spec files were moved into deployment/ when the project root was
+    # tidied, and this was still looking for one beside itself. The old location
+    # is tried too, so a checkout that has not been reorganised still builds.
+    spec_file = find_spec('Slate.spec')
+
+    if spec_file is None:
+        print("ERROR: Spec file not found: Slate.spec")
+        print("       Looked in deployment/ and the project root.")
         sys.exit(1)
         
     print(f"Building using spec file: {spec_file}")
@@ -218,12 +241,47 @@ def build_onedir():
     print("\nCopying unmanaged data directories into dist/Slate...")
     dist_folder = os.path.join('dist', 'Slate')
     
+    def force_rmtree(path):
+        """
+        Remove a tree that Windows is being difficult about.
+
+        slate_server/bin holds a whole PostgreSQL distribution - thousands of
+        small files, some marked read-only - and a plain rmtree over it fails
+        with "The directory is not empty" often enough to break a build that was
+        otherwise finished. The directory is not really non-empty: a file was
+        still being released as the walk passed it.
+
+        So clear the read-only bit on whatever refused, and give the filesystem a
+        moment before each retry.
+        """
+        def _clear_readonly(func, failed_path, _exc):
+            try:
+                os.chmod(failed_path, 0o700)
+                func(failed_path)
+            except OSError:
+                pass
+
+        for attempt in range(4):
+            try:
+                shutil.rmtree(path, onerror=_clear_readonly)
+                if not os.path.exists(path):
+                    return
+            except OSError:
+                pass
+            time.sleep(0.5 * (attempt + 1))
+
+        if os.path.exists(path):
+            raise OSError(
+                f"Could not clear {path}. Something is holding a file open in "
+                f"it - a running Slate Server, an antivirus scan, or an open "
+                f"Explorer window - close it and build again.")
+
     def copy_if_exists(src, dst):
         if os.path.exists(src):
             dst_path = os.path.join(dist_folder, dst)
             print(f'Copying {src} to {dst_path}')
             if os.path.exists(dst_path):
-                shutil.rmtree(dst_path)
+                force_rmtree(dst_path)
             shutil.copytree(src, dst_path)
             
     copy_if_exists('slate/bin', 'slate/bin')
@@ -254,7 +312,11 @@ def build_installer(version=None, target="all"):
     all_scripts = {
         "vfx": (project_root / "deployment" / "setup_slate_client.iss").resolve(),
         "ops": (project_root / "deployment" / "setup_slate_ops.iss").resolve(),
-        "server": (project_root / "deployment" / "setup_slate_central_server.iss").resolve()
+        # setup_slate_server.iss, not setup_slate_central_server.iss: the file
+        # was renamed to match its two siblings, while this reference went
+        # through a text rule that turned "ut_central" into "slate_central" and
+        # grew a word the file never had.
+        "server": (project_root / "deployment" / "setup_slate_server.iss").resolve()
     }
 
     if target == "all":

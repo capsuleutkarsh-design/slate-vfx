@@ -3,9 +3,9 @@
 ; Features: Auto-Updater, Cleanup Old Configs, Bundled Dependencies.
 
 #define MyAppName "Slate"
-#define MyAppVersion "BETA 2.0.22"
+#define MyAppVersion "BETA 2.0.25"
 #define MyAppPublisher "UT Studio"
-#define MyAppURL "https://github.com/slateutkarsh-design/slate-vfx"
+#define MyAppURL "https://github.com/capsuleutkarsh-design/slate-vfx"
 #define MyAppExeName "Slate_Studio.exe"
 #define MyAppIconFileName "app_icon_128.ico"
 

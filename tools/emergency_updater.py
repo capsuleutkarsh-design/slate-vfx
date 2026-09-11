@@ -37,10 +37,20 @@ def main():
         
     exe_name = "slate.exe" if target == "client" else "slate_server.exe"
 
-    # Find Central Directory
-    config_path = Path.home() / ".slate_vfx" / "local_config.json"
-    if not config_path.exists():
-        print(f"ERROR: Local config not found at {config_path}")
+    # Find Central Directory.
+    #
+    # Older builds kept this under .capsule_vfx, and an update preserves the
+    # folder rather than renaming it, so on most machines that is still where it
+    # is. This tool runs when the application will not start at all, which is the
+    # worst possible moment to refuse over a folder name, so try both.
+    candidates = [Path.home() / ".slate_vfx" / "local_config.json",
+                  Path.home() / ".capsule_vfx" / "local_config.json",
+                  Path.home() / ".ut_vfx" / "local_config.json"]
+    config_path = next((p for p in candidates if p.exists()), None)
+    if config_path is None:
+        print("ERROR: Local config not found. Looked in:")
+        for p in candidates:
+            print(f"         {p}")
         print("Cannot determine Central Server path.")
         sys.exit(1)
         

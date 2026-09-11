@@ -25,7 +25,7 @@ cur = conn.cursor()
 cur.execute("""
     SELECT pid, state, query_start, query 
     FROM pg_stat_activity 
-    WHERE datname = 'slate' 
+    WHERE datname = 'ut_vfx' 
     AND state = 'active'
     AND query NOT LIKE '%pg_stat_activity%'
 """)

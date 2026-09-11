@@ -8,7 +8,7 @@ from ui.test_tab import TestTab
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("UT Developer Console")
+        self.setWindowTitle("Slate Developer Console")
         self.setStyleSheet("QMainWindow { background-color: #1e1e23; }")
         
         # Central Widget
@@ -19,7 +19,7 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(10, 10, 10, 10)
         
         # Title Bar / Branding
-        title = QLabel("UT DEVELOPER CONSOLE")
+        title = QLabel("SLATE DEVELOPER CONSOLE")
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet("""
             QLabel {

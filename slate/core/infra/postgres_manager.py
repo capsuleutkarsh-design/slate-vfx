@@ -190,7 +190,7 @@ class PostgresManager:
         # Which one actually worked, for the log and the connection banner.
         self.connected_via = ""
 
-        self.dbname = config.get('name') or get_from_keyring("db_name") or "slate"
+        self.dbname = config.get('name') or get_from_keyring("db_name") or "ut_vfx"
         self.user = config.get('user') or get_from_keyring("db_user") or "postgres"
 
         maxconn_cfg = config.get('maxconn') or config.get('max_db_connections') or 2  # noqa: E501

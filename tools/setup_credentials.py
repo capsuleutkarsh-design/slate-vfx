@@ -169,7 +169,7 @@ def main():
                 defaults = {
                     'host': config.get('db_host', '192.168.0.45'),
                     'port': config.get('db_port', 5432),
-                    'dbname': config.get('db_name', 'slate'),
+                    'dbname': config.get('db_name', 'ut_vfx'),
                     'user': config.get('db_user', 'postgres')
                 }
         except Exception as e:

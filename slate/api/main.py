@@ -81,7 +81,7 @@ async def telemetry_loop():
                     from slate_server.core.db_credentials import connect_kwargs
                     conn = psycopg2.connect(**connect_kwargs(port, connect_timeout=1))
                     with conn.cursor() as cur:
-                        cur.execute("SELECT pg_size_pretty(pg_database_size('slate'))")
+                        cur.execute("SELECT pg_size_pretty(pg_database_size(current_database()))")
                         res = cur.fetchone()
                         db_size = res[0] if res else "Unknown"
                         

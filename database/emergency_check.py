@@ -38,7 +38,7 @@ try:
             state,
             query
         FROM pg_stat_activity 
-        WHERE datname = 'slate'
+        WHERE datname = 'ut_vfx'
         AND query ILIKE '%CREATE INDEX%'
         AND state = 'active'
     """)

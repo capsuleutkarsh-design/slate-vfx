@@ -199,7 +199,17 @@ class DatabaseEngine:
             p.mkdir(parents=True, exist_ok=True)
 
     def _ensure_slate_database(self):
-        """Ensures the slate database exists."""
+        """
+        Create the studio's database if this cluster does not have it yet.
+
+        Worth being careful about, because the failure is silent in both
+        directions: createdb says nothing useful when the database is already
+        there, and the exception handler below discards everything. So if this
+        is ever pointed at the wrong name it will not report a problem - it will
+        quietly manufacture an empty database and let every screen show zero.
+        """
+        from slate_server.core.db_credentials import database_name
+
         createdb_exe = str(self.bin_dir / "createdb.exe")
         if not Path(createdb_exe).exists():
             return
@@ -208,7 +218,7 @@ class DatabaseEngine:
             "-h", "127.0.0.1",
             "-U", "postgres",
             "-p", str(self.port),
-            "slate"
+            database_name(),
         ]
         try:
             from slate_server.core.db_credentials import env_with_password

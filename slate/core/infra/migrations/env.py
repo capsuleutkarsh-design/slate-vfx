@@ -28,7 +28,7 @@ def get_url():
     gc = GlobalConfig()
     host = '127.0.0.1'  # Force localhost for migrations to avoid binding issues
     port = gc.get('db_port', 5440)
-    db = gc.get('db_name', 'slate')
+    db = gc.get('db_name', 'ut_vfx')
     user = gc.get('db_user', 'postgres')
     pwd = gc.get('db_password', 'utkarsh@123')
     return f"postgresql://{user}:{pwd}@{host}:{port}/{db}"

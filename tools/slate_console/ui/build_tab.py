@@ -4,7 +4,21 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 import os
+import sys
 from worker.process_runner import ProcessRunner
+
+
+def _python():
+    """
+    The interpreter to build with, quoted for the shell.
+
+    Every command here used to start with a bare "python". On a machine with
+    only the portable runtime - which is every machine this ships to - that name
+    resolves to the Windows Store alias stub, which prints "Python was not found"
+    and exits 9009 without running anything. The console is itself running under
+    the right interpreter, so sys.executable is the answer and needs no lookup.
+    """
+    return '"%s"' % sys.executable
 
 class BuildTab(QWidget):
     """
@@ -277,7 +291,12 @@ class BuildTab(QWidget):
 
     # --- ACTIONS ---
     def run_clean(self):
-        cmd = 'rd /s /q build dist'
+        # "rd" on a folder that is not there prints "The system cannot find the
+        # file specified" and exits 2, so cleaning an already-clean tree was
+        # reported as a failed operation. Nothing to delete is the success case.
+        cmd = ('(if exist build rd /s /q build) & '
+               '(if exist dist rd /s /q dist) & '
+               'echo Build artifacts cleared.')
         self.start_process(cmd, "Clean Artifacts")
 
     def run_full_build(self):
@@ -289,7 +308,7 @@ class BuildTab(QWidget):
             QMessageBox.warning(self, "Version Required", "Please enter a version number.")
             return
         target = self.target_combo.currentData() if hasattr(self, "target_combo") else "all"
-        cmd = f'python tools/build_pipeline.py --mode full --version "{ver}" --target {target}'
+        cmd = f'{_python()} tools/build_pipeline.py --mode full --version "{ver}" --target {target}'
         self.start_process(cmd, f"Full Build Pipeline ({ver} - {target.upper()})")
 
     def run_component_build(self, target):
@@ -300,7 +319,7 @@ class BuildTab(QWidget):
         if not ver:
             QMessageBox.warning(self, "Version Required", "Please enter a version number.")
             return
-        cmd = f'python tools/build_pipeline.py --mode full --version "{ver}" --target {target}'
+        cmd = f'{_python()} tools/build_pipeline.py --mode full --version "{ver}" --target {target}'
         self.start_process(cmd, f"Build {target.upper()} Suite Component ({ver})")
 
     def run_build_exe(self):
@@ -308,7 +327,7 @@ class BuildTab(QWidget):
         if not self.save_config(): return
 
         # Use onedir to build unified dist/Slate with all executables
-        cmd = 'python tools/build_pipeline.py --mode onedir'
+        cmd = f'{_python()} tools/build_pipeline.py --mode onedir'
         self.start_process(cmd, "Build Executables (Onedir)")
 
     def run_build_update(self):
@@ -316,5 +335,5 @@ class BuildTab(QWidget):
         if not self.save_config(): return
         
         target = self.target_combo.currentData() if hasattr(self, "target_combo") else "all"
-        cmd = f'python tools/build_update_package.py --target {target}'
+        cmd = f'{_python()} tools/build_update_package.py --target {target}'
         self.start_process(cmd, f"Build Update Package ({target.upper()})")

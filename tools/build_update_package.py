@@ -7,6 +7,14 @@ import subprocess
 import argparse
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from slate.core.updater.manifest import (          # noqa: E402
+    build as build_manifest,
+    manifest_name,
+    releases_dir as releases_dir_for,
+)
+
+
 def generate_file_hash(filepath):
     """Generate SHA-256 hash for a file."""
     sha256_hash = hashlib.sha256()
@@ -14,6 +22,42 @@ def generate_file_hash(filepath):
         for byte_block in iter(lambda: f.read(4096), b""):
             sha256_hash.update(byte_block)
     return sha256_hash.hexdigest()
+
+
+def publish(zip_filepath, manifest_path, project_root):
+    """
+    Copy the finished package to where the application looks for it.
+
+    Building into ./releases and stopping there is why nothing has ever been
+    offered as an update: the checker reads SERVER_ROOT/Updates/releases and
+    nothing was ever putting anything in it. The build is kept as well, so there
+    is still a local copy to inspect.
+
+    Returns the published folder, or None with an explanation printed - a
+    central folder that is not mounted is a normal thing on a build machine and
+    should not fail a build that otherwise succeeded.
+    """
+    try:
+        from slate.core.infra.global_config import GlobalConfig
+        server_root = Path(GlobalConfig.server_root())
+    except Exception as exc:
+        print(f"  [publish] Could not read SERVER_ROOT from config: {exc}")
+        return None
+
+    if not server_root.exists():
+        print(f"  [publish] SERVER_ROOT does not exist: {server_root}")
+        return None
+
+    destination = releases_dir_for(server_root / "Updates")
+    try:
+        destination.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(zip_filepath, destination / zip_filepath.name)
+        shutil.copy2(manifest_path, destination / manifest_path.name)
+    except OSError as exc:
+        print(f"  [publish] Could not write to {destination}: {exc}")
+        return None
+
+    return destination
 
 def build_single_target(target="vfx", project_root=None):
     if project_root is None:
@@ -32,10 +76,22 @@ def build_single_target(target="vfx", project_root=None):
             sys.exit(1)
             
         dist_dir = project_root / "dist" / "Slate"
-        zip_filename = f"UT_{target.upper()}_Update"
+        # Both the VFX and the Ops builds come out of the same dist/Slate folder
+        # above, so they are the same package under two names. The application
+        # asks for one "client" update, so that is what gets published - running
+        # this for vfx and then for ops republishes the same thing rather than
+        # leaving two manifests disagreeing about which is current.
+        zip_filename = "Slate_Client_Update"
     elif target == "server":
         print("\nStep 1: Running Server build...")
-        subprocess.run([sys.executable, "-m", "PyInstaller", "Slate_Server.spec", "--noconfirm"])
+        # Same move as above: the specs live in deployment/ now.
+        server_spec = next(
+            (p for p in (Path("deployment") / "Slate_Server.spec",
+                         Path("Slate_Server.spec")) if p.exists()), None)
+        if server_spec is None:
+            print("ERROR: Slate_Server.spec not found in deployment/ or the project root.")
+            sys.exit(1)
+        subprocess.run([sys.executable, "-m", "PyInstaller", str(server_spec), "--noconfirm"])
         
         dist_dir = project_root / "dist" / "Slate_Server_Update"
         if dist_dir.exists():
@@ -85,23 +141,37 @@ def build_single_target(target="vfx", project_root=None):
     print("\nStep 4: Generating Cryptographic Hash (SHA-256)...")
     file_hash = generate_file_hash(zip_filepath)
     
-    external_manifest = {
-        "version": "latest",
-        "target": target,
-        "hash_sha256": file_hash,
-        "package_name": f"{zip_filename}.zip"
-    }
-    
-    external_manifest_path = releases_dir / f"manifest_{target}.json"
+    # The build knows three targets because it produces three executables; the
+    # application knows two, because a workstation updates its client and the
+    # server machine updates its server. The manifest is named for what the
+    # application asks for - it looks for manifest_client.json, and a file
+    # called manifest_vfx.json is simply never found.
+    app_target = "server" if target == "server" else "client"
+
+    external_manifest = build_manifest(
+        version="latest",
+        package_name=f"{zip_filename}.zip",
+        hash_sha256=file_hash,
+        target=app_target,
+        built_from=target,
+    )
+
+    external_manifest_path = releases_dir / manifest_name(app_target)
     with open(external_manifest_path, "w", encoding="utf-8") as f:
         json.dump(external_manifest, f, indent=4)
-        
+
     print("\n" + "=" * 70)
     print(f"  [SUCCESS] Update Package created for {target.upper()}!")
     print("=" * 70)
     print(f"Package: {zip_filepath}")
     print(f"Manifest: {external_manifest_path}")
     print(f"SHA-256: {file_hash}")
+
+    published = publish(zip_filepath, external_manifest_path, project_root)
+    if published:
+        print(f"Published: {published}")
+    else:
+        print("Not published - built locally only. See the message above.")
 
 def build_update_package(target="all"):
     project_root = Path(__file__).resolve().parent.parent

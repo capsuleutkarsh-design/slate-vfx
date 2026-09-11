@@ -16,11 +16,34 @@ DIST_DIR = PROJECT_ROOT / "dist" / "Slate"
 DEFAULT_RELEASE_DIR = Path(r"X:\Extra\Slate_Central\Updates\releases")
 DEFAULT_LATEST_POINTER = Path(r"X:\Extra\Slate_Central\Updates\latest.json")
 
+def configured_updates_root():
+    """
+    The Updates folder under the central server the clients actually read.
+
+    The hardcoded X: default below is a guess about somebody else's drive
+    letter, and it disagreed with SERVER_ROOT - so this tool published where no
+    client was looking. The configured value is the one the application uses to
+    find updates, so it is the one to publish to; the X: path stays only as a
+    fallback for a machine with no config.
+    """
+    try:
+        from slate.core.infra.global_config import GlobalConfig
+        root = Path(GlobalConfig.server_root())
+    except Exception:
+        return None
+    return root / "Updates" if root.exists() else None
+
+
 def resolve_paths():
     """Resolve release paths, prompting if defaults are missing."""
+    configured = configured_updates_root()
+    if configured is not None:
+        print(f"📁 Publishing to the configured central server: {configured}")
+        return configured / "releases", configured / "latest.json"
+
     rel_dir = DEFAULT_RELEASE_DIR
     pointer = DEFAULT_LATEST_POINTER
-    
+
     if not rel_dir.parent.exists(): # Check if Updates folder exists
         print(f"⚠️  Network Drive Path not found: {rel_dir.parent}")
         print("Please enter the path to the 'Updates' folder (or 'q' to quit):")
@@ -37,7 +60,23 @@ def resolve_paths():
             
     return rel_dir, pointer
 
-RELEASE_DIR, LATEST_POINTER = resolve_paths()
+sys.path.insert(0, str(PROJECT_ROOT))
+from slate.core.updater.manifest import (          # noqa: E402
+    build as build_manifest,
+    manifest_name,
+    TARGETS,
+)
+
+# Which half of the product this package is for. The application updates its
+# client and its server separately and asks for them by name, so a publisher
+# that does not say which one it is publishing cannot be found by either.
+TARGET = "client"
+
+# Resolved in publish() rather than here: resolve_paths() can prompt, and a
+# module that asks the operator a question just for being imported cannot be
+# tested, or imported by anything else.
+RELEASE_DIR = None
+LATEST_POINTER = None
 
 def get_version():
     """Extract version from slate/__init__.py"""
@@ -67,33 +106,47 @@ def zip_folder(folder_path, output_path):
                 zipf.write(file_path, arcname)
 
 def publish():
+    global RELEASE_DIR, LATEST_POINTER
+
     print("🚀 Slate - RELEASE PUBLISHER")
     print("==================================")
-    
+    print(f"   target: {TARGET}")
+
+    if RELEASE_DIR is None:
+        RELEASE_DIR, LATEST_POINTER = resolve_paths()
+
     # 1. Validation
-    if not DIST_DIR.exists():
-        print(f"❌ Error: Dist folder not found: {DIST_DIR}")
-        print("   Please run 'pyinstaller' build first.")
+    #
+    # The two targets are built into different folders, so publishing the server
+    # would otherwise zip up the client's dist and label it "server".
+    dist_dir = DIST_DIR if TARGET == "client" else PROJECT_ROOT / "dist" / "Slate_Server_Update"
+    if not dist_dir.exists():
+        print(f"❌ Error: Dist folder not found: {dist_dir}")
+        print("   Please run the build for this target first.")
         return
 
     # 2. Get Version
     version = get_version()
     print(f"📌 Version Detected: {version}")
-    
-    release_folder = RELEASE_DIR / f"v{version}"
-    # REQUESTED FORMAT: update_vX.X.X.zip
-    zip_name = f"update_v{version}.zip"
+
+    # The layout is dictated by the reader, not by what reads nicely in a folder.
+    # SidecarEngine resolves a package as <releases>/<package_name> and
+    # UpdateChecker opens <releases>/manifest_<target>.json, both flat. Publishing
+    # into a per-version subfolder - which this did - puts the manifest somewhere
+    # the checker never looks and names a zip the downloader cannot reach, so
+    # every release made with this tool was invisible to the application.
+    release_folder = RELEASE_DIR
+    zip_name = f"Slate_{TARGET.capitalize()}_Update.zip"
     zip_path = release_folder / zip_name
-    manifest_path = release_folder / "manifest.json"
+    manifest_path = release_folder / manifest_name(TARGET)
 
     # 3. Create Release Structure
-    if release_folder.exists():
-        overwrite = input(f"⚠️ Release v{version} already exists. Overwrite? (y/n): ")
+    if zip_path.exists():
+        overwrite = input(f"⚠️ A {TARGET} package is already published. Replace it? (y/n): ")
         if overwrite.lower() != 'y':
             print("Aborted.")
             return
-        shutil.rmtree(release_folder)
-    
+
     release_folder.mkdir(parents=True, exist_ok=True)
 
     # --- RELEASE NOTES INPUT ---
@@ -112,14 +165,14 @@ def publish():
     if not release_notes: release_notes = "Regular update."
     
     # Write release notes to file for inclusion in ZIP
-    notes_file = DIST_DIR / "release_notes.txt"
+    notes_file = dist_dir / "release_notes.txt"
     with open(notes_file, "w", encoding="utf-8") as f:
         f.write(f"Slate - Update v{version}\n")
         f.write("================================\n\n")
         f.write(release_notes)
     
     # 4. Zip Package
-    zip_folder(DIST_DIR, zip_path)
+    zip_folder(dist_dir, zip_path)
     print(f"✅ Package Created: {zip_name}")
     
     # Cleanup temp notes file
@@ -130,15 +183,21 @@ def publish():
     print(f"🔐 SHA-256: {file_hash}")
     
     # 6. Create Manifest
-    manifest = {
-        "version": version,
-        "release_date": datetime.now().isoformat(),
-        "package_name": zip_name,
-        "sha256": file_hash,
-        "critical": False, 
-        "notes": release_notes # Store notes in manifest for UI
-    }
-    
+    #
+    # Written through the shared builder rather than assembled here. This used to
+    # put the digest under "sha256", which the sidecar does not read - and because
+    # it verified only when the key was present, the package installed without
+    # being checked at all. build() refuses to produce a manifest with no hash.
+    manifest = build_manifest(
+        version=version,
+        package_name=zip_name,
+        hash_sha256=file_hash,
+        target=TARGET,
+        release_date=datetime.now().isoformat(),
+        critical=False,
+        notes=release_notes,      # shown in the update prompt
+    )
+
     with open(manifest_path, "w") as f:
         json.dump(manifest, f, indent=4)
     print("📝 Manifest Created.")
@@ -160,4 +219,12 @@ def publish():
     print("\n🎉 RELEASE PUBLISHED SUCCESSFULLY!")
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Publish a built package where the application looks for it.")
+    parser.add_argument("--target", choices=list(TARGETS), default="client",
+                        help="Which half of the product this package updates.")
+    args = parser.parse_args()
+    TARGET = args.target
     publish()

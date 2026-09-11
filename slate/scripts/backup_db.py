@@ -50,7 +50,7 @@ def run_backup():
     
     host = config.get('host') or GlobalConfig.get('db_host') or "127.0.0.1"
     port = config.get('port') or GlobalConfig.get('db_port') or 5440
-    dbname = config.get('name') or GlobalConfig.get('db_name') or "slate"
+    dbname = config.get('name') or GlobalConfig.get('db_name') or "ut_vfx"
     user = config.get('user') or GlobalConfig.get('db_user') or "postgres"
     password = get_db_password()
     

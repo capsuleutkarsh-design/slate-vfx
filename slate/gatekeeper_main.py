@@ -219,7 +219,7 @@ class FirstRunSetupDialog(QDialog):
         self.db_port_input.setValue(int(GlobalConfig.get("db_port", 5440) or 5440))
         form.addRow("DB Port", self.db_port_input)
 
-        self.db_name_input = QLineEdit(str(GlobalConfig.get("db_name", "slate")))
+        self.db_name_input = QLineEdit(str(GlobalConfig.get("db_name", "ut_vfx")))
         form.addRow("DB Name", self.db_name_input)
 
         self.db_user_input = QLineEdit(str(GlobalConfig.get("db_user", "postgres")))

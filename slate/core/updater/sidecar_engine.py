@@ -7,6 +7,7 @@ import hashlib
 from pathlib import Path
 from PySide6.QtCore import QObject, Signal
 from ..infra.global_config import GlobalConfig
+from .manifest import problems as manifest_problems
 
 class SidecarEngine(QObject):
     """
@@ -26,8 +27,18 @@ class SidecarEngine(QObject):
         Phase 1: Download package to temp and verify integrity.
         """
         try:
-            package_name = self.manifest.get("package_name", "Slate_Update.zip")
-            
+            # Check the manifest before touching the disk. A manifest that
+            # cannot be verified is worse than no update at all, and the place
+            # to refuse it is here - before a package has been copied anywhere.
+            faults = manifest_problems(self.manifest)
+            if faults:
+                raise ValueError(
+                    "This update cannot be installed: %s. The package was built "
+                    "or published incorrectly; it has not been downloaded."
+                    % "; ".join(faults))
+
+            package_name = self.manifest["package_name"]
+
             if source_zip_path:
                 source_zip = Path(source_zip_path)
             else:
@@ -47,18 +58,22 @@ class SidecarEngine(QObject):
             
             # 1.5 Hash Verification
             self.update_progress.emit(55, "Verifying package integrity...")
-            expected_hash = self.manifest.get("hash_sha256")
-            if expected_hash:
-                sha256_hash = hashlib.sha256()
-                with open(self.local_zip, "rb") as f:
-                    for byte_block in iter(lambda: f.read(4096), b""):
-                        sha256_hash.update(byte_block)
-                actual_hash = sha256_hash.hexdigest()
-                
-                if actual_hash != expected_hash:
-                    os.remove(self.local_zip)
-                    raise ValueError(f"Hash mismatch! Expected {expected_hash}, got {actual_hash}. The package is corrupted or tampered with.")
-                logging.info(f"Package verified successfully: {actual_hash}")
+            # Unconditional. It used to run only "if expected_hash", so a
+            # manifest that named the hash field wrongly skipped verification
+            # instead of failing it - the check quietly did not happen on
+            # exactly the packages most likely to be malformed. The manifest is
+            # validated above, so by this line the hash is known to be present.
+            expected_hash = self.manifest["hash_sha256"]
+            sha256_hash = hashlib.sha256()
+            with open(self.local_zip, "rb") as f:
+                for byte_block in iter(lambda: f.read(4096), b""):
+                    sha256_hash.update(byte_block)
+            actual_hash = sha256_hash.hexdigest()
+
+            if actual_hash != expected_hash:
+                os.remove(self.local_zip)
+                raise ValueError(f"Hash mismatch! Expected {expected_hash}, got {actual_hash}. The package is corrupted or tampered with.")
+            logging.info(f"Package verified successfully: {actual_hash}")
             
             # 2. Locate Updater Executable
             if getattr(sys, 'frozen', False):

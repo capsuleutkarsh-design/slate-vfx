@@ -125,7 +125,26 @@ def main():
     backup_dir = install_dir.parent / "Backups" / f"Backup_{int(time.time())}"
     log(f" Creating Backup at {backup_dir}...")
     
-    PERSISTENT_ITEMS = ["LocalDatabase", "database", "logs", ".slate_vfx", "slate_server_config.json", "payload.json", "Backups"]
+    # What an update must not touch. This list does two jobs: these are skipped
+    # when the backup copy is made, and - the dangerous half - anything whose
+    # top-level name is NOT here and is not in the new package gets deleted by
+    # the cleanup further down.
+    #
+    # So the names from before the product was renamed have to stay. A machine
+    # updating off an older build still has .capsule_vfx and ut_server_config.json
+    # sitting at the install root, under those names, because the previous update
+    # preserved them rather than renaming them. Drop them from this list and the
+    # next update deletes the file that says which database to use - and the
+    # server, finding no settings, treats it as a first run and builds an empty
+    # one. Keeping both spellings costs nothing; guessing wrong costs a studio
+    # its server settings.
+    PERSISTENT_ITEMS = [
+        "LocalDatabase", "database", "logs", "payload.json", "Backups",
+        # current names
+        ".slate_vfx", "slate_server_config.json",
+        # names still on disk from earlier builds
+        ".capsule_vfx", ".ut_vfx", "ut_server_config.json",
+    ]
     
     try:
         backup_dir.parent.mkdir(parents=True, exist_ok=True)

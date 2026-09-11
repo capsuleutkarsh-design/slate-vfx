@@ -82,7 +82,7 @@ def db_settings() -> dict:
     return {
         "host": config.get("db_host") or "localhost",
         "port": int(config.get("db_port") or 5440),
-        "dbname": config.get("db_name") or "slate",
+        "dbname": config.get("db_name") or "ut_vfx",
         "user": config.get("db_user") or "ut_vfx_app",
         "password": db_password(required=False),
     }

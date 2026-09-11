@@ -3,7 +3,19 @@ from PySide6.QtWidgets import (
     QLabel, QGroupBox, QListWidget, QListWidgetItem
 )
 import os
+import sys
 from worker.process_runner import ProcessRunner
+
+
+def _python():
+    """
+    The interpreter to run things with, quoted for the shell.
+
+    A bare "python" hits the Windows Store alias stub on a machine that only has
+    the portable runtime, which is every machine this ships to. The console is
+    already running under the right one.
+    """
+    return '"%s"' % sys.executable
 
 class TestTab(QWidget):
     """
@@ -45,7 +57,7 @@ class TestTab(QWidget):
         self.btn_run_py.clicked.connect(self.run_python_mode)
         
         self.btn_run_bat = QPushButton("🚀 LAUNCHER (Batch Mode)")
-        self.btn_run_bat.setToolTip("Run launch_app.bat")
+        self.btn_run_bat.setToolTip("Run launchers/launch_app.bat")
         self.btn_run_bat.setStyleSheet(btn_style)
         self.btn_run_bat.clicked.connect(self.run_batch_mode)
         
@@ -92,11 +104,11 @@ class TestTab(QWidget):
 
     def run_python_mode(self):
         # python -m slate.main
-        cmd = "python -m slate.main"
+        cmd = f'{_python()} -m slate.main'
         self.start_process(cmd)
 
     def run_batch_mode(self):
-        cmd = "launch_app.bat"
+        cmd = os.path.join("launchers", "launch_app.bat")
         self.start_process(cmd)
 
     def run_selected_test(self):
@@ -108,11 +120,11 @@ class TestTab(QWidget):
             # Run experiment
             fname = txt.replace("EXP: ", "")
             path = os.path.join("tools", "experiments", fname)
-            cmd = f"python {path}"
+            cmd = f'{_python()} {path}'
         else:
             # Run Test (basic)
             path = os.path.join("tests", txt)
-            cmd = f"python {path}"
+            cmd = f'{_python()} {path}'
             
         self.start_process(cmd)
         

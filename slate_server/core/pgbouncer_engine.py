@@ -54,12 +54,17 @@ class PgBouncerEngine:
 
     def __init__(self, data_dir: str, db_port: int = 5440,
                  listen_port: int = DEFAULT_LISTEN_PORT,
-                 dbname: str = "slate", db_user: str = "ut_vfx_app",
+                 dbname: str = "", db_user: str = "ut_vfx_app",
                  db_password: str = ""):
+        from slate_server.core.db_credentials import database_name
+
         self.data_dir = Path(data_dir)
         self.db_port = int(db_port)
         self.listen_port = int(listen_port)
-        self.dbname = dbname
+        # The pool publishes this name to every workstation and connects to it
+        # on the other side, so it has to be the database that actually holds
+        # the work - not whatever the product happens to be called.
+        self.dbname = dbname or database_name()
         self.db_user = db_user
         self.db_password = db_password
 

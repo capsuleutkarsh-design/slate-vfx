@@ -1,3 +1,28 @@
+# --- run from the project root -------------------------------------------
+# PyInstaller executes a spec with the working directory set to the spec's own
+# folder. Every path below is written relative to the project root, which is
+# where these specs used to live, so step back to it before anything resolves.
+# Located by looking for the package rather than by counting "..", so moving
+# this file again does not silently break the build.
+import os as _os_root
+
+_root = _os_root.path.dirname(_os_root.path.abspath(SPECPATH))
+_here = _os_root.path.abspath(SPECPATH)
+if _os_root.path.isdir(_os_root.path.join(_here, "slate")):
+    _root = _here
+elif not _os_root.path.isdir(_os_root.path.join(_root, "slate")):
+    raise SystemExit(
+        "Cannot find the slate package from %s - this spec does not know where "
+        "the project root is." % _here)
+_os_root.chdir(_root)
+# -------------------------------------------------------------------------
+
+
+def R(*parts):
+    """A path under the project root, absolute, for PyInstaller to resolve."""
+    return _os_root.path.join(_root, *parts)
+
+
 
 import os as _os
 
@@ -5,7 +30,7 @@ def _optional_binaries():
     """Third-party binaries setup.bat downloads. Skipped when absent."""
     found = []
     for name in ("ffmpeg.exe", "ffprobe.exe"):
-        path = _os.path.join("slate", "bin", name)
+        path = R("slate", "bin", name)
         if _os.path.exists(path):
             found.append((path, "slate/bin"))
         else:
@@ -43,20 +68,20 @@ datas_qasync, binaries_qasync, hiddenimports_qasync = collect_all('qasync')
 hiddenimports += hiddenimports_qasync
 
 shared_datas = [
-    ('slate/data', 'slate/data'),
-    ('slate/assets', 'slate/assets'),
-    ('slate/default_config.json', 'slate'),
-    ('slate/icons', 'slate/icons'),
-    ('slate/resources', 'slate/resources'),
+    (R('slate', 'data'), 'slate/data'),
+    (R('slate', 'assets'), 'slate/assets'),
+    (R('slate', 'default_config.json'), 'slate'),
+    (R('slate', 'icons'), 'slate/icons'),
+    (R('slate', 'resources'), 'slate/resources'),
     # FFmpeg is fetched by setup.bat rather than committed - it is a
     # 95MB third-party binary with its own licence. Include it only if
     # it is present, so a build on a machine that has run setup works
     # and a build on one that has not fails with a clear message
     # instead of a PyInstaller stack trace.
 
-    ('slate/core/help_content.json', 'slate/core'),
-    ('slate/gui/tabs/vfx_dashboard_pro/config', 'slate/gui/tabs/vfx_dashboard_pro/config'),
-    ('slate/gui/tabs/vfx_dashboard_pro/sample_project.xlsx', 'slate/gui/tabs/vfx_dashboard_pro'),
+    (R('slate', 'core', 'help_content.json'), 'slate/core'),
+    (R('slate', 'gui', 'tabs', 'vfx_dashboard_pro', 'config'), 'slate/gui/tabs/vfx_dashboard_pro/config'),
+    (R('slate', 'gui', 'tabs', 'vfx_dashboard_pro', 'sample_project.xlsx'), 'slate/gui/tabs/vfx_dashboard_pro'),
 ] + datas_qasync
 
 common_excludes = [
@@ -66,7 +91,7 @@ common_excludes = [
 
 # 1. Slate Studio (Production Suite)
 vfx_a = Analysis(
-    ['slate\\vfx_studio_main.py'],
+    [R('slate', 'vfx_studio_main.py')],
     pathex=[],
     binaries=_optional_binaries() + binaries_qasync,
     datas=shared_datas,
@@ -95,12 +120,12 @@ vfx_exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['slate\\icons\\app_icon.ico'],
+    icon=[R('slate', 'icons', 'app_icon.ico')],
 )
 
 # 2. Slate Operations (HRMS & IT Suite)
 ops_a = Analysis(
-    ['slate\\studio_ops_main.py'],
+    [R('slate', 'studio_ops_main.py')],
     pathex=[],
     binaries=_optional_binaries() + binaries_qasync,
     datas=shared_datas,
@@ -129,12 +154,12 @@ ops_exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['slate\\icons\\app_icon.ico'],
+    icon=[R('slate', 'icons', 'app_icon.ico')],
 )
 
 # 3. Slate Central Server
 server_a = Analysis(
-    ['slate_server\\main.py'],
+    [R('slate_server', 'main.py')],
     pathex=[],
     binaries=[],
     datas=[],
@@ -163,12 +188,12 @@ server_exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['slate\\icons\\server_icon.ico'],
+    icon=[R('slate', 'icons', 'server_icon.ico')],
 )
 
 # 4. Legacy All-in-One Gatekeeper (Backwards Compatibility)
 legacy_a = Analysis(
-    ['slate\\gatekeeper_main.py'],
+    [R('slate', 'gatekeeper_main.py')],
     pathex=[],
     binaries=_optional_binaries() + binaries_qasync,
     datas=shared_datas,
@@ -197,7 +222,54 @@ legacy_exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['slate\\icons\\app_icon.ico'],
+    icon=[R('slate', 'icons', 'app_icon.ico')],
+)
+
+# 5. The sidecar updater.
+#
+# This has to be its own executable rather than part of the app, because its job
+# is to overwrite the app: it runs after Slate has exited, replaces the files and
+# starts the new build. A process cannot replace itself while it is running.
+#
+# sidecar_engine.py looks for it as SlateUpdater.exe next to the running
+# executable, and logs "expected in dev but fatal in production" when it is
+# missing - the update then stages and can never apply. So it is built here and
+# collected into the same folder as the rest.
+#
+# updater_script.py is deliberately nothing but the standard library, so this
+# Analysis stays small and does not drag Qt or the database drivers into a tool
+# that only copies files around.
+updater_a = Analysis(
+    [R('slate', 'core', 'updater', 'updater_script.py')],
+    pathex=[],
+    binaries=[],
+    datas=[],
+    hiddenimports=[],
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=common_excludes,
+    noarchive=False,
+    optimize=0,
+)
+updater_pyz = PYZ(updater_a.pure)
+updater_exe = EXE(
+    updater_pyz,
+    updater_a.scripts,
+    [],
+    exclude_binaries=True,
+    name='SlateUpdater',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    console=False,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+    icon=[R('slate', 'icons', 'app_icon.ico')],
 )
 
 # Collective distribution folder containing all executables and shared dependencies
@@ -214,6 +286,9 @@ coll = COLLECT(
     legacy_exe,
     legacy_a.binaries,
     legacy_a.datas,
+    updater_exe,
+    updater_a.binaries,
+    updater_a.datas,
     strip=False,
     upx=False,
     upx_exclude=[],

@@ -79,7 +79,24 @@ def admin_user() -> str:
     return "postgres"
 
 
-def connect_kwargs(port: int, dbname: str = "slate",
+def database_name() -> str:
+    """
+    The name of the database inside the cluster.
+
+    It is not the product's name and it does not follow the product's name.
+    The cluster calls this database ut_vfx, and it still will after the software
+    is renamed, because renaming a database that has a studio's work in it is a
+    migration rather than a decision anybody makes in passing.
+
+    Keeping it in one place matters more than the value: a literal spread across
+    the server, the pool and the maintenance scripts is exactly what let a
+    rename point half of them somewhere else, and PostgreSQL answers a request
+    for the wrong database by creating an empty one rather than complaining.
+    """
+    return str(_settings().get("db_name") or "ut_vfx")
+
+
+def connect_kwargs(port: int, dbname: str = "",
                    connect_timeout: int = 2) -> dict:
     """
     Arguments for psycopg2.connect, with the password filled in.
@@ -90,7 +107,7 @@ def connect_kwargs(port: int, dbname: str = "slate",
     kwargs = {
         "host": "127.0.0.1",
         "port": int(port),
-        "dbname": dbname,
+        "dbname": dbname or database_name(),
         "user": admin_user(),
         "connect_timeout": int(connect_timeout),
         "application_name": "Slate Central Server",
