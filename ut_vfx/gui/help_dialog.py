@@ -36,13 +36,18 @@ from .core.icons import icon as drawn_icon
 # to make it show up, and forgetting to list it here is untidy rather than
 # invisible.
 GROUPS = [
-    ("Start here",         ["getting_started", "home"]),
-    ("Production",         ["folder_creator", "rename_tool", "stock_browser",
-                            "shot_review", "dashboard", "scheduling", "bidding"]),
-    ("You and the studio", ["attendance", "leave", "it_support"]),
-    ("People and kit",     ["joining_leaving", "hardware", "licences",
-                            "users_roles", "deployment"]),
-    ("System",             ["settings", "workspace_info", "admin_panel", "tester"]),
+    ("Start here", ["getting_started", "home"]),
+
+    # The VFX client's own screens.
+    ("Production", ["folder_creator", "rename_tool", "stock_browser",
+                    "shot_review", "dashboard", "scheduling", "bidding"]),
+
+    # The operations shell's. Split into the two teams that use them rather
+    # than one long list, because almost nobody works across both.
+    ("People",     ["attendance", "leave", "joining_leaving", "users_roles"]),
+    ("IT",         ["it_support", "hardware", "licences", "deployment"]),
+
+    ("System",     ["settings", "admin_panel", "tester", "workspace_info"]),
 ]
 
 _ROLE_SECTION = Qt.ItemDataRole.UserRole
