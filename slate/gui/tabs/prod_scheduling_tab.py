@@ -4,6 +4,15 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QDate
 from PySide6.QtGui import QFont, QColor
+from slate.gui.core.offline_notice import on_database_error
+
+# Let an outage reach the @on_database_error decorator rather than becoming an
+# empty grid here. Everything else keeps the fallback it already had.
+try:
+    from slate.core.infra.postgres_manager import DatabaseUnavailableError
+except ImportError:                                  # pragma: no cover
+    class DatabaseUnavailableError(ConnectionError):
+        """Fallback when the manager cannot be imported."""
 
 class AddMilestoneDialog(QDialog):
     def __init__(self, parent=None):
@@ -171,11 +180,14 @@ class ProdSchedulingTab(QWidget):
         self.grid.hideColumn(0) # Hide ID
         main_layout.addWidget(self.grid)
 
+    @on_database_error
     def load_data(self):
         try:
             from slate.core.infra.database_manager import database_manager
             query = "SELECT * FROM prod_scheduling ORDER BY id DESC"
             sched = database_manager.execute_query(query) or []
+        except DatabaseUnavailableError:
+            raise
         except:
             sched = []
             
@@ -303,6 +315,8 @@ class ProdSchedulingTab(QWidget):
                             (str(s_date), str(e_date), int(current_id)),
                             fetch=False
                         )
+                    except DatabaseUnavailableError:
+                        raise
                     except Exception:
                         pass
                 # Find children

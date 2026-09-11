@@ -36,10 +36,54 @@ def _unavailable():
         return ()
 
 
+def _say_it_in_the_table(widget):
+    """
+    Put the message where the rows would have been.
+
+    Not every screen has an EmptyState - several were written before there was
+    one, and they show a bare table instead. Returning quietly for those is how
+    a tab ends up silent during an outage, which is the whole fault this module
+    exists to stop. So the table itself carries the message: one row, spanning
+    every column, in the place the person is already looking.
+
+    It needs no clearing. The next refresh that succeeds calls setRowCount()
+    with the real number and overwrites this.
+    """
+    try:
+        from PySide6.QtWidgets import QTableWidget, QTableWidgetItem
+        from PySide6.QtCore import Qt
+    except ImportError:                       # pragma: no cover - no Qt
+        return False
+
+    table = widget if isinstance(widget, QTableWidget) else None
+    if table is None:
+        try:
+            table = widget.findChild(QTableWidget)
+        except (AttributeError, RuntimeError):
+            return False
+    if table is None or table.columnCount() < 1:
+        return False
+
+    try:
+        table.setRowCount(1)
+        item = QTableWidgetItem("%s - %s" % (TITLE, BODY))
+        item.setFlags(Qt.ItemIsEnabled)       # not selectable, not editable
+        item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        table.setItem(0, 0, item)
+        table.setSpan(0, 0, 1, table.columnCount())
+        return True
+    except RuntimeError:
+        return False
+
+
 def show_offline(widget):
     """Put the widget's empty state into the 'database is down' message."""
     empty = getattr(widget, "empty", None) or getattr(widget, "people_empty", None)
     if empty is None:
+        # No EmptyState on this screen. Say it in the table rather than say
+        # nothing - an empty grid with no explanation is exactly the thing that
+        # reads as "the studio owns no computers".
+        _say_it_in_the_table(widget)
         return
     try:
         if hasattr(empty, "set_message"):

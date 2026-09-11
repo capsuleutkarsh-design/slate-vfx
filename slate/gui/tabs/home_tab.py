@@ -19,6 +19,14 @@ from slate.core.domain.central_attendance import CentralAttendance
 from slate.core.infra.database_manager import database_manager
 from slate.core.system.adaptation_engine import system_engine
 
+# Let an outage reach the @on_database_error decorator rather than becoming an
+# empty grid here. Everything else keeps the fallback it already had.
+try:
+    from slate.core.infra.postgres_manager import DatabaseUnavailableError
+except ImportError:                                  # pragma: no cover
+    class DatabaseUnavailableError(ConnectionError):
+        """Fallback when the manager cannot be imported."""
+
 
 class QuickActionBtn(QFrame):
     clicked = Signal()
@@ -118,6 +126,8 @@ class HomeLoaderWorker(QThread):
         self.progress.emit(40, "Connecting to PostgreSQL...")
         try:
             database_manager.ping_sync()
+        except DatabaseUnavailableError:
+            raise
         except Exception:
             pass
             
@@ -141,6 +151,8 @@ class HomeLoaderWorker(QThread):
                     row = res[0]
                     punch_status['punch_in'] = row['punch_in'] if isinstance(row, dict) else row[0]
                     punch_status['punch_out'] = row['punch_out'] if isinstance(row, dict) else row[1]
+            except DatabaseUnavailableError:
+                raise
             except Exception:
                 pass
 
@@ -170,6 +182,8 @@ class HomeLoaderWorker(QThread):
                                 "title": f"{row[0]} - {row[1]}",
                                 "status": str(row[2])
                             })
+            except DatabaseUnavailableError:
+                raise
             except Exception as e:
                 logging.debug(f"Ops home recent items fetch: {e}")
 
@@ -191,6 +205,8 @@ class HomeLoaderWorker(QThread):
                             items.append({"title": row.get("shot_name", "Shot"), "status": row.get("status", "WIP")})
                         else:
                             items.append({"title": str(row[0]), "status": str(row[1])})
+            except DatabaseUnavailableError:
+                raise
             except Exception as e:
                 logging.debug(f"Error async fetching shots: {e}")
 
@@ -211,6 +227,8 @@ class HomeLoaderWorker(QThread):
             ul_count = upcoming_leaves['c'] if isinstance(upcoming_leaves, dict) else (upcoming_leaves[0] if upcoming_leaves else 0)
             
             self.telemetry_loaded.emit(str(ap_count), str(pr_count), str(ao_count), str(ot_count), str(ul_count))
+        except DatabaseUnavailableError:
+            raise
         except Exception as e:
             logging.debug(f"Error async fetching telemetry: {e}")
 

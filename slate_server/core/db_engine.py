@@ -137,16 +137,21 @@ class DatabaseEngine:
 
     def _configure_network_access(self):
         """
-        Write the database's network and access settings.
+        Write the database's network settings, immediately after initdb.
 
-        This used to append two rules meaning "let anyone in, from any address
-        on the internet, without a password", which is what "trust" means. Every
-        client also logged in as the postgres superuser, so anybody who could
-        reach the port was a database administrator. Those rules are gone: the
-        studio's own private networks, and a password, are now required.
+        Only postgresql.conf. Access rules are not written here, and that is
+        deliberate: this runs before the cluster has ever started, so there are
+        no accounts and no passwords yet. Demanding a password at this moment
+        locks out the step that would go on to set one.
+
+        It used to append the hardened rules here as well, which looked right
+        and did nothing - initdb has already written "trust" for local and
+        loopback connections, PostgreSQL uses the first matching line, and the
+        hardened ones went underneath. The file claimed to require a password
+        while the cluster accepted any. _harden_access() replaces the file once
+        the accounts exist.
         """
         conf_path = self.data_dir / "postgresql.conf"
-        hba_path = self.data_dir / "pg_hba.conf"
 
         if conf_path.exists():
             with open(conf_path, "a", encoding="utf-8") as f:
@@ -161,21 +166,223 @@ class DatabaseEngine:
                 # software no longer logs in as a superuser.
                 f.write("superuser_reserved_connections = 5\n")
 
-        if hba_path.exists():
-            rules = [
-                "",
-                "# --- UT CENTRAL SERVER CONFIG ---",
-                "# Studio networks only, and a password every time.",
-                "# Do NOT add a 0.0.0.0/0 rule here, and never use 'trust':",
-                "# 'trust' means the password is not checked at all.",
-                "local   all   all                    scram-sha-256",
-                "host    all   all   127.0.0.1/32     scram-sha-256",
-                "host    all   all   ::1/128          scram-sha-256",
-            ]
-            for network in self.STUDIO_NETWORKS:
-                rules.append(f"host    all   all   {network:<16} scram-sha-256")
-            with open(hba_path, "a", encoding="utf-8") as f:
-                f.write("\n".join(rules) + "\n")
+    def _bootstrap(self):
+        """
+        Get a running cluster into a state the software can actually use.
+
+        The order is the whole point, and it is why these are not three
+        independent calls at three call sites:
+
+          1. the database has to exist before anything can be granted on it;
+          2. the accounts have to be created while the cluster still trusts
+             local connections, because setting a password is the one thing a
+             password requirement would prevent;
+          3. only then is the access hardened, and reloaded.
+
+        Harden first and the cluster locks out the very step that would have
+        given it credentials - a fresh install that can never be finished.
+        """
+        self._ensure_slate_database()
+        self._ensure_application_role()
+        self._harden_access()
+
+    def _ensure_application_role(self):
+        """
+        Create the account the artists' software logs in as, and give it the
+        studio's database.
+
+        Without this a fresh install cannot work at all, and says so in the least
+        helpful way available: every client reaches the server, authenticates,
+        and is told the role does not exist. Five of those trip the circuit
+        breaker, and the application then dies at the login screen with a stack
+        trace. The database itself is created automatically a few lines above,
+        which makes the gap easy to miss - the server looks like it worked.
+
+        deployment/secure_database.sql does this too, for a server that was set
+        up before the software created its own accounts. It has to be run by
+        hand, which is fine as a migration and useless as a first run.
+
+        Idempotent on purpose: run against a studio that already has the account,
+        it re-asserts the password from the settings and the ownership, and
+        changes nothing else.
+        """
+        from slate_server.core.db_credentials import (
+            admin_password, admin_user, application_user, database_name)
+
+        try:
+            import psycopg2
+            from psycopg2 import sql
+        except ImportError:
+            logging.error("psycopg2 is not available; cannot create the "
+                          "application account. Clients will not be able to "
+                          "log in until deployment/secure_database.sql is run.")
+            return False
+
+        password = admin_password()
+        if not password:
+            logging.error("No database password is configured, so the "
+                          "application account cannot be created. Clients will "
+                          "not be able to log in.")
+            return False
+
+        role = application_user()
+        dbname = database_name()
+
+        try:
+            conn = psycopg2.connect(host="127.0.0.1", port=int(self.port),
+                                    dbname=dbname, user=admin_user(),
+                                    password=password, connect_timeout=10,
+                                    application_name="Slate Central Server")
+        except Exception as exc:
+            logging.error("Could not connect as %s to set up the application "
+                          "account: %s", admin_user(), exc)
+            return False
+
+        try:
+            conn.autocommit = True
+            with conn.cursor() as cur:
+                ident = sql.Identifier(role)
+                literal = sql.Literal(password)
+
+                cur.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,))
+                if cur.fetchone():
+                    cur.execute(sql.SQL("ALTER ROLE {} LOGIN PASSWORD {}")
+                                .format(ident, literal))
+                    logging.info("Application account %s already existed; "
+                                 "password re-asserted from the settings.", role)
+                else:
+                    cur.execute(sql.SQL("CREATE ROLE {} LOGIN PASSWORD {}")
+                                .format(ident, literal))
+                    logging.info("Created the application account %s.", role)
+
+                # The point of a separate account. An administrator by accident
+                # is the same hole as no account at all.
+                cur.execute(sql.SQL(
+                    "ALTER ROLE {} NOSUPERUSER NOCREATEROLE NOCREATEDB").format(ident))
+
+                # It has to own the database: the software alters its own tables
+                # as it migrates, and a guest cannot.
+                cur.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}")
+                            .format(sql.Identifier(dbname), ident))
+                cur.execute(sql.SQL("ALTER DATABASE {} OWNER TO {}")
+                            .format(sql.Identifier(dbname), ident))
+                cur.execute(sql.SQL("ALTER SCHEMA public OWNER TO {}").format(ident))
+                cur.execute(sql.SQL("GRANT ALL ON SCHEMA public TO {}").format(ident))
+
+                # Tables made earlier - by an older build, or by the superuser -
+                # must change hands too, or the next migration is refused.
+                cur.execute("""
+                    DO $do$
+                    DECLARE r record;
+                    BEGIN
+                        FOR r IN SELECT tablename FROM pg_tables
+                                 WHERE schemaname = 'public' LOOP
+                            EXECUTE format('ALTER TABLE public.%I OWNER TO %I',
+                                           r.tablename, %s);
+                        END LOOP;
+                        FOR r IN SELECT sequencename FROM pg_sequences
+                                 WHERE schemaname = 'public' LOOP
+                            EXECUTE format('ALTER SEQUENCE public.%I OWNER TO %I',
+                                           r.sequencename, %s);
+                        END LOOP;
+                    END
+                    $do$;
+                """, (role, role))
+
+            # The administrator account is what the hardened settings below will
+            # start demanding a password for. Setting it here, while the cluster
+            # still trusts local connections, is the only moment this can be done
+            # without asking somebody to do it by hand.
+            with conn.cursor() as cur:
+                cur.execute(sql.SQL("ALTER ROLE {} PASSWORD {}")
+                            .format(sql.Identifier(admin_user()),
+                                    sql.Literal(password)))
+            logging.info("Administrator password set from the settings.")
+            return True
+        except Exception as exc:
+            logging.error("Failed to set up the application account %s: %s",
+                          role, exc)
+            return False
+        finally:
+            conn.close()
+
+    def _harden_access(self):
+        """
+        Replace initdb's rules rather than adding to them.
+
+        PostgreSQL uses the first matching line in pg_hba.conf. initdb writes
+        "trust" for local and loopback connections, and the hardened rules were
+        being appended *below* those - so they never applied to anything, and a
+        freshly installed server accepted any password at all on the loopback
+        interface. The file said it was secured; the cluster disagreed.
+
+        Only rewritten when a trust rule is actually present, so a studio that
+        has edited this file by hand keeps its edits.
+        """
+        hba_path = self.data_dir / "pg_hba.conf"
+        if not hba_path.exists():
+            return False
+
+        try:
+            existing = hba_path.read_text(encoding="utf-8").splitlines()
+        except OSError as exc:
+            logging.error("Could not read %s: %s", hba_path, exc)
+            return False
+
+        live = [l for l in existing if l.strip() and not l.strip().startswith("#")]
+        if not any(l.split()[-1].lower() == "trust" for l in live if l.split()):
+            return False           # already hardened, or hand-edited
+
+        rules = [
+            "# Written by Slate Central Server.",
+            "#",
+            "# The first matching line wins, which is why this file is replaced",
+            "# rather than added to. initdb writes 'trust' rules for local and",
+            "# loopback connections - 'trust' means the password is not checked",
+            "# at all - and any hardening appended below them never applies.",
+            "#",
+            "# Studio networks only, and a password every time. Do not add a",
+            "# 0.0.0.0/0 rule here, and never use 'trust'.",
+            "",
+            "local   all   all                    scram-sha-256",
+            "host    all   all   127.0.0.1/32     scram-sha-256",
+            "host    all   all   ::1/128          scram-sha-256",
+        ]
+        for network in self.STUDIO_NETWORKS:
+            rules.append("host    all   all   %-16s scram-sha-256" % network)
+        rules += [
+            "",
+            "local   replication  all                 scram-sha-256",
+            "host    replication  all  127.0.0.1/32   scram-sha-256",
+            "host    replication  all  ::1/128        scram-sha-256",
+        ]
+
+        try:
+            backup = hba_path.with_suffix(".conf.before-hardening")
+            if not backup.exists():
+                shutil.copy2(hba_path, backup)
+            hba_path.write_text("\n".join(rules) + "\n", encoding="utf-8")
+        except OSError as exc:
+            logging.error("Could not write %s: %s", hba_path, exc)
+            return False
+
+        logging.warning("pg_hba.conf still granted trust access; replaced it. "
+                        "The previous file is kept as %s", backup.name)
+
+        # A reload is enough - pg_hba.conf does not need a restart - and it has
+        # to happen now, or the cluster keeps trusting until something else
+        # restarts it.
+        pg_ctl = str(self.bin_dir / "pg_ctl.exe")
+        if os.path.exists(pg_ctl):
+            try:
+                subprocess.run([pg_ctl, "-D", str(self.data_dir), "reload"],
+                               capture_output=True, text=True, timeout=15,
+                               creationflags=(subprocess.CREATE_NO_WINDOW
+                                              if sys.platform == "win32" else 0))
+            except (OSError, subprocess.SubprocessError) as exc:
+                logging.error("Wrote the hardened pg_hba.conf but could not "
+                              "reload it: %s", exc)
+        return True
 
     def _ensure_pg_directories(self):
         """Ensures directories required by PostgreSQL exist (Git does not track empty folders)."""
@@ -246,7 +453,7 @@ class DatabaseEngine:
         if self.is_ready():
             if progress_callback:
                 progress_callback("Database server already running.")
-            self._ensure_slate_database()
+            self._bootstrap()
             return True
             
         is_first_run = not self.is_initialized()
@@ -300,8 +507,7 @@ class DatabaseEngine:
         if not ready:
             raise Exception(f"Failed to start server. Check log at {log_file}")
 
-        # Ensure slate database exists
-        self._ensure_slate_database()
+        self._bootstrap()
         try:
             atexit.register(self.stop)
         except Exception:

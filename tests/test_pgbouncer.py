@@ -43,17 +43,33 @@ class TestTheServerNoLongerBuildsAnOpenDoor:
     this function, not typed by a person. That is why it kept coming back.
     """
 
+    # What initdb -A trust actually leaves behind. The rules have to be here,
+    # not an empty file, because the defect was never a rule that got written -
+    # it was these rules surviving underneath the hardened ones. PostgreSQL
+    # takes the first match, so anything appended below them never applied.
+    INITDB_TRUST = (
+        "local   all             all                                     trust\n"
+        "host    all             all             127.0.0.1/32            trust\n"
+        "host    all             all             ::1/128                 trust\n"
+        "local   replication     all                                     trust\n"
+        "host    replication     all             127.0.0.1/32            trust\n"
+    )
+
     @pytest.fixture
     def generated(self, tmp_path):
         data = tmp_path / "data"
         data.mkdir()
         (data / "postgresql.conf").write_text("", encoding="utf-8")
-        (data / "pg_hba.conf").write_text("", encoding="utf-8")
-        DatabaseEngine(str(data), port=5440)._configure_network_access()
+        (data / "pg_hba.conf").write_text(self.INITDB_TRUST, encoding="utf-8")
+
+        engine = DatabaseEngine(str(data), port=5440)
+        engine._configure_network_access()      # postgresql.conf
+        engine._harden_access()                 # pg_hba.conf, once accounts exist
         return {
             "conf": (data / "postgresql.conf").read_text(encoding="utf-8"),
             "hba": (data / "pg_hba.conf").read_text(encoding="utf-8"),
         }
+
 
     def _rules(self, hba):
         out = []
@@ -64,8 +80,14 @@ class TestTheServerNoLongerBuildsAnOpenDoor:
         return out
 
     def test_it_no_longer_writes_a_trust_rule(self, generated):
+        """
+        With the fixture seeding what initdb really writes, this now checks the
+        thing that actually went wrong: not that a trust rule is never written,
+        but that the ones already in the file are gone afterwards. Appending
+        the hardened rules below them left every one of these in force.
+        """
         offenders = [r for r in self._rules(generated["hba"]) if "trust" in r]
-        assert not offenders, f"still generating trust rules: {offenders}"
+        assert not offenders, f"still granting trust: {offenders}"
 
     def test_it_no_longer_opens_the_database_to_every_address(self, generated):
         offenders = [r for r in self._rules(generated["hba"])

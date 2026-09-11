@@ -30,17 +30,45 @@ def get_db_password():
     return None
 
 def find_pg_dump():
-    # Common installation paths for PostgreSQL on Windows
-    common_paths = [
-        r"C:\Program Files\PostgreSQL\18\bin\pg_dump.exe",
-        r"C:\Program Files\PostgreSQL\17\bin\pg_dump.exe",
-        r"C:\Program Files\PostgreSQL\16\bin\pg_dump.exe",
-        r"C:\Program Files\PostgreSQL\15\bin\pg_dump.exe",
-        r"C:\Program Files\PostgreSQL\14\bin\pg_dump.exe",
-    ]
-    for p in common_paths:
-        if os.path.exists(p):
-            return p
+    """
+    Locate pg_dump, starting with the copy Slate ships.
+
+    This used to look only in C:\\Program Files\\PostgreSQL\\<version>, which is
+    where a separately installed PostgreSQL puts it - and Slate does not install
+    PostgreSQL, it bundles one. So on every machine that has only what Slate
+    ships, this returned None, run_backup() logged "pg_dump.exe not found" and
+    returned False, and the backup simply did not happen. Nothing raised and
+    nobody was told, which for the studio's only backup is the worst way to
+    fail: it looks identical to a backup that ran.
+
+    The bundled copy is tried first even when a system PostgreSQL exists,
+    because it is guaranteed to match the server's own version.
+    """
+    from pathlib import Path
+
+    candidates = []
+
+    # What Slate ships, relative to this file and to a frozen build.
+    here = Path(__file__).resolve()
+    for root in (here.parent.parent.parent,                  # source checkout
+                 Path(getattr(sys, "_MEIPASS", sys.prefix)),  # frozen
+                 Path(sys.executable).parent):
+        candidates.append(root / "slate_server" / "bin" / "pgsql" / "bin" / "pg_dump.exe")
+
+    # Anything on PATH.
+    from shutil import which
+    found = which("pg_dump")
+    if found:
+        candidates.append(Path(found))
+
+    # A separately installed PostgreSQL, as before.
+    for version in (18, 17, 16, 15, 14):
+        candidates.append(
+            Path(r"C:\Program Files\PostgreSQL\%d\bin\pg_dump.exe" % version))
+
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
     return None
 
 def run_backup():

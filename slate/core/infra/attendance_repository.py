@@ -2,6 +2,16 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 
+# A database that is down must not look like a studio with no data. The manager
+# raises DatabaseUnavailableError precisely so a read cannot quietly come back
+# empty; catching it here and returning a fallback puts the fault straight back.
+# So it is re-raised, and anything else is logged before the fallback is used.
+try:
+    from .postgres_manager import DatabaseUnavailableError
+except ImportError:                                  # pragma: no cover
+    class DatabaseUnavailableError(ConnectionError):
+        """Fallback when the manager cannot be imported."""
+
 class AttendanceRepository:
     """Attendance persistence methods extracted and expanded."""
 
@@ -17,6 +27,8 @@ class AttendanceRepository:
             """
             self.db.execute_query(q, (username, timestamp, "checked_in", notes), fetch="none")
             return True
+        except DatabaseUnavailableError:
+            raise
         except Exception as e:
             logging.exception(f"Check In Failed: {e}")
             return False
@@ -30,6 +42,8 @@ class AttendanceRepository:
                 WHERE username=%s AND check_out_time IS NULL
             """
             return (self.db.execute_query(q, (timestamp, "checked_out", notes, username), fetch="rowcount") or 0) > 0
+        except DatabaseUnavailableError:
+            raise
         except Exception as e:
             logging.exception(f"Check Out Failed: {e}")
             return False

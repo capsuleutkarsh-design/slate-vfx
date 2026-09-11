@@ -23,6 +23,15 @@ from PySide6.QtWidgets import (
 
 from PySide6.QtCore import Qt, Signal, QThread, QObject, QDate, QTime, QDateTime
 from ..core.domain.asset_ingestor import IngestWorker
+from slate.gui.core.offline_notice import on_database_error
+
+# Let an outage reach the @on_database_error decorator rather than becoming an
+# empty grid here. Everything else keeps the fallback it already had.
+try:
+    from slate.core.infra.postgres_manager import DatabaseUnavailableError
+except ImportError:                                  # pragma: no cover
+    class DatabaseUnavailableError(ConnectionError):
+        """Fallback when the manager cannot be imported."""
 
 
 # --- UTILS ---
@@ -397,6 +406,8 @@ class ValidationWorker(QThread):
 
             self.finished_signal.emit("<br>".join(report))
 
+        except DatabaseUnavailableError:
+            raise
         except Exception as e:
             self.finished_signal.emit(f"Analysis Error: {e}")
 
@@ -640,6 +651,8 @@ class TesterPanel(QWidget):
                  conn.execute("VACUUM")
              QMessageBox.information(self, "Success", "Database Optimized (VACUUM Complete)")
              self.log("Database VACUUM executed successfully.")
+        except DatabaseUnavailableError:
+            raise
         except Exception as e:
              QMessageBox.critical(self, "Error", f"VACUUM Failed: {e}")
 
@@ -655,6 +668,8 @@ class TesterPanel(QWidget):
              else:
                  QMessageBox.warning(self, "Warning", f"Integrity Issues Found: {status}")
                  self.log(f"DB Integrity Issues: {status}")
+        except DatabaseUnavailableError:
+            raise
         except Exception as e:
              QMessageBox.critical(self, "Error", f"Check Failed: {e}")
 
@@ -859,6 +874,7 @@ class TesterPanel(QWidget):
         l.addStretch()
         return w
 
+    @on_database_error
     def load_permissions(self):
         roles = self.user_manager.roles_config
         

@@ -9,6 +9,15 @@ from ...core.infra.app_context import AppContext
 import json
 from ..core.empty_state import EmptyState
 from ..core.controls import page_title, gate_selection_buttons
+from slate.gui.core.offline_notice import on_database_error
+
+# Let an outage reach the @on_database_error decorator rather than becoming an
+# empty grid here. Everything else keeps the fallback it already had.
+try:
+    from slate.core.infra.postgres_manager import DatabaseUnavailableError
+except ImportError:                                  # pragma: no cover
+    class DatabaseUnavailableError(ConnectionError):
+        """Fallback when the manager cannot be imported."""
 
 class AddPCDialog(QDialog):
     def __init__(self, parent=None, hub=None, edit_data=None):
@@ -226,6 +235,7 @@ class ItInventoryTab(QWidget):
         gate_selection_buttons(self, self.grid)
 
 
+    @on_database_error
     def load_data(self):
         try:
             from slate.core.infra.database_manager import database_manager
@@ -249,6 +259,8 @@ class ItInventoryTab(QWidget):
                     ORDER BY h.machine_name ASC
                 """
                 self.hardware_data = database_manager.execute_query(query) or []
+        except DatabaseUnavailableError:
+            raise
         except Exception as e:
             self.hardware_data = []
             
@@ -384,6 +396,8 @@ class ItInventoryTab(QWidget):
                 """
                 database_manager.execute_query(query, (mname, user, cpu, gpu, ram, storage), fetch=False)
                 added_count += 1
+            except DatabaseUnavailableError:
+                raise
             except Exception as e:
                 pass
                 

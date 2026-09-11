@@ -27,6 +27,15 @@ from slate.core.domain.service_desk import (
 from ..core.controls import make_button, page_title
 from ..core.empty_state import EmptyState
 from .my_tickets_view import TicketThreadDialog
+from slate.gui.core.offline_notice import on_database_error
+
+# Let an outage reach the @on_database_error decorator rather than becoming an
+# empty grid here. Everything else keeps the fallback it already had.
+try:
+    from slate.core.infra.postgres_manager import DatabaseUnavailableError
+except ImportError:                                  # pragma: no cover
+    class DatabaseUnavailableError(ConnectionError):
+        """Fallback when the manager cannot be imported."""
 
 
 def _tone(token: str) -> str:
@@ -154,9 +163,12 @@ class ServiceDeskView(QWidget):
                 "       created_at, assigned_to, first_response_at, impact, urgency "
                 "FROM it_tickets ORDER BY id DESC", fetch="all") or []
             return [dict(r) for r in rows]
+        except DatabaseUnavailableError:
+            raise
         except Exception:
             return []
 
+    @on_database_error
     def refresh(self, *_):
         rows = self._fetch()
 
@@ -275,6 +287,8 @@ class ServiceDeskView(QWidget):
         try:
             self.db.execute_update(sql, params)
             return True
+        except DatabaseUnavailableError:
+            raise
         except Exception as exc:
             QMessageBox.warning(self, "Not saved", str(exc))
             return False

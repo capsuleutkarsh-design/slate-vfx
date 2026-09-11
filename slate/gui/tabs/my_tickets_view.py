@@ -24,6 +24,15 @@ from slate.core.domain.service_desk import (
 )
 from ..core.controls import make_button, page_title
 from ..core.empty_state import EmptyState
+from slate.gui.core.offline_notice import on_database_error
+
+# Let an outage reach the @on_database_error decorator rather than becoming an
+# empty grid here. Everything else keeps the fallback it already had.
+try:
+    from slate.core.infra.postgres_manager import DatabaseUnavailableError
+except ImportError:                                  # pragma: no cover
+    class DatabaseUnavailableError(ConnectionError):
+        """Fallback when the manager cannot be imported."""
 
 
 def _tone(token: str) -> str:
@@ -206,6 +215,8 @@ class TicketThreadDialog(QDialog):
                 "SELECT author, comment_text, timestamp FROM it_ticket_comments "
                 "WHERE ticket_id = %s ORDER BY id ASC",
                 (self.ticket.get("id"),), fetch="all") or []
+        except DatabaseUnavailableError:
+            raise
         except Exception:
             rows = []
 
@@ -257,6 +268,8 @@ class TicketThreadDialog(QDialog):
                 "INSERT INTO it_ticket_comments (ticket_id, author, comment_text) "
                 "VALUES (%s, %s, %s)",
                 (self.ticket.get("id"), self.username, message))
+        except DatabaseUnavailableError:
+            raise
         except Exception as exc:
             QMessageBox.warning(self, "Not sent", "Your reply was not saved.\n\n%s" % exc)
             return
@@ -321,6 +334,7 @@ class MyTicketsView(QWidget):
         self.refresh()
 
     # ------------------------------------------------------------------ data
+    @on_database_error
     def refresh(self):
         try:
             rows = self.db.execute_query(
@@ -329,6 +343,8 @@ class MyTicketsView(QWidget):
                 "ORDER BY id DESC",
                 (self.username,), fetch="all") or []
             self._rows = [dict(r) for r in rows]
+        except DatabaseUnavailableError:
+            raise
         except Exception:
             self._rows = []
 
@@ -370,6 +386,8 @@ class MyTicketsView(QWidget):
                 "VALUES (%s, %s, %s, 'Open', %s, %s, %s)",
                 (self.username, values["category"], values["description"],
                  values["priority"], values["impact"], values["urgency"]))
+        except DatabaseUnavailableError:
+            raise
         except Exception as exc:
             QMessageBox.warning(self, "Not sent", "The ticket was not saved.\n\n%s" % exc)
             return

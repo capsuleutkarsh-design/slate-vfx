@@ -5,6 +5,16 @@ from typing import Dict, List, Tuple, Optional, Any
 from psycopg2.extras import execute_values
 
 
+# A database that is down must not look like a studio with no data. The manager
+# raises DatabaseUnavailableError precisely so a read cannot quietly come back
+# empty; catching it here and returning a fallback puts the fault straight back.
+# So it is re-raised, and anything else is logged before the fallback is used.
+try:
+    from .postgres_manager import DatabaseUnavailableError
+except ImportError:                                  # pragma: no cover
+    class DatabaseUnavailableError(ConnectionError):
+        """Fallback when the manager cannot be imported."""
+
 def _reel_of(data_json) -> str:
     """
     A shot's reel, read out of its stored JSON.
@@ -81,6 +91,8 @@ class TrackingRepository:
                     cur.execute("DELETE FROM change_history WHERE project_code=%s", (code,))
                     conn.commit()
             return True
+        except DatabaseUnavailableError:
+            raise
         except Exception as e:
             logging.exception(f"Delete Failed: {e}")
             return False
@@ -106,6 +118,8 @@ class TrackingRepository:
                     execute_values(cur, sql, values)
                     conn.commit()
             return True
+        except DatabaseUnavailableError:
+            raise
         except Exception as e:
             logging.exception(f"Save Shots Failed: {e}")
             return False
@@ -221,6 +235,8 @@ class TrackingRepository:
                     execute_values(cur, sql, values)
                     conn.commit()
             return True
+        except DatabaseUnavailableError:
+            raise
         except Exception as e:
             logging.exception(f"Save Tasks Failed: {e}")
             return False

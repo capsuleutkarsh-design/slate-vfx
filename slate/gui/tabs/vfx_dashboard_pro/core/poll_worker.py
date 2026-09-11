@@ -1,6 +1,14 @@
 from PySide6.QtCore import QThread, Signal, QMutex
 import logging
 
+# Let an outage reach the @on_database_error decorator rather than becoming an
+# empty grid here. Everything else keeps the fallback it already had.
+try:
+    from slate.core.infra.postgres_manager import DatabaseUnavailableError
+except ImportError:                                  # pragma: no cover
+    class DatabaseUnavailableError(ConnectionError):
+        """Fallback when the manager cannot be imported."""
+
 class PollWorker(QThread):
     """
     Background worker to poll the database for changes.
@@ -64,6 +72,8 @@ class PollWorker(QThread):
                 result = cursor.fetchone()
                 if result and result[0]:
                     return result[0]
+        except DatabaseUnavailableError:
+            raise
         except Exception:
             # logging.exception(f"PollWorker query failed: {e}")
             pass

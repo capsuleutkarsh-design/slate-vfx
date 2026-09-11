@@ -5,6 +5,15 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QColor
 from slate.core.infra.database_manager import database_manager
+from slate.gui.core.offline_notice import on_database_error
+
+# Let an outage reach the @on_database_error decorator rather than becoming an
+# empty grid here. Everything else keeps the fallback it already had.
+try:
+    from slate.core.infra.postgres_manager import DatabaseUnavailableError
+except ImportError:                                  # pragma: no cover
+    class DatabaseUnavailableError(ConnectionError):
+        """Fallback when the manager cannot be imported."""
 
 class AddBidDialog(QDialog):
     def __init__(self, parent=None):
@@ -73,12 +82,15 @@ class AddBidDialog(QDialog):
         btn_layout.addWidget(cancel_btn)
         layout.addRow(btn_layout)
 
+    @on_database_error
     def populate_projects(self):
         query = "SELECT code FROM tracking_projects WHERE active=1 ORDER BY code"
         try:
             projects = database_manager.execute_query(query) or []
             for p in projects:
                 self.proj_input.addItem(p.get('code', ''))
+        except DatabaseUnavailableError:
+            raise
         except Exception as e:
             print(f"Error loading projects: {e}")
 
@@ -91,6 +103,8 @@ class AddBidDialog(QDialog):
             count = res[0]['count'] if res else 0
             self.shot_count_input.setValue(count)
             self.update_budget()
+        except DatabaseUnavailableError:
+            raise
         except Exception as e:
             print(f"Error fetching shots: {e}")
 
@@ -195,10 +209,13 @@ class ProdBiddingTab(QWidget):
         self.grid.hideColumn(0) # Hide ID
         main_layout.addWidget(self.grid)
 
+    @on_database_error
     def load_data(self):
         try:
             query = "SELECT * FROM prod_bidding ORDER BY id DESC"
             bids = database_manager.execute_query(query) or []
+        except DatabaseUnavailableError:
+            raise
         except:
             bids = []
             

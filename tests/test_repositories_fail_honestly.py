@@ -158,3 +158,63 @@ def test_nothing_is_reported_as_still_held_during_an_outage():
     """
     with pytest.raises(DatabaseUnavailableError):
         OnboardingService(Unreachable()).unreturned()
+
+
+# ------------------------------------------------- the other five repositories
+#
+# These were found by auditing every tab: five of the seven repositories caught
+# the outage and answered with an empty list, so the screen above them showed a
+# studio with no machines, no assets, no shots and no attendance. Same two rules
+# as the ones above.
+
+from slate.core.infra.attendance_repository import AttendanceRepository
+from slate.core.infra.stock_repository import StockRepository
+from slate.core.infra.tracking_repository import TrackingRepository
+from slate.core.infra.user_repository import UserRepository
+
+
+REMAINING_READS = [
+    ("attendance.get_attendance",
+     lambda db: AttendanceRepository(db).get_attendance()),
+    ("attendance.log_check_in",
+     lambda db: AttendanceRepository(db).log_check_in("someone")),
+    ("stock.get_stock_count",
+     lambda db: StockRepository(db).get_stock_count()),
+    ("stock.list_stock_paths",
+     lambda db: StockRepository(db).list_stock_paths()),
+    ("tracking.get_all_tracking_projects",
+     lambda db: TrackingRepository(db).get_all_tracking_projects()),
+    ("tracking.get_tracking_project",
+     lambda db: TrackingRepository(db).get_tracking_project("PRJ")),
+    ("user.get_user_roles",
+     lambda db: UserRepository(db).get_user_roles("someone")),
+]
+
+
+@pytest.mark.parametrize("name,call", REMAINING_READS,
+                         ids=[n for n, _ in REMAINING_READS])
+def test_every_repository_refuses_when_the_database_is_unreachable(name, call):
+    with pytest.raises(DatabaseUnavailableError):
+        call(Unreachable())
+
+
+def test_an_empty_stock_library_is_never_invented_from_an_outage():
+    """
+    get_stock_count() returning 0 during an outage tells an artist the library
+    is empty. It is the same lie as the leave balance, about a different thing.
+    """
+    with pytest.raises(DatabaseUnavailableError):
+        StockRepository(Unreachable()).get_stock_count()
+
+
+def test_a_real_bug_is_not_disguised_as_an_empty_result():
+    """
+    The other half of the rule, stated for what these methods actually do.
+
+    Several of them wrap nothing at all, so a malformed statement propagates.
+    That is noisy, but it is honest. The outcome that must never happen is the
+    third one: a bug quietly becoming "no rows", which on screen is
+    indistinguishable from a genuinely empty library.
+    """
+    with pytest.raises(ValueError):
+        StockRepository(Broken()).get_stock_count()

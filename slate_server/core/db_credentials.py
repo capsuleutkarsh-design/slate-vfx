@@ -79,6 +79,23 @@ def admin_user() -> str:
     return "postgres"
 
 
+def application_user() -> str:
+    """
+    The ordinary account the artists' software logs in as.
+
+    Deliberately not the administrator: it owns the studio's database and
+    nothing else on the instance, and it cannot spend the connection slots held
+    back for an administrator during an incident.
+
+    Read from the same settings the clients read, because the server has to
+    create this account with exactly the name every workstation will ask for.
+    A default here that disagreed with the clients would produce the failure
+    this was written after: PostgreSQL reporting that the role does not exist,
+    on every machine, at the login screen.
+    """
+    return str(_settings().get("db_user") or "ut_vfx_app")
+
+
 def database_name() -> str:
     """
     The name of the database inside the cluster.

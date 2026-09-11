@@ -107,6 +107,14 @@ from .components.dashboard_builder_mixin import DashboardBuilderMixin
 from .components.dashboard_actions_mixin import DashboardActionsMixin
 from .components.dashboard_project_mixin import DashboardProjectMixin
 
+# Let an outage reach the @on_database_error decorator rather than becoming an
+# empty grid here. Everything else keeps the fallback it already had.
+try:
+    from slate.core.infra.postgres_manager import DatabaseUnavailableError
+except ImportError:                                  # pragma: no cover
+    class DatabaseUnavailableError(ConnectionError):
+        """Fallback when the manager cannot be imported."""
+
 class DashboardWidget(
     DashboardBuilderMixin,
     DashboardActionsMixin,
@@ -359,6 +367,8 @@ class DashboardWidget(
         try:
             if hasattr(database_manager, "reconnect"):
                 database_manager.reconnect()
+        except DatabaseUnavailableError:
+            raise
         except Exception as exc:
             logging.warning("Reconnect attempt failed: %s", exc)
 
@@ -434,6 +444,8 @@ class DashboardWidget(
             status = database_manager.get_runtime_status() or {}
             mode = str(status.get("active_mode", "")).lower()
             return mode == "sqlite" and bool(status.get("fallback_used", False))
+        except DatabaseUnavailableError:
+            raise
         except Exception:
             return False
 

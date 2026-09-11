@@ -7,6 +7,15 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QColor
 from ..core.empty_state import EmptyState
 from ..core.controls import page_title, gate_selection_buttons
+from slate.gui.core.offline_notice import on_database_error
+
+# Let an outage reach the @on_database_error decorator rather than becoming an
+# empty grid here. Everything else keeps the fallback it already had.
+try:
+    from slate.core.infra.postgres_manager import DatabaseUnavailableError
+except ImportError:                                  # pragma: no cover
+    class DatabaseUnavailableError(ConnectionError):
+        """Fallback when the manager cannot be imported."""
 
 class AddDeploymentDialog(QDialog):
     def __init__(self, parent=None):
@@ -183,6 +192,7 @@ class ItDeploymentTab(QWidget):
         gate_selection_buttons(self, self.grid)
 
 
+    @on_database_error
     def load_data(self):
         try:
             from slate.core.infra.database_manager import database_manager
@@ -195,6 +205,8 @@ class ItDeploymentTab(QWidget):
                 deps = database_manager.execute_query(query) or []
             
             all_deps = database_manager.execute_query("SELECT status FROM it_deployments") or []
+        except DatabaseUnavailableError:
+            raise
         except:
             deps = []
             all_deps = []

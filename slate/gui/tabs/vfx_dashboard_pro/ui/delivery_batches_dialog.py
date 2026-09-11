@@ -22,6 +22,14 @@ from PySide6.QtWidgets import (
 from slate.core.domain.deliveries import DeliveryStore, Delivery
 from slate.core.domain.versions import VersionStore
 
+# Let an outage reach the @on_database_error decorator rather than becoming an
+# empty grid here. Everything else keeps the fallback it already had.
+try:
+    from slate.core.infra.postgres_manager import DatabaseUnavailableError
+except ImportError:                                  # pragma: no cover
+    class DatabaseUnavailableError(ConnectionError):
+        """Fallback when the manager cannot be imported."""
+
 
 class CreateDeliveryDialog(QDialog):
     """Sub-dialog to assemble and create a new delivery batch."""
@@ -138,6 +146,8 @@ class CreateDeliveryDialog(QDialog):
                 "SELECT * FROM tracking_versions WHERE project_code=%s ORDER BY shot_name, version_name",
                 (self.project_code,), fetch="all",
             ) or []
+        except DatabaseUnavailableError:
+            raise
         except Exception:
             rows = []
 

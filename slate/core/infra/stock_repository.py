@@ -5,6 +5,16 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+# A database that is down must not look like a studio with no data. The manager
+# raises DatabaseUnavailableError precisely so a read cannot quietly come back
+# empty; catching it here and returning a fallback puts the fault straight back.
+# So it is re-raised, and anything else is logged before the fallback is used.
+try:
+    from .postgres_manager import DatabaseUnavailableError
+except ImportError:                                  # pragma: no cover
+    class DatabaseUnavailableError(ConnectionError):
+        """Fallback when the manager cannot be imported."""
+
 logger = logging.getLogger(__name__)
 
 
@@ -53,6 +63,8 @@ class StockRepository:
             if res:
                 self.db.invalidate_vector_cache()
             return res or 0
+        except DatabaseUnavailableError:
+            raise
         except Exception as e:
             logger.error(f"Add Stock Asset Failed: {e}")
             return 0
@@ -135,6 +147,8 @@ class StockRepository:
                 return
 
             self.db.execute_query(sql, tuple(params), fetch="none")
+        except DatabaseUnavailableError:
+            raise
         except Exception as e:
             logger.error(f"Failed to update asset paths: {e}")
 
@@ -280,6 +294,8 @@ class StockRepository:
             if deleted:
                 self.db.invalidate_vector_cache()
             return deleted
+        except DatabaseUnavailableError:
+            raise
         except Exception as e:
             logger.error(f"Failed to delete stock asset by id {asset_id}: {e}")
             return False
@@ -297,6 +313,8 @@ class StockRepository:
             if deleted:
                 self.db.invalidate_vector_cache()
             return deleted
+        except DatabaseUnavailableError:
+            raise
         except Exception as e:
             logger.error(f"Failed to delete stock asset by path {file_path}: {e}")
             return False
