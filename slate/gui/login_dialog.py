@@ -36,11 +36,36 @@ class LoginAuthWorker(QThread):
             self.auth_result.emit(None, str(exc))
 
 
+def _database_unavailable():
+    """The error meaning the database is not there, or nothing if it cannot be imported."""
+    try:
+        from slate.core.infra.postgres_manager import DatabaseUnavailableError
+        return DatabaseUnavailableError
+    except Exception:                       # pragma: no cover - import guard
+        return ()
+
 class LoginDialog(QDialog):
     def __init__(self, user_manager=None, app_context=None):
         super().__init__()
         self.app_context = app_context or AppContext()
-        self.user_manager = user_manager or self.app_context.user_manager()
+
+        # Building the user manager runs the schema migration, which reads from
+        # the database. With the database down that raised here - inside the
+        # constructor of the first window the application opens - so there was
+        # no window to put a message in and the whole program died with a stack
+        # trace before anybody saw anything.
+        #
+        # The dialog is built either way now. Without a database it cannot
+        # authenticate, so it says so and offers the Reconfigure button below,
+        # which is what somebody in that position actually needs.
+        self.database_unavailable = False
+        try:
+            self.user_manager = user_manager or self.app_context.user_manager()
+        except _database_unavailable() as exc:
+            logging.warning("Login: the database did not answer: %s", exc)
+            self.user_manager = None
+            self.database_unavailable = True
+
         self.user_data = None
         self.auth_worker = None
         self._is_closing = False
@@ -185,6 +210,28 @@ class LoginDialog(QDialog):
 
         layout.addWidget(self.frame)
 
+        if self.database_unavailable:
+            self._say_the_database_is_down()
+
+    def _say_the_database_is_down(self):
+        """
+        Put the dialog into a state that explains itself.
+
+        Deliberately not a message box: a modal that has to be dismissed before
+        the window behind it appears reads like a crash. This leaves the login
+        screen up, says why it cannot be used, and leaves Reconfigure available
+        - which is the one thing that can actually fix it from here.
+        """
+        self.btn_login.setEnabled(False)
+        self.btn_login.setText("DATABASE UNAVAILABLE")
+        for field in (self.user_input, self.pass_input):
+            field.setEnabled(False)
+        self.status_lbl.setText(
+            "Cannot reach the studio database, so nobody can be signed in yet.\n"
+            "Check that Slate Server is running, then reopen this window. If the\n"
+            "server has moved, use Reconfigure below.")
+        self.status_lbl.setVisible(True)
+
     def handle_login(self):
         try:
             if self.auth_worker and self.auth_worker.isRunning():
@@ -194,6 +241,11 @@ class LoginDialog(QDialog):
             password = self.pass_input.text().strip()
 
             logging.info(f"Attempting login for user: {username}")
+
+            if self.user_manager is None:
+                self.show_error("Cannot reach the studio database - nobody can "
+                                "be signed in until it is back.")
+                return
 
             if not username or not password:
                 self.show_error("Please enter both ID and Password")

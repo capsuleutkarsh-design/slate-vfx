@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from slate.core.domain.deliveries import DeliveryStore, Delivery
 from slate.core.domain.versions import VersionStore
+from slate.gui.core.offline_notice import on_database_error
 
 # Let an outage reach the @on_database_error decorator rather than becoming an
 # empty grid here. Everything else keeps the fallback it already had.
@@ -138,6 +139,7 @@ class CreateDeliveryDialog(QDialog):
 
         layout.addLayout(btn_layout)
 
+    @on_database_error
     def _populate_versions(self):
         try:
             # Query all versions for project

@@ -24,14 +24,28 @@ class AddMilestoneDialog(QDialog):
         self.proj_cb = QComboBox()
         self.proj_cb.setStyleSheet("background: #26262D; color: white; padding: 4px;")
         
-        # Populate project code dropdown
+        # Populate project code dropdown.
+        #
+        # Guarded because this runs in the constructor: an unreachable database
+        # used to raise here, so clicking "New Milestone" produced no dialog at
+        # all and no explanation - the button simply appeared to do nothing.
+        # The dialog opens either way now and says which case it is in, because
+        # "N/A" for both means the person cannot tell a studio with no projects
+        # from a database that is down.
         from slate.core.infra.database_manager import database_manager
-        projects = database_manager.execute_query("SELECT DISTINCT project_code FROM tracking_projects") or []
-        for p in projects:
-            self.proj_cb.addItem(p.get("project_code"))
-            
-        if not projects:
-            self.proj_cb.addItem("N/A")
+        try:
+            projects = database_manager.execute_query(
+                "SELECT DISTINCT project_code FROM tracking_projects") or []
+        except DatabaseUnavailableError:
+            projects = []
+            self.proj_cb.addItem("Database unavailable")
+            self.proj_cb.setEnabled(False)
+        else:
+            for p in projects:
+                self.proj_cb.addItem(p.get("project_code"))
+
+            if not projects:
+                self.proj_cb.addItem("N/A")
             
         self.dep_cb = QComboBox()
         self.dep_cb.setStyleSheet("background: #26262D; color: white; padding: 4px;")
@@ -64,6 +78,7 @@ class AddMilestoneDialog(QDialog):
         btn_layout.addWidget(cancel_btn)
         layout.addRow(btn_layout)
         
+    @on_database_error
     def update_deps(self):
         self.dep_cb.clear()
         self.dep_cb.addItem("None", None)

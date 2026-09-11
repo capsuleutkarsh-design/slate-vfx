@@ -38,6 +38,7 @@ from ..core.infra.design_tokens import ColorTokens as C, TypographyTokens as T, 
 from ..core.infra.style_builder import StyleBuilder
 from .core.icons import icon as draw_icon
 from .core.controls import make_button
+from slate.gui.core.offline_notice import on_database_error
 
 # Import shared PyToggle widget (no more duplication!)
 
@@ -504,6 +505,7 @@ class AdminPanelTab(QWidget):
                 self.on_users_loaded(self.user_manager.get_all_users())
                 self.refresh_table()
                 self.log_action(f"Deleted user: {uid}")
+    @on_database_error
     def load_permissions(self):
         # Permissions now handled by RoleEditor internally
         if hasattr(self, 'role_editor'):

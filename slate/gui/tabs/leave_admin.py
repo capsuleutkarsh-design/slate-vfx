@@ -24,6 +24,7 @@ from slate.core.infra.gate import Gate
 from slate.core.infra.leave_repository import LeaveRepository
 from slate.core.domain import leave_policy as lp
 from ..core.controls import make_button
+from slate.gui.core.offline_notice import on_database_error
 
 
 class HolidayCalendarDialog(QDialog):
@@ -91,6 +92,7 @@ class HolidayCalendarDialog(QDialog):
 
         self.refresh()
 
+    @on_database_error
     def refresh(self):
         self._rows = self.repo.holiday_rows()
         self.table.setRowCount(len(self._rows))
@@ -210,6 +212,7 @@ class YearEndDialog(QDialog):
 
         self.refresh()
 
+    @on_database_error
     def refresh(self, *_):
         year = self.year.currentData()
         done = self.repo.closes(year)

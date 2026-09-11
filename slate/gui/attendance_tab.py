@@ -14,6 +14,7 @@ from ..core.infra.app_context import AppContext
 from .attendance_export_worker import ExcelExportWorker
 from .attendance_metrics import calculate_hours as compute_hours
 from .attendance_metrics import calculate_streak as compute_streak
+from slate.gui.core.offline_notice import on_database_error
 
 class AttendanceTab(QWidget):
     """
@@ -489,6 +490,10 @@ class AttendanceTab(QWidget):
         return compute_hours(in_time=in_time, out_time=out_time, now_ref=now_ref)
 
 
+    # __init__ calls this, so without the decorator an unreachable database
+    # does not produce an empty tab - it produces no tab at all, and the
+    # error surfaces as a failure to open rather than as an explanation.
+    @on_database_error
     def refresh_personal_view(self):
         """Load current month logs for self."""
         now = datetime.now()
@@ -644,6 +649,7 @@ class AttendanceTab(QWidget):
 
 
 
+    @on_database_error
     def refresh_team_view(self):
         """Admin Grid - Now with Stats Columns (P, L, OT, WFH)."""
         year = self.spin_year.value()
@@ -781,6 +787,7 @@ class AttendanceTab(QWidget):
         self.team_table.setColumnWidth(2, 50)
         self.team_table.setColumnWidth(3, 40)
     
+    @on_database_error
     def auto_refresh_team_view(self):
         """
         Auto-refresh Team Overview from Database.
