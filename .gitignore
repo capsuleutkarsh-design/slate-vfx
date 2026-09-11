@@ -60,3 +60,17 @@ Thumbs.db
 
 # Generated at theme time from slate/gui/core/icons.py - not hand-authored art.
 slate/resources/icons/
+
+# ------------------------------------------------------------------ runtime
+# Written while the software runs. None of it is source, and pg_server.log in
+# particular grows to megabytes and is held open by PostgreSQL.
+pg_server.log
+*.log
+.coverage
+.pytest_cache/
+htmlcov/
+crash_log.txt
+
+# Studio state that predates the database. users.json and roles.json were
+# migrated into ut_users; the files are historical and hold password hashes.
+RuntimeData/
