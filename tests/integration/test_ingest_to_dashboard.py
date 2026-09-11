@@ -163,8 +163,8 @@ class TestWorkerReportsShots:
     """FolderCreationWorker must hand over what it found."""
 
     def test_worker_records_reel_and_shot(self, temp_vfx_root, mock_db):
-        from ut_vfx.core.domain.workers.structure import FolderCreationWorker
-        import ut_vfx.core.domain.workers.structure as structure_module
+        from ut_vfx.core.workers.structure import FolderCreationWorker
+        import ut_vfx.core.workers.structure as structure_module
 
         structure_module.database_manager = mock_db
 

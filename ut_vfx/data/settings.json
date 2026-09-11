@@ -28,10 +28,11 @@
         "retry_on_error": true,
         "retry_count": 3
     },
-    "last_project_directory": "D:\\Soft\\UTCAP\\V0040\\demo\\test_projects",
-    "last_excel_file": "D:\\Soft\\UTCAP\\V0040\\demo\\Test_VFX_Data.xlsx",
+    "last_project_directory": "",
+    "last_excel_file": "",
     "last_scan_directory": "",
     "last_destination_root": "",
     "last_shot_subfolders_target": "",
-    "window_state": {}
+    "window_state": {},
+    "_comment": "Shipped defaults. Anything machine-specific is blank on purpose - it is filled in on the machine and must not be committed."
 }

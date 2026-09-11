@@ -44,7 +44,7 @@ class EmptyState(QWidget):
             outer.addWidget(mark)
             outer.addSpacing(Gate.SPACE_3)
 
-        heading = QLabel(title)
+        self._heading = heading = QLabel(title)
         heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
         heading.setWordWrap(True)
         heading.setStyleSheet(
@@ -52,8 +52,9 @@ class EmptyState(QWidget):
             f"font-size: {Gate.SIZE_LG}px; font-weight: 600; background: transparent;")
         outer.addWidget(heading)
 
+        self._detail = None
         if body:
-            detail = QLabel(body)
+            self._detail = detail = QLabel(body)
             detail.setAlignment(Qt.AlignmentFlag.AlignCenter)
             detail.setWordWrap(True)
             detail.setStyleSheet(
@@ -95,6 +96,23 @@ class EmptyState(QWidget):
                     pass
         self.refresh()
         return self
+
+    def set_message(self, title, body=""):
+        """
+        Change what this says.
+
+        An empty table means different things - nothing has been created yet,
+        a filter excluded everything, or the database is unreachable - and a
+        screen that says the same thing in all three cases is not helping.
+        """
+        try:
+            self._heading.setText(str(title))
+            if self._detail is not None:
+                self._detail.setText(str(body))
+                self._detail.setVisible(bool(body))
+        except RuntimeError:
+            # The C++ object is gone; the tab closed while this was in flight.
+            pass
 
     def refresh(self, *args):
         if self._table is None:

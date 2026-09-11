@@ -24,6 +24,7 @@ from ut_vfx.core.infra.gate import Gate
 from ut_vfx.core.infra.leave_repository import LeaveRepository
 from ut_vfx.core.domain import leave_policy as lp
 from ..core.controls import make_button, page_title
+from ..core.offline_notice import on_database_error
 from ..core.empty_state import EmptyState
 from .my_leave_view import Figure, status_tone
 
@@ -123,6 +124,7 @@ class LeaveApprovalsView(QWidget):
         self.refresh()
 
     # ------------------------------------------------------------------ data
+    @on_database_error
     def refresh(self, *_):
         everything = self.repo.all_requests()
         for row in everything:

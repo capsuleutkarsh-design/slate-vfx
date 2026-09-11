@@ -1,3 +1,5 @@
+import os
+import re
 
 from PySide6.QtWidgets import QApplication
 from .global_config import GlobalConfig
@@ -968,6 +970,62 @@ class ThemeManager:
         }
     """
 
+
+    # ---------------------------------------------------------------- tokens
+    #
+    # main.qss written against gate.py is the single source of colour. It used
+    # to be installed by the launcher and then thrown away here, so a fix made
+    # in it never reached the client. The four stylesheets below are kept only
+    # for Light, which has no token sheet yet.
+
+    @staticmethod
+    def _token_stylesheet():
+        """main.qss with @TOKENs resolved, or "" if it cannot be built."""
+        try:
+            from .gate import Gate
+        except Exception:
+            return ""
+
+        here = os.path.dirname(os.path.abspath(__file__))
+        package = os.path.dirname(os.path.dirname(here))       # -> ut_vfx/
+        qss = os.path.join(package, "resources", "styles", "main.qss")
+        if not os.path.exists(qss):
+            return ""
+        try:
+            with open(qss, "r", encoding="utf-8") as handle:
+                sheet = handle.read()
+        except OSError:
+            return ""
+
+        # The sheet reaches a couple of icons through url(). They are written
+        # to disk by the GUI layer, which owns the icon set - core does not
+        # reach up to fetch them. If they are not there, the rules that use
+        # them are dropped and Qt falls back to its own drawing.
+        icons = os.path.join(package, "resources", "icons")
+        if os.path.exists(os.path.join(icons, "chevron-down.svg")):
+            sheet = sheet.replace("@ICONS", icons.replace("\\", "/"))
+        else:
+            sheet = re.sub(r"\s*image:\s*url\(@ICONS[^)]*\);", "", sheet)
+
+        tokens = {
+            "@BG_MAIN": Gate.GROUND, "@BG_PANEL": Gate.PANEL,
+            "@BG_ELEVATED": Gate.RAISED, "@ACCENT_HOVER": Gate.ACCENT_HI,
+            "@ACCENT": Gate.ACCENT, "@TEXT_PRIMARY": Gate.TEXT,
+            "@TEXT_MUTED": Gate.TEXT_DIM, "@BORDER_FOCUS": Gate.ACCENT,
+            "@BORDER": Gate.LINE, "@DANGER": Gate.BAD, "@SUCCESS": Gate.OK,
+            "@WARNING": Gate.WARN,
+            "@RADIUS_SM": "%dpx" % Gate.RADIUS_SM,
+            "@RADIUS_MD": "%dpx" % Gate.RADIUS_MD,
+            "@RADIUS_LG": "%dpx" % Gate.RADIUS_LG,
+            "@FONT_UI": Gate.FONT_UI, "@FONT_LABEL": Gate.FONT_LABEL,
+            "@FONT_MONO": Gate.FONT_MONO,
+        }
+        # Longest first: @BORDER before @BORDER_FOCUS would leave "_FOCUS".
+        for name, value in sorted(tokens.items(), key=lambda kv: -len(kv[0])):
+            sheet = sheet.replace(name, str(value))
+        return sheet
+
+
     @staticmethod
     def get_available_themes():
         """Compatibility API for modules that cycle themes dynamically."""
@@ -997,12 +1055,15 @@ class ThemeManager:
 
         from PySide6.QtGui import QPalette, QColor
 
+        token_sheet = ThemeManager._token_stylesheet()
+
         if mode == "Light":
             app.setStyleSheet(ThemeManager._with_adaptive_scale(ThemeManager.LIGHT_MODE))
             GlobalConfig.set("THEME_MODE", "Light")
 
         elif mode == "Dark":
-            app.setStyleSheet(ThemeManager._with_adaptive_scale(ThemeManager.DARK_MODE))
+            app.setStyleSheet(ThemeManager._with_adaptive_scale(
+                token_sheet or ThemeManager.DARK_MODE))
             GlobalConfig.set("THEME_MODE", "Dark")
             palette = QPalette()
             palette.setColor(QPalette.Window, QColor(18, 18, 18))
@@ -1018,7 +1079,8 @@ class ThemeManager:
 
         else:
             # Default: UT_VFX Mode (Apple × Teenage Engineering)
-            app.setStyleSheet(ThemeManager._with_adaptive_scale(ThemeManager.UTVFX_MODE))
+            app.setStyleSheet(ThemeManager._with_adaptive_scale(
+                token_sheet or ThemeManager.UTVFX_MODE))
             GlobalConfig.set("THEME_MODE", "UT_VFX")
 
             # Force palette to match — prevents white gaps on HiDPI

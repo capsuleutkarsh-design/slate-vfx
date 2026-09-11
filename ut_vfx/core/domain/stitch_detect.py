@@ -221,7 +221,7 @@ def survey_source(source_path, target_reel_name: str = "") -> List[StitchGroup]:
     """
     # Imported here: the ingest worker pulls in Qt, and this module is used by
     # tests and tools that have no GUI.
-    from ut_vfx.core.domain.workers.structure import (
+    from ut_vfx.core.workers.structure import (
         collect_shot_folders, group_shots_by_reel,
     )
 

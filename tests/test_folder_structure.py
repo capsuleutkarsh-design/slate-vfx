@@ -125,8 +125,8 @@ class TestScanVersionFolders:
         The degrained plate belongs to the scan it came from, so a re-delivery
         gets its own Denoise rather than sharing one.
         """
-        from ut_vfx.core.domain.workers.structure import FolderCreationWorker
-        import ut_vfx.core.domain.workers.structure as structure_module
+        from ut_vfx.core.workers.structure import FolderCreationWorker
+        import ut_vfx.core.workers.structure as structure_module
 
         structure_module.database_manager = mock_db
 

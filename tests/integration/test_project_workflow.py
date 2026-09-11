@@ -57,7 +57,7 @@ class TestCompleteProjectWorkflow:
         # Verify integrated state
         assert tab is not None
     
-    @patch('ut_vfx.core.services.user_manager.UserManager')
+    @patch('ut_vfx.core.domain.user_manager.UserManager')
     @patch('ut_vfx.core.infra.postgres_manager.PostgresManager')
     def test_user_authentication_to_project_access(self, mock_db, mock_user_mgr, qapp_integration, qtbot):
         """Test authentication flow leading to project access."""
@@ -139,7 +139,7 @@ class TestAssetLibraryIntegration:
 class TestWorkerIntegrationFlow:
     """Test worker thread integration across components."""
     
-    @patch('ut_vfx.core.domain.workers.structure.FolderCreationWorker')
+    @patch('ut_vfx.core.workers.structure.FolderCreationWorker')
     @patch('ut_vfx.core.infra.performance_monitor.performance_monitor')
     def test_worker_with_performance_monitoring(self, mock_monitor, mock_worker, qapp_integration, qtbot):
         """Test worker execution with performance tracking."""
@@ -153,7 +153,7 @@ class TestWorkerIntegrationFlow:
         # Verify worker and monitoring integration
         assert tab is not None
     
-    @patch('ut_vfx.core.domain.workers.structure.FolderCreationWorker')
+    @patch('ut_vfx.core.workers.structure.FolderCreationWorker')
     def test_worker_error_propagation_to_gui(self, mock_worker, qapp_integration, qtbot):
         """Test worker errors properly propagate to GUI."""
         from ut_vfx.gui.tabs.folder_creator_tab import FolderCreatorTab
@@ -172,7 +172,7 @@ class TestWorkerIntegrationFlow:
 class TestSystemHealthIntegration:
     """Test system health monitoring across components."""
     
-    @patch('ut_vfx.core.services.network_manager.NetworkManager')
+    @patch('ut_vfx.core.infra.network_manager.NetworkManager')
     @patch('ut_vfx.core.infra.postgres_manager.PostgresManager')
     @patch('ut_vfx.core.infra.performance_monitor.performance_monitor')
     def test_system_health_check_integration(self, mock_monitor, mock_db, mock_network, qapp_integration, qtbot):

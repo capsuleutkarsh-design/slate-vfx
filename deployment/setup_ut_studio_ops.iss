@@ -5,7 +5,7 @@
 #define MyAppName "UT Studio Operations"
 #define MyAppVersion "BETA 2.0.22"
 #define MyAppPublisher "UT Studio"
-#define MyAppURL "https://www.capsulestudio.com"
+#define MyAppURL "https://github.com/capsuleutkarsh-design/slate-vfx"
 #define MyAppExeName "UT_Studio_Ops.exe"
 #define MyAppIconFileName "app_icon_128.ico"
 
@@ -96,7 +96,7 @@ begin
   ServerPathPage.Values[0] := 'X:\Extra\UT_Central';
 end;
 
-procedure ForceKillCapsuleProcesses();
+procedure ForceKillSlateProcesses();
 var
   ResultCode: Integer;
 begin
@@ -106,7 +106,7 @@ end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
-  ForceKillCapsuleProcesses();
+  ForceKillSlateProcesses();
   Result := '';
 end;
 

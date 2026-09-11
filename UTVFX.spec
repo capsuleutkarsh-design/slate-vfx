@@ -1,3 +1,18 @@
+
+import os as _os
+
+def _optional_binaries():
+    """Third-party binaries setup.bat downloads. Skipped when absent."""
+    found = []
+    for name in ("ffmpeg.exe", "ffprobe.exe"):
+        path = _os.path.join("ut_vfx", "bin", name)
+        if _os.path.exists(path):
+            found.append((path, "ut_vfx/bin"))
+        else:
+            print("  [spec] %s not present - run setup.bat before building "
+                  "if the build needs it" % path)
+    return found
+
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_submodules, collect_all
 
@@ -33,8 +48,12 @@ shared_datas = [
     ('ut_vfx/default_config.json', 'ut_vfx'),
     ('ut_vfx/icons', 'ut_vfx/icons'),
     ('ut_vfx/resources', 'ut_vfx/resources'),
-    ('ut_vfx/bin/ffmpeg.exe', 'ut_vfx/bin'),
-    ('ut_vfx/bin/ffprobe.exe', 'ut_vfx/bin'),
+    # FFmpeg is fetched by setup.bat rather than committed - it is a
+    # 95MB third-party binary with its own licence. Include it only if
+    # it is present, so a build on a machine that has run setup works
+    # and a build on one that has not fails with a clear message
+    # instead of a PyInstaller stack trace.
+
     ('ut_vfx/core/help_content.json', 'ut_vfx/core'),
     ('ut_vfx/gui/tabs/vfx_dashboard_pro/config', 'ut_vfx/gui/tabs/vfx_dashboard_pro/config'),
     ('ut_vfx/gui/tabs/vfx_dashboard_pro/sample_project.xlsx', 'ut_vfx/gui/tabs/vfx_dashboard_pro'),
@@ -49,7 +68,7 @@ common_excludes = [
 vfx_a = Analysis(
     ['ut_vfx\\vfx_studio_main.py'],
     pathex=[],
-    binaries=[] + binaries_qasync,
+    binaries=_optional_binaries() + binaries_qasync,
     datas=shared_datas,
     hiddenimports=hiddenimports,
     hookspath=[],
@@ -83,7 +102,7 @@ vfx_exe = EXE(
 ops_a = Analysis(
     ['ut_vfx\\studio_ops_main.py'],
     pathex=[],
-    binaries=[] + binaries_qasync,
+    binaries=_optional_binaries() + binaries_qasync,
     datas=shared_datas,
     hiddenimports=hiddenimports,
     hookspath=[],
@@ -151,7 +170,7 @@ server_exe = EXE(
 legacy_a = Analysis(
     ['ut_vfx\\gatekeeper_main.py'],
     pathex=[],
-    binaries=[] + binaries_qasync,
+    binaries=_optional_binaries() + binaries_qasync,
     datas=shared_datas,
     hiddenimports=hiddenimports,
     hookspath=[],

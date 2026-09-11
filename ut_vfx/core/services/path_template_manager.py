@@ -1,4 +1,4 @@
-﻿"""
+"""
 Path Template Management using Lucidity (VFX Industry Standard)
 
 This service provides centralized path template management for studio pipelines

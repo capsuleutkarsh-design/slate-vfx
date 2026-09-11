@@ -14,6 +14,24 @@ import logging
 import re
 from functools import partial
 
+
+def _safe_identifier(name, allowed=None):
+    """
+    A table or column name that is safe to put in a statement.
+
+    SQL cannot parameterise an identifier, so these have to be interpolated -
+    which means the name has to be checked rather than trusted. Anything that
+    is not a plain identifier is refused outright, and where the caller can
+    supply the real list, membership of it is required as well.
+    """
+    text = str(name or "")
+    if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", text):
+        raise ValueError("not a valid SQL identifier: %r" % (name,))
+    if allowed is not None and text not in set(allowed):
+        raise ValueError("unknown table or column: %r" % (name,))
+    return text
+
+
 # --- CUSTOM VISUAL WIDGETS ---
 
 class StatCard(QFrame):
@@ -623,13 +641,15 @@ class DatabaseExplorer(QWidget):
 
         def _fetch():
             if self._is_sqlite_backend():
-                cols_res = self.db.execute_query(f"PRAGMA table_info({table_name})", fetch="all") or []
+                cols_res = self.db.execute_query(
+                f"PRAGMA table_info({_safe_identifier(table_name)})", fetch="all") or []
             else:
                 cols_res = self.db.execute_query(
                     f"SELECT column_name FROM information_schema.columns WHERE table_name = '{table_name}' ORDER BY ordinal_position",
                     fetch="all",
                 ) or []
-            rows = self.db.execute_query(f"SELECT * FROM {table_name} LIMIT 500", fetch="all") or []
+            rows = self.db.execute_query(
+                f"SELECT * FROM {_safe_identifier(table_name)} LIMIT 500", fetch="all") or []
             return {'cols_res': cols_res, 'rows': rows}
 
         def _on_done(data):
@@ -763,7 +783,8 @@ class DatabaseExplorer(QWidget):
             pk = self.primary_key_col
 
             def _do_delete():
-                return self.db.execute_update(f"DELETE FROM {table} WHERE {pk} = %s", (row_id,))
+                return self.db.execute_update(
+            f"DELETE FROM {_safe_identifier(table)} WHERE {_safe_identifier(pk)} = %s", (row_id,))
 
             def _on_done(result):
                 if self._is_closing:

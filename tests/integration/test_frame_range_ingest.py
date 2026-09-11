@@ -11,7 +11,7 @@ to the drive.
 import pytest
 
 from ut_vfx.core.domain.shot_registry import register_ingested_shots
-from ut_vfx.core.domain.workers.structure import FolderCreationWorker
+from ut_vfx.core.workers.structure import FolderCreationWorker
 from ut_vfx.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler
 from ut_vfx.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
 
@@ -23,7 +23,7 @@ TEMPLATE = (
 
 
 def _run(source, target, mock_db, project="PRJ"):
-    import ut_vfx.core.domain.workers.structure as structure_module
+    import ut_vfx.core.workers.structure as structure_module
     structure_module.database_manager = mock_db
 
     worker = FolderCreationWorker(

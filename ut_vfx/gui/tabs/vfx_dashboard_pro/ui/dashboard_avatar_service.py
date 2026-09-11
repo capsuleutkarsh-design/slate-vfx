@@ -9,7 +9,7 @@ from PySide6.QtCore import Qt, QObject
 from PySide6.QtGui import QBrush, QPainter, QPixmap
 from PySide6.QtWidgets import QFileDialog
 
-from ut_vfx.core.domain.workers.file_io import FileOperationWorker
+from ut_vfx.core.workers.file_io import FileOperationWorker
 from ut_vfx.core.infra.database_manager import database_manager
 from ut_vfx.core.infra.global_config import GlobalConfig
 

@@ -15,7 +15,7 @@ def verify_imports():
     
     try:
         print("Importing core.workers.file_ops...")
-        from ut_vfx.core.domain.workers import file_ops
+        from ut_vfx.core.workers import file_ops
         print("OK")
     except ImportError as e:
         print(f"FAILED: {e}")
@@ -23,7 +23,7 @@ def verify_imports():
 
     try:
         print("Importing core.workers.structure...")
-        from ut_vfx.core.domain.workers import structure
+        from ut_vfx.core.workers import structure
         print("OK")
     except ImportError as e:
         print(f"FAILED: {e}")
@@ -31,7 +31,7 @@ def verify_imports():
 
     try:
         print("Importing core.workers.reporting...")
-        from ut_vfx.core.domain.workers import reporting
+        from ut_vfx.core.workers import reporting
         print("OK")
     except ImportError as e:
         print(f"FAILED: {e}")
@@ -39,7 +39,7 @@ def verify_imports():
 
     try:
         print("Importing core.workers.library...")
-        from ut_vfx.core.domain.workers import library
+        from ut_vfx.core.workers import library
         print("OK")
     except ImportError as e:
         print(f"FAILED: {e}")
@@ -47,7 +47,7 @@ def verify_imports():
 
     try:
         print("Importing core.workers.analysis...")
-        from ut_vfx.core.domain.workers import analysis
+        from ut_vfx.core.workers import analysis
         print("OK")
     except ImportError as e:
         print(f"FAILED: {e}")

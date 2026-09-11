@@ -14,7 +14,7 @@ import pytest
 
 from ut_vfx.core.domain.shot_registry import register_ingested_shots
 from ut_vfx.core.domain.stitch_detect import survey_source, apply_groups
-from ut_vfx.core.domain.workers.structure import FolderCreationWorker
+from ut_vfx.core.workers.structure import FolderCreationWorker
 from ut_vfx.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler
 
 
@@ -25,7 +25,7 @@ TEMPLATE = (
 
 
 def _run(source, target, mock_db, project="PRJ", stitch_mapping=None):
-    import ut_vfx.core.domain.workers.structure as structure_module
+    import ut_vfx.core.workers.structure as structure_module
     structure_module.database_manager = mock_db
 
     worker = FolderCreationWorker(

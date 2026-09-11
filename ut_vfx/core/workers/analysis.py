@@ -7,7 +7,7 @@ from ut_vfx.utils.media_capabilities import is_video
 # Import SmartMetadataManager from core.metadata_engine
 # File is in ut_vfx/core/workers/analysis.py
 # Parent is ut_vfx/core
-from ..metadata_engine import SmartMetadataManager
+from ..domain.metadata_engine import SmartMetadataManager
 
 class BrokenAssetWorker(QThread):
     found_broken_signal = Signal(list)

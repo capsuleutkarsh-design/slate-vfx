@@ -32,7 +32,7 @@ from ..core.infra.global_config import GlobalConfig
 from ..core.infra.theme_manager import ThemeManager
 from ..core.infra.app_context import AppContext
 from ..core.infra.database_manager import database_manager
-from ..core.domain.workers.db_monitor import DatabaseMonitor
+from ..core.workers.db_monitor import DatabaseMonitor
 from .components.qt_safety import safe_single_shot
 
 from ..utils.resource_manager import ResourcePathManager

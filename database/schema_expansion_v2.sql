@@ -1,4 +1,4 @@
--- UTCAP VFX Studio & Central Server
+-- Slate - studio and central server
 -- Database Schema Expansion v2 (HRMS, Production, IT)
 
 -- ==============================================================

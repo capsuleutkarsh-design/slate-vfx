@@ -9,9 +9,28 @@ rather than through arithmetic typed into a widget.
 
 from __future__ import annotations
 
+import logging
+
 from datetime import date, datetime
 
 from ..domain import leave_policy as lp
+
+# A database that is down must not look like a studio with no data. The
+# manager raises DatabaseUnavailableError precisely so a read cannot quietly
+# come back empty; catching it here and returning a fallback puts the fault
+# straight back. So it is re-raised, and anything else is logged before the
+# fallback is used.
+try:
+    from .postgres_manager import DatabaseUnavailableError
+except ImportError:                                  # pragma: no cover
+    try:
+        from ..infra.postgres_manager import DatabaseUnavailableError
+    except ImportError:
+        class DatabaseUnavailableError(ConnectionError):
+            """Fallback when the manager cannot be imported."""
+
+logger = logging.getLogger(__name__)
+
 
 
 class LeaveRepository:
@@ -32,7 +51,10 @@ class LeaveRepository:
             else:
                 rows = self.db.execute_query(
                     "SELECT holiday_date FROM holiday_calendar", fetch="all")
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("holidays failed")
             return set()
 
         out = set()
@@ -50,7 +72,10 @@ class LeaveRepository:
                 "SELECT id, holiday_date, name, location FROM holiday_calendar "
                 "ORDER BY holiday_date", fetch="all") or []
             return [dict(r) for r in rows]
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("holiday_rows failed")
             return []
 
     def add_holiday(self, day, name, location="All") -> bool:
@@ -59,7 +84,10 @@ class LeaveRepository:
                 "INSERT INTO holiday_calendar (holiday_date, name, location) "
                 "VALUES (%s, %s, %s) ON CONFLICT DO NOTHING", (day, name, location))
             return True
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("add_holiday failed")
             return False
 
     def remove_holiday(self, holiday_id) -> bool:
@@ -67,7 +95,10 @@ class LeaveRepository:
             self.db.execute_update(
                 "DELETE FROM holiday_calendar WHERE id = %s", (holiday_id,))
             return True
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("remove_holiday failed")
             return False
 
     # ------------------------------------------------------------------ people
@@ -77,7 +108,10 @@ class LeaveRepository:
             row = self.db.execute_query(
                 "SELECT joined_on FROM ut_users WHERE LOWER(username) = LOWER(%s)",
                 (username,), fetch="one")
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("joined_on failed")
             return None
         if not row:
             return None
@@ -95,7 +129,10 @@ class LeaveRepository:
                 "FROM leave_requests WHERE LOWER(user_id) = LOWER(%s) "
                 "ORDER BY start_date DESC", (username,), fetch="all") or []
             return [dict(r) for r in rows]
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("for_user failed")
             return []
 
     def all_requests(self) -> list:
@@ -105,7 +142,10 @@ class LeaveRepository:
                 "       half_day, days_charged, supervisor_by, hr_by, decision_note "
                 "FROM leave_requests ORDER BY start_date DESC", fetch="all") or []
             return [dict(r) for r in rows]
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("all_requests failed")
             return []
 
     def submit(self, username, kind, start, end, half_day, reason, rules=None) -> bool:
@@ -125,7 +165,10 @@ class LeaveRepository:
                 (username, start, end, kind, lp.STATUS_PENDING_SUPERVISOR,
                  1 if half_day else 0, reason, charge["total"]))
             return True
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("submit failed")
             return False
 
     def decide(self, request_id, stage, approved, by_whom, note="") -> bool:
@@ -148,7 +191,10 @@ class LeaveRepository:
                     "hr_at = %s, decision_note = %s WHERE id = %s",
                     (new_status, by_whom, datetime.now(), note, request_id))
             return True
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("decide failed")
             return False
 
     # ---------------------------------------------------------------- comp-off
@@ -158,7 +204,10 @@ class LeaveRepository:
             rows = self.db.execute_query(
                 "SELECT days, consumed, expires_on FROM comp_off_ledger "
                 "WHERE LOWER(user_id) = LOWER(%s)", (username,), fetch="all") or []
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("comp_off_balance failed")
             return 0.0
 
         today = date.today()
@@ -184,7 +233,10 @@ class LeaveRepository:
                 (username, earned_on, days, reason,
                  lp.comp_off_expires(earned_on, rules)))
             return True
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("credit_comp_off failed")
             return False
 
     # --------------------------------------------------------------- year end
@@ -201,7 +253,10 @@ class LeaveRepository:
                 "WHERE LOWER(user_id) = LOWER(%s) ORDER BY leave_year DESC LIMIT 1",
                 (username,), fetch="one")
             return dict(row) if row else {}
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("last_close failed")
             return {}
 
     def closes(self, year: int = None) -> list:
@@ -217,7 +272,10 @@ class LeaveRepository:
                     "       closed_on, closed_by FROM leave_year_close "
                     "WHERE leave_year = %s ORDER BY user_id", (year,), fetch="all") or []
             return [dict(r) for r in rows]
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("closes failed")
             return []
 
     def preview_close(self, year: int, rules=None) -> list:
@@ -231,7 +289,10 @@ class LeaveRepository:
         try:
             rows = self.db.execute_query(
                 "SELECT username FROM ut_users ORDER BY username", fetch="all") or []
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("preview_close failed")
             return []
 
         as_of = date(year, 12, 31)
@@ -270,7 +331,10 @@ class LeaveRepository:
                     (entry["user_id"], year, entry["closing_balance"],
                      entry["carried"], entry["lapsed"], date.today(), by_whom))
                 written += 1
+            except DatabaseUnavailableError:
+                raise
             except Exception:
+                logger.exception("close_year failed")
                 continue
         return {"closed": written, "skipped": len(already)}
 

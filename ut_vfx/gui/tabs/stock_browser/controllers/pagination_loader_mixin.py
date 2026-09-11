@@ -2,7 +2,7 @@ import logging
 
 
 from .....utils.media_capabilities import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
-from .....core.domain.workers.library import StockLoaderWorker
+from .....core.workers.library import StockLoaderWorker
 from ....components.qt_safety import safe_single_shot
 
 class PaginationLoaderMixin:

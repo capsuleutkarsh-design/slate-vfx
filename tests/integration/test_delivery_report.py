@@ -14,7 +14,7 @@ import pytest
 from ut_vfx.core.domain.delivery_report import (
     build_report, frame_summary, write_report,
 )
-from ut_vfx.core.domain.workers.structure import FolderCreationWorker
+from ut_vfx.core.workers.structure import FolderCreationWorker
 
 
 TEMPLATE = (
@@ -24,7 +24,7 @@ TEMPLATE = (
 
 
 def _run(source, target, mock_db, project="PRJ", dry_run=False):
-    import ut_vfx.core.domain.workers.structure as structure_module
+    import ut_vfx.core.workers.structure as structure_module
     structure_module.database_manager = mock_db
 
     worker = FolderCreationWorker(

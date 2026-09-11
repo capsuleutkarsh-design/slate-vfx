@@ -14,7 +14,7 @@ import os
 import sys
 
 
-from ..core.domain.workers.admin_workers import UserDataWorker
+from ..core.workers.admin_workers import UserDataWorker
 from ..core.infra.app_context import AppContext
 from ..core.domain.user_manager import UserManager
 from ..core.infra.config_manager import ConfigManager

@@ -62,15 +62,32 @@ def get_database_url() -> str:
             dbname = config.get("name") or GlobalConfig.get("db_name") or "ut_vfx"
             user = config.get("user") or GlobalConfig.get("db_user") or "postgres"
             
+            # The password comes from the machine, never from source. There
+            # used to be a final "if not password: password = \"postgres\"",
+            # which tried the best-known default password for the best-known
+            # default superuser - silently, and with nothing recorded when it
+            # worked. A missing credential is now a missing credential.
             password = config.get("password")
             if not password:
                 try:
                     import keyring
                     password = keyring.get_password("UTVFX", "db_password")
                 except Exception:
+                    logger.warning(
+                        "Could not read the credential store; falling back to "
+                        "the local config.", exc_info=True)
                     password = None
             if not password:
-                password = "postgres"
+                try:
+                    from ut_vfx.core.infra.local_secrets import db_password
+                    password = db_password(required=False)
+                except Exception:
+                    password = None
+            if not password:
+                logger.error(
+                    "No database password on this machine, so no PostgreSQL URL "
+                    "can be built. Run setup.bat, or set SLATE_DB_PASSWORD.")
+                raise ValueError("no database password configured")
 
             escaped_user = quote_plus(str(user))
             escaped_pwd = quote_plus(str(password))

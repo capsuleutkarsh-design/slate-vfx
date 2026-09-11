@@ -25,6 +25,7 @@ from ut_vfx.core.infra.gate import Gate
 from ut_vfx.core.infra.leave_repository import LeaveRepository
 from ut_vfx.core.domain import leave_policy as lp
 from ..core.controls import make_button, page_title
+from ..core.offline_notice import on_database_error
 from ..core.empty_state import EmptyState
 
 
@@ -285,6 +286,7 @@ class MyLeaveView(QWidget):
         self.refresh()
 
     # ------------------------------------------------------------------ data
+    @on_database_error
     def refresh(self):
         self._balance = self.repo.balance(self.username)
         requests = self.repo.for_user(self.username)

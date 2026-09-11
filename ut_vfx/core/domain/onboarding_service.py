@@ -17,7 +17,26 @@ contract".
 
 from __future__ import annotations
 
+import logging
+
 from datetime import date
+
+# A database that is down must not look like a studio with no data. The
+# manager raises DatabaseUnavailableError precisely so a read cannot quietly
+# come back empty; catching it here and returning a fallback puts the fault
+# straight back. So it is re-raised, and anything else is logged before the
+# fallback is used.
+try:
+    from .postgres_manager import DatabaseUnavailableError
+except ImportError:                                  # pragma: no cover
+    try:
+        from ..infra.postgres_manager import DatabaseUnavailableError
+    except ImportError:
+        class DatabaseUnavailableError(ConnectionError):
+            """Fallback when the manager cannot be imported."""
+
+logger = logging.getLogger(__name__)
+
 
 
 HR = "HR"
@@ -75,7 +94,10 @@ class OnboardingService:
                 "FROM ut_users ORDER BY COALESCE(joined_on, CURRENT_DATE) DESC",
                 fetch="all") or []
             return [dict(r) for r in rows]
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("people failed")
             return []
 
     # ------------------------------------------------------------------- tasks
@@ -96,7 +118,10 @@ class OnboardingService:
                     "WHERE LOWER(user_id) = LOWER(%s) ORDER BY id",
                     (username,), fetch="all") or []
             return [dict(r) for r in rows]
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("tasks_for failed")
             return []
 
     def open_tasks(self, team: str = None, direction: str = None) -> list:
@@ -111,7 +136,10 @@ class OnboardingService:
             # boolean on Postgres and an integer on SQLite, and there is no one
             # literal both accept.
             out = [d for d in (dict(r) for r in rows) if not d.get("is_completed")]
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("open_tasks failed")
             return []
 
         if team:
@@ -146,7 +174,10 @@ class OnboardingService:
                     "VALUES (%s, %s, %s, FALSE, %s, %s)",
                     (username, name, department, direction, team))
                 made += 1
+            except DatabaseUnavailableError:
+                raise
             except Exception:
+                logger.exception("start failed")
                 continue
         return made
 
@@ -156,7 +187,10 @@ class OnboardingService:
                 "UPDATE onboarding_workflows SET is_completed = %s WHERE id = %s",
                 (bool(done), task_id))
             return True
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("complete failed")
             return False
 
     def progress(self, username: str, direction: str = JOINING) -> dict:
@@ -187,7 +221,10 @@ class OnboardingService:
                 "WHERE machine_name = %s", (username, machine_name))
             self._mark_asset_task(username, JOINING, "Workstation issued", machine_name)
             return True
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("issue_machine failed")
             return False
 
     def return_machine(self, machine_name: str, username: str) -> bool:
@@ -208,7 +245,10 @@ class OnboardingService:
                 "WHERE machine_name = %s", (machine_name,))
             self._mark_asset_task(username, LEAVING, "Workstation returned", machine_name)
             return True
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("return_machine failed")
             return False
 
     def _mark_asset_task(self, username, direction, task_name, machine_name):
@@ -218,7 +258,10 @@ class OnboardingService:
                 "UPDATE onboarding_workflows SET is_completed = TRUE, asset_name = %s "
                 "WHERE LOWER(user_id) = LOWER(%s) AND direction = %s AND task_name = %s",
                 (machine_name, username, direction, task_name))
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("_mark_asset_task failed")
             pass
 
     def held_by(self, username: str) -> list:
@@ -229,7 +272,10 @@ class OnboardingService:
                 "WHERE LOWER(user_id) = LOWER(%s) AND returned_on IS NULL "
                 "ORDER BY issued_on", (username,), fetch="all") or []
             return [dict(r) for r in rows]
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("held_by failed")
             return []
 
     def unreturned(self) -> list:
@@ -249,7 +295,10 @@ class OnboardingService:
                 "            AND w.direction = 'offboard') "
                 "ORDER BY a.issued_on", fetch="all") or []
             return [dict(r) for r in rows]
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("unreturned failed")
             return []
 
     def available_machines(self) -> list:
@@ -260,5 +309,8 @@ class OnboardingService:
                 "AND COALESCE(status, '') <> 'Repair' "
                 "ORDER BY machine_name", fetch="all") or []
             return [(r["machine_name"] if isinstance(r, dict) else r[0]) for r in rows]
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("available_machines failed")
             return []

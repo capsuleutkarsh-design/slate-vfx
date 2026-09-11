@@ -5,7 +5,7 @@
 #define MyAppName "Slate"
 #define MyAppVersion "BETA 2.0.22"
 #define MyAppPublisher "UT Studio"
-#define MyAppURL "https://www.capsulestudio.com"
+#define MyAppURL "https://github.com/capsuleutkarsh-design/slate-vfx"
 #define MyAppExeName "UT_VFX_Studio.exe"
 #define MyAppIconFileName "app_icon_128.ico"
 
@@ -104,7 +104,7 @@ begin
   ServerPathPage.Values[0] := 'X:\Extra\UT_Central';
 end;
 
-procedure ForceKillCapsuleProcesses();
+procedure ForceKillSlateProcesses();
 var
   ResultCode: Integer;
 begin
@@ -157,7 +157,7 @@ begin
   CleanupDone := True;
 
   Log('Starting aggressive pre-install cleanup...');
-  ForceKillCapsuleProcesses();
+  ForceKillSlateProcesses();
 
   TryDeleteDirIfExists(ExpandConstant('{localappdata}\{#MyAppName}'));
   TryDeleteDirIfExists(ExpandConstant('{pf}\{#MyAppName}'));
@@ -190,7 +190,7 @@ begin
   if CurUninstallStep = usUninstall then
   begin
     Log('Starting uninstall cleanup...');
-    ForceKillCapsuleProcesses();
+    ForceKillSlateProcesses();
     CleanupLegacyRegistry();
   end;
 end;

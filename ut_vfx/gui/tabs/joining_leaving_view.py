@@ -23,6 +23,7 @@ from ut_vfx.core.domain.onboarding_service import (
     OnboardingService, JOINING, LEAVING, HR, IT,
 )
 from ..core.controls import make_button, page_title
+from ..core.offline_notice import on_database_error
 from ..core.empty_state import EmptyState
 from .my_leave_view import Figure
 
@@ -222,6 +223,7 @@ class JoiningLeavingView(QWidget):
         self.refresh()
 
     # ------------------------------------------------------------------ data
+    @on_database_error
     def refresh(self, *_):
         keep = self._selected_person
         outstanding = self.service.open_tasks()

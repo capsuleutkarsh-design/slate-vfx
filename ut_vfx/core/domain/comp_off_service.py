@@ -16,9 +16,28 @@ Three things this is careful about:
 
 from __future__ import annotations
 
+import logging
+
 from datetime import date, datetime, timedelta
 
 from . import leave_policy as lp
+
+# A database that is down must not look like a studio with no data. The
+# manager raises DatabaseUnavailableError precisely so a read cannot quietly
+# come back empty; catching it here and returning a fallback puts the fault
+# straight back. So it is re-raised, and anything else is logged before the
+# fallback is used.
+try:
+    from .postgres_manager import DatabaseUnavailableError
+except ImportError:                                  # pragma: no cover
+    try:
+        from ..infra.postgres_manager import DatabaseUnavailableError
+    except ImportError:
+        class DatabaseUnavailableError(ConnectionError):
+            """Fallback when the manager cannot be imported."""
+
+logger = logging.getLogger(__name__)
+
 
 
 def _parse_day(value):
@@ -28,7 +47,10 @@ def _parse_day(value):
         return value
     try:
         return datetime.fromisoformat(str(value)[:10]).date()
+    except DatabaseUnavailableError:
+        raise
     except Exception:
+        logger.exception("_parse_day failed")
         return None
 
 
@@ -45,7 +67,10 @@ def hours_between(punch_in, punch_out) -> float:
     try:
         start = datetime.strptime(str(punch_in)[:8], "%H:%M:%S")
         end = datetime.strptime(str(punch_out)[:8], "%H:%M:%S")
+    except DatabaseUnavailableError:
+        raise
     except Exception:
+        logger.exception("hours_between failed")
         return 0.0
 
     delta = (end - start).total_seconds() / 3600.0
@@ -76,7 +101,10 @@ class CompOffService:
                 "WHERE day_date >= %s ORDER BY day_date",
                 (since.isoformat(),), fetch="all") or []
             return [dict(r) for r in rows]
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("_attendance failed")
             return []
 
     def _already_credited(self) -> set:
@@ -85,7 +113,10 @@ class CompOffService:
             rows = self.db.execute_query(
                 "SELECT user_id, earned_on FROM comp_off_ledger "
                 "WHERE source = 'attendance'", fetch="all") or []
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("_already_credited failed")
             return set()
         out = set()
         for row in rows:
@@ -164,7 +195,10 @@ class CompOffService:
             rows = self.db.execute_query(
                 "SELECT id, days, consumed, expires_on FROM comp_off_ledger "
                 "WHERE expires_on IS NOT NULL", fetch="all") or []
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("expire failed")
             return 0
 
         today = date.today()
@@ -182,6 +216,9 @@ class CompOffService:
                     "UPDATE comp_off_ledger SET consumed = days, "
                     "reason = reason || ' (lapsed unused)' WHERE id = %s", (row["id"],))
                 lapsed += 1
+            except DatabaseUnavailableError:
+                raise
             except Exception:
+                logger.exception("expire failed")
                 continue
         return lapsed

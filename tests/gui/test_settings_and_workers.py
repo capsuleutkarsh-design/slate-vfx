@@ -124,7 +124,7 @@ class TestWorkerGUIIntegration:
     
     def test_worker_progress_updates_gui(self, qapp_settings, qtbot):
         """Test worker progress signal updates GUI elements."""
-        from ut_vfx.core.domain.workers.structure import FolderCreationWorker
+        from ut_vfx.core.workers.structure import FolderCreationWorker
         
         # Create worker (will fail without real project, but we test signals)
         worker = FolderCreationWorker(parent=None, mode='scan', root_dir='C:\\Test')
@@ -135,7 +135,7 @@ class TestWorkerGUIIntegration:
     
     def test_worker_finished_signal(self, qapp_settings, qtbot):
         """Test worker emits finished signal."""
-        from ut_vfx.core.domain.workers.structure import FolderCreationWorker
+        from ut_vfx.core.workers.structure import FolderCreationWorker
         
         worker = FolderCreationWorker(parent=None, mode='scan', root_dir='C:\\Test')
         
@@ -144,7 +144,7 @@ class TestWorkerGUIIntegration:
     
     def test_worker_error_signal(self, qapp_settings, qtbot):
         """Test worker has error handling signal."""
-        from ut_vfx.core.domain.workers.structure import FolderCreationWorker
+        from ut_vfx.core.workers.structure import FolderCreationWorker
         
         worker = FolderCreationWorker(parent=None, mode='scan', root_dir='C:\\Test')
         
@@ -153,7 +153,7 @@ class TestWorkerGUIIntegration:
     
     def test_pause_resume_signals(self, qapp_settings, qtbot):
         """Test worker pause/resume functionality."""
-        from ut_vfx.core.domain.workers.structure import FolderCreationWorker
+        from ut_vfx.core.workers.structure import FolderCreationWorker
         
         worker = FolderCreationWorker(parent=None, mode='scan', root_dir='C:\\Test')
         
@@ -163,7 +163,7 @@ class TestWorkerGUIIntegration:
     
     def test_stop_signal(self, qapp_settings, qtbot):
         """Test worker can be stopped."""
-        from ut_vfx.core.domain.workers.structure import FolderCreationWorker
+        from ut_vfx.core.workers.structure import FolderCreationWorker
         
         worker = FolderCreationWorker(parent=None, mode='scan', root_dir='C:\\Test')
         

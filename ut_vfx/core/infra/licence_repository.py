@@ -8,9 +8,28 @@ record on its own cannot tell anybody whether the purchase was right.
 
 from __future__ import annotations
 
+import logging
+
 from datetime import date, datetime, timedelta
 
 from ..domain import licence_compliance as lc
+
+# A database that is down must not look like a studio with no data. The
+# manager raises DatabaseUnavailableError precisely so a read cannot quietly
+# come back empty; catching it here and returning a fallback puts the fault
+# straight back. So it is re-raised, and anything else is logged before the
+# fallback is used.
+try:
+    from .postgres_manager import DatabaseUnavailableError
+except ImportError:                                  # pragma: no cover
+    try:
+        from ..infra.postgres_manager import DatabaseUnavailableError
+    except ImportError:
+        class DatabaseUnavailableError(ConnectionError):
+            """Fallback when the manager cannot be imported."""
+
+logger = logging.getLogger(__name__)
+
 
 
 class LicenceRepository:
@@ -27,7 +46,10 @@ class LicenceRepository:
                 "SELECT id, software_name, total_seats, active_seats, expiration_date "
                 "FROM software_licenses ORDER BY software_name", fetch="all") or []
             return [dict(r) for r in rows]
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("licences failed")
             return []
 
     def save(self, software_name, total_seats, expiry, licence_id=None) -> bool:
@@ -44,7 +66,10 @@ class LicenceRepository:
                     "VALUES (%s, %s, 0, %s)",
                     (software_name, int(total_seats or 0), expiry))
             return True
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("save failed")
             return False
 
     def remove(self, licence_id) -> bool:
@@ -52,7 +77,10 @@ class LicenceRepository:
             self.db.execute_update(
                 "DELETE FROM software_licenses WHERE id = %s", (licence_id,))
             return True
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("remove failed")
             return False
 
     # -------------------------------------------------------------- readings
@@ -74,7 +102,10 @@ class LicenceRepository:
                 "UPDATE software_licenses SET active_seats = %s WHERE software_name = %s",
                 (int(seats_in_use or 0), software_name))
             return True
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("record failed")
             return False
 
     def peaks(self, days: int = 90) -> dict:
@@ -91,7 +122,10 @@ class LicenceRepository:
                 "SELECT software_name, MAX(seats_in_use) AS peak, COUNT(*) AS samples "
                 "FROM licence_readings WHERE taken_at >= %s "
                 "GROUP BY software_name", (since,), fetch="all") or []
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("peaks failed")
             return {}
 
         out = {}
@@ -111,7 +145,10 @@ class LicenceRepository:
                 "WHERE software_name = %s AND taken_at >= %s ORDER BY taken_at",
                 (software_name, since), fetch="all") or []
             return [dict(r) for r in rows]
+        except DatabaseUnavailableError:
+            raise
         except Exception:
+            logger.exception("history failed")
             return []
 
     # -------------------------------------------------------------- reporting

@@ -25,6 +25,7 @@ from ut_vfx.core.infra.gate import Gate
 from ut_vfx.core.infra.licence_repository import LicenceRepository
 from ut_vfx.core.domain import licence_compliance as lc
 from ..core.controls import make_button, page_title
+from ..core.offline_notice import on_database_error
 from ..core.empty_state import EmptyState
 from .my_leave_view import Figure
 
@@ -215,6 +216,7 @@ class LicenceView(QWidget):
         self.refresh()
 
     # ------------------------------------------------------------------ data
+    @on_database_error
     def refresh(self, *_):
         days = self.window_pick.currentData() or 90
         self._rows = self.repo.compliance(days)

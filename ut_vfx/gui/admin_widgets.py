@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..core.domain.workers.admin_workers import LiveStatusWorker
+from ..core.workers.admin_workers import LiveStatusWorker
 from ..core.infra.design_tokens import (
     ColorTokens as C,
     RadiusTokens as R,

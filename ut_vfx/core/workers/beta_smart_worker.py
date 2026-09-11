@@ -9,7 +9,7 @@ from ut_vfx.core.infra.database_manager import database_manager
 from ut_vfx.core.infra.file_operations import SafeFileOperations
 from ut_vfx.utils.security import SecurityValidator
 from ut_vfx.core.services.path_template_manager import get_path_manager
-from ..ingest.analyzer import SmartIngestAnalyzer
+from ..domain.ingest.analyzer import SmartIngestAnalyzer
 from ut_vfx.core.infra.config_manager import ConfigManager
 
 # --- JUNK FILE FILTER LIST ---
