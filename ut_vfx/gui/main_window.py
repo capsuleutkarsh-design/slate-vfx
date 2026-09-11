@@ -917,16 +917,29 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
             tab_id = "getting_started"  # Default
             
             # Map current tab name to help tab ID
+            # Every screen in the sidebar, so F1 always lands somewhere useful.
+            # Half of these were missing, and "Timeline Viewer" pointed at a
+            # section that did not exist - both fell through to the front page.
             tab_mapping = {
-                "Tester Panel": "tester",
-                "Stock Viewer": "stock_browser",
+                "Home": "home",
                 "Build & Ingest": "folder_creator",
                 "CAP Rename": "rename_tool",
+                "Stock Viewer": "stock_browser",
+                "Timeline Viewer": "shot_review",
                 "VFX Dashboard": "dashboard",
+                "Scheduling": "scheduling",
+                "Bidding": "bidding",
                 "Attendance": "attendance",
-                "Settings": "settings",
+                "Leave": "leave",
+                "Joining & Leaving": "joining_leaving",
+                "Hardware": "hardware",
+                "Licences": "licences",
+                "IT Support": "it_support",
+                "Deployment": "deployment",
+                "Users & Roles": "users_roles",
                 "Admin Panel": "admin_panel",
-                "Timeline Viewer": "shot_review"
+                "Tester Panel": "tester",
+                "Settings": "settings",
             }
             
             # Get the help tab ID based on current tab
@@ -935,7 +948,9 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
             logging.info(f"Opening help for tab: {current_tab_name} (help_id: {tab_id})")
             
             # Show help dialog
-            show_help(self, tab_id)
+            # The two shells do not have the same sidebar, so they do not
+            # get the same help.
+            show_help(self, tab_id, mode=getattr(self, "app_mode", None))
             
         except Exception as e:
             logging.exception(f"Error opening help dialog: {e}")

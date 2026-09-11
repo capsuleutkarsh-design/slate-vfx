@@ -41,15 +41,36 @@ def get_help_content(tab_id):
     return HELP_CONTENT.get(tab_id, HELP_CONTENT.get("getting_started"))
 
 
-def get_all_tabs():
-    """Get list of all help tabs."""
+def _in_mode(section, mode):
+    """
+    Whether a section belongs in this application.
+
+    Slate ships as two shells over one window - the VFX client and the
+    operations shell - and they do not have the same sidebar. Handing an artist
+    licence compliance, or somebody in Ops the plate renamer, is the same
+    mistake as showing them the tab.
+
+    A section with no "modes" key belongs everywhere, so older content keeps
+    working.
+    """
+    if not mode or mode == "all":
+        return True
+    modes = section.get("modes")
+    if not modes:
+        return True
+    return mode in modes
+
+
+def get_all_tabs(mode=None):
+    """The help sections for this application, in order."""
     return [
-        {"id": key, "title": value["title"], "icon": value["icon"]}
+        {"id": key, "title": value["title"], "icon": value.get("icon", "")}
         for key, value in HELP_CONTENT.items()
+        if _in_mode(value, mode)
     ]
 
 
-def search_help(query):
+def search_help(query, mode=None):
     """
     Search help content for keywords.
     Returns list of (tab_id, title, snippet) tuples.
@@ -58,6 +79,10 @@ def search_help(query):
     results = []
     
     for tab_id, content_data in HELP_CONTENT.items():
+        # Scoped to the sections this application is showing - a hit on a
+        # page it does not display is a dead end.
+        if not _in_mode(content_data, mode):
+            continue
         content = content_data.get("content", "")
         if query in content.lower() or query in content_data["title"].lower():
             # Extract snippet around match

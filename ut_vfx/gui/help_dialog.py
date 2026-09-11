@@ -15,6 +15,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 
 from ..core.help_content import HELP_CONTENT, get_all_tabs, search_help
+from ..core.infra.gate import Gate
+from .core.icons import icon as drawn_icon
 
 
 class HelpDialog(QDialog):
@@ -22,7 +24,10 @@ class HelpDialog(QDialog):
     Main help dialog featuring tabbed documentation with search.
     """
     
-    def __init__(self, parent=None, initial_tab="getting_started"):
+    def __init__(self, parent=None, initial_tab="getting_started", mode=None):
+        # Which application this is: "vfx", "ops", or None for both.
+        # The two shells do not share a sidebar, so they do not share help.
+        self.mode = mode
         super().__init__(parent)
         self.setWindowTitle("Slate Help")
         self.setMinimumSize(1000, 800)
@@ -255,7 +260,7 @@ class HelpDialog(QDialog):
     def load_content(self):
         """Load all help content into tabs."""
         try:
-            tabs_data = get_all_tabs()
+            tabs_data = get_all_tabs(getattr(self, "mode", None))
             
             if not tabs_data:
                 logging.error("No help tabs found - HELP_CONTENT may be empty")
@@ -281,8 +286,17 @@ class HelpDialog(QDialog):
                     logging.exception(f"Error loading content for tab {tab_id}")
                     browser.setHtml(self.format_html(f"<h2>Error Loading Content</h2><p>{str(e)}</p>"))
                 
-                # Add tab
-                self.tab_widget.addTab(browser, tab_title)
+                # Labelled with the drawn icon set, like the rest of the
+                # product. These used to be emoji baked into the title string,
+                # which Windows rendered in whatever font it fancied.
+                # Qt treats a single "&" in tab text as a keyboard mnemonic,
+                # so "Build & Ingest" would render as "Build _Ingest".
+                tab_title = tab_title.replace("&", "&&")
+                glyph = tab_data.get("icon") or ""
+                if glyph:
+                    self.tab_widget.addTab(browser, drawn_icon(glyph, Gate.TEXT_2, 16), tab_title)
+                else:
+                    self.tab_widget.addTab(browser, tab_title)
                 
         except ImportError as e:
             logging.exception("Failed to import help_content module")
@@ -456,13 +470,15 @@ class HelpDialog(QDialog):
             super().keyPressEvent(event)
 
 
-def show_help(parent=None, tab_id="getting_started"):
+def show_help(parent=None, tab_id="getting_started", mode=None):
     """
     Show help dialog.
     
     Args:
         parent: Parent widget
         tab_id: ID of tab to show (default: getting_started)
+        mode: "vfx", "ops" or None for everything. Decides which sections
+              are offered, so each application's help matches its sidebar.
     """
-    dialog = HelpDialog(parent, initial_tab=tab_id)
+    dialog = HelpDialog(parent, initial_tab=tab_id, mode=mode)
     dialog.exec()
