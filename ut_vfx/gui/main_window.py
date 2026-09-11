@@ -940,6 +940,7 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
                 "Admin Panel": "admin_panel",
                 "Tester Panel": "tester",
                 "Settings": "settings",
+                "Workspace Info": "workspace_info",
             }
             
             # Get the help tab ID based on current tab

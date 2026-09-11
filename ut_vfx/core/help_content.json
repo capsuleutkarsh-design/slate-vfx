@@ -166,5 +166,14 @@
       "ops"
     ],
     "content": "<h1>Tester Panel</h1>\n\n<p>Tools for checking Slate itself. Nothing here is needed to do a day's work,\nand some of it writes to the studio database &mdash; read the screen before\npressing anything.</p>\n\n<h2>Data generator</h2>\n\n<p>Makes realistic demo projects, shots, tickets and leave so a screen can be\nlooked at before a studio has its own data. Everything it writes is tagged, and\nit can remove exactly what it wrote.</p>\n\n<h2>Workflow simulation</h2>\n\n<p>Drives a whole job end to end &mdash; ingest, assign, review, deliver &mdash;\nso a change can be checked against the full path rather than one screen.</p>\n\n<h2>Diagnostics</h2>\n\n<p>Database round trip, disk throughput, thumbnail rate, memory. Useful numbers\nto put in a ticket when somebody says Slate is slow, because \"slow\" on its own\ncannot be acted on.</p>\n\n<h2>Chaos</h2>\n\n<p>Deliberately breaks things &mdash; pulls the database mid-save, corrupts a\nsequence &mdash; to check Slate fails honestly instead of quietly. <b>Never run\nthis against the studio database.</b>\n</p>"
+  },
+  "workspace_info": {
+    "icon": "info",
+    "title": "Workspace Info",
+    "modes": [
+      "vfx",
+      "ops"
+    ],
+    "content": "<h1>Workspace Info</h1>\n\n<p>What this copy of Slate is actually running: the version, where it is\ninstalled, which database it reached, and which plugins loaded.</p>\n\n<h2>What it is for</h2>\n\n<p>Two things.</p>\n\n<p><b>Answering \"which version are you on?\"</b> &mdash; the first question IT\nwill ask on a ticket, and the one nobody can ever answer. It is on this screen.\nCopy it into the ticket and save a round trip.</p>\n\n<p><b>Checking the plugin system.</b> This tab is itself a plugin, shipped as a\nworking example. If it loaded, the plugin machinery is healthy.</p>\n\n<h2>Reading it</h2>\n\n<p>The card lists the runtime context Slate handed the plugin &mdash; the signed-in\nuser, the workspace root, and the active database mode.</p>\n\n<p><b>Database mode</b> is the one worth glancing at. If it says SQLite when\nyour studio runs PostgreSQL, this machine is on its local fallback copy and\nnothing it does is being shared. That is worth a ticket.</p>"
   }
 }
