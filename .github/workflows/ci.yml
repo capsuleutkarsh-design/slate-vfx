@@ -12,6 +12,18 @@ env:
   # and that is most of this suite. "offscreen" renders into memory instead.
   QT_QPA_PLATFORM: offscreen
 
+  # Home renders its background in a QWebEngineView, so opening it starts
+  # Chromium - and on a runner with no GPU that logs "WebGL1 blocklisted" and
+  # then falls over as it shuts down. Every test passed and the process still
+  # returned non-zero, which read as three failing steps for several runs.
+  # The three steps that passed throughout are precisely the three that never
+  # build a window.
+  #
+  # Chromium is told not to look for a GPU it does not have, and not to start
+  # a sandbox it cannot start.
+  QTWEBENGINE_CHROMIUM_FLAGS: "--disable-gpu --disable-gpu-compositing --disable-software-rasterizer --no-sandbox --disable-dev-shm-usage"
+  QTWEBENGINE_DISABLE_SANDBOX: "1"
+
 jobs:
   validate:
     runs-on: windows-latest
