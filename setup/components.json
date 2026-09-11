@@ -1,0 +1,86 @@
+{
+  "_comment": [
+    "Everything Slate needs that is not source code. setup.bat reads this file,",
+    "downloads what is missing and puts it where the application looks for it.",
+    "",
+    "None of it is committed: these are third-party builds with their own",
+    "licences, and between them they are the better part of a gigabyte. Pinning",
+    "them here rather than vendoring them keeps the repository a few megabytes",
+    "and makes an upgrade a one-line edit.",
+    "",
+    "Set 'required' to false for anything the studio can work without - setup",
+    "reports those as skipped rather than failing the whole install."
+  ],
+  "components": [
+    {
+      "name": "python",
+      "title": "Python 3.10 (portable)",
+      "why": "Slate runs on it. Nothing is installed system-wide and no existing Python on the machine is touched.",
+      "url": "https://www.python.org/ftp/python/3.10.11/python-3.10.11-embed-amd64.zip",
+      "kind": "zip",
+      "dest": "runtime/python",
+      "probe": "runtime/python/python.exe",
+      "required": true
+    },
+    {
+      "name": "pip",
+      "title": "pip",
+      "why": "Installs Slate's Python dependencies into the portable runtime.",
+      "url": "https://bootstrap.pypa.io/get-pip.py",
+      "kind": "file",
+      "dest": "runtime/python/get-pip.py",
+      "probe": "runtime/python/Scripts/pip.exe",
+      "required": true
+    },
+    {
+      "name": "ffmpeg",
+      "title": "FFmpeg",
+      "why": "Thumbnails, proxies and playback. The review and stock browser tabs need it.",
+      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
+      "kind": "zip",
+      "dest": "runtime/ffmpeg",
+      "extract_glob": "**/bin/ffmpeg.exe",
+      "install_to": "ut_vfx/bin/ffmpeg.exe",
+      "probe": "ut_vfx/bin/ffmpeg.exe",
+      "required": true
+    },
+    {
+      "name": "postgresql",
+      "title": "PostgreSQL 16 (binaries only)",
+      "why": "The studio database. Only needed on the machine that runs UT Central Server - a workstation that connects to an existing server can skip it.",
+      "url": "https://get.enterprisedb.com/postgresql/postgresql-16.9-1-windows-x64-binaries.zip",
+      "kind": "zip",
+      "dest": "ut_server/bin",
+      "strip_root": "pgsql",
+      "into": "pgsql",
+      "probe": "ut_server/bin/pgsql/bin/postgres.exe",
+      "required": false
+    },
+    {
+      "name": "olive",
+      "title": "Olive video editor",
+      "why": "Embedded in the review tab for cutting. Slate falls back to its own player when this is absent.",
+      "url": null,
+      "kind": "zip",
+      "dest": "external/olive-editor",
+      "probe": "external/olive-editor/olive-editor.exe",
+      "required": false,
+      "resolve": {
+        "_comment": "Olive's nightly asset carries the build's commit hash in its filename, so a pinned link rots within the week. The release is looked up at setup time instead.",
+        "github_release": "olive-editor/olive",
+        "tag": "0.2.0-nightly",
+        "asset_match": "Windows-x86_64-Portable\\.zip$"
+      }
+    },
+    {
+      "name": "openrv",
+      "title": "OpenRV",
+      "why": "Used for review playback when it is present. There is no public Windows build, so this one is built or supplied by the studio - drop it in the folder below and Slate finds it.",
+      "url": null,
+      "kind": "manual",
+      "dest": "OpenRV",
+      "probe": "OpenRV/bin/rv.exe",
+      "required": false
+    }
+  ]
+}

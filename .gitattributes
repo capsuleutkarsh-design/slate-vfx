@@ -1,0 +1,28 @@
+# Normalise to LF in the repository and let Git check out what each platform
+# expects. Without this, a .bat edited on Windows and a .py edited anywhere
+# arrive as whole-file diffs.
+* text=auto
+
+# These are run by Windows shells, which need CRLF - cmd.exe mis-parses a
+# multi-line .bat with bare LF endings, and the failure looks like a syntax
+# error in a line that is fine.
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+# Source stays LF everywhere.
+*.py   text eol=lf
+*.sql  text eol=lf
+*.md   text eol=lf
+*.json text eol=lf
+*.qss  text eol=lf
+*.html text eol=lf
+*.ini  text eol=lf
+
+# Never touched.
+*.png  binary
+*.jpg  binary
+*.ico  binary
+*.bmp  binary
+*.xlsx binary
+*.onnx binary

@@ -1,0 +1,45 @@
+{
+  "_comment": "Which roles may perform each action. Role names are matched case-insensitively. Edit this file to change permissions - no code change needed.",
+  "_dashboard_write": "May edit shots, statuses and assignments on the dashboard.",
+  "dashboard_write": [
+    "admin",
+    "developer",
+    "supervisor",
+    "coordinator",
+    "lead"
+  ],
+  "_excel_sync": "May import from and export to the project Excel backup.",
+  "excel_sync": [
+    "admin",
+    "developer",
+    "supervisor",
+    "coordinator",
+    "lead"
+  ],
+  "_force_save": "May overwrite another user's concurrent edit when a conflict is reported.",
+  "force_save": [
+    "admin",
+    "developer",
+    "supervisor"
+  ],
+  "_artist_own_status": "May set the status of a department row they are personally assigned to, and nothing else.",
+  "artist_own_status": [
+    "artist",
+    "lead",
+    "coordinator",
+    "supervisor",
+    "developer",
+    "admin"
+  ],
+  "_artist_statuses": "Statuses somebody with only artist_own_status may set. Everything else (Approved, Retake, Omit) is a verdict and stays with the roles in dashboard_write.",
+  "artist_statuses": [
+    "YTS",
+    "WIP",
+    "READY",
+    "SENT FOR REVIEW"
+  ],
+  "_department_scoped": "Roles in dashboard_write that may edit only their own department's columns. The department comes from the person's job title.",
+  "department_scoped": [
+    "lead"
+  ]
+}

@@ -1,0 +1,176 @@
+{
+    "projects": {
+        "UT98": {
+            "name": "UT98 Dummy Project",
+            "project_number": 2,
+            "excel_path": "",
+            "local_excel_path": "..\\\\..\\\\..\\\\..\\\\data\\\\UT98_DUMMY_SHEET.xlsx",
+            "sheet_name": "MASTER",
+            "header_row": 2,
+            "data_start_row": 3,
+            "folder_base": "",
+            "folder_template": {
+                "scan": "05_Reels/{reel}/{shot}/01_Scan/EXR",
+                "roto": "05_Reels/{reel}/{shot}/04_Roto",
+                "prep": "05_Reels/{reel}/{shot}/05_Prep/prep out",
+                "comp": "05_Reels/{reel}/{shot}/04_Comp",
+                "dmp": "05_Reels/{reel}/{shot}/02_Dmp/final",
+                "output": "05_Reels/{reel}/{shot}/08_Output"
+            },
+            "column_mapping": {
+                "serial": "A",
+                "thumbnail": "B",
+                "reel": "C",
+                "shot_name": "D",
+                "frames": "E",
+                "sow": "G",
+                "internal_comment": "H",
+                "client_feedback": "I",
+                "director_feedback": "J",
+                "artist_all": "M",
+                "assigned_artist": "N",
+                "wip_date": "O",
+                "shot_done_date": "P",
+                "internal_status": "Q",
+                "overall_status": "R",
+                "client_status": "S",
+                "version": "V",
+                "submission_date": "X",
+                "roto_bid": "AD",
+                "roto_artist": "AF",
+                "roto_status": "AG",
+                "roto_eta": "AI",
+                "dmp_status": "AL",
+                "dmp_mandays": "AN",
+                "dmp_eta": "AO",
+                "cg_status": "AR",
+                "cg_artist": "AS",
+                "cg_mandays": "AU",
+                "cg_eta": "AV",
+                "latest_version": "BF"
+            },
+            "status": "active"
+        },
+        "DEMO": {
+            "name": "Demo Project",
+            "project_number": 3,
+            "excel_path": "",
+            "local_excel_path": "sample_project.xlsx",
+            "sheet_name": "MASTER",
+            "header_row": 2,
+            "data_start_row": 3,
+            "folder_base": "",
+            "folder_template": {
+                "scan": "05_Reels/{reel}/{shot}/01_Scan/EXR",
+                "roto": "05_Reels/{reel}/{shot}/04_Roto",
+                "prep": "05_Reels/{reel}/{shot}/05_Prep/prep out",
+                "comp": "05_Reels/{reel}/{shot}/04_Comp",
+                "dmp": "05_Reels/{reel}/{shot}/02_Dmp/final",
+                "output": "05_Reels/{reel}/{shot}/08_Output"
+            },
+            "column_mapping": {
+                "serial": "A",
+                "thumbnail": "B",
+                "reel": "C",
+                "shot_name": "D",
+                "frames": "E",
+                "sow": "F",
+                "internal_comment": "G",
+                "client_feedback": "H",
+                "director_feedback": "I",
+                "scan_status": "J",
+                "assigned_artist": "K",
+                "wip_date": "L",
+                "shot_done_date": "M",
+                "internal_status": "N",
+                "overall_status": "O",
+                "client_status": "P",
+                "version": "Q",
+                "submission_date": "R",
+                "roto_bid": "S",
+                "roto_artist": "T",
+                "roto_status": "U",
+                "roto_eta": "V",
+                "dmp_status": "W",
+                "dmp_mandays": "X",
+                "dmp_eta": "Y",
+                "cg_status": "Z",
+                "cg_artist": "AA",
+                "cg_mandays": "AB",
+                "cg_eta": "AC",
+                "latest_version": "AD",
+                "priority": "AE",
+                "shot_type": "AF",
+                "slapcomp_artist": "AG",
+                "slapcomp_status": "AH",
+                "slapcomp_bid": "AI",
+                "slapcomp_eta": "AJ",
+                "slapcomp_target": "AK"
+            },
+            "status": "active"
+        }
+    },
+    "extended_sheets": {
+        "ut_vfx_data": {
+            "name": "UTVFX_DATA",
+            "columns": {
+                "shot_id": "A",
+                "shot_type": "B",
+                "priority": "C",
+                "is_hero": "D",
+                "similar_to": "E",
+                "created_date": "F",
+                "updated_date": "G"
+            }
+        },
+        "artist_log": {
+            "name": "ARTIST_LOG",
+            "columns": {
+                "shot_id": "A",
+                "artist": "B",
+                "department": "C",
+                "start_date": "D",
+                "end_date": "E",
+                "notes": "F"
+            }
+        },
+        "feedback_log": {
+            "name": "FEEDBACK_LOG",
+            "columns": {
+                "shot_id": "A",
+                "date": "B",
+                "source": "C",
+                "feedback": "D",
+                "logged_by": "E"
+            }
+        }
+    },
+    "shot_types": [
+        "Prep",
+        "2D Comp",
+        "2.5D Comp",
+        "CG Comp",
+        "AI Shot"
+    ],
+    "priority_levels": [
+        0,
+        1,
+        2,
+        3
+    ],
+    "departments": [
+        "Comp",
+        "Roto",
+        "Prep",
+        "DMP",
+        "CG",
+        "MGFX"
+    ],
+    "feedback_sources": [
+        "Client",
+        "Director",
+        "Internal",
+        "UT_VFX"
+    ],
+    "default_project": "DEMO"
+}

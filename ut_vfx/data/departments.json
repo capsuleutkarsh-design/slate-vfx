@@ -1,0 +1,85 @@
+{
+  "_comment": "Departments tracked on every shot. Edit this file to add, remove or rename one - no code change needed. 'key' is stored in the database: never rename a key that already has data against it. 'folder' should match the shot folder in templates.json. 'family' groups related departments (comp and slapcomp are both comp).",
+  "departments": [
+    {
+      "key": "dmp",
+      "label": "DMP",
+      "name": "Matte Painting",
+      "folder": "02_Dmp",
+      "family": "dmp",
+      "order": 10
+    },
+    {
+      "key": "cg",
+      "label": "CG",
+      "name": "CG",
+      "folder": "03_Cg",
+      "family": "cg",
+      "order": 20
+    },
+    {
+      "key": "roto",
+      "label": "Roto",
+      "name": "Roto",
+      "folder": "04_Roto",
+      "family": "roto",
+      "order": 30
+    },
+    {
+      "key": "prep",
+      "label": "Prep",
+      "name": "Prep / Paint",
+      "folder": "05_Prep",
+      "family": "prep",
+      "order": 40
+    },
+    {
+      "key": "matchmove",
+      "label": "MMV",
+      "name": "Matchmove",
+      "folder": "06_Cmm",
+      "family": "matchmove",
+      "order": 50
+    },
+    {
+      "key": "comp",
+      "label": "Comp",
+      "name": "Comp",
+      "folder": "07_Comp",
+      "family": "comp",
+      "order": 60
+    },
+    {
+      "key": "slapcomp",
+      "label": "Slap",
+      "name": "Slap Comp",
+      "folder": "07_Comp/Slapcomp",
+      "family": "comp",
+      "order": 70
+    },
+    {
+      "key": "deage",
+      "label": "Face",
+      "name": "Face / De-age",
+      "folder": "09_Deage",
+      "family": "deage",
+      "order": 80
+    },
+    {
+      "key": "ai",
+      "label": "AI",
+      "name": "AI",
+      "folder": "10_AI",
+      "family": "ai",
+      "order": 90
+    },
+    {
+      "key": "mgfx",
+      "label": "MGFX",
+      "name": "Motion Graphics",
+      "folder": "11_Mgfx",
+      "family": "mgfx",
+      "order": 100
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+name: UT_VFX CI
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Poetry
+        run: python -m pip install --upgrade pip poetry
+
+      - name: Install dependencies
+        run: poetry install --with dev --no-interaction --no-root
+
+      - name: Smoke compile
+        run: |
+          poetry run python -m py_compile ut_vfx/gatekeeper_main.py
+          poetry run python -m py_compile ut_vfx/core/infra/postgres_manager.py
+          poetry run python -m py_compile ut_vfx/gui/main_window.py
+
+      - name: Run tests
+        run: poetry run pytest -q -o addopts='' -p no:cacheprovider --maxfail=5

@@ -1,0 +1,62 @@
+# ---------------------------------------------------------------- credentials
+#
+# Slate keeps every password out of the repository. The shipped
+# ut_vfx/default_config.json carries settings only; setup.bat writes the real
+# values into the files below, which stay on the machine.
+ut_vfx/config.json
+client_config.json
+**/client_config.json
+*.secret.key
+.secret.key
+.env
+pgbouncer/pgbouncer.ini
+pgbouncer/userlist.txt
+**/config/users.json
+
+# ------------------------------------------------------------------- runtime
+#
+# Downloaded by setup.bat. Third-party builds with their own licences, and
+# together the better part of a gigabyte - pinned in setup/components.json
+# rather than committed.
+runtime/
+OpenRV/
+external/olive-editor/
+ut_server/bin/
+ut_vfx/bin/ffmpeg.exe
+
+# A live PostgreSQL data directory. These files change on every query and
+# corrupt on checkout; they are not source and must never be committed.
+LocalDatabase/
+**/LocalDatabase/
+*.pid
+
+# ---------------------------------------------------------------- studio data
+#
+# Delivery sheets, render logs and anything else a production leaves behind.
+*.xlsx.lock
+logs/
+RuntimeData/
+crash_log.txt
+
+# ------------------------------------------------------------------- python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# -------------------------------------------------------------------- editor
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store
+*.tmp
+
+# Generated at theme time from ut_vfx/gui/core/icons.py - not hand-authored art.
+ut_vfx/resources/icons/

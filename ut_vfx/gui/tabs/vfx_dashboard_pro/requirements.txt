@@ -1,0 +1,11 @@
+# PyQt5==5.15.9 (Removed: Migrated to Pyside6)
+PySide6
+openpyxl==3.1.2
+Pillow==10.0.0
+openimageio==3.0.3.1
+gspread==5.10.0
+oauth2client==4.1.3
+gazu>=1.1.6
+cryptography==41.0.3
+watchdog==3.0.0
+numpy==1.24.3

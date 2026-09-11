@@ -1,0 +1,59 @@
+{
+  "standard": {
+    "name": "Standard Pipeline (Studio)",
+    "description": "Standard pipeline structure matching Studio requirements v1.0",
+    "base_folders": [
+      "01_Frm Client",
+      "02_Edit",
+      "03_References",
+      "04_Production",
+      "05_Reels",
+      "06_Feedback",
+      "07_Outsource/01_To_Outsource",
+      "07_Outsource/02_Frm_Outsource",
+      "08_To Client"
+    ],
+    "production_subfolders": [
+      "01_ARTIST_SOW_SHEET",
+      "02_Contact_sheet"
+    ],
+    "outsource_subfolders": [],
+    "shot_folders": [
+      "00_Annotation",
+      "01_Scan",
+      "02_Dmp/Script",
+      "02_Dmp/Work/PSD",
+      "02_Dmp/Work/Layer",
+      "02_Dmp/Output",
+      "03_Cg/Script",
+      "03_Cg/Cache",
+      "03_Cg/Output/Anim",
+      "03_Cg/Output/Fx",
+      "03_Cg/Output/Lighting",
+      "04_Roto/Script",
+      "04_Roto/Output/Shape",
+      "04_Roto/Output/Matte",
+      "05_Prep/Script",
+      "05_Prep/Output",
+      "06_Cmm/Script",
+      "06_Cmm/Output/Cam",
+      "06_Cmm/Output/Geo",
+      "07_Comp/Script",
+      "07_Comp/Output",
+      "07_Comp/Slapcomp/Script",
+      "07_Comp/Slapcomp/Output",
+      "08_Deliver/EXR",
+      "08_Deliver/MOV",
+      "09_Deage/Script",
+      "09_Deage/Output",
+      "10_AI/Script",
+      "10_AI/Output/Plates",
+      "10_AI/Output/Backgrounds",
+      "11_Mgfx/Script",
+      "11_Mgfx/Output"
+    ],
+    "scan_version_folders": [
+      "Denoise"
+    ]
+  }
+}

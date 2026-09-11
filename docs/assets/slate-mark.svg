@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Slate">
+  <title>Slate</title>
+  <g fill="none" stroke="#3EA8BF" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M11 28 V47 a8 8 0 0 0 8 8 h26 a8 8 0 0 0 8 -8 V28"/>
+  </g>
+  <g fill="#3EA8BF">
+    <g transform="rotate(-11 32 19)">
+      <path fill-rule="evenodd" d="
+        M10 12 h44 a4 4 0 0 1 4 4 v7 a4 4 0 0 1 -4 4
+        h-44 a4 4 0 0 1 -4 -4 v-7 a4 4 0 0 1 4 -4 z
+        M21 12 h6 l-7 15 h-6 z
+        M38 12 h6 l-7 15 h-6 z
+        M55 12 h3 v4 l-5 11 h-6 z"/>
+    </g>
+    <rect x="28.5" y="30" width="7" height="13" rx="2.5"/>
+  </g>
+</svg>

@@ -1,0 +1,128 @@
+<?xml version="1.0" ?>
+<olive version="230220" url=".\test_olive_bridge.ovexml">
+    <project>
+        <project version="1">
+            <nodes>
+                <node version="1" id="org.olivevideoeditor.Olive.folder" ptr="1770102709324">
+                    <label>Root</label>
+                    <input id="child_in"/>
+                    <connections>
+                        <connection input="child_in" element="0">
+                            <output>1770102709981</output>
+                        </connection>
+                    </connections>
+                </node>
+                <node version="1" id="org.olivevideoeditor.Olive.sequence" ptr="1770102709981">
+                    <label>VFX_Lineup</label>
+                    <connections>
+                        <connection input="track_in_0" element="0">
+                            <output>1770102706249</output>
+                        </connection>
+                        <connection input="track_in_0" element="1">
+                            <output>1770102705048</output>
+                        </connection>
+                    </connections>
+                </node>
+                <node version="1" id="org.olivevideoeditor.Olive.track" ptr="1770102706249">
+                    <label>Scans</label>
+                    <connections>
+                        <connection input="block_in" element="0">
+                            <output>1770102703172</output>
+                        </connection>
+                        <connection input="block_in" element="1">
+                            <output>1770102707636</output>
+                        </connection>
+                    </connections>
+                </node>
+                <node version="1" id="org.olivevideoeditor.Olive.track" ptr="1770102705048">
+                    <label>Renders</label>
+                    <connections>
+                        <connection input="block_in" element="0">
+                            <output>1770102710792</output>
+                        </connection>
+                    </connections>
+                </node>
+                <node version="1" id="org.olivevideoeditor.Olive.footage" ptr="1770102703549">
+                    <label>Shot_01_scan</label>
+                    <input id="file_in">
+                        <primary>
+                            <standard>
+                                <track>X:/Element/06. Dirt_Charges/Dirt_Charge_05.mov</track>
+                            </standard>
+                        </primary>
+                    </input>
+                </node>
+                <node version="1" id="org.olivevideoeditor.Olive.transform" ptr="1770102702080">
+                    <connections>
+                        <connection input="tex_in">
+                            <output>1770102703549</output>
+                        </connection>
+                    </connections>
+                </node>
+                <node version="1" id="org.olivevideoeditor.Olive.clip" ptr="1770102703172">
+                    <connections>
+                        <connection input="buffer_in">
+                            <output>1770102702080</output>
+                        </connection>
+                    </connections>
+                </node>
+                <node version="1" id="org.olivevideoeditor.Olive.footage" ptr="1770102710638">
+                    <label>Shot_02_scan</label>
+                    <input id="file_in">
+                        <primary>
+                            <standard>
+                                <track>X:/Element/06. Dirt_Charges/Dirt_Charge_06.mov</track>
+                            </standard>
+                        </primary>
+                    </input>
+                </node>
+                <node version="1" id="org.olivevideoeditor.Olive.transform" ptr="1770102705439">
+                    <connections>
+                        <connection input="tex_in">
+                            <output>1770102710638</output>
+                        </connection>
+                    </connections>
+                </node>
+                <node version="1" id="org.olivevideoeditor.Olive.clip" ptr="1770102707636">
+                    <connections>
+                        <connection input="buffer_in">
+                            <output>1770102705439</output>
+                        </connection>
+                    </connections>
+                </node>
+                <node version="1" id="org.olivevideoeditor.Olive.footage" ptr="1770102703481">
+                    <label>Shot_02_render</label>
+                    <input id="file_in">
+                        <primary>
+                            <standard>
+                                <track>X:/Element/06. Dirt_Charges/Dirt_Charge_06.mov</track>
+                            </standard>
+                        </primary>
+                    </input>
+                </node>
+                <node version="1" id="org.olivevideoeditor.Olive.transform" ptr="1770102705084">
+                    <connections>
+                        <connection input="tex_in">
+                            <output>1770102703481</output>
+                        </connection>
+                    </connections>
+                </node>
+                <node version="1" id="org.olivevideoeditor.Olive.clip" ptr="1770102710792">
+                    <connections>
+                        <connection input="buffer_in">
+                            <output>1770102705084</output>
+                        </connection>
+                    </connections>
+                </node>
+            </nodes>
+            <settings>
+                <root>1770102709324</root>
+            </settings>
+        </project>
+        <layout version="1">
+            <timeline>
+                <sequence>1770102709981</sequence>
+            </timeline>
+        </layout>
+    </project>
+</olive>

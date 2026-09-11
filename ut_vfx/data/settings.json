@@ -1,0 +1,37 @@
+{
+    "project_directory": "",
+    "excel_file": "",
+    "template": "standard",
+    "format_mapping": {
+        "dpx": "Scan/Dpx",
+        "exr": "Scan/Exr",
+        "tif": "Scan/Tiff",
+        "tiff": "Scan/Tiff",
+        "mov": "Scan/Mov",
+        "avi": "Scan/Avi",
+        "png": "Scan/Png",
+        "jpg": "Scan/Jpg",
+        "jpeg": "Scan/Jpg",
+        "raw": "Scan/Raw",
+        "cine": "Scan/Cine",
+        "r3d": "Scan/R3d"
+    },
+    "global_settings": {
+        "restore_last_paths": true,
+        "show_hidden_files": false,
+        "auto_backup": true,
+        "backup_retention_days": 30,
+        "max_log_size_mb": 10,
+        "default_template_used": "standard",
+        "enable_dry_run_by_default": false,
+        "max_concurrent_operations": 1,
+        "retry_on_error": true,
+        "retry_count": 3
+    },
+    "last_project_directory": "D:\\Soft\\UTCAP\\V0040\\demo\\test_projects",
+    "last_excel_file": "D:\\Soft\\UTCAP\\V0040\\demo\\Test_VFX_Data.xlsx",
+    "last_scan_directory": "",
+    "last_destination_root": "",
+    "last_shot_subfolders_target": "",
+    "window_state": {}
+}

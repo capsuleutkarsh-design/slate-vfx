@@ -1,0 +1,12 @@
+{
+    "mount_mappings": {
+        "Z:/": "/Volumes/Projects/",
+        "Y:/": "/Volumes/Assets/",
+        "X:/": "/Volumes/Shared/",
+        "/Volumes/Projects/": "Z:/",
+        "/Volumes/Assets/": "Y:/",
+        "/Volumes/Shared/": "X:/"
+    },
+    "_comment": "Map network paths across Windows/Mac/Linux. Format: 'source_prefix': 'target_prefix'",
+    "_instructions": "Edit this file to add custom mount point mappings for cross-platform path resolution"
+}

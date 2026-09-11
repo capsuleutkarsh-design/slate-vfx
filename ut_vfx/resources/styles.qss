@@ -1,0 +1,342 @@
+/* CAPSULE VFX - ELECTRIC BLUE THEME (v3.0 - "Blue Glow") */
+/* Inspired by user request: #03699a + Cyan Glow */
+
+/* --- 1. GLOBAL RESET & TYPOGRAPHY --- */
+* {
+    font-family: "Segoe UI", "Roboto", "Helvetica Neue", sans-serif;
+    font-size: 10pt;
+    color: #E0E0E0; /* Soft White */
+    outline: none;
+}
+
+/* --- 2. MAIN BACKGROUNDS --- */
+QMainWindow, QWidget {
+    background-color: #1A1A1A; /* Deep Charcoal */
+}
+
+QDialog {
+    background-color: #1A1A1A;
+}
+
+/* --- 3. CONTAINERS (Cards) --- */
+QGroupBox {
+    background-color: #242424; 
+    border: 1px solid #333333;
+    border-radius: 16px; 
+    margin-top: 24px; 
+    padding-top: 25px;
+    padding-bottom: 15px;
+    padding-left: 15px;
+    padding-right: 15px;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    padding: 4px 10px;
+    margin-left: 15px;
+    color: #00B4D8; /* Bright Cyan Title */
+    font-weight: bold;
+    font-size: 11pt;
+    background-color: #1A1A1A; 
+    border: 1px solid #333333;
+    border-radius: 8px; 
+}
+
+/* --- 4. LABELS (Rounded Chips) --- */
+QLabel {
+    background-color: transparent;
+    border: none;
+    color: #AAAAAA;            
+    font-weight: 600;
+    font-size: 9pt;
+}
+
+QStatusBar QLabel {
+    background-color: transparent;
+    border: none;
+}
+
+/* --- 5. INPUT FIELDS (Blue Focus) --- */
+QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox {
+    background-color: #0F0F0F;
+    border: 1px solid #333333; 
+    border-radius: 15px; 
+    padding: 8px 15px; 
+    color: #FFFFFF;
+    selection-background-color: #03699a;
+    selection-color: #FFFFFF;
+    min-height: 20px;
+}
+
+QLineEdit:focus, QTextEdit:focus {
+    border: 1px solid #00B4D8; /* Bright Cyan Glow */
+    background-color: #141414;
+}
+
+QLineEdit:read-only {
+    background-color: #1A1A1A; 
+    color: #555555;
+    border: 1px dashed #333333;
+}
+
+/* --- 6. COMBO BOXES --- */
+QComboBox {
+    background-color: #0F0F0F;
+    border: 1px solid #333333;
+    border-radius: 15px;
+    padding: 5px 15px;
+    min-height: 25px;
+    color: #E0E0E0;
+}
+
+QComboBox:hover {
+    border: 1px solid #555555;
+}
+
+QComboBox::drop-down {
+    border: none;
+    width: 30px;
+}
+
+QComboBox::down-arrow {
+    image: none;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 6px solid #00B4D8; /* Cyan Arrow */
+    width: 0;
+    height: 0;
+    margin-right: 10px;
+}
+
+/* --- 7. BUTTONS (The "Electric Blue" Gradient) --- */
+QPushButton {
+    background-color: #2D2D2D;
+    border: 1px solid #404040;
+    border-radius: 12px;
+    padding: 8px 16px;
+    font-weight: 600;
+    color: #E0E0E0;
+}
+
+QPushButton:hover {
+    background-color: #383838;
+    border-color: #666666;
+}
+
+QPushButton:pressed {
+    background-color: #151515;
+    padding-top: 10px;
+}
+
+QPushButton#primaryButton {
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #03699a, stop:1 #00B4D8);
+    border: none;
+    color: white;
+    font-weight: bold;
+    font-size: 11pt;
+    border-radius: 20px; 
+    padding: 10px 24px;
+}
+
+QPushButton#primaryButton:hover {
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #0077B6, stop:1 #48CAE4);
+}
+
+QPushButton#primaryButton:pressed {
+    background-color: #0077B6;
+}
+
+/* --- 8. TABS --- */
+QTabWidget::pane {
+    border: 1px solid #333333;
+    background-color: #1A1A1A;
+    border-radius: 12px;
+    margin-top: -1px;
+}
+
+QTabBar::tab {
+    background-color: transparent;
+    color: #888888;
+    padding: 12px 25px;
+    font-weight: 600;
+    border-bottom: 2px solid transparent;
+    margin-right: 5px;
+}
+
+QTabBar::tab:selected {
+    color: #FFFFFF;
+    border-bottom: 2px solid #00B4D8; /* Cyan Underline */
+}
+
+QTabBar::tab:hover {
+    color: #CCCCCC;
+}
+
+/* --- 9. DATA TABLES --- */
+QTreeWidget, QTableWidget {
+    background-color: #121212;
+    alternate-background-color: #181818;
+    border: 1px solid #333333;
+    border-radius: 12px;
+    gridline-color: #2A2A2A;
+    selection-background-color: #03699a; /* Blue Selection */
+    selection-color: #FFFFFF;
+}
+
+QHeaderView::section {
+    background-color: #242424;
+    padding: 10px;
+    border: none;
+    border-bottom: 2px solid #333333;
+    color: #00B4D8; /* Cyan Header Text */
+    font-weight: bold;
+    text-transform: uppercase;
+    font-size: 9pt;
+}
+
+/* --- 10. PROGRESS BAR --- */
+QProgressBar {
+    border: 1px solid #333333;
+    border-radius: 8px;
+    text-align: center;
+    background-color: #121212;
+    color: #FFFFFF;
+    font-weight: bold;
+    height: 20px;
+}
+
+QProgressBar::chunk {
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #03699a, stop:1 #00B4D8);
+    border-radius: 6px;
+}
+
+/* --- 11. STATUS BAR --- */
+QStatusBar {
+    background-color: #242424;
+    color: #888888;
+    border-top: 1px solid #333333;
+}
+
+/* --- 12. CHECKBOXES --- */
+QCheckBox {
+    spacing: 8px;
+    color: #E0E0E0;
+}
+
+QCheckBox::indicator {
+    width: 18px;
+    height: 18px;
+    border-radius: 6px; 
+    border: 1px solid #555555;
+    background-color: #0F0F0F;
+}
+
+QCheckBox::indicator:checked {
+    background-color: #03699a;
+    border-color: #03699a;
+}
+
+QCheckBox::indicator:hover {
+    border-color: #00B4D8;
+}
+
+/* --- 13. MODERN SCROLLBARS (NEW) --- */
+QScrollBar:vertical {
+    border: none;
+    background: transparent;
+    width: 8px;
+    margin: 0px;
+}
+QScrollBar::handle:vertical {
+    background: #2C2C38;
+    min-height: 28px;
+    border-radius: 4px;
+}
+QScrollBar::handle:vertical:hover {
+    background: #00B4D8;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    border: none;
+    background: transparent;
+    height: 0px;
+    width: 0px;
+}
+
+QScrollBar:horizontal {
+    border: none;
+    background: transparent;
+    height: 8px;
+    margin: 0px;
+}
+QScrollBar::handle:horizontal {
+    background: #2C2C38;
+    min-width: 28px;
+    border-radius: 4px;
+}
+QScrollBar::handle:horizontal:hover {
+    background: #00B4D8;
+}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal,
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+    border: none;
+    background: transparent;
+    height: 0px;
+    width: 0px;
+}
+
+/* --- 14. MODERN SLIDERS (QSlider) --- */
+QSlider::groove:horizontal {
+    border: none;
+    height: 4px;
+    background: #282834;
+    border-radius: 2px;
+}
+QSlider::sub-page:horizontal {
+    background: #00B4D8;
+    border-radius: 2px;
+}
+QSlider::add-page:horizontal {
+    background: #22222A;
+    border-radius: 2px;
+}
+QSlider::handle:horizontal {
+    background: #E6E4DC;
+    border: 2px solid #00B4D8;
+    width: 14px;
+    margin-top: -5px;
+    margin-bottom: -5px;
+    border-radius: 7px;
+}
+QSlider::handle:horizontal:hover {
+    background: #00B4D8;
+    border-color: #FFFFFF;
+}
+
+QSlider::groove:vertical {
+    border: none;
+    width: 4px;
+    background: #282834;
+    border-radius: 2px;
+}
+QSlider::sub-page:vertical {
+    background: #00B4D8;
+    border-radius: 2px;
+}
+QSlider::add-page:vertical {
+    background: #22222A;
+    border-radius: 2px;
+}
+QSlider::handle:vertical {
+    background: #E6E4DC;
+    border: 2px solid #00B4D8;
+    height: 14px;
+    margin-left: -5px;
+    margin-right: -5px;
+    border-radius: 7px;
+}
+QSlider::handle:vertical:hover {
+    background: #00B4D8;
+    border-color: #FFFFFF;
+}

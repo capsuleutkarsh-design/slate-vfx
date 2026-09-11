@@ -1,0 +1,10 @@
+{
+    "thread_pool_size": 4,
+    "batch_size": 100,
+    "chunk_size": 8192,
+    "max_memory_usage_mb": 1024,
+    "progress_update_interval": 0.1,
+    "disk_space_check_buffer": 0.25,
+    "checksum_threshold_mb": 1024,
+    "max_concurrent_operations": 1
+}
