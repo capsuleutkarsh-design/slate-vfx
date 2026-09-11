@@ -51,9 +51,15 @@ jobs:
           $out = (poetry run python -m compileall -q ut_vfx ut_server tools tests 2>&1 | Out-String)
           Write-Host $out
           if ($LASTEXITCODE -ne 0) {
-            $keep = ($out -split "`n") |
-              Where-Object { $_ -match '^(FAILED|ERROR|E\s|\S+Error:|assert |\d+ failed)' } |
-              Select-Object -First 20
+            $lines = ($out -split "`n") |
+              Where-Object { $_ -notmatch 'qtwebengine|chromium|WebGL|ContextResult|command_buffer|GpuChannelHost' }
+            # pytest's own summary first - the -rf list and the counts are the
+            # answer. Tracebacks are the runner-up, and only if there is room.
+            $keep = @(
+              $lines | Where-Object { $_ -match '^(FAILED|ERROR) ' }
+              $lines | Where-Object { $_ -match '^\d+ (failed|error)' }
+              $lines | Where-Object { $_ -match '^E\s|\S+Error:' }
+            ) | Select-Object -Unique -First 20
             foreach ($line in $keep) {
               $clean = ($line.Trim() -replace '::', ' - ')
               Write-Host "::error title=Compile every module::$clean"

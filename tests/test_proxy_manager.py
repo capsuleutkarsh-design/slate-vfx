@@ -79,14 +79,37 @@ class TestProxyManager:
             # Expected to fail without FFmpeg/real video
             assert "video" in str(e).lower() or "codec" in str(e).lower()
     
-    def test_proxy_path_validation(self, proxy_manager):
-        """Test that proxy manager validates paths."""
-        invalid_source = Path("/nonexistent/video.mp4")
-        invalid_proxy = Path("/nonexistent/proxy.mp4")
-        
-        with pytest.raises((FileNotFoundError, ValueError, Exception)):
-            proxy_manager.generate_proxy(invalid_source, invalid_proxy)
-    
+    def test_a_proxy_is_not_claimed_for_a_source_that_is_not_there(self, proxy_manager):
+        """
+        Whatever else happens, it must not report success.
+
+        How it declines depends on the machine, which is why this test used to
+        pass here and fail on a runner:
+
+            FFmpeg present   get_hash() stats the missing file and raises
+                             FileNotFoundError
+            FFmpeg absent    generate_proxy returns (False, None) at the top,
+                             before it ever looks at the path
+
+        Both are correct refusals. The old assertion was pytest.raises alone, so
+        on a machine without FFmpeg it reported "DID NOT RAISE" - a failure that
+        said nothing about proxies. What actually matters is that neither route
+        ever claims a proxy was made.
+
+        The arguments were also positional, so the second landed in `is_seq`
+        rather than `proxy_path`. Both are named here.
+        """
+        try:
+            succeeded, produced = proxy_manager.generate_proxy(
+                source_path=Path("/nonexistent/video.mp4"),
+                proxy_path=Path("/nonexistent/proxy.mp4"),
+            )
+        except (FileNotFoundError, OSError, ValueError):
+            return          # refusing loudly is a perfectly good outcome
+
+        assert succeeded is False, "reported a proxy for a source that does not exist"
+        assert not (produced and Path(produced).exists()), "left a proxy file behind"
+
     def test_resolution_parsing(self, proxy_manager):
         """Test resolution string parsing."""
         test_resolutions = [
