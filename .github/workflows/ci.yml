@@ -44,144 +44,47 @@ jobs:
       # this suite runnable on a machine that has never seen the studio.
       # -----------------------------------------------------------------------
 
+      # Run plainly, and let pytest's own exit code stand.
+      #
+      # These were briefly wrapped in PowerShell that captured the output with
+      # 2>&1 so failures could be re-emitted as annotations. That wrapper made
+      # every step fail while every test passed: QtWebEngine writes WebGL
+      # chatter to stderr, 2>&1 turns a native command's stderr into PowerShell
+      # error records, and the exit code is lost. The annotations then reported
+      # the chatter as the cause. It found two real bugs first - an undeclared
+      # sqlalchemy and a test that assumed FFmpeg - and was removed once it had.
+      #
+      # --tb=short -rf keeps a failure readable in the log, and the step split
+      # below still says which area broke without opening anything.
+
       - name: Compile every module
         if: always()
-        shell: pwsh
-        run: |
-          $out = (poetry run python -m compileall -q ut_vfx ut_server tools tests 2>&1 | Out-String)
-          Write-Host $out
-          if ($LASTEXITCODE -ne 0) {
-            $lines = ($out -split "`n") |
-              Where-Object { $_ -notmatch 'qtwebengine|chromium|WebGL|ContextResult|command_buffer|GpuChannelHost' }
-            # pytest's own summary first - the -rf list and the counts are the
-            # answer. Tracebacks are the runner-up, and only if there is room.
-            $keep = @(
-              $lines | Where-Object { $_ -match '^(FAILED|ERROR) ' }
-              $lines | Where-Object { $_ -match '^\d+ (failed|error)' }
-              $lines | Where-Object { $_ -match '^E\s|\S+Error:' }
-            ) | Select-Object -Unique -First 20
-            foreach ($line in $keep) {
-              $clean = ($line.Trim() -replace '::', ' - ')
-              Write-Host "::error title=Compile every module::$clean"
-            }
-            exit 1
-          }
+        run: poetry run python -m compileall -q ut_vfx ut_server tools tests
 
       - name: Qt starts headless
         if: always()
-        shell: pwsh
-        run: |
-          $out = (poetry run python -c "from PySide6.QtWidgets import QApplication; a = QApplication([]); print('qt ok:', a.platformName())" 2>&1 | Out-String)
-          Write-Host $out
-          if ($LASTEXITCODE -ne 0) {
-            $keep = ($out -split "`n") |
-              Where-Object { $_ -match '^(FAILED|ERROR|E\s|\S+Error:|assert |\d+ failed)' } |
-              Select-Object -First 20
-            foreach ($line in $keep) {
-              $clean = ($line.Trim() -replace '::', ' - ')
-              Write-Host "::error title=Qt starts headless::$clean"
-            }
-            exit 1
-          }
+        run: poetry run python -c "from PySide6.QtWidgets import QApplication; a = QApplication([]); print('qt ok:', a.platformName())"
 
       - name: The rules - no Qt, no database
         if: always()
-        shell: pwsh
-        run: |
-          $out = (poetry run pytest tests/test_workplace_domain.py -q -o addopts='' -p no:cacheprovider --tb=line -rf 2>&1 | Out-String)
-          Write-Host $out
-          if ($LASTEXITCODE -ne 0) {
-            $keep = ($out -split "`n") |
-              Where-Object { $_ -match '^(FAILED|ERROR|E\s|\S+Error:|assert |\d+ failed)' } |
-              Select-Object -First 20
-            foreach ($line in $keep) {
-              $clean = ($line.Trim() -replace '::', ' - ')
-              Write-Host "::error title=The rules - no Qt, no database::$clean"
-            }
-            exit 1
-          }
+        run: poetry run pytest tests/test_workplace_domain.py -q -o addopts='' -p no:cacheprovider --tb=short -rf
 
       - name: Unit tests
         if: always()
-        shell: pwsh
-        run: |
-          $out = (poetry run pytest tests -q -o addopts='' -p no:cacheprovider --tb=line -rf --ignore=tests/gui --ignore=tests/integration --ignore=tests/legacy_root --ignore=tests/manual --ignore=tests/verification_scripts 2>&1 | Out-String)
-          Write-Host $out
-          if ($LASTEXITCODE -ne 0) {
-            $keep = ($out -split "`n") |
-              Where-Object { $_ -match '^(FAILED|ERROR|E\s|\S+Error:|assert |\d+ failed)' } |
-              Select-Object -First 20
-            foreach ($line in $keep) {
-              $clean = ($line.Trim() -replace '::', ' - ')
-              Write-Host "::error title=Unit tests::$clean"
-            }
-            exit 1
-          }
+        run: poetry run pytest tests -q -o addopts='' -p no:cacheprovider --tb=short -rf --ignore=tests/gui --ignore=tests/integration --ignore=tests/legacy_root --ignore=tests/manual --ignore=tests/verification_scripts
 
       - name: Integration tests
         if: always()
-        shell: pwsh
-        run: |
-          $out = (poetry run pytest tests/integration -q -o addopts='' -p no:cacheprovider --tb=line -rf 2>&1 | Out-String)
-          Write-Host $out
-          if ($LASTEXITCODE -ne 0) {
-            $keep = ($out -split "`n") |
-              Where-Object { $_ -match '^(FAILED|ERROR|E\s|\S+Error:|assert |\d+ failed)' } |
-              Select-Object -First 20
-            foreach ($line in $keep) {
-              $clean = ($line.Trim() -replace '::', ' - ')
-              Write-Host "::error title=Integration tests::$clean"
-            }
-            exit 1
-          }
+        run: poetry run pytest tests/integration -q -o addopts='' -p no:cacheprovider --tb=short -rf
 
       - name: Legacy tests
         if: always()
-        shell: pwsh
-        run: |
-          $out = (poetry run pytest tests/legacy_root -q -o addopts='' -p no:cacheprovider --tb=line -rf 2>&1 | Out-String)
-          Write-Host $out
-          if ($LASTEXITCODE -ne 0) {
-            $keep = ($out -split "`n") |
-              Where-Object { $_ -match '^(FAILED|ERROR|E\s|\S+Error:|assert |\d+ failed)' } |
-              Select-Object -First 20
-            foreach ($line in $keep) {
-              $clean = ($line.Trim() -replace '::', ' - ')
-              Write-Host "::error title=Legacy tests::$clean"
-            }
-            exit 1
-          }
+        run: poetry run pytest tests/legacy_root -q -o addopts='' -p no:cacheprovider --tb=short -rf
 
       - name: Manual and verification scripts
         if: always()
-        shell: pwsh
-        run: |
-          $out = (poetry run pytest tests/manual tests/verification_scripts -q -o addopts='' -p no:cacheprovider --tb=line -rf 2>&1 | Out-String)
-          Write-Host $out
-          if ($LASTEXITCODE -ne 0) {
-            $keep = ($out -split "`n") |
-              Where-Object { $_ -match '^(FAILED|ERROR|E\s|\S+Error:|assert |\d+ failed)' } |
-              Select-Object -First 20
-            foreach ($line in $keep) {
-              $clean = ($line.Trim() -replace '::', ' - ')
-              Write-Host "::error title=Manual and verification scripts::$clean"
-            }
-            exit 1
-          }
+        run: poetry run pytest tests/manual tests/verification_scripts -q -o addopts='' -p no:cacheprovider --tb=short -rf
 
       - name: Tests that build windows
         if: always()
-        shell: pwsh
-        run: |
-          $out = (poetry run pytest tests/gui -q -o addopts='' -p no:cacheprovider --tb=line -rf 2>&1 | Out-String)
-          Write-Host $out
-          if ($LASTEXITCODE -ne 0) {
-            $keep = ($out -split "`n") |
-              Where-Object { $_ -match '^(FAILED|ERROR|E\s|\S+Error:|assert |\d+ failed)' } |
-              Select-Object -First 20
-            foreach ($line in $keep) {
-              $clean = ($line.Trim() -replace '::', ' - ')
-              Write-Host "::error title=Tests that build windows::$clean"
-            }
-            exit 1
-          }
+        run: poetry run pytest tests/gui -q -o addopts='' -p no:cacheprovider --tb=short -rf
