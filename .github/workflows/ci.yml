@@ -53,8 +53,26 @@ jobs:
       - name: The rules - no Qt, no database
         run: poetry run pytest tests/test_workplace_domain.py -q -o addopts='' -p no:cacheprovider
 
-      - name: Tests that need no window
-        run: poetry run pytest tests -q -o addopts='' -p no:cacheprovider --ignore=tests/gui
+      # Split by area for the same reason: a failing step name is a diagnosis
+      # where a failing job is only a question. Each runs even if an earlier
+      # one failed, so one run reports the whole picture rather than stopping
+      # at the first problem.
+      - name: Unit tests
+        if: always()
+        run: poetry run pytest tests -q -o addopts='' -p no:cacheprovider --ignore=tests/gui --ignore=tests/integration --ignore=tests/legacy_root --ignore=tests/manual --ignore=tests/verification_scripts
+
+      - name: Integration tests
+        if: always()
+        run: poetry run pytest tests/integration -q -o addopts='' -p no:cacheprovider
+
+      - name: Legacy tests
+        if: always()
+        run: poetry run pytest tests/legacy_root -q -o addopts='' -p no:cacheprovider
+
+      - name: Manual and verification scripts
+        if: always()
+        run: poetry run pytest tests/manual tests/verification_scripts -q -o addopts='' -p no:cacheprovider
 
       - name: Tests that build windows
+        if: always()
         run: poetry run pytest tests/gui -q -o addopts='' -p no:cacheprovider
