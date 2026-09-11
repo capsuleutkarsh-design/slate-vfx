@@ -1,10 +1,16 @@
-name: UT_VFX CI
+name: Slate CI
 
 on:
   push:
     branches:
       - "**"
   pull_request:
+
+env:
+  # A CI runner has no desktop session. Qt's default platform plugin needs one
+  # and aborts without it, which takes down every test that builds a widget -
+  # and that is most of this suite. "offscreen" renders into memory instead.
+  QT_QPA_PLATFORM: offscreen
 
 jobs:
   validate:
@@ -14,10 +20,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # The version the studio actually runs. setup.bat installs 3.10.11 and
+      # the studio's portable runtime is 3.10.21, so testing 3.11 here was
+      # testing a Python nobody uses.
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.10"
 
       - name: Install Poetry
         run: python -m pip install --upgrade pip poetry
@@ -25,11 +34,27 @@ jobs:
       - name: Install dependencies
         run: poetry install --with dev --no-interaction --no-root
 
-      - name: Smoke compile
-        run: |
-          poetry run python -m py_compile ut_vfx/gatekeeper_main.py
-          poetry run python -m py_compile ut_vfx/core/infra/postgres_manager.py
-          poetry run python -m py_compile ut_vfx/gui/main_window.py
+      # -----------------------------------------------------------------------
+      # The steps below are deliberately split rather than one pytest call.
+      # A job's step conclusions can be read without a token; its logs cannot.
+      # So when this goes red, which step went red is itself the diagnosis.
+      #
+      # There is no studio database on a runner and no local config pointing at
+      # one, so Slate falls back to SQLite - which is the behaviour that makes
+      # this suite runnable on a machine that has never seen the studio.
+      # -----------------------------------------------------------------------
 
-      - name: Run tests
-        run: poetry run pytest -q -o addopts='' -p no:cacheprovider --maxfail=5
+      - name: Compile every module
+        run: poetry run python -m compileall -q ut_vfx ut_server tools tests
+
+      - name: Qt starts headless
+        run: poetry run python -c "from PySide6.QtWidgets import QApplication; a = QApplication([]); print('qt ok:', a.platformName())"
+
+      - name: The rules - no Qt, no database
+        run: poetry run pytest tests/test_workplace_domain.py -q -o addopts='' -p no:cacheprovider
+
+      - name: Tests that need no window
+        run: poetry run pytest tests -q -o addopts='' -p no:cacheprovider --ignore=tests/gui
+
+      - name: Tests that build windows
+        run: poetry run pytest tests/gui -q -o addopts='' -p no:cacheprovider
