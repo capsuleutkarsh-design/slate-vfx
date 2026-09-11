@@ -1,484 +1,449 @@
-# -*- coding: utf-8 -*-
 """
-Help Dialog - Interactive documentation system for UT_VFX.
+The help window.
 
-Provides tabbed, searchable help content with rich formatting and emoji support.
+It used to be a horizontal strip of tabs. That works for five sections and
+falls apart at twenty-one: the strip overflowed, Qt put small scroll arrows at
+each end, and the only way to learn what help existed was to click an arrow
+repeatedly. You cannot read a table of contents you have to scroll through one
+item at a time.
+
+So it is built the way the application itself is built - a list down the left,
+grouped under headings, and the page on the right. Everything Slate can explain
+is visible at once, and the search narrows that list rather than replacing
+whatever you were reading.
+
+    from ut_vfx.gui.help_dialog import show_help
+    show_help(self, "leave", mode="ops")
 """
 
 import logging
-from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
-    QTextBrowser, QLineEdit, QPushButton, QLabel,
-    QWidget
-)
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
 
-from ..core.help_content import HELP_CONTENT, get_all_tabs, search_help
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QFont
+from PySide6.QtWidgets import (
+    QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+    QListWidgetItem, QStackedWidget, QTextBrowser, QVBoxLayout,
+)
+
+from ..core.help_content import HELP_CONTENT, get_all_tabs
 from ..core.infra.gate import Gate
+from .core.controls import make_button
 from .core.icons import icon as drawn_icon
 
 
+# The order sections appear in, and the headings they sit under. A section not
+# named here still appears, under "More" - so adding one to the JSON is enough
+# to make it show up, and forgetting to list it here is untidy rather than
+# invisible.
+GROUPS = [
+    ("Start here",         ["getting_started", "home"]),
+    ("Production",         ["folder_creator", "rename_tool", "stock_browser",
+                            "shot_review", "dashboard", "scheduling", "bidding"]),
+    ("You and the studio", ["attendance", "leave", "it_support"]),
+    ("People and kit",     ["joining_leaving", "hardware", "licences",
+                            "users_roles", "deployment"]),
+    ("System",             ["settings", "workspace_info", "admin_panel", "tester"]),
+]
+
+_ROLE_SECTION = Qt.ItemDataRole.UserRole
+_ROLE_HEADING = Qt.ItemDataRole.UserRole + 1
+
+
 class HelpDialog(QDialog):
-    """
-    Main help dialog featuring tabbed documentation with search.
-    """
-    
+    """Slate's help, as a browsable table of contents."""
+
     def __init__(self, parent=None, initial_tab="getting_started", mode=None):
-        # Which application this is: "vfx", "ops", or None for both.
-        # The two shells do not share a sidebar, so they do not share help.
+        # Which application this is: "vfx", "ops", or None for both. The two
+        # shells do not share a sidebar, so they do not share help.
         self.mode = mode
         super().__init__(parent)
+
         self.setWindowTitle("Slate Help")
-        self.setMinimumSize(1000, 800)
-        self.resize(1200, 850)
-        
-        self.setup_ui()
-        self.load_content()
+        self.setMinimumSize(940, 620)
+        self.resize(1180, 800)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(f"QDialog {{ background: {Gate.GROUND}; }}")
+
+        self._pages = {}      # section id -> index in the stack
+        self._items = []      # (item, section id, searchable text)
+
+        self._build()
+        self._populate()
         self.set_active_tab(initial_tab)
-        
-        # Apply polished dark theme
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #16161A;
-                color: #E8E6E1;
-            }
-            QTabWidget::pane {
-                border: 1px solid #1D1D22;
-                background: #1D1D22;
-                border-radius: 8px;
-            }
-            QTabBar::tab {
-                background: #1D1D22;
-                color: #B4B1AA;
-                padding: 12px 24px;
-                border: 1px solid #1D1D22;
-                border-bottom: none;
-                margin-right: 3px;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
-                font-size: 13px;
-                font-weight: 500;
-            }
-            QTabBar::tab:selected {
-                background: #1D1D22;
-                color: #E8E6E1;
-                border-bottom: 3px solid #3EA8BF;
-                font-weight: 600;
-            }
-            QTabBar::tab:hover:!selected {
-                background: #26262D;
-                color: #E8E6E1;
-            }
-            QTextBrowser {
-                background: #1D1D22;
-                color: #E8E6E1;
-                border: 1px solid #1D1D22;
-                border-radius: 6px;
-                padding: 20px;
-                font-size: 14px;
-                line-height: 1.6;
-            }
-            QLineEdit {
-                background: #1D1D22;
-                color: #E8E6E1;
-                border: 2px solid #26262D;
-                border-radius: 6px;
-                padding: 10px 14px;
-                font-size: 14px;
-            }
-            QLineEdit:focus {
-                border: 2px solid #3EA8BF;
-                background: #1D1D22;
-            }
-            QPushButton {
-                background: #26262D;
-                color: #E8E6E1;
-                border: 1px solid #2C2C34;
-                border-radius: 6px;
-                padding: 10px 20px;
-                font-weight: 600;
-                font-size: 13px;
-            }
-            QPushButton:hover {
-                background: #26262D;
-                border: 1px solid #3EA8BF;
-            }
-            QPushButton:pressed {
-                background: #1D1D22;
-            }
-        """)
-    
-    def setup_ui(self):
-        """Create the main UI layout."""
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        
-        # Header with search
-        header = self.create_header()
-        layout.addWidget(header)
-        
-        # Tab widget for different help sections
-        self.tab_widget = QTabWidget()
-        self.tab_widget.setTabPosition(QTabWidget.North)
-        layout.addWidget(self.tab_widget)
-        
-        # Footer with buttons
-        footer = self.create_footer()
-        layout.addWidget(footer)
-    
-    def create_header(self):
-        """Create header with title and search."""
-        header = QWidget()
-        header.setStyleSheet("""
-            QWidget {
-                background: #1D1D22;
-                border-bottom: 1px solid #3EA8BF;
-            }
-        """)
-        h_layout = QHBoxLayout(header)
-        h_layout.setContentsMargins(24, 16, 24, 16)
-        h_layout.setSpacing(20)
-        
-        # Title - Clean text only
-        title = QLabel("Slate Help")
-        title.setFont(QFont("Segoe UI", 16, QFont.Bold))
-        title.setStyleSheet("color: #3EA8BF; border: none;")
-        h_layout.addWidget(title)
-        
-        h_layout.addStretch()
-        
-        # Search container with integrated clear button
-        search_container = QWidget()
-        search_container.setStyleSheet("background: transparent; border: none;")
-        search_layout = QHBoxLayout(search_container)
-        search_layout.setContentsMargins(0, 0, 0, 0)
-        search_layout.setSpacing(0)
-        
-        # Search box with icon
-        self.search_box = QLineEdit()
-        self.search_box.setPlaceholderText("Search documentation...")
-        self.search_box.setFixedWidth(320)
-        self.search_box.setFixedHeight(36)
-        self.search_box.setStyleSheet("""
-            QLineEdit {
-                background: #1D1D22;
-                color: #E8E6E1;
-                border: 1px solid #26262D;
-                border-radius: 4px;
-                padding: 8px 40px 8px 12px;
-                font-size: 13px;
-            }
-            QLineEdit:focus {
-                border: 1px solid #3EA8BF;
-                background: #26262D;
-            }
-        """)
-        self.search_box.textChanged.connect(self.on_search)
-        search_layout.addWidget(self.search_box)
-        
-        # Clear button (icon style, overlaid on search box)
-        clear_btn = QPushButton("×")
-        clear_btn.setFixedSize(28, 28)
-        clear_btn.setStyleSheet("""
-            QPushButton {
-                background: transparent;
-                color: #87857F;
-                border: none;
-                border-radius: 14px;
-                font-size: 20px;
-                font-weight: bold;
-                margin-right: 4px;
-            }
-            QPushButton:hover {
-                background: #26262D;
-                color: #3EA8BF;
-            }
-            QPushButton:pressed {
-                background: #2C2C34;
-            }
-        """)
-        clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        clear_btn.clicked.connect(lambda: self.search_box.clear())
-        
-        # Position clear button over search box (right side)
-        search_layout.addWidget(clear_btn)
-        search_layout.setAlignment(clear_btn, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        clear_btn.move(-32, 0)  # Overlay on search box
-        
-        h_layout.addWidget(search_container)
-        
-        return header
-    
-    def create_footer(self):
-        """Create footer with action buttons."""
-        footer = QWidget()
-        footer.setStyleSheet("""
-            QWidget {
-                background: #1D1D22;
-                border-top: 1px solid #26262D;
-            }
-        """)
-        f_layout = QHBoxLayout(footer)
-        f_layout.setContentsMargins(24, 14, 24, 14)
-        
-        # Info label
-        info = QLabel("Press <b>F1</b> anytime to open help")
-        info.setStyleSheet("color: #87857F; font-size: 12px; border: none;")
-        f_layout.addWidget(info)
-        
-        f_layout.addStretch()
-        
-        # Close button
-        close_btn = QPushButton("Close")
-        close_btn.setFixedWidth(100)
-        close_btn.setFixedHeight(34)
-        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        close_btn.setStyleSheet("""
-            QPushButton {
-                background: #3EA8BF;
-                border: none;
-                border-radius: 4px;
-                padding: 8px 20px;
-                font-weight: 600;
-                font-size: 13px;
-                color: #E8E6E1;
-            }
-            QPushButton:hover {
-                background: #3EA8BF;
-            }
-            QPushButton:pressed {
-                background: #3EA8BF;
-            }
-        """)
-        close_btn.clicked.connect(self.accept)
-        f_layout.addWidget(close_btn)
-        
-        return footer
-    
-    def load_content(self):
-        """Load all help content into tabs."""
+
+    # ------------------------------------------------------------------ build
+    def _build(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        root.addWidget(self._header())
+
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        body.addWidget(self._sidebar())
+        body.addWidget(self._content(), 1)
+        root.addLayout(body, 1)
+
+        root.addWidget(self._footer())
+
+    def _header(self):
+        bar = QFrame()
+        bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        bar.setStyleSheet(
+            f"QFrame {{ background: {Gate.PANEL}; border: none; "
+            f"border-bottom: 1px solid {Gate.LINE}; }}")
+
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(Gate.SPACE_4, Gate.SPACE_3, Gate.SPACE_4, Gate.SPACE_3)
+        row.setSpacing(Gate.SPACE_3)
+
+        # The same mark as the application header, from the same path data.
         try:
-            tabs_data = get_all_tabs(getattr(self, "mode", None))
-            
-            if not tabs_data:
-                logging.error("No help tabs found - HELP_CONTENT may be empty")
-                self._show_error_tab("No Help Content", 
-                    "Help system is not available. The help content database is empty.")
-                return
-                
-            for tab_data in tabs_data:
-                tab_id = tab_data["id"]
-                tab_title = tab_data["title"]
-                
-                # Create text browser for this tab
-                browser = QTextBrowser()
-                browser.setOpenExternalLinks(True)
-                browser.setObjectName(tab_id)
-                
-                # Load HTML content
-                try:
-                    content_data = HELP_CONTENT[tab_id]
-                    html_content = self.format_html(content_data.get("content", ""))
-                    browser.setHtml(html_content)
-                except Exception as e:
-                    logging.exception(f"Error loading content for tab {tab_id}")
-                    browser.setHtml(self.format_html(f"<h2>Error Loading Content</h2><p>{str(e)}</p>"))
-                
-                # Labelled with the drawn icon set, like the rest of the
-                # product. These used to be emoji baked into the title string,
-                # which Windows rendered in whatever font it fancied.
-                # Qt treats a single "&" in tab text as a keyboard mnemonic,
-                # so "Build & Ingest" would render as "Build _Ingest".
-                tab_title = tab_title.replace("&", "&&")
-                glyph = tab_data.get("icon") or ""
-                if glyph:
-                    self.tab_widget.addTab(browser, drawn_icon(glyph, Gate.TEXT_2, 16), tab_title)
-                else:
-                    self.tab_widget.addTab(browser, tab_title)
-                
-        except ImportError as e:
-            logging.exception("Failed to import help_content module")
-            self._show_error_tab("Import Error", 
-                f"Failed to load help system: {str(e)}<br><br>Please contact IT support.")
-        except Exception as e:
-            logging.exception("Error loading help content")
-            self._show_error_tab("System Error", 
-                f"An error occurred while loading help: {str(e)}")
-    
-    def _show_error_tab(self, title, message):
-        """Display error message in help dialog"""
-        error_html = self.format_html(f"""
-            <h1 style="color: #D9635F;">&#9888; {title}</h1>
-            <p style="font-size: 14px;">{message}</p>
-            <hr style="border: 1px solid #2C2C34; margin: 20px 0;">
-            <p style="color: #87857F;">If this problem persists, please contact your supervisor or IT team for support.</p>
+            from .core.icons_brand import slate_mark
+            mark = QLabel()
+            mark.setPixmap(slate_mark(Gate.ACCENT, 26).pixmap(26, 26))
+            mark.setStyleSheet("background: transparent; border: none;")
+            row.addWidget(mark)
+        except Exception:
+            logging.debug("help: brand mark unavailable", exc_info=True)
+
+        title = QLabel("HELP")
+        title.setStyleSheet(
+            f"color: {Gate.TEXT}; font-family: {Gate.FONT_LABEL_STRONG}; "
+            f"font-size: 18px; font-weight: 700; letter-spacing: 2.5px; "
+            f"background: transparent; border: none;")
+        row.addWidget(title)
+
+        which = {"vfx": "VFX", "ops": "OPERATIONS"}.get(str(self.mode or "").lower())
+        if which:
+            badge = QLabel(which)
+            badge.setStyleSheet(
+                f"color: {Gate.ACCENT}; font-family: {Gate.FONT_LABEL}; font-size: 11px; "
+                f"letter-spacing: 1.6px; background: transparent; "
+                f"border: 1px solid {Gate.LINE}; border-radius: {Gate.RADIUS_SM}px; "
+                f"padding: 3px 9px;")
+            row.addWidget(badge)
+
+        row.addStretch(1)
+
+        self.crumb = QLabel("")
+        self.crumb.setStyleSheet(
+            f"color: {Gate.TEXT_DIM}; font-size: 12px; "
+            f"background: transparent; border: none;")
+        row.addWidget(self.crumb)
+        return bar
+
+    def _sidebar(self):
+        panel = QFrame()
+        panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        panel.setFixedWidth(268)
+        panel.setStyleSheet(
+            f"QFrame {{ background: {Gate.PANEL}; border: none; "
+            f"border-right: 1px solid {Gate.LINE}; }}")
+
+        box = QVBoxLayout(panel)
+        box.setContentsMargins(Gate.SPACE_3, Gate.SPACE_3, Gate.SPACE_3, Gate.SPACE_3)
+        box.setSpacing(Gate.SPACE_2)
+
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Search help...")
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(self._filter)
+        self.search.setStyleSheet(f"""
+            QLineEdit {{
+                background: {Gate.GROUND};
+                border: 1px solid {Gate.LINE};
+                border-radius: {Gate.RADIUS_SM}px;
+                padding: 7px 10px;
+                color: {Gate.TEXT};
+            }}
+            QLineEdit:focus {{ border: 1px solid {Gate.ACCENT}; }}
         """)
-        browser = QTextBrowser()
-        browser.setHtml(error_html)
-        self.tab_widget.addTab(browser, f"Warning: {title}")
-    
-    def format_html(self, content):
-        """Wrap content in HTML template with styling."""
-        return f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <style>
-                body {{
-                    font-family: 'Segoe UI', Arial, sans-serif;
-                    font-size: 13px;
-                    line-height: 1.6;
-                    color: #E8E6E1;
-                    margin: 0;
-                    padding: 0;
-                }}
-                h1 {{
-                    color: #3EA8BF;
-                    border-bottom: 2px solid #3EA8BF;
-                    padding-bottom: 10px;
-                    margin-top: 0;
-                }}
-                h2 {{
-                    color: #5FBF8F;
-                    border-bottom: 1px solid #2C2C34;
-                    padding-bottom: 5px;
-                    margin-top: 25px;
-                }}
-                h3 {{
-                    color: #D9A441;
-                    margin-top: 20px;
-                }}
-                code {{
-                    background: #16161A;
-                    padding: 2px 6px;
-                    border-radius: 3px;
-                    font-family: 'Consolas', monospace;
-                    color: #5FBF8F;
-                }}
-                pre {{
-                    background: #16161A;
-                    padding: 15px;
-                    border-radius: 5px;
-                    border-left: 3px solid #3EA8BF;
-                    overflow-x: auto;
-                    font-family: 'Consolas', monospace;
-                    font-size: 12px;
-                }}
-                table {{
-                    border-collapse: collapse;
-                    width: 100%;
-                    margin: 15px 0;
-                }}
-                th {{
-                    background: #26262D;
-                    color: #3EA8BF;
-                    font-weight: bold;
-                    text-align: left;
-                    padding: 10px;
-                    border: 1px solid #2C2C34;
-                }}
-                td {{
-                    padding: 8px;
-                    border: 1px solid #2C2C34;
-                }}
-                tr:nth-child(even) {{
-                    background: #1D1D22;
-                }}
-                ul, ol {{
-                    margin: 10px 0;
-                    padding-left: 25px;
-                }}
-                li {{
-                    margin: 5px 0;
-                }}
-                a {{
-                    color: #3EA8BF;
-                    text-decoration: none;
-                }}
-                a:hover {{
-                    text-decoration: underline;
-                }}
-                p {{
-                    margin: 10px 0;
-                }}
-            </style>
-        </head>
-        <body>
-            {content}
-        </body>
-        </html>
-        """
-    
-    def set_active_tab(self, tab_id):
-        """Set active tab by ID."""
-        for i in range(self.tab_widget.count()):
-            widget = self.tab_widget.widget(i)
-            if widget.objectName() == tab_id:
-                self.tab_widget.setCurrentIndex(i)
-                break
-    
-    def on_search(self, query):
-        """Handle search query."""
-        if not query.strip():
-            # Reset to normal content
-            self.load_content()
+        box.addWidget(self.search)
+
+        self.nav = QListWidget()
+        self.nav.setFrameShape(QFrame.Shape.NoFrame)
+        self.nav.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
+        self.nav.currentItemChanged.connect(self._picked)
+        self.nav.setStyleSheet(f"""
+            QListWidget {{ background: transparent; border: none; outline: none; }}
+            QListWidget::item {{
+                color: {Gate.TEXT_2};
+                padding: 7px 9px;
+                border-radius: {Gate.RADIUS_SM}px;
+                margin: 1px 0;
+            }}
+            QListWidget::item:hover {{ background: {Gate.RAISED}; color: {Gate.TEXT}; }}
+            QListWidget::item:selected {{
+                background: rgba(62, 168, 191, 0.15);
+                color: {Gate.ACCENT};
+            }}
+        """)
+        box.addWidget(self.nav, 1)
+
+        self.tally = QLabel("")
+        self.tally.setStyleSheet(
+            f"color: {Gate.TEXT_DIM}; font-size: 11px; "
+            f"background: transparent; border: none;")
+        box.addWidget(self.tally)
+        return panel
+
+    def _content(self):
+        holder = QFrame()
+        holder.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        holder.setStyleSheet(f"QFrame {{ background: {Gate.GROUND}; border: none; }}")
+
+        box = QVBoxLayout(holder)
+        box.setContentsMargins(0, 0, 0, 0)
+        box.setSpacing(0)
+
+        self.stack = QStackedWidget()
+        box.addWidget(self.stack, 1)
+
+        # Shown when a search matches nothing. A page rather than a dialog, so
+        # the window does not jump about while somebody is still typing.
+        self.nothing = QTextBrowser()
+        self.nothing.setFrameShape(QFrame.Shape.NoFrame)
+        self.nothing.setStyleSheet(self._browser_style())
+        self.stack.addWidget(self.nothing)
+        return holder
+
+    def _footer(self):
+        bar = QFrame()
+        bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        bar.setStyleSheet(
+            f"QFrame {{ background: {Gate.PANEL}; border: none; "
+            f"border-top: 1px solid {Gate.LINE}; }}")
+
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(Gate.SPACE_4, Gate.SPACE_3, Gate.SPACE_4, Gate.SPACE_3)
+
+        hint = QLabel("F1 opens help for whatever screen you are on")
+        hint.setStyleSheet(
+            f"color: {Gate.TEXT_DIM}; font-size: 12px; "
+            f"background: transparent; border: none;")
+        row.addWidget(hint)
+        row.addStretch(1)
+        row.addWidget(make_button("Close", "secondary", on_click=self.accept))
+        return bar
+
+    # --------------------------------------------------------------- populate
+    def _populate(self):
+        sections = get_all_tabs(self.mode)
+        available = {s["id"]: s for s in sections}
+
+        ordered = []
+        for heading, ids in GROUPS:
+            picked = [available.pop(i) for i in ids if i in available]
+            if picked:
+                ordered.append((heading, picked))
+        if available:
+            ordered.append(("More", list(available.values())))
+
+        if not ordered:
+            self._empty("No help available",
+                        "The help content could not be loaded.")
+            self.tally.setText("")
             return
-        
-        # Perform search
-        results = search_help(query)
-        
-        if not results:
-            # No results - show message
-            no_results_html = self.format_html(f"""
-                <h2>🔍 No Results Found</h2>
-                <p>No help content matches your search for <b>"{query}"</b></p>
-                <p>Try different keywords or check spelling.</p>
-            """)
-            current_browser = self.tab_widget.currentWidget()
-            if isinstance(current_browser, QTextBrowser):
-                current_browser.setHtml(no_results_html)
-        else:
-            # Show results in current tab
-            results_html = "<h2>🔍 Search Results</h2>"
-            results_html += f"<p>Found <b>{len(results)}</b> result(s) for <b>\"{query}\"</b></p>"
-            
-            for tab_id, title, snippet in results:
-                results_html += f"""
-                    <div style="background: #1D1D22; padding: 10px; margin: 10px 0; border-left: 3px solid #3EA8BF; border-radius: 3px;">
-                        <h3>{title}</h3>
-                        <p>{snippet}</p>
-                    </div>
-                """
-            
-            results_html += """
-                <p style="margin-top: 20px; color: #87857F; font-size: 11px;">
-                💡 Tip: Clear search to return to full documentation
-                </p>
-            """
-            
-            current_browser = self.tab_widget.currentWidget()
-            if isinstance(current_browser, QTextBrowser):
-                current_browser.setHtml(self.format_html(results_html))
-    
+
+        for heading, items in ordered:
+            head = QListWidgetItem(heading.upper())
+            head.setFlags(Qt.ItemFlag.NoItemFlags)      # a label, not a choice
+            head.setData(_ROLE_HEADING, True)
+            font = QFont()
+            font.setPointSize(8)
+            font.setBold(True)
+            head.setFont(font)
+            head.setForeground(QColor(Gate.TEXT_DIM))
+            self.nav.addItem(head)
+
+            for section in items:
+                body = HELP_CONTENT.get(section["id"], {})
+
+                item = QListWidgetItem(section["title"])
+                item.setData(_ROLE_SECTION, section["id"])
+                glyph = section.get("icon") or ""
+                if glyph:
+                    item.setIcon(drawn_icon(glyph, Gate.TEXT_2, 16))
+                self.nav.addItem(item)
+
+                page = QTextBrowser()
+                page.setOpenExternalLinks(True)
+                page.setFrameShape(QFrame.Shape.NoFrame)
+                page.setStyleSheet(self._browser_style())
+                try:
+                    page.setHtml(self.format_html(body.get("content", "")))
+                except Exception:
+                    logging.exception("help: could not render %s", section["id"])
+                    page.setHtml(self.format_html(
+                        "<h2>This page could not be shown</h2>"
+                        "<p>The rest of the help still works.</p>"))
+                self._pages[section["id"]] = self.stack.addWidget(page)
+
+                self._items.append((
+                    item, section["id"],
+                    (section["title"] + " " + body.get("content", "")).lower()))
+
+        self.tally.setText("%d pages" % len(self._items))
+
+    def _empty(self, title, message):
+        self.nothing.setHtml(self.format_html(
+            f'<h1 style="color:{Gate.WARN};">{title}</h1><p>{message}</p>'))
+        self.stack.setCurrentWidget(self.nothing)
+
+    # ----------------------------------------------------------------- events
+    def _picked(self, current, _previous=None):
+        if current is None or current.data(_ROLE_HEADING):
+            return
+        section_id = current.data(_ROLE_SECTION)
+        if section_id in self._pages:
+            self.stack.setCurrentIndex(self._pages[section_id])
+            self.crumb.setText(current.text())
+
+    def _filter(self, query):
+        """
+        Narrow the list rather than replacing the page.
+
+        The search used to overwrite whatever you were reading with a results
+        page, so a typo lost your place. This hides what does not match and
+        leaves the page alone.
+        """
+        query = (query or "").strip().lower()
+
+        if not query:
+            for i in range(self.nav.count()):
+                self.nav.item(i).setHidden(False)
+            self.tally.setText("%d pages" % len(self._items))
+            if self.stack.currentWidget() is self.nothing:
+                self.set_active_tab(None)
+            return
+
+        matched = 0
+        for item, _section_id, haystack in self._items:
+            hit = query in haystack
+            item.setHidden(not hit)
+            matched += int(hit)
+
+        # A heading with nothing under it is noise.
+        head, seen = None, 0
+        for i in range(self.nav.count() + 1):
+            item = self.nav.item(i) if i < self.nav.count() else None
+            if item is None or item.data(_ROLE_HEADING):
+                if head is not None:
+                    head.setHidden(seen == 0)
+                head, seen = item, 0
+            elif not item.isHidden():
+                seen += 1
+
+        self.tally.setText("%d of %d pages match" % (matched, len(self._items)))
+        if matched == 0:
+            self._empty("Nothing matches &ldquo;%s&rdquo;" % query,
+                        "Try another word &mdash; the search reads every page, "
+                        "not just their titles.")
+
     def keyPressEvent(self, event):
-        """Handle keyboard shortcuts."""
         if event.key() == Qt.Key.Key_Escape:
             self.accept()
+        elif (event.key() == Qt.Key.Key_F
+              and event.modifiers() & Qt.KeyboardModifier.ControlModifier):
+            self.search.setFocus()
+            self.search.selectAll()
         else:
             super().keyPressEvent(event)
+
+    # -------------------------------------------------------------------- api
+    def set_active_tab(self, tab_id):
+        """Open a section by id. Falls back to the first page."""
+        for item, section_id, _haystack in self._items:
+            if section_id == tab_id:
+                self.nav.setCurrentItem(item)
+                self._picked(item)
+                return
+        for item, _section_id, _haystack in self._items:
+            if not item.isHidden():
+                self.nav.setCurrentItem(item)
+                self._picked(item)
+                return
+
+    # ----------------------------------------------------------------- render
+    def _browser_style(self):
+        return (f"QTextBrowser {{ background: {Gate.GROUND}; border: none; "
+                f"padding: {Gate.SPACE_4}px {Gate.SPACE_5}px; }}")
+
+    def format_html(self, content):
+        """
+        Wrap a section in the page styling.
+
+        Colours come from Gate rather than being repeated here, so the help
+        cannot drift away from the rest of the product's palette.
+        """
+        return f"""
+        <html><head><style>
+            body {{
+                font-family: 'Segoe UI', Arial, sans-serif;
+                font-size: 14px;
+                line-height: 1.6;
+                color: {Gate.TEXT_2};
+            }}
+            h1 {{
+                color: {Gate.TEXT};
+                font-size: 25px;
+                margin: 0 0 4px 0;
+                padding-bottom: 10px;
+                border-bottom: 1px solid {Gate.LINE};
+            }}
+            h2 {{ color: {Gate.ACCENT}; font-size: 17px; margin: 28px 0 4px 0; }}
+            h3 {{ color: {Gate.TEXT}; font-size: 15px; margin: 20px 0 2px 0; }}
+            p  {{ margin: 9px 0; }}
+            b  {{ color: {Gate.TEXT}; }}
+            ul {{ margin: 8px 0 8px 18px; }}
+            li {{ margin: 5px 0; }}
+            code {{
+                background: {Gate.PANEL};
+                color: {Gate.OK};
+                padding: 1px 5px;
+                border-radius: 3px;
+                font-family: Consolas, monospace;
+            }}
+            pre {{
+                background: {Gate.PANEL};
+                border-left: 2px solid {Gate.ACCENT};
+                padding: 13px 15px;
+                margin: 14px 0;
+                font-family: Consolas, monospace;
+                font-size: 12.5px;
+                color: {Gate.TEXT_2};
+            }}
+            table {{ border-collapse: collapse; margin: 14px 0; width: 100%; }}
+            th {{
+                background: {Gate.RAISED};
+                color: {Gate.TEXT_DIM};
+                font-size: 11px;
+                letter-spacing: 1px;
+                text-align: left;
+                padding: 9px 12px;
+                border: 1px solid {Gate.LINE};
+            }}
+            td {{
+                padding: 9px 12px;
+                border: 1px solid {Gate.LINE};
+                vertical-align: top;
+            }}
+        </style></head>
+        <body>{content}</body></html>
+        """
 
 
 def show_help(parent=None, tab_id="getting_started", mode=None):
     """
-    Show help dialog.
-    
+    Show the help window.
+
     Args:
         parent: Parent widget
-        tab_id: ID of tab to show (default: getting_started)
-        mode: "vfx", "ops" or None for everything. Decides which sections
-              are offered, so each application's help matches its sidebar.
+        tab_id: Section to open on
+        mode: "vfx", "ops", or None for everything. Decides which sections are
+              offered, so each application's help matches its own sidebar.
     """
     dialog = HelpDialog(parent, initial_tab=tab_id, mode=mode)
     dialog.exec()
