@@ -13,6 +13,5 @@ you are missing.
 | **[HR](hr.md)** | The approval queue, the holiday calendar, the year end, and joining and leaving |
 | **[IT](it.md)** | The service desk, provisioning, machines, licences, and the server |
 
-Building or deploying it instead? See the
-[deployment guide](../studio/DEPLOYMENT_GUIDE.md) and the
-[architecture notes](../dev/ARCHITECTURE.md).
+Building or deploying it instead? See [installing it](../install.md), the
+[architecture](../architecture.md) and [working on it](../development.md).

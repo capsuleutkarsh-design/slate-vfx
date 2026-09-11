@@ -165,8 +165,10 @@ people who build it: [artists](docs/guide/artists.md) ·
 [supervisors](docs/guide/supervisors.md) · [HR](docs/guide/hr.md) ·
 [IT](docs/guide/it.md).
 
-**[Deploying it](docs/studio/DEPLOYMENT_GUIDE.md)** ·
-**[Architecture](docs/dev/ARCHITECTURE.md)**
+**[Installing it](docs/install.md)** ·
+**[Architecture](docs/architecture.md)** ·
+**[Working on it](docs/development.md)** ·
+**[All documentation](docs/)**
 
 ---
 

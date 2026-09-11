@@ -1,50 +1,41 @@
-# Tools Directory Organization
+# tools/
 
-## Archive (tools/archive/)
+Maintenance and seeding scripts. Run them with Slate's own Python so they see
+the same dependencies the application does:
 
-**Historical scripts - migration complete, kept for reference:**
+```
+runtime\python\python.exe tools\<script>.py
+```
 
-- `migrate_legacy_db.py` - Legacy SQLite to PostgreSQL migration
-- `migrate_sqlite_to_postgres.py` - Database migration script
-- `migrate_stock_data.py` - Stock library migration
-- `reset_db_password.py` - Old password reset (has hardcoded password)
-- `upgrade_schema_dashboard.py` - Schema upgrade script (has hardcoded password)
-- `setup_postgres_db.py` - Initial database setup
-- `codebase_analysis.md` - Pre-Phase 1 analysis
-- `codebase_analysis_v2.md` - Second analysis
-
-**Status:** ⚠️ These contain hardcoded passwords - use for reference only, not production!
+Each reads its database settings through
+`ut_vfx/core/infra/local_secrets.py`, so none of them carries a password.
+Set `SLATE_DB_PASSWORD` for a one-off session, or let it read the local config
+`setup.bat` wrote.
 
 ---
 
-## Utilities (tools/utilities/)
+## seed_workplace_demo.py
 
-**Diagnostic and maintenance scripts:**
+Fills Leave, Tickets, Hardware, Joining & Leaving and Licences with realistic
+data so the screens can be looked at before a studio has its own.
 
-- `check_db_location.py` - Verify database paths
-- `debug_db_paths.py` - Debug path resolution
-- `debug_projects_data.py` - Inspect project data
-- `debug_stock_db.py` - Stock library diagnostics
-- `inspect_legacy_data.py` - Legacy data inspection
-- `inspect_sqlite.py` - SQLite database inspection
-- `create_client_config.py` - Generate client config files
+```
+runtime\python\python.exe tools\seed_workplace_demo.py
+runtime\python\python.exe tools\seed_workplace_demo.py --clear
+```
 
-**Usage:** Run when troubleshooting issues
+Everything it writes is tagged `[demo]`, and `--clear` removes exactly what it
+wrote and nothing else. The licences it creates are deliberately one of each
+finding — over-subscribed, expired, renewing soon, under-used, never measured —
+so the screen opens showing all five kinds of answer rather than five rows of
+"fine".
 
----
-
-## Active Tools (tools/)
-
-**Production build and maintenance:**
-
-- `build_pipeline.py` - **Main build script** ⭐
-- `bump_version.py` - Version management
-- Other active development tools...
+Safe to run twice: it clears its own records first.
 
 ---
 
-## Notes
+## utilities/
 
-- Archive folder contains historical scripts post-migration
-- Utilities are for diagnostics, not regular use
-- Main build process: `python tools/build_pipeline.py`
+Smaller one-off scripts. `create_client_config.py` writes a per-site
+`client_config.json` for a machine that needs settings different from the
+shipped defaults.
