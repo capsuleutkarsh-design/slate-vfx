@@ -12,8 +12,8 @@ import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
-from ut_vfx.core.domain.stitch_detect import StitchGroup
-from ut_vfx.gui.dialogs.stitch_confirm_dialog import StitchConfirmDialog
+from slate.core.domain.stitch_detect import StitchGroup
+from slate.gui.dialogs.stitch_confirm_dialog import StitchConfirmDialog
 
 
 @pytest.fixture(scope="session")

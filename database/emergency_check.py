@@ -3,12 +3,12 @@ Emergency check - is the database ACTUALLY working or just hung?
 """
 
 # The password is not in this file. It comes from the machine - either the
-# SLATE_DB_PASSWORD environment variable or the git-ignored ut_vfx/config.json
+# SLATE_DB_PASSWORD environment variable or the git-ignored slate/config.json
 # that setup.bat writes. This repository is public.
 import sys as _sys
 from pathlib import Path as _Path
 _sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
-from ut_vfx.core.infra.local_secrets import db_password as _db_password
+from slate.core.infra.local_secrets import db_password as _db_password
 
 import psycopg2
 import sys
@@ -38,7 +38,7 @@ try:
             state,
             query
         FROM pg_stat_activity 
-        WHERE datname = 'ut_vfx'
+        WHERE datname = 'slate'
         AND query ILIKE '%CREATE INDEX%'
         AND state = 'active'
     """)

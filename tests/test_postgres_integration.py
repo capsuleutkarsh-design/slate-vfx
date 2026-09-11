@@ -23,12 +23,12 @@ class TestPostgresManagerStructure:
     
     def test_postgres_manager_can_be_imported(self):
         """Test that PostgresManager can be imported."""
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.postgres_manager import PostgresManager
         assert PostgresManager is not None
     
     def test_postgres_manager_has_core_methods(self):
         """Test that PostgresManager has all required methods."""
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.postgres_manager import PostgresManager
         
         # Core database methods
         assert hasattr(PostgresManager, 'execute_query')
@@ -54,7 +54,7 @@ class TestPostgresManagerStructure:
     
     def test_postgres_manager_singleton_pattern(self):
         """Test that PostgresManager uses singleton pattern."""
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.postgres_manager import PostgresManager
         
         # Should be able to instantiate (even if it fails connection)
         try:
@@ -69,13 +69,13 @@ class TestPostgresManagerStructure:
     
     def test_postgres_manager_has_retry_logic(self):
         """Test that retry logic method exists."""
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.postgres_manager import PostgresManager
         
         assert hasattr(PostgresManager, '_create_pool_with_retry')
     
     def test_context_managers_exist(self):
         """Test that context manager methods exist."""
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.postgres_manager import PostgresManager
         
         # get_connection and transaction should be context managers
         assert hasattr(PostgresManager, 'get_connection')
@@ -88,13 +88,13 @@ class TestPostgresManagerMocked:
     @pytest.fixture(autouse=True)
     def setup_basic_mocks(self):
         """Setup minimal mocks for class instantiation."""
-        with patch('ut_vfx.core.infra.global_config.GlobalConfig') as mock_config:
+        with patch('slate.core.infra.global_config.GlobalConfig') as mock_config:
             mock_config.get.return_value = None
             yield
     
     def test_init_creates_instance(self):
         """Test that __init__ can create instance."""
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.postgres_manager import PostgresManager
         
         try:
             db = PostgresManager()
@@ -110,7 +110,7 @@ class TestPostgresManagerMocked:
     
     def test_lazy_initialization_mode(self):
         """Test that PostgresManager uses lazy initialization."""
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.postgres_manager import PostgresManager
         
         try:
             db = PostgresManager()
@@ -121,7 +121,7 @@ class TestPostgresManagerMocked:
     
     def test_pool_stats_structure(self):
         """Test that get_pool_stats returns expected structure."""
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.postgres_manager import PostgresManager
         
         with patch.object(PostgresManager, 'get_pool_stats') as mock_stats:
             mock_stats.return_value = {
@@ -145,7 +145,7 @@ class TestPostgresManagerWithFullMocks:
     
     def test_execute_query_method_callable(self):
         """Test execute_query method exists and is callable."""
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.postgres_manager import PostgresManager
         
         # Just verify method exists, don't try to call it without proper setup
         assert hasattr(PostgresManager, 'execute_query')
@@ -153,14 +153,14 @@ class TestPostgresManagerWithFullMocks:
     
     def test_add_stock_asset_method_callable(self):
         """Test add_stock_asset method exists and is callable."""
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.postgres_manager import PostgresManager
         
         assert hasattr(PostgresManager, 'add_stock_asset')
         assert callable(getattr(PostgresManager, 'add_stock_asset'))
     
     def test_transaction_method_callable(self):
         """Test transaction method exists and is callable."""
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.postgres_manager import PostgresManager
         
         assert hasattr(PostgresManager, 'transaction')
         assert callable(getattr(PostgresManager, 'transaction'))
@@ -171,12 +171,12 @@ class TestDatabaseManagerProxy:
     
     def test_proxy_can_be_imported(self):
         """Test that DatabaseManager proxy can be imported."""
-        from ut_vfx.core.infra.database_manager import DatabaseManager
+        from slate.core.infra.database_manager import DatabaseManager
         assert DatabaseManager is not None
     
     def test_proxy_has_backend_attribute(self):
         """Test that proxy has backend attribute."""
-        from ut_vfx.core.infra.database_manager import DatabaseManager
+        from slate.core.infra.database_manager import DatabaseManager
         
         with patch.object(DatabaseManager, '_bootstrap_backend', return_value=(MagicMock(), 'postgres', False)):
             db = DatabaseManager()
@@ -184,7 +184,7 @@ class TestDatabaseManagerProxy:
     
     def test_proxy_delegates_to_backend(self):
         """Test that DatabaseManager delegates calls to PostgresManager."""
-        from ut_vfx.core.infra.database_manager import DatabaseManager
+        from slate.core.infra.database_manager import DatabaseManager
         
         mock_backend = MagicMock()
         mock_backend.execute_query.return_value = [{'id': 1}]
@@ -205,7 +205,7 @@ class TestDatabaseManagerProxy:
     
     def test_proxy_accepts_legacy_db_path_parameter(self):
         """Test that DatabaseManager accepts db_path for backward compatibility."""
-        from ut_vfx.core.infra.database_manager import DatabaseManager
+        from slate.core.infra.database_manager import DatabaseManager
         
         with patch.object(DatabaseManager, '_bootstrap_backend', return_value=(MagicMock(), 'postgres', False)):
             # Should not raise error with optional db_path

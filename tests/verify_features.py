@@ -3,8 +3,8 @@ import sys
 # Add project root to path
 sys.path.append("c:/Users/capadmin/Documents/Studio_soft_2/V0040")
 
-from ut_vfx.core.domain.user_manager import UserManager
-from ut_vfx.core.domain.notification_manager import NotificationManager
+from slate.core.domain.user_manager import UserManager
+from slate.core.domain.notification_manager import NotificationManager
 
 def test_multi_role():
     print("--- Testing Multi-Role ---")

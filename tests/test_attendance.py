@@ -27,10 +27,10 @@ import sys
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from ut_vfx.core.domain.attendance_manager import AttendanceManager
-from ut_vfx.core.domain.central_attendance import CentralAttendance
-from ut_vfx.core.infra.database_manager import DatabaseManager
-from ut_vfx.core.infra.sqlite_manager import SQLiteManager
+from slate.core.domain.attendance_manager import AttendanceManager
+from slate.core.domain.central_attendance import CentralAttendance
+from slate.core.infra.database_manager import DatabaseManager
+from slate.core.infra.sqlite_manager import SQLiteManager
 
 
 @pytest.fixture

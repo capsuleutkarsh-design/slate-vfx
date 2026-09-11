@@ -1,6 +1,6 @@
 import sys
 
-# Set up path to find ut_vfx
+# Set up path to find slate
 project_root = r"c:/Users/capadmin/Documents/Studio_soft_2/V0040"
 sys.path.append(project_root)
 

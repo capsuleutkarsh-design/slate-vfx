@@ -9,7 +9,7 @@ tests are about what must NOT be grouped.
 
 import pytest
 
-from ut_vfx.core.domain.stitch_detect import (
+from slate.core.domain.stitch_detect import (
     StitchGroup, find_stitch_groups, group_by_reel,
 )
 
@@ -135,7 +135,7 @@ class TestWhatThePersonSees:
 
 class TestMapping:
     def test_every_part_maps_to_the_merged_shot(self):
-        from ut_vfx.core.domain.stitch_detect import apply_groups
+        from slate.core.domain.stitch_detect import apply_groups
 
         groups = find_stitch_groups(["SH010_A", "SH010_B"])
         mapping = apply_groups([], groups)
@@ -143,6 +143,6 @@ class TestMapping:
         assert mapping == {"SH010_A": "SH010", "SH010_B": "SH010"}
 
     def test_no_groups_means_no_mapping(self):
-        from ut_vfx.core.domain.stitch_detect import apply_groups
+        from slate.core.domain.stitch_detect import apply_groups
 
         assert apply_groups([], []) == {}

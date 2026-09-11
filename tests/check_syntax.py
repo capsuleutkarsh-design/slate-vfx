@@ -3,9 +3,9 @@ import ast
 import sys
 
 files = [
-    "ut_vfx/gui/stock_model.py",
-    "ut_vfx/gui/tabs/stock_browser_tab.py",
-    "ut_vfx/gui/widgets/advanced_player.py",
+    "slate/gui/stock_model.py",
+    "slate/gui/tabs/stock_browser_tab.py",
+    "slate/gui/widgets/advanced_player.py",
 ]
 
 ok = 0

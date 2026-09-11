@@ -16,7 +16,7 @@ from pathlib import Path
 
 # Setup Path
 sys.path.append(os.getcwd())
-from ut_vfx.core.infra.database_manager import DatabaseManager
+from slate.core.infra.database_manager import DatabaseManager
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

@@ -12,10 +12,10 @@ personally named on, and nothing else.
 
 import pytest
 
-from ut_vfx.core.domain.access import can_edit_dashboard, can_edit_own_status
-from ut_vfx.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler
-from ut_vfx.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
-from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.shot_table_model import ShotTableModel
+from slate.core.domain.access import can_edit_dashboard, can_edit_own_status
+from slate.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler
+from slate.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
+from slate.gui.tabs.vfx_dashboard_pro.ui.shot_table_model import ShotTableModel
 
 
 PROJECT = "SELF_PRJ"
@@ -124,7 +124,7 @@ class TestTheWritePath:
         assert after.dept("comp").bid_days == 0.0          # bid
 
     def test_a_stale_edit_is_rejected(self, mock_db, seeded):
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import StaleDataError
+        from slate.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import StaleDataError
 
         artist = _artist(mock_db)
         shot = seeded.read_shots()[0]
@@ -141,8 +141,8 @@ class TestTheWritePath:
             )
 
     def test_it_is_refused_while_offline(self, mock_db, seeded, monkeypatch):
-        from ut_vfx.core.domain.access import OfflineError
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.core import sqlite_handler
+        from slate.core.domain.access import OfflineError
+        from slate.gui.tabs.vfx_dashboard_pro.core import sqlite_handler
 
         monkeypatch.setattr(sqlite_handler, "is_offline_fallback", lambda: True)
         artist = _artist(mock_db)
@@ -245,7 +245,7 @@ class TestUnsavedChanges:
     """Closing the tab used to discard an afternoon with no prompt."""
 
     def _widget(self, qtbot, role="Supervisor"):
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.dashboard_widget import DashboardWidget
+        from slate.gui.tabs.vfx_dashboard_pro.ui.dashboard_widget import DashboardWidget
 
         widget = DashboardWidget(user_data={
             "username": "coord", "display_name": "Coordinator", "roles": [role],
@@ -293,7 +293,7 @@ class TestUnsavedChanges:
 
     def test_discarding_is_allowed_when_chosen(self, qtbot, mock_db, monkeypatch):
         from PySide6.QtWidgets import QMessageBox
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui import dashboard_widget as dw
+        from slate.gui.tabs.vfx_dashboard_pro.ui import dashboard_widget as dw
 
         widget = self._widget(qtbot)
         shot = _shot()
@@ -306,7 +306,7 @@ class TestUnsavedChanges:
 
     def test_cancelling_stops_the_close(self, qtbot, mock_db, monkeypatch):
         from PySide6.QtWidgets import QMessageBox
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui import dashboard_widget as dw
+        from slate.gui.tabs.vfx_dashboard_pro.ui import dashboard_widget as dw
 
         widget = self._widget(qtbot)
         shot = _shot()
@@ -321,7 +321,7 @@ class TestUnsavedChanges:
             self, qtbot, mock_db, monkeypatch):
         """Choosing Save must not proceed if the save did not work."""
         from PySide6.QtWidgets import QMessageBox
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui import dashboard_widget as dw
+        from slate.gui.tabs.vfx_dashboard_pro.ui import dashboard_widget as dw
 
         widget = self._widget(qtbot)
         shot = _shot()

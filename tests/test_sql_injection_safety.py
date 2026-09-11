@@ -10,7 +10,7 @@ from pathlib import Path
 # Add project root to sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from ut_vfx.core.infra.sqlite_manager import SQLiteManager
+from slate.core.infra.sqlite_manager import SQLiteManager
 
 
 class TestSQLInjectionSafety(unittest.TestCase):

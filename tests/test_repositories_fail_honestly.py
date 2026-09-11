@@ -25,10 +25,10 @@ import logging
 
 import pytest
 
-from ut_vfx.core.infra.postgres_manager import DatabaseUnavailableError
-from ut_vfx.core.infra.leave_repository import LeaveRepository
-from ut_vfx.core.infra.licence_repository import LicenceRepository
-from ut_vfx.core.domain.onboarding_service import OnboardingService
+from slate.core.infra.postgres_manager import DatabaseUnavailableError
+from slate.core.infra.leave_repository import LeaveRepository
+from slate.core.infra.licence_repository import LicenceRepository
+from slate.core.domain.onboarding_service import OnboardingService
 
 
 class Unreachable:

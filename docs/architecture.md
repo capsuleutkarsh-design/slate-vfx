@@ -15,17 +15,17 @@ There are four entry points:
 
 | | |
 |---|---|
-| `ut_vfx/vfx_studio_main.py` | the main client — `Slate.bat` |
-| `ut_vfx/studio_ops_main.py` | the operations shell — `Slate Ops.bat` |
-| `ut_vfx/gatekeeper_main.py` | the login screen, which launches one of the above |
-| `ut_server/main.py` | Central Server — `Slate Server.bat` |
+| `slate/vfx_studio_main.py` | the main client — `Slate.bat` |
+| `slate/studio_ops_main.py` | the operations shell — `Slate Ops.bat` |
+| `slate/gatekeeper_main.py` | the login screen, which launches one of the above |
+| `slate_server/main.py` | Central Server — `Slate Server.bat` |
 
 ---
 
 ## The layers
 
 ```
-ut_vfx/
+slate/
   gui/          Qt. Windows, tabs, widgets, the design system.
   core/
     domain/     The rules. What the studio does.
@@ -122,10 +122,10 @@ awkward rather than destructive.
 Layered, lowest priority first. Each layer overrides the one above it:
 
 1. `GlobalConfig.DEFAULTS` — hard-coded
-2. `ut_vfx/default_config.json` — shipped with the source. **Settings only, no credentials.**
-3. `ut_vfx/config.json` — written by `setup.bat`, git-ignored, **this is where the password lives**
+2. `slate/default_config.json` — shipped with the source. **Settings only, no credentials.**
+3. `slate/config.json` — written by `setup.bat`, git-ignored, **this is where the password lives**
 4. `client_config.json` — per-site overrides
-5. `%LOCALAPPDATA%\UTVFX\config.json` — per-machine
+5. `%LOCALAPPDATA%\Slate\config.json` — per-machine
 
 `core/infra/local_secrets.py` is the one place that resolves a credential. It
 checks the `SLATE_DB_PASSWORD` environment variable first, then the local

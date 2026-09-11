@@ -11,7 +11,7 @@ event loop - and assert on what actually lands on disk.
 
 from pathlib import Path
 
-from ut_vfx.core.workers.structure import FolderCreationWorker
+from slate.core.workers.structure import FolderCreationWorker
 
 
 TEMPLATE_DATA = (
@@ -45,7 +45,7 @@ def _build_client_drive(root: Path, with_root_level_media=False, with_junk=False
 
 def _run_autoscan(source, target, mock_db, project_name="PRJ"):
     """Run FolderCreationWorker synchronously in Auto-Scan configuration."""
-    import ut_vfx.core.workers.structure as structure_module
+    import slate.core.workers.structure as structure_module
 
     structure_module.database_manager = mock_db
 
@@ -148,7 +148,7 @@ class TestAutoScanIngest:
     def test_failed_moves_are_reported_as_errors(self, temp_vfx_root, mock_db,
                                                  monkeypatch):
         """A move that fails must be counted, not reported as a success."""
-        import ut_vfx.core.workers.structure as structure_module
+        import slate.core.workers.structure as structure_module
 
         def always_fail(src, dst, verify_checksum=True):
             return (False, "SIMULATED: destination unreachable", 0)
@@ -192,7 +192,7 @@ class TestProgressAndDryRun:
         target = temp_vfx_root / "Projects"
         target.mkdir()
 
-        import ut_vfx.core.workers.structure as structure_module
+        import slate.core.workers.structure as structure_module
         structure_module.database_manager = mock_db
 
         worker = FolderCreationWorker(
@@ -215,7 +215,7 @@ class TestProgressAndDryRun:
         target = temp_vfx_root / "Projects"
         target.mkdir()
 
-        import ut_vfx.core.workers.structure as structure_module
+        import slate.core.workers.structure as structure_module
         structure_module.database_manager = mock_db
 
         worker = FolderCreationWorker(
@@ -238,7 +238,7 @@ class TestProgressAndDryRun:
     def test_database_outage_does_not_fail_the_ingest(self, temp_vfx_root, mock_db,
                                                      monkeypatch):
         """Bookkeeping is best-effort; files still move when the DB is down."""
-        import ut_vfx.core.workers.structure as structure_module
+        import slate.core.workers.structure as structure_module
 
         class DeadDB:
             def __getattr__(self, name):

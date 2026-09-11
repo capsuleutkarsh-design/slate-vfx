@@ -17,10 +17,10 @@ root_dir = Path(__file__).resolve().parent.parent.parent
 if str(root_dir) not in sys.path:
     sys.path.insert(0, str(root_dir))
 
-os.environ["UTVFX_DB_MODE"] = "sqlite"
-from ut_vfx.core.infra.global_config import GlobalConfig
+os.environ["Slate_DB_MODE"] = "sqlite"
+from slate.core.infra.global_config import GlobalConfig
 GlobalConfig.set("db_mode", "sqlite")
-from ut_vfx.core.infra.database_manager import database_manager
+from slate.core.infra.database_manager import database_manager
 try:
     database_manager.reload_from_config()
 except Exception:
@@ -33,11 +33,11 @@ app = QApplication.instance()
 if not app:
     app = QApplication(["--platform", "offscreen"])
 
-from ut_vfx.core.infra.app_context import AppContext
-from ut_vfx.gui.vfx_studio_window import VFXStudioWindow
-from ut_vfx.gui.studio_ops_window import StudioOpsWindow
-from ut_vfx.gui.main_window import VFXFolderCreatorApp
-from ut_vfx.gui.tabs.vfx_dashboard_pro.viewmodels.dashboard_viewmodel import DashboardViewModel
+from slate.core.infra.app_context import AppContext
+from slate.gui.vfx_studio_window import VFXStudioWindow
+from slate.gui.studio_ops_window import StudioOpsWindow
+from slate.gui.main_window import VFXFolderCreatorApp
+from slate.gui.tabs.vfx_dashboard_pro.viewmodels.dashboard_viewmodel import DashboardViewModel
 
 # Ensure Developer role has ALL permissions
 um = AppContext().user_manager()
@@ -55,7 +55,7 @@ def verify_vfx_studio_window():
     ctx = AppContext()
     win = VFXStudioWindow(user_data=mock_user, app_context=ctx)
     assert win.app_mode == "vfx", f"Expected mode 'vfx', got '{win.app_mode}'"
-    assert "UT VFX Studio" in win.windowTitle(), f"Expected 'UT VFX Studio' in title, got '{win.windowTitle()}'"
+    assert "Slate Studio" in win.windowTitle(), f"Expected 'Slate Studio' in title, got '{win.windowTitle()}'"
 
     tab_labels = [lbl for lbl in win.tab_coordinator.tab_labels if not lbl.startswith("__HEADER__")]
     print(f"  VFX Tab count: {len(tab_labels)}, Labels: {tab_labels}")
@@ -83,7 +83,7 @@ def verify_studio_ops_window():
     ctx = AppContext()
     win = StudioOpsWindow(user_data=mock_user, app_context=ctx)
     assert win.app_mode == "ops", f"Expected mode 'ops', got '{win.app_mode}'"
-    assert "UT Studio Operations" in win.windowTitle(), f"Expected 'UT Studio Operations' in title, got '{win.windowTitle()}'"
+    assert "Slate Operations" in win.windowTitle(), f"Expected 'Slate Operations' in title, got '{win.windowTitle()}'"
 
     tab_labels = [lbl for lbl in win.tab_coordinator.tab_labels if not lbl.startswith("__HEADER__")]
     print(f"  Ops Tab count: {len(tab_labels)}, Labels: {tab_labels}")
@@ -111,7 +111,7 @@ def verify_all_in_one_window():
     ctx = AppContext()
     win = VFXFolderCreatorApp(user_data=mock_user, app_context=ctx, app_mode="all")
     assert win.app_mode == "all", f"Expected mode 'all', got '{win.app_mode}'"
-    assert "UT_VFX Production" in win.windowTitle(), f"Expected 'UT_VFX Production' in title, got '{win.windowTitle()}'"
+    assert "Slate Production" in win.windowTitle(), f"Expected 'Slate Production' in title, got '{win.windowTitle()}'"
 
     tab_labels = [lbl for lbl in win.tab_coordinator.tab_labels if not lbl.startswith("__HEADER__")]
     print(f"  All-in-One Tab count: {len(tab_labels)}, Labels: {tab_labels}")
@@ -133,24 +133,24 @@ def verify_build_and_launch_files():
         root_dir / "launch_server.bat",
         root_dir / "launch_app.bat",
         root_dir / "launch_console.bat",
-        root_dir / "UTVFX.spec",
-        root_dir / "deployment" / "setup_ut_vfx_client.iss",
+        root_dir / "Slate.spec",
+        root_dir / "deployment" / "setup_slate_client.iss",
         root_dir / "deployment" / "setup_ut_studio_ops.iss",
         root_dir / "deployment" / "setup_ut_central_server.iss",
         root_dir / "tools" / "build_pipeline.py",
         root_dir / "tools" / "build_update_package.py",
-        root_dir / "tools" / "capsule_console" / "ui" / "build_tab.py",
+        root_dir / "tools" / "slate_console" / "ui" / "build_tab.py",
     ]
     for f in required_files:
         assert f.exists(), f"Required build/launch file missing: {f}"
         print(f"  [OK] Exists: {f.name}")
 
     # Check spec contains all 3 targets
-    spec_content = (root_dir / "UTVFX.spec").read_text(encoding="utf-8")
-    assert "name='UT_VFX_Studio'" in spec_content, "UT_VFX_Studio missing from UTVFX.spec"
-    assert "name='UT_Studio_Ops'" in spec_content, "UT_Studio_Ops missing from UTVFX.spec"
-    assert "name='UT_Server'" in spec_content, "UT_Server missing from UTVFX.spec"
-    assert "name='UTVFX'" in spec_content, "UTVFX fallback missing from UTVFX.spec"
+    spec_content = (root_dir / "Slate.spec").read_text(encoding="utf-8")
+    assert "name='Slate_Studio'" in spec_content, "Slate_Studio missing from Slate.spec"
+    assert "name='UT_Studio_Ops'" in spec_content, "UT_Studio_Ops missing from Slate.spec"
+    assert "name='UT_Server'" in spec_content, "UT_Server missing from Slate.spec"
+    assert "name='Slate'" in spec_content, "Slate fallback missing from Slate.spec"
 
     print("  [PASS] All build and installer configuration files verified.")
 

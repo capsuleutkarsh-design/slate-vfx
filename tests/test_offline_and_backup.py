@@ -12,10 +12,10 @@ Two failsafes that used to fail quietly.
 
 import pytest
 
-from ut_vfx.core.domain import access
-from ut_vfx.core.domain.access import OfflineError, is_offline_fallback
-from ut_vfx.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler
-from ut_vfx.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
+from slate.core.domain import access
+from slate.core.domain.access import OfflineError, is_offline_fallback
+from slate.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler
+from slate.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
 
 
 PROJECT = "OFFLINE_PRJ"
@@ -38,7 +38,7 @@ def _set_offline(monkeypatch, value: bool):
     The handler binds the name at import time, so patching the access module
     alone would not reach it.
     """
-    from ut_vfx.gui.tabs.vfx_dashboard_pro.core import sqlite_handler
+    from slate.gui.tabs.vfx_dashboard_pro.core import sqlite_handler
 
     monkeypatch.setattr(access, "is_offline_fallback", lambda: value)
     monkeypatch.setattr(sqlite_handler, "is_offline_fallback", lambda: value)
@@ -61,18 +61,18 @@ class TestDetectingAnOutage:
     """These exercise the real detection, so they stub the status it reads."""
 
     def test_fallback_is_detected(self, monkeypatch):
-        import ut_vfx.core.infra.database_manager as dbm
+        import slate.core.infra.database_manager as dbm
         monkeypatch.setattr(dbm, "database_manager", _Status("sqlite", True))
         assert is_offline_fallback() is True
 
     def test_a_healthy_connection_is_not_an_outage(self, monkeypatch):
-        import ut_vfx.core.infra.database_manager as dbm
+        import slate.core.infra.database_manager as dbm
         monkeypatch.setattr(dbm, "database_manager", _Status("postgres", False))
         assert is_offline_fallback() is False
 
     def test_a_studio_running_on_sqlite_on_purpose_is_not_offline(self, monkeypatch):
         """Choosing SQLite is not the same as losing the server."""
-        import ut_vfx.core.infra.database_manager as dbm
+        import slate.core.infra.database_manager as dbm
         monkeypatch.setattr(dbm, "database_manager", _Status("sqlite", False))
         assert is_offline_fallback() is False
 
@@ -82,7 +82,7 @@ class TestDetectingAnOutage:
             def get_runtime_status(self):
                 raise RuntimeError("no status")
 
-        import ut_vfx.core.infra.database_manager as dbm
+        import slate.core.infra.database_manager as dbm
         monkeypatch.setattr(dbm, "database_manager", Broken())
         assert is_offline_fallback() is False
 
@@ -113,7 +113,7 @@ class TestWritesAreRefusedWhileOffline:
 class TestTheDashboardShowsTheOutage:
 
     def _widget(self, qtbot):
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.dashboard_widget import DashboardWidget
+        from slate.gui.tabs.vfx_dashboard_pro.ui.dashboard_widget import DashboardWidget
 
         widget = DashboardWidget(user_data={
             "username": "coord", "display_name": "Coordinator",
@@ -155,7 +155,7 @@ class TestTheDashboardShowsTheOutage:
 class TestExcelBackupHealth:
 
     def _service(self):
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.dashboard_sync_service import (
+        from slate.gui.tabs.vfx_dashboard_pro.ui.dashboard_sync_service import (
             DashboardSyncService,
         )
 
@@ -191,7 +191,7 @@ class TestExcelBackupHealth:
         assert service.last_backup_error is None
 
     def test_the_indicator_reflects_a_failure(self, qtbot, mock_db, online):
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.dashboard_widget import DashboardWidget
+        from slate.gui.tabs.vfx_dashboard_pro.ui.dashboard_widget import DashboardWidget
 
         widget = DashboardWidget(user_data={
             "username": "coord", "roles": ["Supervisor"],
@@ -206,7 +206,7 @@ class TestExcelBackupHealth:
 
     def test_the_indicator_reflects_a_success(self, qtbot, mock_db, online):
         from datetime import datetime
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.dashboard_widget import DashboardWidget
+        from slate.gui.tabs.vfx_dashboard_pro.ui.dashboard_widget import DashboardWidget
 
         widget = DashboardWidget(user_data={
             "username": "coord", "roles": ["Supervisor"],

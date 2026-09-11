@@ -25,12 +25,12 @@ class TestPostgresManagerStructure:
     def test_postgres_manager_can_be_imported(self):
         """Test that PostgresManager can be imported."""
         # This will fail if there are syntax errors or missing deps
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.postgres_manager import PostgresManager
         assert PostgresManager is not None
     
     def test_postgres_manager_has_required_methods(self):
         """Test that PostgresManager has all required methods."""
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.postgres_manager import PostgresManager
         
         # Check for key methods
         assert hasattr(PostgresManager, 'execute_query')
@@ -42,7 +42,7 @@ class TestPostgresManagerStructure:
     
     def test_postgres_manager_singleton_pattern(self):
         """Test that PostgresManager uses singleton pattern."""
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.postgres_manager import PostgresManager
         
         # Multiple instantiations should return same instance
         try:
@@ -56,7 +56,7 @@ class TestPostgresManagerStructure:
     
     def test_connection_pool_properties_exist(self):
         """Test that connection pool related attributes exist."""
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.postgres_manager import PostgresManager
         
         # Check class has pool-related attributes/methods
         assert hasattr(PostgresManager, '_init_pool')
@@ -65,14 +65,14 @@ class TestPostgresManagerStructure:
     
     def test_retry_logic_exists(self):
         """Test that retry logic method exists."""
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.postgres_manager import PostgresManager
         
         # Verify retry mechanism exists
         assert hasattr(PostgresManager, '_create_pool_with_retry')
     
     def test_stock_asset_methods_exist(self):
         """Test that stock asset management methods exist."""
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.postgres_manager import PostgresManager
         
         # Check for stock library methods
         assert hasattr(PostgresManager, 'add_stock_asset')
@@ -82,7 +82,7 @@ class TestPostgresManagerStructure:
     
     def test_project_management_methods_exist(self):
         """Test that project management methods exist."""
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.postgres_manager import PostgresManager
         
         # Check for project tracking methods  
         assert hasattr(PostgresManager, 'record_project')
@@ -96,12 +96,12 @@ class TestDatabaseManagerProxy:
     
     def test_database_manager_can_be_imported(self):
         """Test that DatabaseManager proxy can be imported."""
-        from ut_vfx.core.infra.database_manager import DatabaseManager
+        from slate.core.infra.database_manager import DatabaseManager
         assert DatabaseManager is not None
     
     def test_proxy_wraps_postgres_manager(self):
         """Test that DatabaseManager is a proxy to PostgresManager."""
-        from ut_vfx.core.infra.database_manager import DatabaseManager
+        from slate.core.infra.database_manager import DatabaseManager
         
         try:
             db = DatabaseManager()
@@ -113,7 +113,7 @@ class TestDatabaseManagerProxy:
     
     def test_proxy_accepts_legacy_db_path_parameter(self):
         """Test that DatabaseManager accepts db_path for backward compatibility."""
-        from ut_vfx.core.infra.database_manager import DatabaseManager
+        from slate.core.infra.database_manager import DatabaseManager
         
         try:
             # Should not raise error even with db_path

@@ -16,7 +16,7 @@ import os
 # Add project root
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from ut_vfx.core.domain.template_manager import TemplateManager
+from slate.core.domain.template_manager import TemplateManager
 
 class TestTemplateManager(unittest.TestCase):
 
@@ -28,7 +28,7 @@ class TestTemplateManager(unittest.TestCase):
         # Clear cache for isolation
         self.manager.template_cache = {}
 
-    @patch('ut_vfx.core.domain.template_manager.SafeJsonIO.save_json')
+    @patch('slate.core.domain.template_manager.SafeJsonIO.save_json')
     def test_create_template_success(self, mock_save):
         """Test creating a valid custom template."""
         

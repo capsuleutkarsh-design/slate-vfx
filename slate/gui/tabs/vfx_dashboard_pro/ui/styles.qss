@@ -1,0 +1,391 @@
+/* === GLOBAL THEME === */
+/* Backgrounds: #1e1e1e (Main), #252526 (Panels/Bars) */
+/* Accents: #00B4D8 (Slate Blue), #0078d4 (Microsoft Blue - Secondary) */
+/* Text: #e0e0e0 (Primary), #aaaaaa (Secondary) */
+
+QMainWindow, QWidget {
+    background-color: #1e1e1e;
+    color: #e0e0e0;
+    font-family: "Segoe UI", "Roboto", "Arial", sans-serif;
+}
+
+/* === APP BAR === */
+#appBar {
+    background-color: #1A1A22;
+    border-bottom: 1px solid #282834;
+}
+
+/* === BUTTONS === */
+/* Base Button */
+QPushButton {
+    background-color: #3e3e42;
+    color: #ffffff;
+    border: 1px solid #555555;
+    padding: 6px 16px;
+    border-radius: 4px;
+    font-size: 10pt;
+    font-weight: 500;
+}
+
+QPushButton:hover {
+    background-color: #505050;
+    border-color: #00B4D8;
+}
+
+QPushButton:pressed {
+    background-color: #00B4D8;
+    border-color: #00B4D8;
+}
+
+QPushButton:disabled {
+    background-color: #2d2d30;
+    color: #666;
+    border-color: #333;
+}
+
+/* Primary Action (Save, etc.) */
+/* Primary Action (Save, etc.) */
+#headerBtnPrimary, #saveBtn {
+    background-color: #007799; /* Darker shade of Slate Blue for better contrast */
+    border: 1px solid #007799;
+    font-weight: bold;
+}
+
+#headerBtnPrimary:hover, #saveBtn:hover {
+    background-color: #00B4D8; /* Full Slate Blue on Hover */
+    border-color: #00B4D8;
+    color: white; /* Ensure text remains white */
+}
+
+/* Header Specific Buttons (Set Root, Search) */
+#headerBtn {
+    background-color: #333333;
+    border: 1px solid #555555;
+    color: #f0f0f0;
+}
+
+#headerBtn:hover {
+    background-color: #444444;
+    border-color: #00B4D8;
+    color: white;
+}
+
+/* Close / Destructive */
+#closeBtn, #logoutBtn {
+    background-color: transparent; /* No red box by default */
+    border: none;
+    color: #aaaaaa;
+    font-weight: bold;
+    border-radius: 4px; /* Ensure hover shape is nice */
+}
+
+#closeBtn:hover, #logoutBtn:hover {
+    background-color: #d32f2f;
+    color: white;
+}
+
+/* Quick Filter Pills */
+#folderBtn {
+    background-color: #2d2d30;
+    border: 1px solid #3e3e42;
+    border-radius: 14px; /* Pill shape */
+    padding: 4px 14px;
+    color: #cccccc;
+    font-size: 9pt;
+}
+
+#folderBtn:hover {
+    background-color: #3e3e42;
+    border-color: #00B4D8;
+    color: #00B4D8;
+}
+
+#folderBtn:checked {
+    background-color: #00B4D8;
+    color: white;
+    border-color: #00B4D8;
+}
+
+
+/* === INPUTS === */
+QLineEdit, QTextEdit, QPlainTextEdit {
+    background-color: rgba(0, 0, 0, 0.2);
+    border: 1px solid #3A3A3A;
+    border-radius: 4px;
+    padding: 6px 8px;
+    color: #ffffff;
+    font-size: 10pt;
+    selection-background-color: #0078d4;
+}
+
+QLineEdit:focus, QTextEdit:focus {
+    border: 1px solid #00B4D8; /* Brand Blue */
+    background-color: #1e1e1e;
+}
+
+/* === COMBOBOX === */
+QComboBox {
+    background-color: #2b2b2b;
+    border: 1px solid #3e3e42;
+    border-radius: 4px;
+    padding: 6px 8px;
+    color: #ffffff;
+    font-size: 10pt;
+    min-width: 60px; /* Prevent tiny combos */
+}
+
+QComboBox:hover {
+    border-color: #666;
+}
+
+QComboBox:on {
+    border-color: #00B4D8;
+}
+
+QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 24px;
+    border-left-width: 0px;
+    border-top-right-radius: 3px;
+    border-bottom-right-radius: 3px;
+    background: transparent;
+}
+
+QComboBox::down-arrow {
+    image: none;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 5px solid #aaaaaa; /* Simple CSS Arrow */
+    margin-right: 8px;
+}
+
+QComboBox::down-arrow:on {
+    border-top-color: #00B4D8;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #252526;
+    border: 1px solid #454545;
+    selection-background-color: #0078d4;
+    color: #f0f0f0;
+    outline: none;
+}
+
+/* === TABLE VIEW === */
+QTableView {
+    background-color: #1e1e1e;
+    alternate-background-color: #232323;
+    gridline-color: #383838; /* Visible grid lines */
+    selection-background-color: #004c8c;
+    selection-color: white;
+    border: none;
+    font-size: 11pt; /* Readable text */
+}
+
+QHeaderView::section {
+    background-color: #252526;
+    color: #dddddd;
+    padding: 4px;
+    border: none;
+    border-right: 1px solid #3e3e42;
+    border-bottom: 2px solid #555;
+    font-weight: 600;
+    font-size: 8pt;
+    text-transform: uppercase;
+}
+
+QHeaderView::section:hover {
+    background-color: #2d2d30;
+}
+
+QTableView::item {
+    min-height: 32px; /* Ensure row height */
+    padding: 2px;
+}
+
+/* === SCROLLBARS === */
+QScrollBar:vertical {
+    border: none;
+    background: #1e1e1e;
+    width: 12px;
+    margin: 0;
+}
+
+QScrollBar::handle:vertical {
+    background-color: #424242;
+    min-height: 20px;
+    border-radius: 6px;
+    border: 2px solid #1e1e1e; /* Padding effect */
+}
+
+QScrollBar::handle:vertical:hover {
+    background-color: #666;
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+
+/* === DETAIL PANEL HEADERS (Flat Style) === */
+QGroupBox {
+    border: none;
+    border-top: 1px solid #444; /* Clean separator line */
+    margin-top: 24px;
+    padding-top: 16px;
+    font-weight: bold;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    padding: 0 5px;
+    left: 0px; 
+    top: 0px;
+    color: #00B4D8; /* Branding Blue */
+    background-color: transparent;
+    font-size: 11pt;
+    text-transform: uppercase;
+    font-weight: bold;
+}
+
+#detailHeader, #detailFooter {
+    background-color: #252526;
+    border-color: #3e3e42;
+}
+
+#detailContent {
+    background-color: #252526;
+}
+
+#thumbnail {
+    background-color: #111;
+    border: 1px solid #444;
+    border-radius: 4px;
+}
+
+#detailTitle {
+    color: #ffffff;
+    font-size: 22pt;
+    font-weight: normal;
+}
+
+#versionLabelPrev, #dateLabel {
+    color: #999999;
+    font-size: 10pt;
+}
+
+#gridHeader {
+    color: #00B4D8;
+    font-weight: bold;
+    font-size: 9pt;
+    border-bottom: 2px solid #3e3e42;
+    margin-bottom: 6px;
+}
+
+#deptName {
+    color: #dddddd;
+    font-size: 11pt;
+    font-weight: 500;
+}
+
+/* === FEEDBACK HEADERS === */
+#feedbackLabel {
+    color: #00B4D8;
+    font-size: 10pt;
+    font-weight: bold;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+}
+
+/* === BADGES === */
+#statusBadge {
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-weight: bold;
+}
+
+/* === CHECKBOX & RADIO === */
+QCheckBox, QRadioButton {
+    spacing: 8px;
+    color: #e0e0e0;
+    font-size: 10pt;
+}
+
+QCheckBox::indicator {
+    width: 18px;
+    height: 18px;
+    background-color: #2b2b2b;
+    border: 1px solid #555;
+    border-radius: 3px;
+}
+
+QCheckBox::indicator:hover {
+    border-color: #00B4D8;
+}
+
+QCheckBox::indicator:checked {
+    background-color: #00B4D8;
+    border-color: #00B4D8;
+    /* Built-in checkmark via background-color/image usually works, 
+       but we can rely on color change for simplicity if icon is missing */
+    image: url(none); 
+}
+
+/* Fix specific widgets from main window */
+#headerCombo, #headerInput {
+    background-color: #252526;
+    border: 1px solid #444;
+}
+
+/* === PROJECT SELECTOR === */
+#projectCombo {
+    background-color: #111111;
+    border: 1px solid #00B4D8;
+    border-radius: 4px;
+    color: #ffffff;
+    font-weight: bold;
+    padding: 6px 12px;
+    min-width: 160px;
+}
+
+#projectCombo:hover {
+    background-color: #1a1a1a;
+    border-color: #00e0ff;
+}
+
+#projectCombo::drop-down {
+    border: none;
+    background: transparent;
+    width: 30px;
+}
+
+#projectCombo::down-arrow {
+    image: none;
+    border: none;
+    border-top: 6px solid #00B4D8;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    margin-right: 10px;
+}
+
+#projectCombo QAbstractItemView {
+    background-color: #1e1e1e;
+    border: 1px solid #00B4D8;
+    selection-background-color: #00B4D8;
+    selection-color: black;
+}
+
+/* === DELETE BUTTON === */
+#deleteBtn {
+    background-color: #4a1e1e;
+    border: 1px solid #662222;
+    color: #ff9999; 
+    font-weight: bold;
+}
+
+#deleteBtn:hover {
+    background-color: #662222;
+    border-color: #ff4444;
+    color: #ffffff;
+}

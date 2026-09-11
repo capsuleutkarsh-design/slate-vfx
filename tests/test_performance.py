@@ -15,8 +15,8 @@ import os
 # Add the project root to the path so we can import modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
 
-from ut_vfx.core.infra.performance_monitor import PerformanceMonitor, batch_process
-from ut_vfx.core.infra.performance_config import performance_config
+from slate.core.infra.performance_monitor import PerformanceMonitor, batch_process
+from slate.core.infra.performance_config import performance_config
 
 
 class TestPerformanceMonitor(unittest.TestCase):

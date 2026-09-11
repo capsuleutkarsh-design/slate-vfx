@@ -11,7 +11,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from ut_vfx.core.infra.postgres_manager import PostgresManager
+from slate.core.infra.postgres_manager import PostgresManager
 import logging
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
@@ -20,7 +20,7 @@ def apply_indexes():
     """Apply all performance indexes to the database"""
     
     print("=" * 70)
-    print("  PostgreSQL Index Creation for UT_VFX")
+    print("  PostgreSQL Index Creation for Slate")
     print("=" * 70)
     print()
     
@@ -156,7 +156,7 @@ def apply_indexes():
         print("  ✓ Project/shot queries - Faster")
         print("  ✓ Tag searches - Full-text indexed")
         print()
-        print("Next: Restart UT_VFX to see improved performance.")
+        print("Next: Restart Slate to see improved performance.")
     
     return error_count == 0
 

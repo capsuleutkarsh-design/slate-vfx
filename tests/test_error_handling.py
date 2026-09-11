@@ -19,7 +19,7 @@ import logging
 # Add the project root to the path so we can import modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
 
-from ut_vfx.utils.error_handler import ErrorHandler, safe_execute, retry_on_failure, log_exceptions, suppress_errors
+from slate.utils.error_handler import ErrorHandler, safe_execute, retry_on_failure, log_exceptions, suppress_errors
 
 class TestErrorHandler(unittest.TestCase):
     """Test the error handling utilities."""
@@ -32,7 +32,7 @@ class TestErrorHandler(unittest.TestCase):
     def tearDown(self):
         """Clean up test environment."""
         # Close all handlers associated with the test logger
-        logger = logging.getLogger("ut_vfx_errors")
+        logger = logging.getLogger("slate_errors")
         for handler in logger.handlers[:]:
             handler.close()
             logger.removeHandler(handler)

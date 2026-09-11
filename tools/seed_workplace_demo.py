@@ -19,9 +19,9 @@ from datetime import date, datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ut_vfx.core.infra.database_manager import database_manager as db  # noqa: E402
-from ut_vfx.core.domain.service_desk import priority_for  # noqa: E402
-from ut_vfx.core.domain import leave_policy as lp  # noqa: E402
+from slate.core.infra.database_manager import database_manager as db  # noqa: E402
+from slate.core.domain.service_desk import priority_for  # noqa: E402
+from slate.core.domain import leave_policy as lp  # noqa: E402
 
 # Anything seeded carries this, so the clear-up is exact.
 TAG = "[demo]"
@@ -254,7 +254,7 @@ def seed_joining():
     machine in somebody's hands so the leaving side has something to ask back.
     """
     print("Seeding joining and leaving...")
-    from ut_vfx.core.domain.onboarding_service import OnboardingService
+    from slate.core.domain.onboarding_service import OnboardingService
 
     service = OnboardingService(db)
     free = list(service.available_machines())
@@ -282,7 +282,7 @@ def seed_licences():
     once, because a peak is only credible if it came from repeated sampling.
     """
     print("Seeding licences and their usage...")
-    from ut_vfx.core.infra.licence_repository import LicenceRepository
+    from slate.core.infra.licence_repository import LicenceRepository
 
     repo = LicenceRepository(db)
     today = date.today()

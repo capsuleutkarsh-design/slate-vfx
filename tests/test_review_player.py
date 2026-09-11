@@ -12,9 +12,9 @@ Verifies:
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from ut_vfx.core.domain.versions import Version, VersionStore, STATUS_APPROVED, STATUS_RETAKE
-from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.review_queue_dialog import ReviewQueueDialog
-from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.review_player_dialog import ReviewPlayerDialog
+from slate.core.domain.versions import Version, VersionStore, STATUS_APPROVED, STATUS_RETAKE
+from slate.gui.tabs.vfx_dashboard_pro.ui.review_queue_dialog import ReviewQueueDialog
+from slate.gui.tabs.vfx_dashboard_pro.ui.review_player_dialog import ReviewPlayerDialog
 
 
 @pytest.fixture(scope="session")

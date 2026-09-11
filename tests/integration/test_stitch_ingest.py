@@ -12,10 +12,10 @@ one scan version. A confirmed stitch must produce exactly that.
 
 import pytest
 
-from ut_vfx.core.domain.shot_registry import register_ingested_shots
-from ut_vfx.core.domain.stitch_detect import survey_source, apply_groups
-from ut_vfx.core.workers.structure import FolderCreationWorker
-from ut_vfx.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler
+from slate.core.domain.shot_registry import register_ingested_shots
+from slate.core.domain.stitch_detect import survey_source, apply_groups
+from slate.core.workers.structure import FolderCreationWorker
+from slate.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler
 
 
 TEMPLATE = (
@@ -25,7 +25,7 @@ TEMPLATE = (
 
 
 def _run(source, target, mock_db, project="PRJ", stitch_mapping=None):
-    import ut_vfx.core.workers.structure as structure_module
+    import slate.core.workers.structure as structure_module
     structure_module.database_manager = mock_db
 
     worker = FolderCreationWorker(

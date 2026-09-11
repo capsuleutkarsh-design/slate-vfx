@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from ut_server.core.db_engine import DatabaseEngine
-from ut_server.core.pgbouncer_engine import (
+from slate_server.core.db_engine import DatabaseEngine
+from slate_server.core.pgbouncer_engine import (
     DEFAULT_POOL_SIZE, MAX_CLIENT_CONN, PgBouncerEngine,
 )
 
@@ -181,7 +181,7 @@ class TestTheClientPrefersThePooler:
 
     @pytest.fixture
     def manager(self):
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.postgres_manager import PostgresManager
         return PostgresManager()
 
     def test_the_pooler_is_tried_before_the_database(self, manager):
@@ -221,7 +221,7 @@ class TestTheShippedClientSettings:
         import json
         root = Path(__file__).resolve().parents[1]
         config = json.loads(
-            (root / "ut_vfx" / "default_config.json").read_text(encoding="utf-8"))
+            (root / "slate" / "default_config.json").read_text(encoding="utf-8"))
 
         assert config["db_pooler_port"] == 6432
 
@@ -230,7 +230,7 @@ class TestTheServerStartsAndStopsIt:
     """The pool must not outlive the database it points at."""
 
     def test_the_server_starts_the_pooler_after_the_database(self):
-        from ut_server.gui import app_window
+        from slate_server.gui import app_window
 
         source = inspect.getsource(app_window)
         start_at = source.index("self.engine.start(")
@@ -239,7 +239,7 @@ class TestTheServerStartsAndStopsIt:
         assert start_at < pooler_at, "the pool comes up before the database"
 
     def test_the_server_stops_the_pooler_before_the_database(self):
-        from ut_server.gui import app_window
+        from slate_server.gui import app_window
 
         source = inspect.getsource(app_window)
         pooler_at = source.index("pooler.stop(")
@@ -260,7 +260,7 @@ class TestStartingUpWhenThePoolerIsDown:
 
     def test_only_the_last_option_is_worth_retrying(self):
         import inspect
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.postgres_manager import PostgresManager
 
         source = inspect.getsource(PostgresManager._init_pool)
 
@@ -271,7 +271,7 @@ class TestStartingUpWhenThePoolerIsDown:
 
     def test_the_quick_attempt_does_not_retry(self):
         """It must not carry the retry decorator, or it is not quick."""
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.postgres_manager import PostgresManager
 
         assert not hasattr(PostgresManager._create_pool_once, "retry"), (
             "_create_pool_once is decorated with retry, so it is not a single attempt"
@@ -279,7 +279,7 @@ class TestStartingUpWhenThePoolerIsDown:
 
     def test_the_final_attempt_still_retries(self):
         """A genuine network blip on the real database deserves another go."""
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.postgres_manager import PostgresManager
 
         assert hasattr(PostgresManager._create_pool_with_retry, "retry")
 
@@ -299,7 +299,7 @@ class TestPermanentFailuresAreNotRetried:
     ])
     def test_a_permanent_problem_is_not_retried(self, message):
         import psycopg2
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.postgres_manager import PostgresManager
 
         assert not PostgresManager._is_worth_retrying(
             psycopg2.OperationalError(message))
@@ -311,7 +311,7 @@ class TestPermanentFailuresAreNotRetried:
     ])
     def test_a_transient_problem_is_retried(self, message):
         import psycopg2
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.postgres_manager import PostgresManager
 
         assert PostgresManager._is_worth_retrying(
             psycopg2.OperationalError(message))

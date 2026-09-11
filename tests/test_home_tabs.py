@@ -5,7 +5,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 from PySide6.QtWidgets import QApplication
 
-from ut_vfx.gui.tabs.home_tab import HomeTab, VfxHomeTab, OpsHomeTab
+from slate.gui.tabs.home_tab import HomeTab, VfxHomeTab, OpsHomeTab
 
 
 @pytest.fixture(scope="session")
@@ -58,7 +58,7 @@ class TestSeparatedHomeTabs:
         assert tab_ops.mode == "ops"
         assert hasattr(tab_ops, "attendance_panel")
 
-    @patch('ut_vfx.core.domain.central_attendance.CentralAttendance.log_action')
+    @patch('slate.core.domain.central_attendance.CentralAttendance.log_action')
     def test_ops_home_punch_action(self, mock_log_action, qapp, qtbot):
         """Verify punch action logs attendance in Operations Home."""
         user_data = {"username": "test_ops", "display_name": "Test Ops"}

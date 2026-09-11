@@ -18,8 +18,8 @@ from pathlib import Path
 
 import pytest
 
-from ut_vfx.core.infra.circuit_breaker import CircuitBreakerError
-from ut_vfx.core.infra.postgres_manager import (
+from slate.core.infra.circuit_breaker import CircuitBreakerError
+from slate.core.infra.postgres_manager import (
     DatabaseUnavailableError, PostgresManager, _client_identity,
 )
 
@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # place the door can be left open.
 CLUSTERS = [
     ROOT / "LocalDatabase",
-    ROOT / "ut_server" / "gui" / "LocalDatabase",
+    ROOT / "slate_server" / "gui" / "LocalDatabase",
 ]
 HBA_FILES = [c / "pg_hba.conf" for c in CLUSTERS]
 CONF_FILES = [c / "postgresql.conf" for c in CLUSTERS]
@@ -52,7 +52,7 @@ def _require_cluster(path):
 
 def _require_local_password():
     """Skip where no credentials are configured - a fresh clone, or CI."""
-    from ut_server.core.db_credentials import admin_password
+    from slate_server.core.db_credentials import admin_password
     if not admin_password():
         pytest.skip(
             "no database password configured on this machine. Run setup.bat, "
@@ -129,7 +129,7 @@ class TestTheShippedSettings:
     @pytest.fixture
     def config(self):
         return json.loads(
-            (ROOT / "ut_vfx" / "default_config.json").read_text(encoding="utf-8"))
+            (ROOT / "slate" / "default_config.json").read_text(encoding="utf-8"))
 
     def test_the_app_does_not_log_in_as_a_superuser(self, config):
         """
@@ -218,7 +218,7 @@ class TestConnectionsAreIdentifiable:
     def test_a_client_names_itself(self):
         identity = _client_identity()
 
-        assert identity.startswith("UT_VFX ")
+        assert identity.startswith("Slate ")
         assert "@" in identity
 
     def test_the_name_fits_what_postgres_stores(self):
@@ -227,14 +227,14 @@ class TestConnectionsAreIdentifiable:
 
 class TestTheConnectionCapReachesInstalledMachines:
     """
-    Every workstation that already has UT VFX carries a settings file written
+    Every workstation that already has Slate carries a settings file written
     before this limit existed, and those files override the shipped defaults.
     Lowering the default alone would therefore have changed nothing on a single
     machine already in use, which is all 150 of them.
     """
 
     def test_a_saved_setting_cannot_ask_for_more_than_the_cap(self):
-        from ut_vfx.core.infra.postgres_manager import MAX_POOL_PER_CLIENT
+        from slate.core.infra.postgres_manager import MAX_POOL_PER_CLIENT
 
         manager = PostgresManager()
 
@@ -242,7 +242,7 @@ class TestTheConnectionCapReachesInstalledMachines:
 
     def test_the_cap_keeps_a_full_studio_under_control(self):
         """150 machines must not be able to ask for more than a few hundred."""
-        from ut_vfx.core.infra.postgres_manager import MAX_POOL_PER_CLIENT
+        from slate.core.infra.postgres_manager import MAX_POOL_PER_CLIENT
 
         assert MAX_POOL_PER_CLIENT * 150 <= 300
 
@@ -262,9 +262,9 @@ class TestTheServerCanStillReachItsOwnDatabase:
     """
 
     SERVER_SOURCES = [
-        ROOT / "ut_server" / "gui" / "app_window.py",
-        ROOT / "ut_server" / "gui" / "views" / "analytics_view.py",
-        ROOT / "ut_vfx" / "api" / "main.py",
+        ROOT / "slate_server" / "gui" / "app_window.py",
+        ROOT / "slate_server" / "gui" / "views" / "analytics_view.py",
+        ROOT / "slate" / "api" / "main.py",
     ]
 
     @pytest.mark.parametrize("path", SERVER_SOURCES, ids=lambda p: p.name)
@@ -286,7 +286,7 @@ class TestTheServerCanStillReachItsOwnDatabase:
 
     def test_the_helper_supplies_a_password(self):
         _require_local_password()
-        from ut_server.core.db_credentials import connect_kwargs
+        from slate_server.core.db_credentials import connect_kwargs
 
         kwargs = connect_kwargs(5440)
 
@@ -295,23 +295,23 @@ class TestTheServerCanStillReachItsOwnDatabase:
 
     def test_server_connections_are_named_apart_from_clients(self):
         """So 150 workstations and the server are told apart on the list."""
-        from ut_server.core.db_credentials import connect_kwargs
+        from slate_server.core.db_credentials import connect_kwargs
 
-        assert connect_kwargs(5440)["application_name"] == "UT Central Server"
+        assert connect_kwargs(5440)["application_name"] == "Slate Central Server"
 
     def test_command_line_tools_are_given_the_password(self):
         _require_local_password()
         """Otherwise createdb stops to prompt, and nothing is there to answer."""
-        from ut_server.core.db_credentials import env_with_password
+        from slate_server.core.db_credentials import env_with_password
 
         assert "PGPASSWORD" in env_with_password({})
 
     def test_creating_the_database_passes_the_password_through(self):
         """A fresh install runs createdb before anyone can type anything."""
         import inspect
-        from ut_server.core.db_engine import DatabaseEngine
+        from slate_server.core.db_engine import DatabaseEngine
 
-        source = inspect.getsource(DatabaseEngine._ensure_ut_vfx_database)
+        source = inspect.getsource(DatabaseEngine._ensure_slate_database)
 
         assert "env_with_password" in source
 
@@ -339,8 +339,8 @@ class TestTheTwoBackendsAgree:
             return None
 
     def _shared_methods(self):
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
-        from ut_vfx.core.infra.sqlite_manager import SQLiteManager
+        from slate.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.sqlite_manager import SQLiteManager
 
         return [
             name for name in dir(PostgresManager)
@@ -350,8 +350,8 @@ class TestTheTwoBackendsAgree:
         ]
 
     def test_every_shared_method_takes_the_same_arguments(self):
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
-        from ut_vfx.core.infra.sqlite_manager import SQLiteManager
+        from slate.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.sqlite_manager import SQLiteManager
 
         mismatches = []
         for name in self._shared_methods():
@@ -370,8 +370,8 @@ class TestTheTwoBackendsAgree:
 
     def test_saving_a_shot_accepts_its_reel_on_both_backends(self):
         """The exact drift that stopped the dashboard saving on PostgreSQL."""
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
-        from ut_vfx.core.infra.sqlite_manager import SQLiteManager
+        from slate.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.sqlite_manager import SQLiteManager
 
         for backend in (PostgresManager, SQLiteManager):
             params = self._params(backend, "update_tracking_shot_safe")
@@ -396,7 +396,7 @@ class TestStartupDoesNotEatItself:
     def test_the_migration_takes_the_backend_it_is_told_about(self):
         """So it never has to ask for a manager that is still being built."""
         import inspect
-        from ut_vfx.core.infra.migrations.auto_migrate import run_auto_migrations
+        from slate.core.infra.migrations.auto_migrate import run_auto_migrations
 
         params = inspect.signature(run_auto_migrations).parameters
 
@@ -405,7 +405,7 @@ class TestStartupDoesNotEatItself:
 
     def test_the_constructor_passes_its_own_state(self):
         import inspect
-        from ut_vfx.core.infra.database_manager import DatabaseManager
+        from slate.core.infra.database_manager import DatabaseManager
 
         source = inspect.getsource(DatabaseManager.__init__)
 
@@ -418,7 +418,7 @@ class TestStartupDoesNotEatItself:
         A loud refusal beats a silent hundred-and-sixty-fold recursion. If this
         ever fires in real use, the fix is to pass the backend in.
         """
-        import ut_vfx.core.infra.database_manager as db_module
+        import slate.core.infra.database_manager as db_module
 
         was_building = db_module._manager_building
         was_instance = db_module._manager_instance
@@ -438,7 +438,7 @@ class TestStartupDoesNotEatItself:
         under hundreds of alarming lines.
         """
         import inspect
-        from ut_vfx.core.infra.migrations import shot_identity
+        from slate.core.infra.migrations import shot_identity
 
         source = inspect.getsource(shot_identity._widen_postgres_constraints)
 
@@ -456,7 +456,7 @@ class TestSavingAProject:
 
     def test_the_active_flag_is_written_as_a_number(self):
         import inspect
-        from ut_vfx.core.infra.tracking_repository import TrackingRepository
+        from slate.core.infra.tracking_repository import TrackingRepository
 
         source = inspect.getsource(TrackingRepository.save_tracking_project)
 
@@ -466,7 +466,7 @@ class TestSavingAProject:
 
     def test_it_reports_whether_the_project_was_written(self):
         import inspect
-        from ut_vfx.core.infra.tracking_repository import TrackingRepository
+        from slate.core.infra.tracking_repository import TrackingRepository
 
         source = inspect.getsource(TrackingRepository.save_tracking_project)
 
@@ -475,7 +475,7 @@ class TestSavingAProject:
     def test_the_ingest_refuses_to_carry_on_without_a_project(self):
         """Shots with no project to appear under are worse than an error."""
         import inspect
-        from ut_vfx.core.domain import shot_registry
+        from slate.core.domain import shot_registry
 
         source = inspect.getsource(shot_registry._ensure_project)
 

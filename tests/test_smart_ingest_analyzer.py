@@ -15,7 +15,7 @@ import os
 # Ensure the project root is in sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from ut_vfx.core.domain.ingest.analyzer import SmartIngestAnalyzer
+from slate.core.domain.ingest.analyzer import SmartIngestAnalyzer
 
 class TestSmartIngestAnalyzer(unittest.TestCase):
     def setUp(self):

@@ -12,12 +12,12 @@ from collections import defaultdict
 
 import pytest
 
-from ut_vfx.core.domain.departments import load_departments
+from slate.core.domain.departments import load_departments
 
 
 @pytest.fixture(scope="module")
 def shot_folders():
-    with io.open("ut_vfx/data/templates.json", encoding="utf-8") as handle:
+    with io.open("slate/data/templates.json", encoding="utf-8") as handle:
         templates = json.load(handle)
     standard = templates["standard"].get("structure", templates["standard"])
     return standard["shot_folders"]
@@ -82,7 +82,7 @@ class TestEveryDepartmentLooksTheSame:
             assert head in tops, f"{dept.key} points at {dept.folder}, which is not in the template"
 
     def test_slapcomp_sits_with_comp_and_has_its_own_script(self, shot_folders):
-        from ut_vfx.core.domain.departments import get_department
+        from slate.core.domain.departments import get_department
 
         assert get_department("slapcomp").folder == "07_Comp/Slapcomp"
         assert "07_Comp/Slapcomp/Script" in shot_folders
@@ -115,7 +115,7 @@ class TestShape:
 class TestScanVersionFolders:
 
     def test_denoise_is_configured_per_scan_version(self):
-        with io.open("ut_vfx/data/templates.json", encoding="utf-8") as handle:
+        with io.open("slate/data/templates.json", encoding="utf-8") as handle:
             templates = json.load(handle)
         standard = templates["standard"].get("structure", templates["standard"])
         assert "Denoise" in standard.get("scan_version_folders", [])
@@ -125,12 +125,12 @@ class TestScanVersionFolders:
         The degrained plate belongs to the scan it came from, so a re-delivery
         gets its own Denoise rather than sharing one.
         """
-        from ut_vfx.core.workers.structure import FolderCreationWorker
-        import ut_vfx.core.workers.structure as structure_module
+        from slate.core.workers.structure import FolderCreationWorker
+        import slate.core.workers.structure as structure_module
 
         structure_module.database_manager = mock_db
 
-        with io.open("ut_vfx/data/templates.json", encoding="utf-8") as handle:
+        with io.open("slate/data/templates.json", encoding="utf-8") as handle:
             standard = json.load(handle)["standard"]
         st = standard.get("structure", standard)
 

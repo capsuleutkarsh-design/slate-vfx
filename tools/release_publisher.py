@@ -10,7 +10,7 @@ from pathlib import Path
 # --- CONFIGURATION ---
 # --- CONFIGURATION ---
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DIST_DIR = PROJECT_ROOT / "dist" / "UTVFX"
+DIST_DIR = PROJECT_ROOT / "dist" / "Slate"
 
 # Default shared path - can be overridden at runtime if missing
 DEFAULT_RELEASE_DIR = Path(r"X:\Extra\UT_Central\Updates\releases")
@@ -40,8 +40,8 @@ def resolve_paths():
 RELEASE_DIR, LATEST_POINTER = resolve_paths()
 
 def get_version():
-    """Extract version from ut_vfx/__init__.py"""
-    init_file = PROJECT_ROOT / "ut_vfx" / "__init__.py"
+    """Extract version from slate/__init__.py"""
+    init_file = PROJECT_ROOT / "slate" / "__init__.py"
     with open(init_file, "r") as f:
         for line in f:
             if line.startswith("__version__"):
@@ -67,7 +67,7 @@ def zip_folder(folder_path, output_path):
                 zipf.write(file_path, arcname)
 
 def publish():
-    print("🚀 UT_VFX - RELEASE PUBLISHER")
+    print("🚀 Slate - RELEASE PUBLISHER")
     print("==================================")
     
     # 1. Validation
@@ -114,7 +114,7 @@ def publish():
     # Write release notes to file for inclusion in ZIP
     notes_file = DIST_DIR / "release_notes.txt"
     with open(notes_file, "w", encoding="utf-8") as f:
-        f.write(f"UT_VFX - Update v{version}\n")
+        f.write(f"Slate - Update v{version}\n")
         f.write("================================\n\n")
         f.write(release_notes)
     

@@ -41,7 +41,7 @@ def main():
     root = Path(__file__).parent
     
     # Focus on shot_review code
-    shot_review_path = root / 'ut_vfx' / 'gui' / 'tabs' / 'shot_review'
+    shot_review_path = root / 'slate' / 'gui' / 'tabs' / 'shot_review'
     
     print("=" * 80)
     print("SCANNING SHOT REVIEW TAB FOR DANGEROUS IMAGE LOADING PATTERNS")
@@ -63,7 +63,7 @@ def main():
     
     # Check for EXR_LOADING_ENABLED status
     print("\n✓ VERIFICATION: EXR_LOADING_ENABLED status")
-    image_loader = root / 'ut_vfx' / 'utils' / 'image_loader.py'
+    image_loader = root / 'slate' / 'utils' / 'image_loader.py'
     if image_loader.exists():
         with open(image_loader, 'r') as f:
             content = f.read()
@@ -74,7 +74,7 @@ def main():
     
     # Check tech_check_dialog for EXR protection
     print("\n✓ VERIFICATION: EXR protection in tech_check_dialog")
-    tech_check = root / 'ut_vfx' / 'gui' / 'tabs' / 'shot_review' / 'tech_check_dialog.py'
+    tech_check = root / 'slate' / 'gui' / 'tabs' / 'shot_review' / 'tech_check_dialog.py'
     if tech_check.exists():
         with open(tech_check, 'r') as f:
             content = f.read()
@@ -85,7 +85,7 @@ def main():
     
     # Check live_tech_check for EXR protection  
     print("\n✓ VERIFICATION: EXR protection in live_tech_check")
-    live_check = root / 'ut_vfx' / 'gui' / 'tabs' / 'shot_review' / 'live_tech_check.py'
+    live_check = root / 'slate' / 'gui' / 'tabs' / 'shot_review' / 'live_tech_check.py'
     if live_check.exists():
         with open(live_check, 'r') as f:
             content = f.read()

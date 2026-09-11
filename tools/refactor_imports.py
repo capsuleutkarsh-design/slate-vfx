@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 
 ROOT = Path(".")
-DIRS_TO_SCAN = ["ut_vfx", "tests", "tools"]
+DIRS_TO_SCAN = ["slate", "tests", "tools"]
 
 # Map: Module Name -> New Sub-Package (infra/domain)
 MOVES = {
@@ -48,17 +48,17 @@ def process_file(filepath):
         original_content = content
         
         for mod, subpkg in MOVES.items():
-            # 1. Absolute Imports: ut_vfx.core.MOD -> ut_vfx.core.SUB.MOD
-            # Regex to match: ut_vfx.core.MOD( |$|.)
+            # 1. Absolute Imports: slate.core.MOD -> slate.core.SUB.MOD
+            # Regex to match: slate.core.MOD( |$|.)
             # We want to insert .subpkg after core.
             
             # Simple String Replace first for most common cases
-            # case: from ut_vfx.core.database_manager import X
-            content = content.replace(f"ut_vfx.core.{mod}", f"ut_vfx.core.{subpkg}.{mod}")
+            # case: from slate.core.database_manager import X
+            content = content.replace(f"slate.core.{mod}", f"slate.core.{subpkg}.{mod}")
             
-            # case: from ut_vfx.core import database_manager
+            # case: from slate.core import database_manager
             # This is harder to auto-fix perfectly, but let's try regex
-            # pattern: from ut_vfx.core import ..., database_manager, ...
+            # pattern: from slate.core import ..., database_manager, ...
             # This is too complex for simple regex. 
             # Reviewer Note: We assume most imports are direct.
             
@@ -67,7 +67,7 @@ def process_file(filepath):
             
             # 3. Direct imports inside core: from .database_manager import X (if inside core)
             # This script runs from root, so we don't know context easily. 
-            # But we can check if file is in ut_vfx/core/ and not in subpkg.
+            # But we can check if file is in slate/core/ and not in subpkg.
             # But we moved files, so they are now in subpkg!
             # If database_manager imports config_manager, they are both in infra now.
             # So `from .config_manager` works!

@@ -42,11 +42,11 @@ print()
 # Test 2: Check image_loader.py integration
 print("[2/4] Checking image_loader.py integration...")
 try:
-    from ut_vfx.utils.image_loader import ImageLoader
+    from slate.utils.image_loader import ImageLoader
     print("  ✓ ImageLoader imported successfully")
     
     # Check if OIIO flag is set
-    import ut_vfx.utils.image_loader as il_module
+    import slate.utils.image_loader as il_module
     if hasattr(il_module, 'HAS_OIIO'):
         if il_module.HAS_OIIO:
             print("  ✓ ImageLoader has OIIO enabled")
@@ -112,6 +112,6 @@ else:
 
 print()
 print("Next steps:")
-print("  1. Restart UT_VFX to use OIIO")
+print("  1. Restart Slate to use OIIO")
 print("  2. Test with real EXR files from production")
 print("  3. Monitor console for 'OIIO' messages in logs")

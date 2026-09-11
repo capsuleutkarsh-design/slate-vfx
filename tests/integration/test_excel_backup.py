@@ -10,9 +10,9 @@ after the sheet's column layout was designed.
 
 import pytest
 
-from ut_vfx.core.domain.access import can_edit_dashboard, can_use_excel
-from ut_vfx.core.domain.departments import department_keys
-from ut_vfx.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
+from slate.core.domain.access import can_edit_dashboard, can_use_excel
+from slate.core.domain.departments import department_keys
+from slate.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
 
 
 class TestExcelRoles:
@@ -46,7 +46,7 @@ class TestDefaultRoles:
 
     def test_coordinator_and_lead_exist_as_default_roles(self):
         import inspect
-        from ut_vfx.core.domain.user_manager import UserManager
+        from slate.core.domain.user_manager import UserManager
 
         source = inspect.getsource(UserManager._create_default_roles_sql)
         assert '"Coordinator"' in source
@@ -58,7 +58,7 @@ class TestExcelRoundTrip:
 
     @staticmethod
     def _make_project(tmp_path, column_mapping, name="project.xlsx"):
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.core.project_manager import ProjectConfig
+        from slate.gui.tabs.vfx_dashboard_pro.core.project_manager import ProjectConfig
 
         return ProjectConfig(
             code="PRJ",
@@ -100,7 +100,7 @@ class TestExcelRoundTrip:
         return path, mapping, tmp_path
 
     def test_every_department_survives_the_round_trip(self, sheet):
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.core.excel_handler import ExcelHandler
+        from slate.gui.tabs.vfx_dashboard_pro.core.excel_handler import ExcelHandler
 
         path, mapping, tmp_path = sheet
         project = self._make_project(tmp_path, mapping)
@@ -133,7 +133,7 @@ class TestExcelRoundTrip:
         simply does not track.
         """
         from openpyxl import Workbook
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.core.excel_handler import ExcelHandler
+        from slate.gui.tabs.vfx_dashboard_pro.core.excel_handler import ExcelHandler
 
         wb = Workbook()
         ws = wb.active
@@ -163,7 +163,7 @@ class TestExcelRoundTrip:
         assert shots[0].dept("comp").status == "APPROVED"
 
     def test_full_sheet_tracks_every_department(self, sheet):
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.core.excel_handler import ExcelHandler
+        from slate.gui.tabs.vfx_dashboard_pro.core.excel_handler import ExcelHandler
 
         path, mapping, tmp_path = sheet
         handler = ExcelHandler(str(path), self._make_project(tmp_path, mapping))
@@ -181,7 +181,7 @@ class TestExcelIsWriteOnly:
 
     def test_opening_a_project_never_imports_from_excel(self):
         import inspect
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.components import (
+        from slate.gui.tabs.vfx_dashboard_pro.ui.components import (
             dashboard_project_mixin,
         )
 
@@ -193,7 +193,7 @@ class TestExcelIsWriteOnly:
 
     def test_refresh_never_imports_from_excel(self):
         import inspect
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.dashboard_widget import (
+        from slate.gui.tabs.vfx_dashboard_pro.ui.dashboard_widget import (
             DashboardWidget,
         )
 
@@ -208,10 +208,10 @@ class TestExcelIsWriteOnly:
         import "for onboarding"; it was a loaded gun pointing at the database
         and it is gone - from the menu, the actions and the sync service.
         """
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.components.dashboard_actions_mixin import (
+        from slate.gui.tabs.vfx_dashboard_pro.ui.components.dashboard_actions_mixin import (
             DashboardActionsMixin,
         )
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.dashboard_sync_service import (
+        from slate.gui.tabs.vfx_dashboard_pro.ui.dashboard_sync_service import (
             DashboardSyncService,
         )
 
@@ -225,7 +225,7 @@ class TestStaffDepartments:
     """Designations offered when adding a user match the tracked departments."""
 
     def test_every_tracked_department_can_be_a_designation(self):
-        from ut_vfx.core.domain.departments import (
+        from slate.core.domain.departments import (
             load_departments, staff_department_names,
         )
 
@@ -237,7 +237,7 @@ class TestStaffDepartments:
             )
 
     def test_non_production_functions_are_offered_too(self):
-        from ut_vfx.core.domain.departments import staff_department_names
+        from slate.core.domain.departments import staff_department_names
 
         options = staff_department_names()
         for name in ("Production", "IT", "HR", "Admin"):

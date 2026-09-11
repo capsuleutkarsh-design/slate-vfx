@@ -33,7 +33,7 @@ import sys
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from ut_vfx.core.infra.network_manager import NetworkManager
+from slate.core.infra.network_manager import NetworkManager
 
 
 class TestNetworkManager:

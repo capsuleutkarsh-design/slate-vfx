@@ -7,7 +7,7 @@ developer tools for debugging and manual testing within the application.
 
 import sys
 from PySide6.QtWidgets import QApplication
-from ut_vfx.gui.tester_panel import TesterPanel
+from slate.gui.tester_panel import TesterPanel
 
 def test_panel(qtbot):
     window = TesterPanel()

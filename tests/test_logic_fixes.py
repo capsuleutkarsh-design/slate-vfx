@@ -9,11 +9,11 @@ root_dir = Path(__file__).resolve().parent.parent
 if str(root_dir) not in sys.path:
     sys.path.insert(0, str(root_dir))
 
-os.environ["UTVFX_DB_MODE"] = "sqlite"
+os.environ["Slate_DB_MODE"] = "sqlite"
 
-from ut_vfx.core.infra.global_config import GlobalConfig
+from slate.core.infra.global_config import GlobalConfig
 GlobalConfig.set("db_mode", "sqlite")
-from ut_vfx.core.infra.database_manager import database_manager
+from slate.core.infra.database_manager import database_manager
 
 class TestLogicFixes(unittest.TestCase):
     def setUp(self):
@@ -97,7 +97,7 @@ class TestLogicFixes(unittest.TestCase):
 
     def test_central_attendance_configurable_auto_logout(self):
         """Fix 3: Verify central_attendance auto-logout uses configured cutoff time."""
-        from ut_vfx.core.domain.central_attendance import CentralAttendance
+        from slate.core.domain.central_attendance import CentralAttendance
         ca = CentralAttendance()
 
         test_user = "test_autologout_user"

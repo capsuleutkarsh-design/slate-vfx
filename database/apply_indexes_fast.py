@@ -4,12 +4,12 @@ Applies 10 out of 11 indexes in ~30 seconds
 """
 
 # The password is not in this file. It comes from the machine - either the
-# SLATE_DB_PASSWORD environment variable or the git-ignored ut_vfx/config.json
+# SLATE_DB_PASSWORD environment variable or the git-ignored slate/config.json
 # that setup.bat writes. This repository is public.
 import sys as _sys
 from pathlib import Path as _Path
 _sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
-from ut_vfx.core.infra.local_secrets import db_password as _db_password
+from slate.core.infra.local_secrets import db_password as _db_password
 
 
 import psycopg2
@@ -19,13 +19,13 @@ from pathlib import Path
 # Database credentials
 DB_HOST = "172.16.1.45"
 DB_PORT = 5432
-DB_NAME = "ut_vfx"
+DB_NAME = "slate"
 DB_USER = "postgres"
 DB_PASSWORD = _db_password()
 
 def main():
     print("=" * 70)
-    print("  PostgreSQL FAST Index Creation for UT_VFX")
+    print("  PostgreSQL FAST Index Creation for Slate")
     print("  (Skips slow GIN index - you'll get 10/11 indexes)")
     print("=" * 70)
     
@@ -104,7 +104,7 @@ def main():
         print("  ⚠ GIN full-text index for tags (too slow)")
         print("  → Tag searches will use regular index (still 2-3x faster)")
         print("\nNext step:")
-        print("  → Restart UT_VFX to see the performance boost!")
+        print("  → Restart Slate to see the performance boost!")
         print("=" * 70)
         
     except Exception as e:

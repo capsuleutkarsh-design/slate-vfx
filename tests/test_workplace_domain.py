@@ -10,11 +10,11 @@ from datetime import date, timedelta
 
 import pytest
 
-from ut_vfx.core.domain import leave_policy as lp
-from ut_vfx.core.domain import licence_compliance as lc
-from ut_vfx.core.domain import service_desk as sd
-from ut_vfx.core.domain.comp_off_service import hours_between
-from ut_vfx.core.domain.onboarding_service import (
+from slate.core.domain import leave_policy as lp
+from slate.core.domain import licence_compliance as lc
+from slate.core.domain import service_desk as sd
+from slate.core.domain.comp_off_service import hours_between
+from slate.core.domain.onboarding_service import (
     FREELANCE_SKIP, JOINING, LEAVING, OFFBOARD_TASKS, ONBOARD_TASKS,
 )
 

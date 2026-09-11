@@ -10,7 +10,7 @@ import multiprocessing
 import time
 import os
 from pathlib import Path
-from ut_vfx.utils.safe_json import SafeJsonIO
+from slate.utils.safe_json import SafeJsonIO
 
 TEST_FILE = Path("concurrency_test.json")
 

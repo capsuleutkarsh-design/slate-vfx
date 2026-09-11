@@ -2,7 +2,7 @@ import sys
 import os
 sys.path.append(os.getcwd())
 
-from ut_vfx.core.infra.postgres_manager import PostgresManager
+from slate.core.infra.postgres_manager import PostgresManager
 
 def check_tables():
     db = PostgresManager()

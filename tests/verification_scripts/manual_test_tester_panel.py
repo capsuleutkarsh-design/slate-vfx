@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QApplication
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 sys.path.append(root_dir)
 
-from ut_vfx.gui.tester_panel import TesterPanel
+from slate.gui.tester_panel import TesterPanel
 
 def run():
     app = QApplication(sys.argv)

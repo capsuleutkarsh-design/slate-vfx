@@ -7,8 +7,8 @@ Tests the stability enhancements for network operations.
 import pytest
 import time
 from unittest.mock import Mock, patch
-from ut_vfx.core.infra.circuit_breaker import CircuitBreaker, CircuitState, CircuitBreakerError
-from ut_vfx.core.infra.retry_strategy import RetryStrategy
+from slate.core.infra.circuit_breaker import CircuitBreaker, CircuitState, CircuitBreakerError
+from slate.core.infra.retry_strategy import RetryStrategy
 
 
 class TestCircuitBreaker:
@@ -196,10 +196,10 @@ class TestRetryStrategy:
 class TestPostgresManagerIntegration:
     """Integration tests for PostgresManager with circuit breaker"""
     
-    @patch('ut_vfx.core.infra.postgres_manager.pool.ThreadedConnectionPool')
+    @patch('slate.core.infra.postgres_manager.pool.ThreadedConnectionPool')
     def test_execute_query_with_circuit_breaker(self, mock_pool):
         """execute_query should use circuit breaker"""
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.postgres_manager import PostgresManager
         
         # This test would require mocking the entire database connection
         # For now, just verify the circuit breaker exists
@@ -208,7 +208,7 @@ class TestPostgresManagerIntegration:
     
     def test_circuit_breaker_configuration(self):
         """PostgresManager circuit breaker should be properly configured"""
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.postgres_manager import PostgresManager
         
         breaker = PostgresManager._circuit_breaker
         
@@ -218,7 +218,7 @@ class TestPostgresManagerIntegration:
     
     def test_retry_strategy_configuration(self):
         """PostgresManager retry strategy should be properly configured"""
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.postgres_manager import PostgresManager
         
         retry = PostgresManager._retry_strategy
         

@@ -11,11 +11,11 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-from ut_vfx.core.domain.olive_lineup import (
+from slate.core.domain.olive_lineup import (
     TRACK_LAYOUT, build_lineup, build_lineup_shot, generate_timelines,
     group_by_reel,
 )
-from ut_vfx.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
+from slate.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
 
 
 def _frames(folder, basename="plate", frames=(1001, 1002, 1003)):
@@ -302,7 +302,7 @@ class TestNodeIdentifiersAreUnique:
     """
 
     def test_a_long_run_never_repeats(self):
-        from ut_vfx.core.domain.olive_bridge import OliveBridge
+        from slate.core.domain.olive_bridge import OliveBridge
 
         bridge = OliveBridge()
         pointers = [bridge._generate_ptr() for _ in range(20000)]

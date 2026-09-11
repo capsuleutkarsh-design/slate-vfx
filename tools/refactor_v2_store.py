@@ -31,7 +31,7 @@ content = content.replace('\r\n', '\n').replace('\r', '\n')
 # ============================================================================
 # 1. Fix imports
 # ============================================================================
-old_import = "from ut_vfx.core.infra.database_manager import database_manager"
+old_import = "from slate.core.infra.database_manager import database_manager"
 new_imports = """import sqlite3
 from contextlib import contextmanager
 
@@ -43,7 +43,7 @@ except ImportError:
     execute_values = None
     HAS_PSYCOPG2 = False
 
-from ut_vfx.core.infra.database_manager import database_manager"""
+from slate.core.infra.database_manager import database_manager"""
 
 content = content.replace(old_import, new_imports)
 

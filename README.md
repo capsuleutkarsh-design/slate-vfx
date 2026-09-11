@@ -111,8 +111,8 @@ when the server is ready.
 ## About credentials
 
 This repository is public, so **it contains no passwords.**
-`ut_vfx/default_config.json` carries settings only. `setup.bat` writes the real
-values to `ut_vfx/config.json`, which is git-ignored and never leaves the machine.
+`slate/default_config.json` carries settings only. `setup.bat` writes the real
+values to `slate/config.json`, which is git-ignored and never leaves the machine.
 
 Migrating from a private checkout? Keep your existing password — nothing about it
 needs to change, it just moves into the local file.
@@ -122,7 +122,7 @@ needs to change, it just moves into the local file.
 ## How it is put together
 
 ```
-ut_vfx/
+slate/
   core/
     domain/        the rules. Leave policy, the SLA matrix, licence
                    compliance, the joining spine. No Qt and no SQL - these
@@ -132,7 +132,7 @@ ut_vfx/
   gui/
     core/          the design system - icons, controls, empty states
     tabs/          one file per screen
-ut_server/         Central Server - PostgreSQL, PgBouncer, sync
+slate_server/         Central Server - PostgreSQL, PgBouncer, sync
 tests/             994 of them
 tools/             seeding and maintenance
 docs/              this site, and the studio guide

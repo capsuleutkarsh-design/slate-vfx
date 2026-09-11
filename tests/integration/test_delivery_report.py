@@ -11,10 +11,10 @@ import json
 
 import pytest
 
-from ut_vfx.core.domain.delivery_report import (
+from slate.core.domain.delivery_report import (
     build_report, frame_summary, write_report,
 )
-from ut_vfx.core.workers.structure import FolderCreationWorker
+from slate.core.workers.structure import FolderCreationWorker
 
 
 TEMPLATE = (
@@ -24,7 +24,7 @@ TEMPLATE = (
 
 
 def _run(source, target, mock_db, project="PRJ", dry_run=False):
-    import ut_vfx.core.workers.structure as structure_module
+    import slate.core.workers.structure as structure_module
     structure_module.database_manager = mock_db
 
     worker = FolderCreationWorker(

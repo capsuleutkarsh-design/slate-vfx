@@ -6,7 +6,7 @@ REM ============================================================================
 
 echo.
 echo ╔═══════════════════════════════════════════════════════════════════════╗
-echo ║         PostgreSQL Index Creation for UT_VFX                    ║
+echo ║         PostgreSQL Index Creation for Slate                    ║
 echo ╚═══════════════════════════════════════════════════════════════════════╝
 echo.
 
@@ -33,7 +33,7 @@ echo.
 echo Creating performance indexes...
 echo.
 
-psql -h 172.16.1.45 -U postgres -d ut_vfx -f database\create_indexes.sql
+psql -h 172.16.1.45 -U postgres -d slate -f database\create_indexes.sql
 
 if errorlevel 1 (
     echo.
@@ -53,7 +53,7 @@ echo   ✓ Stock library searches - Faster
 echo   ✓ Project/shot queries - Faster
 echo   ✓ Tag searches - Full-text indexed
 echo.
-echo Next: Restart UT_VFX to see improved performance.
+echo Next: Restart Slate to see improved performance.
 echo.
 
 pause

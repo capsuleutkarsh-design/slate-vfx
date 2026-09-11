@@ -3,7 +3,7 @@ import shutil
 import os
 from pathlib import Path
 
-CORE = Path("ut_vfx/core")
+CORE = Path("slate/core")
 INFRA = CORE / "infra"
 DOMAIN = CORE / "domain"
 

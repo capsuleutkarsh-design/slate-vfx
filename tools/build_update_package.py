@@ -31,7 +31,7 @@ def build_single_target(target="vfx", project_root=None):
             print("ERROR: Build pipeline failed.")
             sys.exit(1)
             
-        dist_dir = project_root / "dist" / "UTVFX"
+        dist_dir = project_root / "dist" / "Slate"
         zip_filename = f"UT_{target.upper()}_Update"
     elif target == "server":
         print("\nStep 1: Running Server build...")
@@ -48,7 +48,7 @@ def build_single_target(target="vfx", project_root=None):
             sys.exit(1)
         shutil.copy2(server_exe, dist_dir / "UT_Server.exe")
         
-        bin_dir = project_root / "ut_server" / "bin"
+        bin_dir = project_root / "slate_server" / "bin"
         if bin_dir.exists():
             shutil.copytree(bin_dir, dist_dir / "bin")
             

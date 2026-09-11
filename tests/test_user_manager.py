@@ -52,9 +52,9 @@ class TestUserManager:
     @pytest.fixture
     def user_manager_instance(self, temp_config_dir, monkeypatch):
         """Create a UserManager instance with temp files and isolated SQLite DB."""
-        from ut_vfx.core.domain.user_manager import UserManager
-        from ut_vfx.core.infra.server_hub import ServerHub
-        from ut_vfx.core.infra.sqlite_manager import SQLiteManager
+        from slate.core.domain.user_manager import UserManager
+        from slate.core.infra.server_hub import ServerHub
+        from slate.core.infra.sqlite_manager import SQLiteManager
         
         # Monkey-patch ServerHub to return our temp paths
         def mock_get_users_file(self):

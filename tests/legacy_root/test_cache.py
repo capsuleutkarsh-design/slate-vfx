@@ -4,8 +4,8 @@ from pathlib import Path
 
 print("Looking for configs...")
 
-appdata = Path(os.getenv('LOCALAPPDATA', '')) / "UTVFX" / "config.json"
-docs = Path.home() / "Documents" / "UTVFX" / "config.json"
+appdata = Path(os.getenv('LOCALAPPDATA', '')) / "Slate" / "config.json"
+docs = Path.home() / "Documents" / "Slate" / "config.json"
 
 for p in [appdata, docs]:
     if p.exists():

@@ -48,7 +48,7 @@ class TestConfigManagerActualAPI:
     @pytest.fixture
     def config_manager(self, temp_config_dir, monkeypatch):
         """Create ConfigManager with temp directory."""
-        from ut_vfx.core.infra.config_manager import ConfigManager
+        from slate.core.infra.config_manager import ConfigManager
         
         # Patch _get_app_data_dir to use temp directory
         def mock_get_app_data_dir(self):
@@ -208,7 +208,7 @@ class TestConfigManagerErrorHandling:
     
     def test_load_settings_handles_corrupted_json(self, monkeypatch):
         """Test handling of corrupted settings file."""
-        from ut_vfx.core.infra.config_manager import ConfigManager
+        from slate.core.infra.config_manager import ConfigManager
         
         with tempfile.TemporaryDirectory() as tmpdir:
             config_dir = Path(tmpdir)
@@ -233,7 +233,7 @@ class TestConfigManagerErrorHandling:
     
     def test_save_settings_rejects_non_dict(self, monkeypatch):
         """Test that save_settings rejects non-dict input."""
-        from ut_vfx.core.infra.config_manager import ConfigManager
+        from slate.core.infra.config_manager import ConfigManager
         
         with tempfile.TemporaryDirectory() as tmpdir:
             config_dir = Path(tmpdir)
@@ -252,7 +252,7 @@ class TestConfigManagerErrorHandling:
     
     def test_missing_settings_file_creates_defaults(self, monkeypatch):
         """Test that missing settings file results in defaults."""
-        from ut_vfx.core.infra.config_manager import ConfigManager
+        from slate.core.infra.config_manager import ConfigManager
         
         with tempfile.TemporaryDirectory() as tmpdir:
             config_dir = Path(tmpdir)
@@ -277,7 +277,7 @@ class TestConfigManagerTemplates:
     @pytest.fixture
     def config_manager(self, monkeypatch):
         """Create ConfigManager for template testing."""
-        from ut_vfx.core.infra.config_manager import ConfigManager
+        from slate.core.infra.config_manager import ConfigManager
         
         with tempfile.TemporaryDirectory() as tmpdir:
             config_dir = Path(tmpdir)

@@ -13,7 +13,7 @@ import hashlib
 # Add project root to path
 sys.path.append(os.getcwd())
 
-from ut_vfx.core.domain.user_manager import UserManager
+from slate.core.domain.user_manager import UserManager
 
 def test_migration():
     print("--- TESTING BCRYPT MIGRATION ---")

@@ -7,9 +7,9 @@ from PySide6.QtCore import QCoreApplication
 # Add project root to sys.path
 sys.path.append(os.getcwd())
 
-from ut_vfx.core.infra.database_manager import DatabaseManager
+from slate.core.infra.database_manager import DatabaseManager
 # DISABLED: Legacy vfx_dashboard archived 2026-01-16
-# from ut_vfx.vfx_dashboard.core.poll_worker import PollWorker
+# from slate.vfx_dashboard.core.poll_worker import PollWorker
 # Manual test needs updating for new architecture
 
 # Flag to signal success

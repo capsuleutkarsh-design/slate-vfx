@@ -1,7 +1,7 @@
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent.parent))
-from ut_vfx.core.infra.database_manager import DatabaseManager
+from slate.core.infra.database_manager import DatabaseManager
 import tempfile
 
 def test_avatar_persistence():
@@ -13,10 +13,10 @@ def test_avatar_persistence():
     # Let's try to instantiate with a temp path if the class supports it.
     # Looking at code: __init__(self, db_path: Optional[Path] = None)
     
-    from ut_vfx.core.infra.sqlite_manager import SQLiteManager
+    from slate.core.infra.sqlite_manager import SQLiteManager
     SQLiteManager._instance = None
     with tempfile.TemporaryDirectory() as temp_dir:
-        db_path = Path(temp_dir) / "test_ut_vfx.db"
+        db_path = Path(temp_dir) / "test_slate.db"
         db = DatabaseManager(db_path=db_path)
         
         # 2. Setup User

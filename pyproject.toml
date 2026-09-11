@@ -1,11 +1,11 @@
 [tool.poetry]
 name = "ut-vfx"
 version = "1.8.0-beta.0"
-description = "UT_VFX Production Tools & Dashboard"
+description = "Slate Production Tools & Dashboard"
 authors = ["Utkarsh Tripathi <utkarshtripathi771@gmail.com>"]
 readme = "README.md"
 packages = [
-    { include = "ut_vfx" },
+    { include = "slate" },
     { include = "tools" }
 ]
 
@@ -102,20 +102,20 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 minversion = "9.0"
-addopts = "-ra -q --cov=ut_vfx --cov-report=term-missing --cov-report=html"
+addopts = "-ra -q --cov=slate --cov-report=term-missing --cov-report=html"
 testpaths = [
     "tests",
-    "ut_vfx/tests"
+    "slate/tests"
 ]
 
 [tool.coverage.run]
-source = ["ut_vfx"]
+source = ["slate"]
 omit = [
     "*/tests/*",
     "*/vfx_dashboard/*",
     "*/vfx_dashboard_pro/*",
     "*/__pycache__/*",
-    "*/scripts/*",
+    "*/tools/*",
 ]
 
 [tool.coverage.report]

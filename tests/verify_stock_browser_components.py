@@ -7,11 +7,11 @@ sys.path.append(START_DIR)
 print(f"Checking imports from {START_DIR}...")
 
 components = [
-    ("ut_vfx.gui.tabs.stock_browser.ui.inspector", "StockInspectorPanel"),
-    ("ut_vfx.gui.tabs.stock_browser.ui.sidebar", "StockSidebar"),
-    ("ut_vfx.gui.tabs.stock_browser.ui.gallery", "StockGallery"),
-    ("ut_vfx.gui.tabs.stock_browser.ingest_controller", "StockIngestController"),
-    ("ut_vfx.gui.tabs.stock_browser_tab", "StockBrowserTab")
+    ("slate.gui.tabs.stock_browser.ui.inspector", "StockInspectorPanel"),
+    ("slate.gui.tabs.stock_browser.ui.sidebar", "StockSidebar"),
+    ("slate.gui.tabs.stock_browser.ui.gallery", "StockGallery"),
+    ("slate.gui.tabs.stock_browser.ingest_controller", "StockIngestController"),
+    ("slate.gui.tabs.stock_browser_tab", "StockBrowserTab")
 ]
 
 failed = False

@@ -1,5 +1,5 @@
 
-from ut_vfx.core.infra.consistency_protocol import (
+from slate.core.infra.consistency_protocol import (
     CrossStoreConsistencyProtocol,
     StoreAction,
 )

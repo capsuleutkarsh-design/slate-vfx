@@ -1,7 +1,7 @@
 import sqlite3
 import os
 
-DB_PATH = r".\DB\ut_vfx.db"
+DB_PATH = r".\DB\slate.db"
 
 def inspect_other_tables():
     if not os.path.exists(DB_PATH):

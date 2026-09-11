@@ -14,14 +14,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
-from ut_vfx.core.infra.models.base import Base
-from ut_vfx.core.infra.models.auth import UserModel, RoleModel, AuditLogModel
-from ut_vfx.core.infra.models.tracking import ProjectModel, ShotModel, TaskModel, ChangeHistoryModel
-from ut_vfx.core.infra.models.operations import (
+from slate.core.infra.models.base import Base
+from slate.core.infra.models.auth import UserModel, RoleModel, AuditLogModel
+from slate.core.infra.models.tracking import ProjectModel, ShotModel, TaskModel, ChangeHistoryModel
+from slate.core.infra.models.operations import (
     StockAssetModel, AttendanceLogModel, HardwareInventoryModel,
     ItDeploymentModel, ItTicketModel, LeaveRequestModel, LeaveBalanceModel
 )
-from ut_vfx.core.infra.db_factory import get_db_session, init_schema
+from slate.core.infra.db_factory import get_db_session, init_schema
 
 
 class TestSQLAlchemyModels(unittest.TestCase):

@@ -31,7 +31,7 @@ import sys
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from ut_vfx.utils.backup_recovery import BackupManager, RecoveryManager
+from slate.utils.backup_recovery import BackupManager, RecoveryManager
 
 
 class TestBackupManager:
@@ -76,7 +76,7 @@ class TestBackupManager:
         backup_dir = manager.backup_directory
         
         assert backup_dir.exists()
-        assert "AppData" in str(backup_dir) or ".ut_vfx" in str(backup_dir)
+        assert "AppData" in str(backup_dir) or ".slate" in str(backup_dir)
         assert "system32" not in str(backup_dir).lower()
         assert "WINDOWS" not in str(backup_dir)
     

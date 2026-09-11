@@ -26,7 +26,7 @@ class TestAssetIdentifiersCannotCollide:
 
     @staticmethod
     def _make_id(name, path):
-        from ut_vfx.core.domain.asset_ingestor import IngestWorker
+        from slate.core.domain.asset_ingestor import IngestWorker
         source = inspect.getsource(IngestWorker._create_basic_asset)
         assert "% 2_147_483_647" not in source, (
             "the fingerprint is still being squeezed into a small number range"
@@ -73,7 +73,7 @@ class TestSearchWorksOnBothDatabases:
 
     def test_no_postgres_only_comparison_remains(self):
         """Comments may mention it; the SQL must not use it."""
-        from ut_vfx.core.infra.stock_repository import StockRepository
+        from slate.core.infra.stock_repository import StockRepository
 
         code = [line.split("#", 1)[0]
                 for line in inspect.getsource(StockRepository).splitlines()]
@@ -121,19 +121,19 @@ class TestBrowsingDoesNotFetchWhatItCannotShow:
         They are large, never displayed, and were being carried across the
         network on every page of scrolling.
         """
-        from ut_vfx.core.infra.stock_repository import StockRepository
+        from slate.core.infra.stock_repository import StockRepository
 
         assert "embedding" not in StockRepository.BROWSE_COLUMNS
 
     def test_everything_the_interface_shows_is_still_fetched(self):
-        from ut_vfx.core.infra.stock_repository import StockRepository
+        from slate.core.infra.stock_repository import StockRepository
 
         for column in ("id", "file_path", "file_name", "file_type",
                        "thumb_path", "proxy_path", "tags", "metadata"):
             assert column in StockRepository.BROWSE_COLUMNS
 
     def test_listing_is_no_longer_a_select_star(self):
-        from ut_vfx.core.infra.stock_repository import StockRepository
+        from slate.core.infra.stock_repository import StockRepository
 
         source = inspect.getsource(StockRepository.get_all_stock_assets)
 
@@ -147,19 +147,19 @@ class TestCountsMatchWhatIsOnScreen:
     """
 
     def test_the_repository_can_count_a_filtered_list(self):
-        from ut_vfx.core.infra.stock_repository import StockRepository
+        from slate.core.infra.stock_repository import StockRepository
 
         assert hasattr(StockRepository, "count_stock_assets")
 
     def test_the_filter_is_shared_between_listing_and_counting(self):
         """Two copies of the rule would drift apart."""
-        from ut_vfx.core.infra.stock_repository import StockRepository
+        from slate.core.infra.stock_repository import StockRepository
 
         assert "_where" in inspect.getsource(StockRepository.get_all_stock_assets)
         assert "_where" in inspect.getsource(StockRepository.count_stock_assets)
 
     def test_the_library_manager_passes_the_filter_through(self):
-        from ut_vfx.core.domain.library_manager import LibraryManager
+        from slate.core.domain.library_manager import LibraryManager
 
         params = inspect.signature(LibraryManager.get_total_count).parameters
 
@@ -175,7 +175,7 @@ class TestTheIngestDoesNotReadTheWholeLibrary:
     """
 
     def test_it_asks_only_for_the_paths(self):
-        from ut_vfx.core.domain.asset_ingestor import IngestWorker
+        from slate.core.domain.asset_ingestor import IngestWorker
 
         source = inspect.getsource(IngestWorker.run)
 
@@ -183,7 +183,7 @@ class TestTheIngestDoesNotReadTheWholeLibrary:
         assert "get_all_assets()" not in source
 
     def test_the_repository_offers_a_paths_only_query(self):
-        from ut_vfx.core.infra.stock_repository import StockRepository
+        from slate.core.infra.stock_repository import StockRepository
 
         source = inspect.getsource(StockRepository.list_stock_paths)
 
@@ -191,7 +191,7 @@ class TestTheIngestDoesNotReadTheWholeLibrary:
         assert "SELECT *" not in source
 
     def test_paths_are_compared_without_touching_the_file_system(self):
-        from ut_vfx.core.domain.asset_ingestor import IngestWorker
+        from slate.core.domain.asset_ingestor import IngestWorker
 
         code = [line.split("#", 1)[0]
                 for line in inspect.getsource(IngestWorker.run).splitlines()]
@@ -208,7 +208,7 @@ class TestTheIngestDoesNotReadTheWholeLibrary:
         backslashes while the other half stores forward slashes - so no sequence
         ever matched, and every image sequence was ingested again on every run.
         """
-        from ut_vfx.core.domain.asset_ingestor import IngestWorker
+        from slate.core.domain.asset_ingestor import IngestWorker
 
         source = inspect.getsource(IngestWorker.run)
 
@@ -217,13 +217,13 @@ class TestTheIngestDoesNotReadTheWholeLibrary:
         )
 
     def test_the_same_path_normalises_the_same_way(self):
-        from ut_vfx.core.domain.asset_ingestor import _normalise_path
+        from slate.core.domain.asset_ingestor import _normalise_path
 
         assert (_normalise_path(r"C:\Stock\Clip.mov")
                 == _normalise_path("C:/Stock/clip.mov"))
 
     def test_a_trailing_separator_makes_no_difference(self):
-        from ut_vfx.core.domain.asset_ingestor import _normalise_path
+        from slate.core.domain.asset_ingestor import _normalise_path
 
         assert _normalise_path("/stock/a/") == _normalise_path("/stock/a")
 
@@ -231,7 +231,7 @@ class TestTheIngestDoesNotReadTheWholeLibrary:
 class TestALargeIngestDoesNotFloodTheInterface:
 
     def test_updates_are_sent_in_groups(self):
-        from ut_vfx.core.domain.asset_ingestor import IngestWorker
+        from slate.core.domain.asset_ingestor import IngestWorker
 
         source = inspect.getsource(IngestWorker.run)
 
@@ -240,7 +240,7 @@ class TestALargeIngestDoesNotFloodTheInterface:
 
     def test_the_interface_listens_for_those_groups(self):
         """Sending them without a listener would silently lose every update."""
-        from ut_vfx.gui.tabs.stock_browser.controllers.ingest_controller import (
+        from slate.gui.tabs.stock_browser.controllers.ingest_controller import (
             StockIngestController,
         )
 
@@ -250,7 +250,7 @@ class TestALargeIngestDoesNotFloodTheInterface:
         assert hasattr(StockIngestController, "on_assets_update_batch")
 
     def test_matching_an_asset_is_not_a_search_through_the_whole_list(self):
-        from ut_vfx.gui.tabs.stock_browser.controllers.ingest_controller import (
+        from slate.gui.tabs.stock_browser.controllers.ingest_controller import (
             StockIngestController,
         )
 
@@ -271,7 +271,7 @@ class TestTheCacheFolderStaysUsable:
 
     @pytest.fixture
     def manager(self, tmp_path):
-        from ut_vfx.core.domain.proxy_manager import ProxyManager
+        from slate.core.domain.proxy_manager import ProxyManager
 
         instance = ProxyManager()
         instance.cache_dir = tmp_path / "Cache"
@@ -341,14 +341,14 @@ class TestRemovingAnAssetActuallyRemovesIt:
         It used to drop the asset from the in-memory list only, so it came
         straight back the next time the library was read.
         """
-        from ut_vfx.core.domain.library_manager import LibraryManager
+        from slate.core.domain.library_manager import LibraryManager
 
         source = inspect.getsource(LibraryManager.remove_asset)
 
         assert "remove_stock_asset_by_path" in source
 
     def test_it_says_whether_it_worked(self):
-        from ut_vfx.core.domain.library_manager import LibraryManager
+        from slate.core.domain.library_manager import LibraryManager
 
         source = inspect.getsource(LibraryManager.remove_asset)
 
@@ -359,12 +359,12 @@ class TestAddingAndEditingReportTheirResult:
     """The same silent-failure pattern found across the database work."""
 
     def test_adding_returns_the_new_identifier(self):
-        from ut_vfx.core.domain.library_manager import LibraryManager
+        from slate.core.domain.library_manager import LibraryManager
 
         assert "return new_id" in inspect.getsource(LibraryManager.add_asset)
 
     def test_editing_returns_whether_it_saved(self):
-        from ut_vfx.core.domain.library_manager import LibraryManager
+        from slate.core.domain.library_manager import LibraryManager
 
         source = inspect.getsource(LibraryManager.update_asset_metadata)
 
@@ -375,7 +375,7 @@ class TestAddingAndEditingReportTheirResult:
 class TestScrollingDoesNotRepeatItself:
 
     def test_the_sidebar_is_only_rebuilt_on_a_fresh_list(self):
-        from ut_vfx.gui.tabs.stock_browser.controllers.pagination_loader_mixin import (
+        from slate.gui.tabs.stock_browser.controllers.pagination_loader_mixin import (
             PaginationLoaderMixin,
         )
 
@@ -384,7 +384,7 @@ class TestScrollingDoesNotRepeatItself:
         assert "if not append:" in source
 
     def test_a_typed_search_is_not_cleared_by_the_next_page(self):
-        from ut_vfx.gui.tabs.stock_browser.controllers.pagination_loader_mixin import (
+        from slate.gui.tabs.stock_browser.controllers.pagination_loader_mixin import (
             PaginationLoaderMixin,
         )
 
@@ -405,7 +405,7 @@ class TestWhatIsBeingFilteredForIsRemembered:
     """
 
     def _controller(self, search=None, media_type="All"):
-        from ut_vfx.gui.tabs.stock_browser.controllers.pagination_loader_mixin import (
+        from slate.gui.tabs.stock_browser.controllers.pagination_loader_mixin import (
             PaginationLoaderMixin,
         )
 
@@ -525,8 +525,8 @@ class TestBothBackendsOfferWhatTheLibraryAsksFor:
     )
 
     @pytest.mark.parametrize("module_name, class_name", [
-        ("ut_vfx.core.infra.postgres_manager", "PostgresManager"),
-        ("ut_vfx.core.infra.sqlite_manager", "SQLiteManager"),
+        ("slate.core.infra.postgres_manager", "PostgresManager"),
+        ("slate.core.infra.sqlite_manager", "SQLiteManager"),
     ])
     def test_every_stock_method_is_forwarded(self, module_name, class_name):
         import importlib
@@ -546,15 +546,15 @@ class TestBothBackendsOfferWhatTheLibraryAsksFor:
         )
 
     def test_the_repository_defines_them_in_the_first_place(self):
-        from ut_vfx.core.infra.stock_repository import StockRepository
+        from slate.core.infra.stock_repository import StockRepository
 
         for name in self.REQUIRED:
             assert hasattr(StockRepository, name), name
 
     def test_the_filtered_count_takes_the_same_arguments_all_the_way_down(self):
         """A forward with the wrong signature fails just as quietly."""
-        from ut_vfx.core.infra.stock_repository import StockRepository
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.stock_repository import StockRepository
+        from slate.core.infra.postgres_manager import PostgresManager
 
         expected = list(inspect.signature(
             StockRepository.count_stock_assets).parameters)[1:]
@@ -567,7 +567,7 @@ class TestBothBackendsOfferWhatTheLibraryAsksFor:
 class TestTheLibraryIsIndexed:
 
     def test_the_columns_every_browse_uses_are_covered(self):
-        from ut_vfx.core.infra.migrations.stock_indexes import INDEXES
+        from slate.core.infra.migrations.stock_indexes import INDEXES
 
         covered = " ".join(definition for _name, definition in INDEXES)
 
@@ -575,7 +575,7 @@ class TestTheLibraryIsIndexed:
         assert "file_type" in covered, "every category filter narrows on this"
 
     def test_creating_them_twice_is_harmless(self):
-        from ut_vfx.core.infra.migrations.stock_indexes import INDEXES
+        from slate.core.infra.migrations.stock_indexes import INDEXES
 
         for name, definition in INDEXES:
             assert name and definition

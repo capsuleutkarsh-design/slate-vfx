@@ -3,7 +3,7 @@ import os
 import re
 from pathlib import Path
 
-ROOT = Path("ut_vfx/core")
+ROOT = Path("slate/core")
 DOMAIN_DIR = ROOT / "domain"
 INFRA_DIR = ROOT / "infra"
 
@@ -38,7 +38,7 @@ def fix_file(filepath, current_top_pkg):
                 if target_pkg and target_pkg != current_top_pkg:
                     print(f"Fixing import in {filepath.name}: {mod_name} is in {target_pkg} (was {dots}{mod_name})")
                     # Use absolute import for safety in deep structure
-                    new_line = f"from ut_vfx.core.{target_pkg}.{mod_name} import {imports}"
+                    new_line = f"from slate.core.{target_pkg}.{mod_name} import {imports}"
                     new_lines.append(new_line)
                     continue
             

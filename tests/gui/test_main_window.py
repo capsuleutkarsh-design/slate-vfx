@@ -8,7 +8,7 @@ It relies on a simplified QTimer loop or direct instantiation checks.
 
 import sys
 from PySide6.QtWidgets import QApplication
-from ut_vfx.gui.main_window import VFXFolderCreatorApp
+from slate.gui.main_window import VFXFolderCreatorApp
 
 def test_main(qtbot):
     user_data = {

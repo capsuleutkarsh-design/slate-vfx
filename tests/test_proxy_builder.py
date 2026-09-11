@@ -11,12 +11,12 @@ get a proxy, where it lands, and what happens when things go wrong.
 
 import pytest
 
-from ut_vfx.core.domain.proxy_builder import (
+from slate.core.domain.proxy_builder import (
     ProxyBuildResult, ProxyJob, build, first_frame_file, needs_proxy, plan,
     proxy_path_for,
 )
-from ut_vfx.core.domain.shot_media import MediaClip
-from ut_vfx.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
+from slate.core.domain.shot_media import MediaClip
+from slate.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
 
 
 def _frames(folder, basename="SH010", frames=(1001, 1002)):

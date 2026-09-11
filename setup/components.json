@@ -40,20 +40,20 @@
       "kind": "zip",
       "dest": "runtime/ffmpeg",
       "extract_glob": "**/bin/ffmpeg.exe",
-      "install_to": "ut_vfx/bin/ffmpeg.exe",
-      "probe": "ut_vfx/bin/ffmpeg.exe",
+      "install_to": "slate/bin/ffmpeg.exe",
+      "probe": "slate/bin/ffmpeg.exe",
       "required": true
     },
     {
       "name": "postgresql",
       "title": "PostgreSQL 16 (binaries only)",
-      "why": "The studio database. Only needed on the machine that runs UT Central Server - a workstation that connects to an existing server can skip it.",
+      "why": "The studio database. Only needed on the machine that runs Slate Central Server - a workstation that connects to an existing server can skip it.",
       "url": "https://get.enterprisedb.com/postgresql/postgresql-16.9-1-windows-x64-binaries.zip",
       "kind": "zip",
-      "dest": "ut_server/bin",
+      "dest": "slate_server/bin",
       "strip_root": "pgsql",
       "into": "pgsql",
-      "probe": "ut_server/bin/pgsql/bin/postgres.exe",
+      "probe": "slate_server/bin/pgsql/bin/postgres.exe",
       "required": false
     },
     {

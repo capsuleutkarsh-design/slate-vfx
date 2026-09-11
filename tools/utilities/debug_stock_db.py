@@ -12,8 +12,8 @@ project_root = Path(os.getcwd())
 sys.path.append(str(project_root))
 
 try:
-    from ut_vfx.core.infra.database_manager import DatabaseManager
-    from ut_vfx.core.infra.global_config import GlobalConfig
+    from slate.core.infra.database_manager import DatabaseManager
+    from slate.core.infra.global_config import GlobalConfig
     
     print("-" * 50)
     print("DEBUGGING STOCK LIBRARY REGRESSION")

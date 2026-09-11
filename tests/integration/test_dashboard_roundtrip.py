@@ -10,10 +10,10 @@ No GUI, no event loop. Failures here are real defects, not test scaffolding.
 
 import pytest
 
-from ut_vfx.gui.tabs.vfx_dashboard_pro.models.shot_model import (
+from slate.gui.tabs.vfx_dashboard_pro.models.shot_model import (
     Shot, DepartmentInfo, FeedbackEntry,
 )
-from ut_vfx.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler
+from slate.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler
 
 
 PROJECT = "AUDIT_PRJ"
@@ -164,7 +164,7 @@ class TestGranularEdit:
 
     def test_stale_edit_is_rejected(self, handler):
         """Two coordinators editing the same shot must not silently clobber."""
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import StaleDataError
+        from slate.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import StaleDataError
 
         handler.write_shots([_sample_shot()])
         current = handler.read_shots()[0]
@@ -223,7 +223,7 @@ class TestDashboardWidgetOpens:
     """
 
     def test_widget_constructs_for_a_coordinator(self, qtbot, mock_db):
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.dashboard_widget import DashboardWidget
+        from slate.gui.tabs.vfx_dashboard_pro.ui.dashboard_widget import DashboardWidget
 
         widget = DashboardWidget(user_data={
             "username": "coord1",
@@ -238,7 +238,7 @@ class TestDashboardWidgetOpens:
         assert widget._user_can_edit() is True
 
     def test_widget_constructs_for_an_artist_readonly(self, qtbot, mock_db):
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.dashboard_widget import DashboardWidget
+        from slate.gui.tabs.vfx_dashboard_pro.ui.dashboard_widget import DashboardWidget
 
         widget = DashboardWidget(user_data={
             "username": "priya",
@@ -297,7 +297,7 @@ class TestOperationalWiring:
     """The new pieces must actually be reachable from the real widget."""
 
     def _widget(self, qtbot, role):
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.dashboard_widget import DashboardWidget
+        from slate.gui.tabs.vfx_dashboard_pro.ui.dashboard_widget import DashboardWidget
 
         widget = DashboardWidget(user_data={
             "username": "u1", "display_name": "User One", "roles": [role],

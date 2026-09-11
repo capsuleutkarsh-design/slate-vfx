@@ -15,7 +15,7 @@ class TestFfmpegIsAllowedToExplainItself:
 
     @pytest.fixture
     def source(self):
-        from ut_vfx.gui.widgets.media_engines import stream_engine
+        from slate.gui.widgets.media_engines import stream_engine
         return inspect.getsource(stream_engine)
 
     def test_its_messages_are_no_longer_discarded(self, source):
@@ -52,7 +52,7 @@ class TestFailingIsNotTheSameAsFinishing:
 
     @pytest.fixture
     def producer(self):
-        from ut_vfx.gui.widgets.media_engines.stream_engine import StreamEngine
+        from slate.gui.widgets.media_engines.stream_engine import StreamEngine
         for name in ("_producer_loop", "_producer", "run"):
             fn = getattr(StreamEngine, name, None)
             if fn is not None and "_read_exact" in inspect.getsource(fn):
@@ -85,25 +85,25 @@ class TestRestartingDoesNotLeakAProcess:
     """
 
     def test_the_old_process_is_handed_back_on_restart(self):
-        from ut_vfx.gui.widgets.media_engines.stream_engine import StreamEngine
+        from slate.gui.widgets.media_engines.stream_engine import StreamEngine
 
         source = inspect.getsource(StreamEngine._restart_ffmpeg_at)
 
         assert "subprocess_tracker.unregister" in source
 
     def test_the_tracker_clears_out_processes_that_have_ended(self):
-        from ut_vfx.utils.process_manager import SubprocessTracker
+        from slate.utils.process_manager import SubprocessTracker
 
         assert "_sweep_finished" in inspect.getsource(SubprocessTracker.register)
 
     def test_letting_one_go_closes_its_pipes(self):
         """An open pipe is a held handle even after the process is gone."""
-        from ut_vfx.utils.process_manager import SubprocessTracker
+        from slate.utils.process_manager import SubprocessTracker
 
         assert hasattr(SubprocessTracker, "_release")
 
     def test_how_many_are_held_can_be_read(self):
-        from ut_vfx.utils.process_manager import subprocess_tracker
+        from slate.utils.process_manager import subprocess_tracker
 
         assert isinstance(subprocess_tracker.tracked_count, int)
 
@@ -115,7 +115,7 @@ class TestOpenExrFilesShowAPicture:
     """
 
     def test_the_channel_count_is_asked_for_explicitly(self):
-        from ut_vfx.gui.widgets.media_engines import image_engine
+        from slate.gui.widgets.media_engines import image_engine
 
         source = inspect.getsource(image_engine)
 
@@ -124,7 +124,7 @@ class TestOpenExrFilesShowAPicture:
 
     def test_formats_the_ordinary_loader_cannot_read_fall_back(self):
         """DPX and TGA are read by the image library, not by Qt."""
-        from ut_vfx.gui.widgets.media_engines.image_engine import ImageEngine
+        from slate.gui.widgets.media_engines.image_engine import ImageEngine
 
         assert hasattr(ImageEngine, "_load_via_oiio")
         assert "_load_via_oiio" in inspect.getsource(ImageEngine._load_standard)
@@ -137,7 +137,7 @@ class TestClickingAnAssetPlaysIt:
         Selecting a clip loaded it into the player but left it stopped, so it had
         to be started by hand every time.
         """
-        from ut_vfx.gui.tabs.stock_browser_tab import StockBrowserTab
+        from slate.gui.tabs.stock_browser_tab import StockBrowserTab
 
         source = inspect.getsource(StockBrowserTab.on_selection_changed)
 

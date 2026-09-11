@@ -3,7 +3,7 @@ import os
 import re
 from pathlib import Path
 
-ROOT = Path("ut_vfx/core")
+ROOT = Path("slate/core")
 DOMAIN_DIR = ROOT / "domain"
 INFRA_DIR = ROOT / "infra"
 

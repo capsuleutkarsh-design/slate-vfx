@@ -25,7 +25,7 @@ def verify_file_hash(file_path, expected_hash):
 
 def main():
     print("========================================")
-    print("    UT_VFX Emergency Recovery Updater   ")
+    print("    Slate Emergency Recovery Updater   ")
     print("========================================")
     print("This tool will force an update from the Central Server without launching the application.")
     print("Use this if the application crashes on startup and cannot update normally.\n")
@@ -35,10 +35,10 @@ def main():
         print("Invalid target. Must be 'client' or 'server'. Exiting.")
         sys.exit(1)
         
-    exe_name = "ut_vfx.exe" if target == "client" else "ut_server.exe"
+    exe_name = "slate.exe" if target == "client" else "slate_server.exe"
 
     # Find Central Directory
-    config_path = Path.home() / ".capsule_vfx" / "local_config.json"
+    config_path = Path.home() / ".slate_vfx" / "local_config.json"
     if not config_path.exists():
         print(f"ERROR: Local config not found at {config_path}")
         print("Cannot determine Central Server path.")
@@ -94,7 +94,7 @@ def main():
     staging_dir = app_dir / "Updates" / "Staging"
     staging_dir.mkdir(parents=True, exist_ok=True)
     
-    dest_zip = staging_dir / "UTVFX_Update.zip"
+    dest_zip = staging_dir / "Slate_Update.zip"
     
     try:
         shutil.copy2(source_zip, dest_zip)
@@ -110,8 +110,8 @@ def main():
     print("Hash verified successfully.")
     
     # Locate sidecar updater
-    updater_exe = app_dir / "ut_vfx" / "core" / "updater" / "updater_script.exe"
-    updater_py = app_dir / "ut_vfx" / "core" / "updater" / "updater_script.py"
+    updater_exe = app_dir / "slate" / "core" / "updater" / "updater_script.exe"
+    updater_py = app_dir / "slate" / "core" / "updater" / "updater_script.py"
     
     if updater_exe.exists():
         updater_path = updater_exe
@@ -120,7 +120,7 @@ def main():
         updater_path = updater_py
         is_python = True
     else:
-        print(f"ERROR: Sidecar updater not found in {app_dir / 'ut_vfx' / 'core' / 'updater'}")
+        print(f"ERROR: Sidecar updater not found in {app_dir / 'slate' / 'core' / 'updater'}")
         sys.exit(1)
         
     print("\nLaunching Sidecar Updater...")

@@ -1,11 +1,11 @@
 
 # The password is not in this file. It comes from the machine - either the
-# SLATE_DB_PASSWORD environment variable or the git-ignored ut_vfx/config.json
+# SLATE_DB_PASSWORD environment variable or the git-ignored slate/config.json
 # that setup.bat writes. This repository is public.
 import sys as _sys
 from pathlib import Path as _Path
 _sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
-from ut_vfx.core.infra.local_secrets import db_password as _db_password
+from slate.core.infra.local_secrets import db_password as _db_password
 
 import json
 import os
@@ -32,7 +32,7 @@ def create_client_config():
         json.dump(config, f, indent=4)
         
     print(f"Successfully generated '{filename}'")
-    print(f"Copy this file to 'RuntimeData/UTVFX/config.json' on client PCs.")
+    print(f"Copy this file to 'RuntimeData/Slate/config.json' on client PCs.")
 
 if __name__ == "__main__":
     create_client_config()

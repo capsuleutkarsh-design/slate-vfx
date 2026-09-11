@@ -10,14 +10,14 @@ writes, and in the model that decides which cells open.
 import pytest
 from PySide6.QtCore import Qt
 
-from ut_vfx.core.domain.access import (
+from slate.core.domain.access import (
     artist_statuses, can_force_save, can_set_status, is_department_scoped,
 )
-from ut_vfx.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import (
+from slate.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import (
     SQLiteHandler, StaleDataError,
 )
-from ut_vfx.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
-from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.shot_table_model import ShotTableModel
+from slate.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
+from slate.gui.tabs.vfx_dashboard_pro.ui.shot_table_model import ShotTableModel
 
 
 PRIYA = ["priya", "Priya"]

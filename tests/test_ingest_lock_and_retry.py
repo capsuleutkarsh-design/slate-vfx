@@ -10,10 +10,10 @@ import json
 
 import pytest
 
-from ut_vfx.core.domain.ingest_lock import (
+from slate.core.domain.ingest_lock import (
     IngestLock, IngestLocked, current_holder,
 )
-from ut_vfx.core.domain.ingest_retry import (
+from slate.core.domain.ingest_retry import (
     latest_manifest, load_failures, retry_failures,
 )
 
@@ -64,7 +64,7 @@ class TestIngestLock:
         """A crashed machine must not lock a project out forever."""
         import os
         import time
-        from ut_vfx.core.domain import ingest_lock as module
+        from slate.core.domain import ingest_lock as module
 
         project = tmp_path / "PRJ"
         project.mkdir()
@@ -151,7 +151,7 @@ class TestRetry:
         assert result.recovered == ["SH010.0001.exr"]
 
     def test_a_file_that_fails_again_is_still_reported(self, tmp_path, monkeypatch):
-        from ut_vfx.core.domain import ingest_retry
+        from slate.core.domain import ingest_retry
 
         source = tmp_path / "src" / "SH010.0001.exr"
         source.parent.mkdir(parents=True)
@@ -202,7 +202,7 @@ class TestRetry:
         assert load_failures(manifest) == []
 
     def test_the_latest_manifest_is_found(self, tmp_path):
-        from ut_vfx.core.domain.delivery_report import REPORT_DIRNAME
+        from slate.core.domain.delivery_report import REPORT_DIRNAME
 
         project = tmp_path / "PRJ"
         reports = project / REPORT_DIRNAME
@@ -226,7 +226,7 @@ class TestFastModeIsHonest:
     """
 
     def test_a_size_mismatch_is_caught_without_a_checksum(self, tmp_path):
-        from ut_vfx.core.infra.file_operations import SafeFileOperations
+        from slate.core.infra.file_operations import SafeFileOperations
 
         source = tmp_path / "a.exr"
         source.write_bytes(b"1234567890")

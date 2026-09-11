@@ -30,7 +30,7 @@ with open(hba_path, "r", encoding="utf-8") as f:
 
 hba_rule = "host    all             all             0.0.0.0/0               md5"
 if "0.0.0.0/0" not in hba_content:
-    hba_content += f"\n# Added by UT_VFX Configurator\n{hba_rule}\n"
+    hba_content += f"\n# Added by Slate Configurator\n{hba_rule}\n"
     with open(hba_path, "w", encoding="utf-8") as f:
         f.write(hba_content)
     print("pg_hba.conf updated")

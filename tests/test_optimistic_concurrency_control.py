@@ -10,9 +10,9 @@ from pathlib import Path
 # Add project root to sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from ut_vfx.core.infra.sqlite_manager import SQLiteManager
-from ut_vfx.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
-from ut_vfx.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler, StaleDataError
+from slate.core.infra.sqlite_manager import SQLiteManager
+from slate.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
+from slate.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler, StaleDataError
 
 
 class TestOptimisticConcurrencyControl(unittest.TestCase):

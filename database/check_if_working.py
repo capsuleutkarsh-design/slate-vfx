@@ -2,7 +2,7 @@
 Check if PostgreSQL is actively creating indexes RIGHT NOW
 """
 
-from ut_vfx.core.infra.postgres_manager import PostgresManager
+from slate.core.infra.postgres_manager import PostgresManager
 
 try:
     db = PostgresManager()
@@ -20,7 +20,7 @@ try:
             EXTRACT(EPOCH FROM (NOW() - query_start)) as seconds_running,
             query
         FROM pg_stat_activity
-        WHERE datname = 'ut_vfx'
+        WHERE datname = 'slate'
         AND state = 'active'
         AND query NOT LIKE '%pg_stat_activity%'
     """)

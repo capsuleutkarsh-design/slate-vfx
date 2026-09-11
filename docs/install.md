@@ -25,7 +25,7 @@ setup.bat              install what is missing
 setup.bat /check       say what it would do, download nothing
 setup.bat /force       re-download even what is already there
 setup.bat /server      also install PostgreSQL (the Central Server machine only)
-setup.bat /skipconfig  leave ut_vfx/config.json alone
+setup.bat /skipconfig  leave slate/config.json alone
 ```
 
 Start with `setup.bat /check` on a machine you are unsure about. It contacts
@@ -46,8 +46,8 @@ script reads it rather than hard-coding anything.
 |---|---|---|
 | **Python 3.10** | required | `runtime/python` — portable, not system-wide |
 | **pip** | required | bootstrapped into that runtime |
-| **FFmpeg** | required | `ut_vfx/bin/ffmpeg.exe` — thumbnails, proxies, playback |
-| **PostgreSQL 16** | server only | `ut_server/bin/pgsql` — skipped without `/server` |
+| **FFmpeg** | required | `slate/bin/ffmpeg.exe` — thumbnails, proxies, playback |
+| **PostgreSQL 16** | server only | `slate_server/bin/pgsql` — skipped without `/server` |
 | **Olive** | optional | `external/olive-editor` — the review tab falls back without it |
 | **OpenRV** | manual | `OpenRV/` — no public Windows build; drop yours in and Slate finds it |
 
@@ -68,13 +68,13 @@ Once, at the end:
 ```
 Database host  [localhost]
 Port           [5440]
-Database name  [ut_vfx]
+Database name  [slate]
 Database user  [ut_vfx_app]
 Database password
 Admin password (for Slate's own admin panel)
 ```
 
-These are written to **`ut_vfx/config.json`**, which is git-ignored and never
+These are written to **`slate/config.json`**, which is git-ignored and never
 leaves the machine. Delete that file and re-run `setup.bat` to change them.
 
 ### Without a server
@@ -144,7 +144,7 @@ runtime\python\python.exe -m pip install -r requirements.txt
 ```
 
 **Slate starts but says it is in fallback mode** — it could not reach the
-database and is on local SQLite. Check the host and port in `ut_vfx/config.json`,
+database and is on local SQLite. Check the host and port in `slate/config.json`,
 that `Slate Server.bat` is running on the server, and that TCP 5440 is open.
 
 **"Circuit breaker is OPEN"** — five database calls failed in a row, so Slate

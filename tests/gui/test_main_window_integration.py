@@ -28,7 +28,7 @@ else:
 
 
 # Import Main Window
-from ut_vfx.gui.main_window import VFXFolderCreatorApp
+from slate.gui.main_window import VFXFolderCreatorApp
 
 @pytest.fixture
 def app(qtbot):

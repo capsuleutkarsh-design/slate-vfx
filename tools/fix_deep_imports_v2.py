@@ -3,7 +3,7 @@ import os
 import re
 from pathlib import Path
 
-ROOT = Path("ut_vfx/core")
+ROOT = Path("slate/core")
 DOMAIN_DIR = ROOT / "domain"
 INFRA_DIR = ROOT / "infra"
 
@@ -17,11 +17,11 @@ def fix_file(filepath):
         
         for line in lines:
             # Regex: matches 'from .utils', 'from ..utils', 'from ...utils' etc.
-            # Convert to 'from ut_vfx.utils'
-            line = re.sub(r'from \.+utils', 'from ut_vfx.utils', line)
+            # Convert to 'from slate.utils'
+            line = re.sub(r'from \.+utils', 'from slate.utils', line)
             
             # Regex: matches 'from .core' etc (if any exist)
-            line = re.sub(r'from \.+core', 'from ut_vfx.core', line)
+            line = re.sub(r'from \.+core', 'from slate.core', line)
             
             new_lines.append(line)
         

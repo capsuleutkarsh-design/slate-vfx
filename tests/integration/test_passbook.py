@@ -12,14 +12,14 @@ Nothing here reads a sheet back into the database, and nothing ever will.
 import pytest
 from openpyxl import load_workbook
 
-from ut_vfx.core.domain.shot_registry import register_ingested_shots
-from ut_vfx.core.infra.global_config import GlobalConfig
-from ut_vfx.gui.tabs.vfx_dashboard_pro.core.project_manager import (
+from slate.core.domain.shot_registry import register_ingested_shots
+from slate.core.infra.global_config import GlobalConfig
+from slate.gui.tabs.vfx_dashboard_pro.core.project_manager import (
     ProjectManager, passbook_path,
 )
-from ut_vfx.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler
-from ut_vfx.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
-from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.dashboard_sync_service import (
+from slate.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler
+from slate.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
+from slate.gui.tabs.vfx_dashboard_pro.ui.dashboard_sync_service import (
     DashboardSyncService,
 )
 

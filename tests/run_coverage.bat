@@ -11,7 +11,7 @@ pip install -q pytest-cov
 echo.
 
 echo Running tests with coverage analysis...
-python -m pytest --cov=ut_vfx --cov-report=term-missing --cov-report=html tests/
+python -m pytest --cov=slate --cov-report=term-missing --cov-report=html tests/
 echo.
 
 if %ERRORLEVEL% EQU 0 (

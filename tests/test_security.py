@@ -10,7 +10,7 @@ This suite is critical for data safety and preventing malicious input:
 import unittest
 from pathlib import Path
 import tempfile
-from ut_vfx.utils.security import SecurityValidator, SecureTempManager
+from slate.utils.security import SecurityValidator, SecureTempManager
 
 
 class TestSecurityValidator(unittest.TestCase):

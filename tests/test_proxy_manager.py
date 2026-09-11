@@ -33,7 +33,7 @@ import sys
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from ut_vfx.core.domain.proxy_manager import ProxyManager
+from slate.core.domain.proxy_manager import ProxyManager
 
 
 class TestProxyManager:

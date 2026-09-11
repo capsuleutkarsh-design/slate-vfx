@@ -16,8 +16,8 @@ sys.modules["PySide6"] = MagicMock()
 sys.modules["PySide6.QtWidgets"] = MagicMock()
 sys.modules["PySide6.QtGui"] = MagicMock()
 sys.modules["PySide6.QtCore"] = MagicMock()
-sys.modules["ut_vfx.gui"] = MagicMock()
-sys.modules["ut_vfx.gui.main_window"] = MagicMock()
+sys.modules["slate.gui"] = MagicMock()
+sys.modules["slate.gui.main_window"] = MagicMock()
 
 # Mock heavy binary dependencies not needed for User Sync logic
 sys.modules["psutil"] = MagicMock()
@@ -41,7 +41,7 @@ sys.modules["psycopg2.extras"] = MagicMock()
 sys.modules["psycopg2.pool"] = MagicMock()
 
 # Mock PostgresManager module entirely to avoid "Password not found" error during import
-sys.modules["ut_vfx.core.infra.postgres_manager"] = MagicMock()
+sys.modules["slate.core.infra.postgres_manager"] = MagicMock()
 sys.modules["matplotlib"] = MagicMock()
 sys.modules["matplotlib.pyplot"] = MagicMock()
 sys.modules["seaborn"] = MagicMock()
@@ -58,13 +58,13 @@ sys.modules["reportlab.lib.styles"] = MagicMock()
 
 
 # Now import the backend
-from ut_vfx.core.domain.user_manager import UserManager
+from slate.core.domain.user_manager import UserManager
 
 def run_test():
     print("--- STARTING USER SYNC VERIFICATION (MOCKED) ---")
     
     # Access the mock we injected
-    pm_module = sys.modules["ut_vfx.core.infra.postgres_manager"]
+    pm_module = sys.modules["slate.core.infra.postgres_manager"]
     MockPM = pm_module.PostgresManager
     
     print("[1] Initializing UserManager...")

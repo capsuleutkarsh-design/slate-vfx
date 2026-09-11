@@ -1,7 +1,7 @@
 
 import pytest
 from PySide6.QtWidgets import QLabel
-from ut_vfx.gui.main_window import VFXFolderCreatorApp
+from slate.gui.main_window import VFXFolderCreatorApp
 
 @pytest.fixture
 def app(qtbot, mock_db):
@@ -21,7 +21,7 @@ def test_header_structure(app, qtbot):
 
     logo = app.findChild(QLabel, "appLogo")
     assert logo is not None
-    # The wordmark. The product was renamed from UT_VFX, whose "UT" carried the
+    # The wordmark. The product was renamed from Slate, whose "UT" carried the
     # owner's initials; those now live inside the mark's geometry instead.
     assert logo.text() == "SLATE"
 

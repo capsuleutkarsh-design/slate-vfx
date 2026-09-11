@@ -121,6 +121,6 @@ card appears at the top of the screen. It is only there when it is true.
 | Comp off | off by default; the engine exists for studios that operate it |
 | Approval | supervisor, then HR |
 
-These live in `ut_vfx/core/domain/leave_policy.py`, defined once. Changing a number
+These live in `slate/core/domain/leave_policy.py`, defined once. Changing a number
 there changes it everywhere — the artist's preview, your queue and the year end all
 read the same rules.

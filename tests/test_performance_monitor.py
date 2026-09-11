@@ -6,7 +6,7 @@ query performance, worker duration, and memory tracking.
 """
 
 import time
-from ut_vfx.core.infra.performance_monitor import PerformanceMonitor, performance_monitor
+from slate.core.infra.performance_monitor import PerformanceMonitor, performance_monitor
 
 
 class TestPerformanceMonitorInitialization:

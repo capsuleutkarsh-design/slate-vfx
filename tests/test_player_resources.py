@@ -16,7 +16,7 @@ import subprocess
 
 import pytest
 
-from ut_vfx.utils.process_manager import SubprocessTracker, subprocess_tracker
+from slate.utils.process_manager import SubprocessTracker, subprocess_tracker
 
 
 class _FakeProc:
@@ -121,7 +121,7 @@ class TestTheRestartPathReleasesTheOldProcess:
 
     def test_restarting_hands_the_old_process_back(self):
         import inspect
-        from ut_vfx.gui.widgets.media_engines.stream_engine import StreamEngine
+        from slate.gui.widgets.media_engines.stream_engine import StreamEngine
 
         source = inspect.getsource(StreamEngine._restart_ffmpeg_at)
 
@@ -131,7 +131,7 @@ class TestTheRestartPathReleasesTheOldProcess:
 
     def test_stopping_hands_it_back_as_well(self):
         import inspect
-        from ut_vfx.gui.widgets.media_engines.stream_engine import StreamEngine
+        from slate.gui.widgets.media_engines.stream_engine import StreamEngine
 
         source = inspect.getsource(StreamEngine._stop_producer)
 

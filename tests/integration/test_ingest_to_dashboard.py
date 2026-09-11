@@ -9,10 +9,10 @@ against a shot.
 
 import pytest
 
-from ut_vfx.core.domain.shot_registry import (
+from slate.core.domain.shot_registry import (
     IngestedShot, register_ingested_shots, NEW_SHOT_STATUS,
 )
-from ut_vfx.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler
+from slate.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler
 
 
 PROJECT = "BRIDGE_PRJ"
@@ -163,8 +163,8 @@ class TestWorkerReportsShots:
     """FolderCreationWorker must hand over what it found."""
 
     def test_worker_records_reel_and_shot(self, temp_vfx_root, mock_db):
-        from ut_vfx.core.workers.structure import FolderCreationWorker
-        import ut_vfx.core.workers.structure as structure_module
+        from slate.core.workers.structure import FolderCreationWorker
+        import slate.core.workers.structure as structure_module
 
         structure_module.database_manager = mock_db
 
@@ -202,8 +202,8 @@ class TestTheProjectItselfReachesTheDashboard:
 
     def test_an_ingested_project_appears_in_the_project_list(
             self, temp_vfx_root, mock_db):
-        from ut_vfx.core.domain.shot_registry import register_ingested_shots
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.core.project_manager import ProjectManager
+        from slate.core.domain.shot_registry import register_ingested_shots
+        from slate.gui.tabs.vfx_dashboard_pro.core.project_manager import ProjectManager
 
         register_ingested_shots(
             "NEWPRJ",

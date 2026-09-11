@@ -23,10 +23,10 @@ def qapp_stock():
 class TestStockLibraryInitialization:
     """Test stock library tab initialization."""
     
-    @patch('ut_vfx.gui.tabs.stock_library_tab.LibraryManager')
+    @patch('slate.gui.tabs.stock_library_tab.LibraryManager')
     def test_stock_library_tab_creates(self, mock_lib_manager, qapp_stock, qtbot):
         """Test stock library tab can be instantiated."""
-        from ut_vfx.gui.tabs.stock_library_tab import StockLibraryTab
+        from slate.gui.tabs.stock_library_tab import StockLibraryTab
         
         mock_lib_manager.return_value.get_all_assets.return_value = []
         
@@ -36,10 +36,10 @@ class TestStockLibraryInitialization:
         assert tab is not None
         assert isinstance(tab, QWidget)
     
-    @patch('ut_vfx.gui.tabs.stock_library_tab.LibraryManager')
+    @patch('slate.gui.tabs.stock_library_tab.LibraryManager')
     def test_assets_load_on_init(self, mock_lib_manager, qapp_stock, qtbot):
         """Test assets are loaded when tab is created."""
-        from ut_vfx.gui.tabs.stock_library_tab import StockLibraryTab
+        from slate.gui.tabs.stock_library_tab import StockLibraryTab
         
         mock_assets = [
             {'id': 1, 'name': 'asset1.jpg', 'tags': ['nature']},
@@ -57,10 +57,10 @@ class TestStockLibraryInitialization:
 class TestAssetBrowsing:
     """Test asset browsing functionality."""
     
-    @patch('ut_vfx.gui.tabs.stock_library_tab.LibraryManager')
+    @patch('slate.gui.tabs.stock_library_tab.LibraryManager')
     def test_asset_grid_populated(self, mock_lib_manager, qapp_stock, qtbot):
         """Test asset grid is populated with thumbnails."""
-        from ut_vfx.gui.tabs.stock_library_tab import StockLibraryTab
+        from slate.gui.tabs.stock_library_tab import StockLibraryTab
         
         mock_lib_manager.return_value.get_all_assets.return_value = [
             {'id': 1, 'name': 'test.jpg', 'thumbnail_path': 'thumb.jpg'}
@@ -72,10 +72,10 @@ class TestAssetBrowsing:
         # Should have grid/list view
         assert hasattr(tab, 'asset_grid') or hasattr(tab, 'asset_list') or True
     
-    @patch('ut_vfx.gui.tabs.stock_library_tab.LibraryManager')
+    @patch('slate.gui.tabs.stock_library_tab.LibraryManager')
     def test_asset_selection(self, mock_lib_manager, qapp_stock, qtbot):
         """Test selecting an asset shows details."""
-        from ut_vfx.gui.tabs.stock_library_tab import StockLibraryTab
+        from slate.gui.tabs.stock_library_tab import StockLibraryTab
         
         mock_lib_manager.return_value.get_all_assets.return_value = []
         
@@ -89,10 +89,10 @@ class TestAssetBrowsing:
 class TestSearchAndFilter:
     """Test search and filtering functionality."""
     
-    @patch('ut_vfx.gui.tabs.stock_library_tab.LibraryManager')
+    @patch('slate.gui.tabs.stock_library_tab.LibraryManager')
     def test_search_by_name(self, mock_lib_manager, qapp_stock, qtbot):
         """Test searching assets by name."""
-        from ut_vfx.gui.tabs.stock_library_tab import StockLibraryTab
+        from slate.gui.tabs.stock_library_tab import StockLibraryTab
         
         mock_lib_manager.return_value.get_all_assets.return_value = []
         mock_lib_manager.return_value.search_assets.return_value = []
@@ -103,10 +103,10 @@ class TestSearchAndFilter:
         # Should have search field
         assert hasattr(tab, 'search_input') or hasattr(tab, 'search_bar') or True
     
-    @patch('ut_vfx.gui.tabs.stock_library_tab.LibraryManager')
+    @patch('slate.gui.tabs.stock_library_tab.LibraryManager')
     def test_filter_by_tags(self, mock_lib_manager, qapp_stock, qtbot):
         """Test filtering assets by tags."""
-        from ut_vfx.gui.tabs.stock_library_tab import StockLibraryTab
+        from slate.gui.tabs.stock_library_tab import StockLibraryTab
         
         mock_lib_manager.return_value.get_all_assets.return_value = []
         
@@ -116,10 +116,10 @@ class TestSearchAndFilter:
         # Should have tag filter
         assert hasattr(tab, 'tag_filter') or hasattr(tab, 'filter_by_tag') or True
     
-    @patch('ut_vfx.gui.tabs.stock_library_tab.LibraryManager')
+    @patch('slate.gui.tabs.stock_library_tab.LibraryManager')
     def test_filter_by_type(self, mock_lib_manager, qapp_stock, qtbot):
         """Test filtering by asset type (image/video)."""
-        from ut_vfx.gui.tabs.stock_library_tab import StockLibraryTab
+        from slate.gui.tabs.stock_library_tab import StockLibraryTab
         
         mock_lib_manager.return_value.get_all_assets.return_value = []
         
@@ -133,11 +133,11 @@ class TestSearchAndFilter:
 class TestAssetImport:
     """Test asset import functionality."""
     
-    @patch('ut_vfx.gui.tabs.stock_library_tab.LibraryManager')
-    @patch('ut_vfx.gui.tabs.stock_library_tab.QFileDialog')
+    @patch('slate.gui.tabs.stock_library_tab.LibraryManager')
+    @patch('slate.gui.tabs.stock_library_tab.QFileDialog')
     def test_import_single_asset(self, mock_dialog, mock_lib_manager, qapp_stock, qtbot):
         """Test importing a single asset."""
-        from ut_vfx.gui.tabs.stock_library_tab import StockLibraryTab
+        from slate.gui.tabs.stock_library_tab import StockLibraryTab
         
         mock_lib_manager.return_value.get_all_assets.return_value = []
         mock_dialog.getOpenFileName.return_value = ("C:\\test.jpg", "*.jpg")
@@ -148,10 +148,10 @@ class TestAssetImport:
         # Should have import button
         assert hasattr(tab, 'import_button') or hasattr(tab, 'add_asset_button') or True
     
-    @patch('ut_vfx.gui.tabs.stock_library_tab.LibraryManager')
+    @patch('slate.gui.tabs.stock_library_tab.LibraryManager')
     def test_import_with_metadata(self, mock_lib_manager, qapp_stock, qtbot):
         """Test importing asset with metadata."""
-        from ut_vfx.gui.tabs.stock_library_tab import StockLibraryTab
+        from slate.gui.tabs.stock_library_tab import StockLibraryTab
         
         mock_lib_manager.return_value.get_all_assets.return_value = []
         mock_lib_manager.return_value.add_asset.return_value = True
@@ -166,10 +166,10 @@ class TestAssetImport:
 class TestAssetManagement:
     """Test asset management operations."""
     
-    @patch('ut_vfx.gui.tabs.stock_library_tab.LibraryManager')
+    @patch('slate.gui.tabs.stock_library_tab.LibraryManager')
     def test_edit_asset_tags(self, mock_lib_manager, qapp_stock, qtbot):
         """Test editing asset tags."""
-        from ut_vfx.gui.tabs.stock_library_tab import StockLibraryTab
+        from slate.gui.tabs.stock_library_tab import StockLibraryTab
         
         mock_lib_manager.return_value.get_all_assets.return_value = []
         mock_lib_manager.return_value.update_asset_metadata.return_value = True
@@ -180,10 +180,10 @@ class TestAssetManagement:
         # Should have tag editing
         assert hasattr(tab, 'edit_tags') or hasattr(tab, 'update_metadata') or True
     
-    @patch('ut_vfx.gui.tabs.stock_library_tab.LibraryManager')
+    @patch('slate.gui.tabs.stock_library_tab.LibraryManager')
     def test_delete_asset(self, mock_lib_manager, qapp_stock, qtbot):
         """Test deleting an asset."""
-        from ut_vfx.gui.tabs.stock_library_tab import StockLibraryTab
+        from slate.gui.tabs.stock_library_tab import StockLibraryTab
         
         mock_lib_manager.return_value.get_all_assets.return_value = []
         mock_lib_manager.return_value.trash_asset.return_value = True
@@ -194,10 +194,10 @@ class TestAssetManagement:
         # Should have delete capability
         assert hasattr(tab, 'delete_asset') or hasattr(tab, 'trash_selected') or True
     
-    @patch('ut_vfx.gui.tabs.stock_library_tab.LibraryManager')
+    @patch('slate.gui.tabs.stock_library_tab.LibraryManager')
     def test_export_asset(self, mock_lib_manager, qapp_stock, qtbot):
         """Test exporting asset to project."""
-        from ut_vfx.gui.tabs.stock_library_tab import StockLibraryTab
+        from slate.gui.tabs.stock_library_tab import StockLibraryTab
         
         mock_lib_manager.return_value.get_all_assets.return_value = []
         
@@ -211,10 +211,10 @@ class TestAssetManagement:
 class TestViewModes:
     """Test different view modes (grid/list)."""
     
-    @patch('ut_vfx.gui.tabs.stock_library_tab.LibraryManager')
+    @patch('slate.gui.tabs.stock_library_tab.LibraryManager')
     def test_grid_view_mode(self, mock_lib_manager, qapp_stock, qtbot):
         """Test grid view mode for thumbnails."""
-        from ut_vfx.gui.tabs.stock_library_tab import StockLibraryTab
+        from slate.gui.tabs.stock_library_tab import StockLibraryTab
         
         mock_lib_manager.return_value.get_all_assets.return_value = []
         
@@ -224,10 +224,10 @@ class TestViewModes:
         # Should have view mode toggle
         assert hasattr(tab, 'set_grid_view') or hasattr(tab, 'view_mode') or True
     
-    @patch('ut_vfx.gui.tabs.stock_library_tab.LibraryManager')
+    @patch('slate.gui.tabs.stock_library_tab.LibraryManager')
     def test_list_view_mode(self, mock_lib_manager, qapp_stock, qtbot):
         """Test list view mode for details."""
-        from ut_vfx.gui.tabs.stock_library_tab import StockLibraryTab
+        from slate.gui.tabs.stock_library_tab import StockLibraryTab
         
         mock_lib_manager.return_value.get_all_assets.return_value = []
         

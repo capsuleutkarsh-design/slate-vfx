@@ -1,7 +1,7 @@
 @echo off
 color 0B
 echo ========================================================
-echo      UT_VFX - DUAL BUILDER (v3.0)
+echo      Slate - DUAL BUILDER (v3.0)
 echo ========================================================
 echo.
 
@@ -13,9 +13,9 @@ echo       Clean complete.
 echo.
 
 REM 2. Build Main App (The Core Software)
-echo [2/4] Compiling MAIN APP (UTVFX)...
+echo [2/4] Compiling MAIN APP (Slate)...
 echo       This takes a minute...
-pyinstaller --clean --noconfirm deployment\UTVFX.spec
+pyinstaller --clean --noconfirm deployment\Slate.spec
 if errorlevel 1 goto failed
 
 REM 3. Build Launcher (The Updater)
@@ -28,8 +28,8 @@ REM 4. Organization (Optional but Recommended)
 REM Move the Launcher EXE next to the Main EXE for easy testing,
 REM or keep them separate folders. By default, PyInstaller makes two folders in dist.
 
-if exist "dist\UTVFX\UTVFX.exe" (
-    if exist "dist\CapsuleLauncher\CapsuleLauncher.exe" (
+if exist "dist\Slate\Slate.exe" (
+    if exist "dist\SlateLauncher\SlateLauncher.exe" (
         goto success
     )
 )
@@ -49,10 +49,10 @@ echo ========================================================
 echo    SUCCESS! BOTH APPS BUILT.
 echo ========================================================
 echo.
-echo    1. MAIN APP: dist\UTVFX\UTVFX.exe
+echo    1. MAIN APP: dist\Slate\Slate.exe
 echo       (Put this entire folder on X:\Extra\UT_Central\Updates)
 echo.
-echo    2. LAUNCHER: dist\CapsuleLauncher\CapsuleLauncher.exe
+echo    2. LAUNCHER: dist\SlateLauncher\SlateLauncher.exe
 echo       (Distribute THIS file to Artist Desktops)
 echo.
 exit /b 0

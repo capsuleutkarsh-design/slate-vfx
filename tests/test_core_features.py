@@ -18,8 +18,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 # Attempt to import your core modules. 
 # NOTE: If your class names are different, update them here!
 try:
-    from ut_vfx.core.infra.file_operations import FileOperations
-    from ut_vfx.core.worker_threads import WorkerThread
+    from slate.core.infra.file_operations import FileOperations
+    from slate.core.worker_threads import WorkerThread
 except ImportError:
     # Fallback/Mock classes for the sake of the test structure if files aren't perfect yet
     class FileOperations:

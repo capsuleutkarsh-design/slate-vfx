@@ -18,10 +18,10 @@ so the suite still passes on a laptop with nothing installed.
 
 import pytest
 
-from ut_vfx.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import (
+from slate.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import (
     SQLiteHandler, StaleDataError,
 )
-from ut_vfx.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
+from slate.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
 
 
 PROJECT = "PGTEST"
@@ -49,7 +49,7 @@ class TestTheBasicsActuallyWork:
         password field unassigned. Every PostgreSQL client failed on startup
         and the whole suite stayed green.
         """
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.postgres_manager import PostgresManager
 
         manager = PostgresManager()
 
@@ -201,7 +201,7 @@ class TestTheIngestReachesTheDashboard:
     """The whole chain, on the real backend."""
 
     def test_an_ingested_shot_appears_with_its_frame_range(self, pg_db, tmp_path):
-        from ut_vfx.core.domain.shot_registry import register_ingested_shots
+        from slate.core.domain.shot_registry import register_ingested_shots
 
         result = register_ingested_shots(
             PROJECT,
@@ -221,8 +221,8 @@ class TestTheIngestReachesTheDashboard:
         A project the ingest creates must be loadable, not silently dropped for
         missing fields.
         """
-        from ut_vfx.core.domain.shot_registry import register_ingested_shots
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.core.project_manager import ProjectManager
+        from slate.core.domain.shot_registry import register_ingested_shots
+        from slate.gui.tabs.vfx_dashboard_pro.core.project_manager import ProjectManager
 
         register_ingested_shots(
             PROJECT, [{"reel": "ReelA", "shot": "SH010", "scan_version": "v001"}],
@@ -235,13 +235,13 @@ class TestTheOtherStores:
     """Everything else that keeps data, exercised once on the real backend."""
 
     def test_versions(self, pg_db):
-        from ut_vfx.core.domain.versions import VersionStore
+        from slate.core.domain.versions import VersionStore
 
         store = VersionStore(db=pg_db)
         assert isinstance(store.awaiting_review(PROJECT), list)
 
     def test_delivery_batches(self, pg_db):
-        from ut_vfx.core.domain.deliveries import DeliveryStore
+        from slate.core.domain.deliveries import DeliveryStore
 
         store = DeliveryStore(db=pg_db)
         assert isinstance(store.list_deliveries(PROJECT), list)

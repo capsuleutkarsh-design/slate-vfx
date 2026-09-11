@@ -8,7 +8,7 @@ runtime\python\python.exe tools\<script>.py
 ```
 
 Each reads its database settings through
-`ut_vfx/core/infra/local_secrets.py`, so none of them carries a password.
+`slate/core/infra/local_secrets.py`, so none of them carries a password.
 Set `SLATE_DB_PASSWORD` for a one-off session, or let it read the local config
 `setup.bat` wrote.
 

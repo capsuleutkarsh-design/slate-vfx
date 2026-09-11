@@ -7,8 +7,8 @@ import sys
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.append(str(PROJECT_ROOT))
 
-from ut_vfx.core.infra.database_manager import DatabaseManager
-from ut_vfx.core.infra.config_manager import ConfigManager
+from slate.core.infra.database_manager import DatabaseManager
+from slate.core.infra.config_manager import ConfigManager
 
 @pytest.fixture
 def temp_vfx_root(tmp_path):
@@ -23,10 +23,10 @@ def temp_vfx_root(tmp_path):
 @pytest.fixture
 def mock_db(temp_vfx_root):
     """Creates a localized database manager that doesn't touch the real system DB."""
-    from ut_vfx.core.infra.sqlite_manager import SQLiteManager
-    import ut_vfx.core.infra.database_manager as db_module
+    from slate.core.infra.sqlite_manager import SQLiteManager
+    import slate.core.infra.database_manager as db_module
     
-    db_path = str(temp_vfx_root / "test_ut_vfx.db")
+    db_path = str(temp_vfx_root / "test_slate.db")
     SQLiteManager._instance = None
     mgr = db_module.DatabaseManager(db_path=db_path)
     
@@ -92,7 +92,7 @@ def pytest_configure(config):
     Values still change in memory, so the tests behave exactly as before. Only
     the write to disk is stopped.
     """
-    from ut_vfx.core.infra.global_config import GlobalConfig
+    from slate.core.infra.global_config import GlobalConfig
 
     if not getattr(GlobalConfig, "_save_disabled_for_tests", False):
         GlobalConfig._real_save = GlobalConfig.save
@@ -101,7 +101,7 @@ def pytest_configure(config):
 
 
 def pytest_unconfigure(config):
-    from ut_vfx.core.infra.global_config import GlobalConfig
+    from slate.core.infra.global_config import GlobalConfig
 
     if getattr(GlobalConfig, "_save_disabled_for_tests", False):
         GlobalConfig.save = GlobalConfig._real_save
@@ -121,7 +121,7 @@ def pytest_unconfigure(config):
 # themselves when no server is reachable, so the suite still runs anywhere.
 # ---------------------------------------------------------------------------
 
-POSTGRES_TEST_DB = "ut_vfx_pytest"
+POSTGRES_TEST_DB = "slate_pytest"
 
 _MISSING = object()
 
@@ -134,7 +134,7 @@ def _pg_settings():
 
     root = Path(__file__).resolve().parents[1]
     for candidate in (root / "client_config.json",
-                      root / "ut_vfx" / "default_config.json"):
+                      root / "slate" / "default_config.json"):
         try:
             if candidate.exists():
                 data = json.loads(candidate.read_text(encoding="utf-8"))
@@ -145,9 +145,9 @@ def _pg_settings():
             continue
 
     # An explicit environment variable wins, for CI.
-    settings["host"] = os.environ.get("UTVFX_TEST_PGHOST", settings["host"])
-    settings["port"] = int(os.environ.get("UTVFX_TEST_PGPORT", settings["port"]))
-    settings["password"] = os.environ.get("UTVFX_TEST_PGPASSWORD", settings["password"])
+    settings["host"] = os.environ.get("Slate_TEST_PGHOST", settings["host"])
+    settings["port"] = int(os.environ.get("Slate_TEST_PGPORT", settings["port"]))
+    settings["password"] = os.environ.get("Slate_TEST_PGPASSWORD", settings["password"])
     return settings
 
 
@@ -157,7 +157,7 @@ def _pg_connect(dbname):
     return psycopg2.connect(host=s["host"], port=s["port"], user=s["user"],
                             password=s["password"], dbname=dbname,
                             connect_timeout=3,
-                            application_name="UT_VFX pytest")
+                            application_name="Slate pytest")
 
 
 @pytest.fixture(scope="session")
@@ -226,7 +226,7 @@ def _postgres_settings_applied(dbname):
     is undone the moment a PostgreSQL test finishes, so the SQLite tests that
     run afterwards do not believe they are in offline fallback.
     """
-    from ut_vfx.core.infra.global_config import GlobalConfig
+    from slate.core.infra.global_config import GlobalConfig
 
     settings = _pg_settings()
     overrides = {
@@ -269,8 +269,8 @@ def _pg_manager(postgres_scratch_db):
     Building it per test cost about eighty seconds each - the migrations run on
     every construction - which made these tests unusable and so useless.
     """
-    import ut_vfx.core.infra.database_manager as db_module
-    from ut_vfx.core.infra.postgres_manager import PostgresManager
+    import slate.core.infra.database_manager as db_module
+    from slate.core.infra.postgres_manager import PostgresManager
 
     with _postgres_settings_applied(postgres_scratch_db):
         PostgresManager._instance = None
@@ -294,7 +294,7 @@ def pg_db(postgres_scratch_db, _pg_manager):
     Use this anywhere the behaviour could differ between the two backends -
     which is anywhere the database layer is involved at all.
     """
-    import ut_vfx.core.infra.database_manager as db_module
+    import slate.core.infra.database_manager as db_module
 
     with _postgres_settings_applied(postgres_scratch_db):
         try:

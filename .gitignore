@@ -1,9 +1,9 @@
 # ---------------------------------------------------------------- credentials
 #
 # Slate keeps every password out of the repository. The shipped
-# ut_vfx/default_config.json carries settings only; setup.bat writes the real
+# slate/default_config.json carries settings only; setup.bat writes the real
 # values into the files below, which stay on the machine.
-ut_vfx/config.json
+slate/config.json
 client_config.json
 **/client_config.json
 *.secret.key
@@ -21,8 +21,8 @@ pgbouncer/userlist.txt
 runtime/
 OpenRV/
 external/olive-editor/
-ut_server/bin/
-ut_vfx/bin/ffmpeg.exe
+slate_server/bin/
+slate/bin/ffmpeg.exe
 
 # A live PostgreSQL data directory. These files change on every query and
 # corrupt on checkout; they are not source and must never be committed.
@@ -58,5 +58,5 @@ Thumbs.db
 .DS_Store
 *.tmp
 
-# Generated at theme time from ut_vfx/gui/core/icons.py - not hand-authored art.
-ut_vfx/resources/icons/
+# Generated at theme time from slate/gui/core/icons.py - not hand-authored art.
+slate/resources/icons/

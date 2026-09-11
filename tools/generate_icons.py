@@ -21,7 +21,7 @@ except ImportError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "Pillow"])
     from PIL import Image
 
-ICONS_DIR = os.path.join(os.path.dirname(__file__), '..', 'ut_vfx', 'icons')
+ICONS_DIR = os.path.join(os.path.dirname(__file__), '..', 'slate', 'icons')
 ICONS_DIR = os.path.abspath(ICONS_DIR)
 SOURCE = os.path.join(ICONS_DIR, 'app_icon_128.ico')
 

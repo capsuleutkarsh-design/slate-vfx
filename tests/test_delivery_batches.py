@@ -11,8 +11,8 @@ Verifies:
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from ut_vfx.core.domain.deliveries import DeliveryStore, Delivery
-from ut_vfx.core.domain.versions import VersionStore
+from slate.core.domain.deliveries import DeliveryStore, Delivery
+from slate.core.domain.versions import VersionStore
 
 
 @pytest.fixture(scope="session")

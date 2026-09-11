@@ -12,9 +12,9 @@ import sqlite3
 
 import pytest
 
-from ut_vfx.core.domain.shot_registry import register_ingested_shots
-from ut_vfx.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler
-from ut_vfx.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
+from slate.core.domain.shot_registry import register_ingested_shots
+from slate.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler
+from slate.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
 
 
 PROJECT = "IDENT_PRJ"
@@ -106,7 +106,7 @@ class TestTwoReelsOneShotName:
 class TestVersionsAreScopedToTheRightShot:
 
     def test_versions_do_not_leak_between_reels(self, mock_db, handler):
-        from ut_vfx.core.domain.versions import VersionStore
+        from slate.core.domain.versions import VersionStore
 
         handler.write_shots([_shot("SH010", "ReelA"), _shot("SH010", "ReelB")])
         store = VersionStore(db=mock_db)
@@ -154,12 +154,12 @@ class TestMigrationFromAnOlderDatabase:
 
     @staticmethod
     def _manager(path):
-        from ut_vfx.core.infra.sqlite_manager import SQLiteManager
+        from slate.core.infra.sqlite_manager import SQLiteManager
         SQLiteManager._instance = None
         return SQLiteManager(db_path=str(path))
 
     def test_dry_run_reports_before_changing_anything(self, legacy_db):
-        from ut_vfx.core.infra.migrations.shot_identity import report_shot_identity
+        from slate.core.infra.migrations.shot_identity import report_shot_identity
 
         db = self._manager(legacy_db)
         report = report_shot_identity(db)
@@ -169,7 +169,7 @@ class TestMigrationFromAnOlderDatabase:
         assert report["key_is_current"] is False
 
     def test_migration_adds_the_column_and_backfills_it(self, legacy_db):
-        from ut_vfx.core.infra.migrations.shot_identity import (
+        from slate.core.infra.migrations.shot_identity import (
             ensure_shot_identity, report_shot_identity,
         )
 
@@ -190,7 +190,7 @@ class TestMigrationFromAnOlderDatabase:
 
     def test_existing_work_is_preserved(self, legacy_db):
         """The migration must not disturb a status, an artist or a version."""
-        from ut_vfx.core.infra.migrations.shot_identity import ensure_shot_identity
+        from slate.core.infra.migrations.shot_identity import ensure_shot_identity
 
         db = self._manager(legacy_db)
         ensure_shot_identity(db)
@@ -205,7 +205,7 @@ class TestMigrationFromAnOlderDatabase:
         assert json.loads(row["data_json"])["assigned_artist"] == "Rahul"
 
     def test_running_it_twice_changes_nothing(self, legacy_db):
-        from ut_vfx.core.infra.migrations.shot_identity import (
+        from slate.core.infra.migrations.shot_identity import (
             ensure_shot_identity, report_shot_identity,
         )
 
@@ -221,7 +221,7 @@ class TestMigrationFromAnOlderDatabase:
 
     def test_a_migrated_database_accepts_the_second_reel(self, legacy_db):
         """The whole point: after migrating, ReelB/SH010 can be added."""
-        from ut_vfx.core.infra.migrations.shot_identity import ensure_shot_identity
+        from slate.core.infra.migrations.shot_identity import ensure_shot_identity
 
         db = self._manager(legacy_db)
         ensure_shot_identity(db)

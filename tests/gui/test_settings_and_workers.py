@@ -23,10 +23,10 @@ def qapp_settings():
 class TestSettingsTabInitialization:
     """Test settings tab initialization and loading."""
     
-    @patch('ut_vfx.gui.tabs.settings_tab.ConfigManager')
+    @patch('slate.gui.tabs.settings_tab.ConfigManager')
     def test_settings_tab_creates(self, mock_config, qapp_settings, qtbot):
         """Test settings tab can be instantiated."""
-        from ut_vfx.gui.tabs.settings_tab import SettingsTab
+        from slate.gui.tabs.settings_tab import SettingsTab
         
         mock_config_instance = mock_config.return_value
         mock_config_instance.load_settings.return_value = {}
@@ -36,10 +36,10 @@ class TestSettingsTabInitialization:
         
         assert tab is not None
     
-    @patch('ut_vfx.gui.tabs.settings_tab.ConfigManager')
+    @patch('slate.gui.tabs.settings_tab.ConfigManager')
     def test_settings_load_on_init(self, mock_config, qapp_settings, qtbot):
         """Test settings are loaded when tab is created."""
-        from ut_vfx.gui.tabs.settings_tab import SettingsTab
+        from slate.gui.tabs.settings_tab import SettingsTab
         
         mock_config_instance = mock_config.return_value
         mock_config_instance.load_settings.return_value = {
@@ -56,10 +56,10 @@ class TestSettingsTabInitialization:
 class TestSettingsPersistence:
     """Test settings saving and persistence."""
     
-    @patch('ut_vfx.gui.tabs.settings_tab.ConfigManager')
+    @patch('slate.gui.tabs.settings_tab.ConfigManager')
     def test_save_button_persists_settings(self, mock_config, qapp_settings, qtbot):
         """Test save button writes settings to config."""
-        from ut_vfx.gui.tabs.settings_tab import SettingsTab
+        from slate.gui.tabs.settings_tab import SettingsTab
         
         mock_config_instance = mock_config.return_value
         mock_config_instance.load_settings.return_value = {}
@@ -70,10 +70,10 @@ class TestSettingsPersistence:
         # Tab should have save mechanism
         assert hasattr(tab, 'save_settings') or hasattr(tab, 'on_save_clicked') or True
     
-    @patch('ut_vfx.gui.tabs.settings_tab.ConfigManager')
+    @patch('slate.gui.tabs.settings_tab.ConfigManager')
     def test_settings_validation_before_save(self, mock_config, qapp_settings, qtbot):
         """Test settings are validated before saving."""
-        from ut_vfx.gui.tabs.settings_tab import SettingsTab
+        from slate.gui.tabs.settings_tab import SettingsTab
         
         mock_config_instance = mock_config.return_value
         mock_config_instance.load_settings.return_value = {}
@@ -88,10 +88,10 @@ class TestSettingsPersistence:
 class TestTemplateManagementInSettings:
     """Test template management in settings tab."""
     
-    @patch('ut_vfx.gui.tabs.settings_tab.ConfigManager')
+    @patch('slate.gui.tabs.settings_tab.ConfigManager')
     def test_add_new_template(self, mock_config, qapp_settings, qtbot):
         """Test adding a new project template."""
-        from ut_vfx.gui.tabs.settings_tab import SettingsTab
+        from slate.gui.tabs.settings_tab import SettingsTab
         
         mock_config_instance = mock_config.return_value
         mock_config_instance.load_settings.return_value = {}
@@ -103,10 +103,10 @@ class TestTemplateManagementInSettings:
         # Should have template management
         assert hasattr(tab, 'add_template') or hasattr(tab, 'template_list') or True
     
-    @patch('ut_vfx.gui.tabs.settings_tab.ConfigManager')
+    @patch('slate.gui.tabs.settings_tab.ConfigManager')
     def test_edit_existing_template(self, mock_config, qapp_settings, qtbot):
         """Test editing an existing template."""
-        from ut_vfx.gui.tabs.settings_tab import SettingsTab
+        from slate.gui.tabs.settings_tab import SettingsTab
         
         mock_config_instance = mock_config.return_value
         mock_config_instance.load_settings.return_value = {}
@@ -124,7 +124,7 @@ class TestWorkerGUIIntegration:
     
     def test_worker_progress_updates_gui(self, qapp_settings, qtbot):
         """Test worker progress signal updates GUI elements."""
-        from ut_vfx.core.workers.structure import FolderCreationWorker
+        from slate.core.workers.structure import FolderCreationWorker
         
         # Create worker (will fail without real project, but we test signals)
         worker = FolderCreationWorker(parent=None, mode='scan', root_dir='C:\\Test')
@@ -135,7 +135,7 @@ class TestWorkerGUIIntegration:
     
     def test_worker_finished_signal(self, qapp_settings, qtbot):
         """Test worker emits finished signal."""
-        from ut_vfx.core.workers.structure import FolderCreationWorker
+        from slate.core.workers.structure import FolderCreationWorker
         
         worker = FolderCreationWorker(parent=None, mode='scan', root_dir='C:\\Test')
         
@@ -144,7 +144,7 @@ class TestWorkerGUIIntegration:
     
     def test_worker_error_signal(self, qapp_settings, qtbot):
         """Test worker has error handling signal."""
-        from ut_vfx.core.workers.structure import FolderCreationWorker
+        from slate.core.workers.structure import FolderCreationWorker
         
         worker = FolderCreationWorker(parent=None, mode='scan', root_dir='C:\\Test')
         
@@ -153,7 +153,7 @@ class TestWorkerGUIIntegration:
     
     def test_pause_resume_signals(self, qapp_settings, qtbot):
         """Test worker pause/resume functionality."""
-        from ut_vfx.core.workers.structure import FolderCreationWorker
+        from slate.core.workers.structure import FolderCreationWorker
         
         worker = FolderCreationWorker(parent=None, mode='scan', root_dir='C:\\Test')
         
@@ -163,7 +163,7 @@ class TestWorkerGUIIntegration:
     
     def test_stop_signal(self, qapp_settings, qtbot):
         """Test worker can be stopped."""
-        from ut_vfx.core.workers.structure import FolderCreationWorker
+        from slate.core.workers.structure import FolderCreationWorker
         
         worker = FolderCreationWorker(parent=None, mode='scan', root_dir='C:\\Test')
         
@@ -174,10 +174,10 @@ class TestWorkerGUIIntegration:
 class TestGUIResponsiveness:
     """Test GUI remains responsive during operations."""
     
-    @patch('ut_vfx.gui.tabs.folder_creator_tab.ConfigManager')
+    @patch('slate.gui.tabs.folder_creator_tab.ConfigManager')
     def test_gui_not_blocked_during_worker(self, mock_config, qapp_settings, qtbot):
         """Test GUI doesn't freeze while worker runs."""
-        from ut_vfx.gui.tabs.folder_creator_tab import FolderCreatorTab
+        from slate.gui.tabs.folder_creator_tab import FolderCreatorTab
         
         mock_config_instance = mock_config.return_value
         mock_config_instance.get_templates.return_value = []

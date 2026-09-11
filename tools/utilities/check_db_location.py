@@ -5,7 +5,7 @@ import os
 sys.path.append(os.getcwd())
 
 try:
-    from ut_vfx.core.infra.postgres_manager import PostgresManager
+    from slate.core.infra.postgres_manager import PostgresManager
 except ImportError:
     print("Could not import PostgresManager.")
     sys.exit(1)

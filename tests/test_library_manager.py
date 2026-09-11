@@ -15,7 +15,7 @@ import os
 # Add project root
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from ut_vfx.core.domain.library_manager import LibraryManager
+from slate.core.domain.library_manager import LibraryManager
 
 class TestLibraryManager(unittest.TestCase):
     

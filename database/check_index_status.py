@@ -2,7 +2,7 @@
 Quick script to check if indexes are being created or if it's stuck
 """
 
-from ut_vfx.core.infra.postgres_manager import PostgresManager
+from slate.core.infra.postgres_manager import PostgresManager
 import sys
 
 try:

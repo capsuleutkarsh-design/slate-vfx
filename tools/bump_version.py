@@ -2,8 +2,8 @@
 AUTOMATIC VERSION BUMPER
 ========================
 Updates the version number in all critical files:
-1. ut_vfx/__init__.py (The Source of Truth)
-2. setup_ut_vfx.iss (The Installer)
+1. slate/__init__.py (The Source of Truth)
+2. setup_slate.iss (The Installer)
 3. pyproject.toml (Packaging metadata)
 """
 
@@ -11,8 +11,8 @@ import re
 from pathlib import Path
 
 # Files to update
-INIT_FILE = Path("ut_vfx/__init__.py") # Assumes CWD is Project Root
-ISS_FILE = Path("deployment/setup_ut_vfx.iss")
+INIT_FILE = Path("slate/__init__.py") # Assumes CWD is Project Root
+ISS_FILE = Path("deployment/setup_slate.iss")
 PYPROJECT_FILE = Path("pyproject.toml")
 
 def get_current_version():
@@ -43,7 +43,7 @@ def update_file(path, pattern, replacement):
         print(f"[NO CHANGES] {path} (Pattern match failed?)")
 
 def main():
-    print("--- UT_VFX VERSION MANAGER ---")
+    print("--- Slate VERSION MANAGER ---")
     current_ver = get_current_version()
     print(f"Current Source Version: {current_ver}")
     

@@ -9,7 +9,7 @@ its output - so that is what most of these tests pin down.
 
 import pytest
 
-from ut_vfx.core.domain.shot_media import (
+from slate.core.domain.shot_media import (
     MediaClip, available_media, department_label, resolve_department,
     resolve_scan, scan_versions, shot_folder,
 )

@@ -12,7 +12,7 @@ from PySide6.QtGui import QFont, QColor, QTextCursor
 class TestRunnerWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("UT_VFX - Enterprise Test Suite")
+        self.setWindowTitle("Slate - Enterprise Test Suite")
         self.resize(1300, 850)
         
         # Modern Dark Theme
@@ -85,7 +85,7 @@ class TestRunnerWindow(QMainWindow):
         
         # Header (Smaller now)
         header = QHBoxLayout()
-        title = QLabel("🧪 Capsule Test Lab") # Shortened
+        title = QLabel("🧪 Slate Test Lab") # Shortened
         title.setStyleSheet("font-size: 18px; color: #007ACC; font-weight: 800; margin-bottom: 5px;")
         header.addWidget(title)
         header.addStretch()

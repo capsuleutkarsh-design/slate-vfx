@@ -12,13 +12,13 @@ from pathlib import Path
 
 import pytest
 
-from ut_vfx.core.domain.rv_feedback import (
+from slate.core.domain.rv_feedback import (
     RVFeedback, apply_feedback, department_from_path, file_annotation,
     match_shot, note_text, read_feedback,
 )
-from ut_vfx.core.domain.rv_review import build_request, launch
-from ut_vfx.core.rv_integration import RVLauncher
-from ut_vfx.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
+from slate.core.domain.rv_review import build_request, launch
+from slate.core.rv_integration import RVLauncher
+from slate.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
 
 
 def _frames(folder, basename="SH010", frames=(1001, 1002)):

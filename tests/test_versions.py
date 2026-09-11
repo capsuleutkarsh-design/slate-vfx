@@ -9,7 +9,7 @@ from datetime import date
 
 import pytest
 
-from ut_vfx.core.domain.versions import (
+from slate.core.domain.versions import (
     STATUS_APPROVED, STATUS_PENDING, STATUS_RETAKE, SENT_CLIENT, SENT_INTERNAL,
     Version, VersionStore, next_version_name,
 )
@@ -239,7 +239,7 @@ class TestVersionsUI:
     """The panel and the review queue are how versions are actually used."""
 
     def test_panel_lists_a_shots_versions(self, qtbot, mock_db):
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.versions_panel import VersionsPanel
+        from slate.gui.tabs.vfx_dashboard_pro.ui.versions_panel import VersionsPanel
 
         store = VersionStore(db=mock_db)
         store.add_version(PROJECT, "SH010", artist="Rahul")
@@ -255,7 +255,7 @@ class TestVersionsUI:
 
     def test_panel_does_not_touch_the_database_until_shown(self, qtbot):
         """Building a shot detail panel must never block on a query."""
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.versions_panel import VersionsPanel
+        from slate.gui.tabs.vfx_dashboard_pro.ui.versions_panel import VersionsPanel
 
         class ExplodingStore:
             def list_for_shot(self, *a, **k):
@@ -266,7 +266,7 @@ class TestVersionsUI:
         qtbot.addWidget(panel)   # constructed without a single query
 
     def test_panel_is_read_only_for_an_artist(self, qtbot, mock_db):
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.versions_panel import VersionsPanel
+        from slate.gui.tabs.vfx_dashboard_pro.ui.versions_panel import VersionsPanel
 
         panel = VersionsPanel(project_code=PROJECT, shot_name="SH010",
                               store=VersionStore(db=mock_db), can_edit=False)
@@ -276,7 +276,7 @@ class TestVersionsUI:
         assert panel.note_btn.isEnabled() is False
 
     def test_review_queue_shows_pending_versions(self, qtbot, mock_db):
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.review_queue_dialog import (
+        from slate.gui.tabs.vfx_dashboard_pro.ui.review_queue_dialog import (
             ReviewQueueDialog,
         )
 
@@ -294,7 +294,7 @@ class TestVersionsUI:
         assert dialog.table.item(0, 0).text() == "SH010"
 
     def test_review_queue_handles_an_empty_queue(self, qtbot, mock_db):
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.review_queue_dialog import (
+        from slate.gui.tabs.vfx_dashboard_pro.ui.review_queue_dialog import (
             ReviewQueueDialog,
         )
 
@@ -305,8 +305,8 @@ class TestVersionsUI:
         assert "Nothing" in dialog.heading.text()
 
     def test_shot_detail_shows_the_versions_section(self, qtbot, mock_db):
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.shot_detail import ShotDetailWidget
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
+        from slate.gui.tabs.vfx_dashboard_pro.ui.shot_detail import ShotDetailWidget
+        from slate.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
 
         panel = ShotDetailWidget(Shot(shot_name="SH010"), user_role="supervisor",
                                  current_project_code=PROJECT,

@@ -15,7 +15,7 @@ def verify_imports():
     
     try:
         print("Importing core.workers.file_ops...")
-        from ut_vfx.core.workers import file_ops
+        from slate.core.workers import file_ops
         print("OK")
     except ImportError as e:
         print(f"FAILED: {e}")
@@ -23,7 +23,7 @@ def verify_imports():
 
     try:
         print("Importing core.workers.structure...")
-        from ut_vfx.core.workers import structure
+        from slate.core.workers import structure
         print("OK")
     except ImportError as e:
         print(f"FAILED: {e}")
@@ -31,7 +31,7 @@ def verify_imports():
 
     try:
         print("Importing core.workers.reporting...")
-        from ut_vfx.core.workers import reporting
+        from slate.core.workers import reporting
         print("OK")
     except ImportError as e:
         print(f"FAILED: {e}")
@@ -39,7 +39,7 @@ def verify_imports():
 
     try:
         print("Importing core.workers.library...")
-        from ut_vfx.core.workers import library
+        from slate.core.workers import library
         print("OK")
     except ImportError as e:
         print(f"FAILED: {e}")
@@ -47,7 +47,7 @@ def verify_imports():
 
     try:
         print("Importing core.workers.analysis...")
-        from ut_vfx.core.workers import analysis
+        from slate.core.workers import analysis
         print("OK")
     except ImportError as e:
         print(f"FAILED: {e}")
@@ -55,7 +55,7 @@ def verify_imports():
 
     try:
         print("Importing gui.tabs.settings_tab...")
-        from ut_vfx.gui.tabs import settings_tab
+        from slate.gui.tabs import settings_tab
         print("OK")
     except ImportError as e:
         print(f"FAILED: {e}")
@@ -64,7 +64,7 @@ def verify_imports():
     # This one might fail if GUI requires QApplication, but we'll try just the import
     try:
         print("Importing gui.main_window...")
-        from ut_vfx.gui import main_window
+        from slate.gui import main_window
         print("OK")
     except ImportError as e:
         print(f"FAILED logic import: {e}")

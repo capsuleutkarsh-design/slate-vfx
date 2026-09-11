@@ -2,7 +2,7 @@
 Test script for Path Template Manager - Verify all templates work correctly.
 """
 
-from ut_vfx.core.services.path_template_manager import get_path_manager
+from slate.core.services.path_template_manager import get_path_manager
 
 def test_templates():
     print("Testing Path Template Manager...")
@@ -32,9 +32,9 @@ def test_templates():
     except Exception as e:
         print(f"❌ render failed: {e}")
     
-    # Test new UT_VFX templates
+    # Test new Slate templates
     print("\n" + "=" * 60)
-    print("TESTING NEW UT_VFX TEMPLATES")
+    print("TESTING NEW Slate TEMPLATES")
     print("=" * 60)
     
     try:

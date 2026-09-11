@@ -1,7 +1,7 @@
 from contextlib import contextmanager
 from pathlib import Path
 
-from ut_vfx.core.infra.shared_json_write_coordinator import SharedJsonWriteCoordinator
+from slate.core.infra.shared_json_write_coordinator import SharedJsonWriteCoordinator
 
 
 class _BrokenDB:

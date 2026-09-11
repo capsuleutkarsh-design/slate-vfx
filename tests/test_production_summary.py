@@ -10,8 +10,8 @@ from datetime import date
 
 import pytest
 
-from ut_vfx.core.domain.production_summary import build_summary
-from ut_vfx.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
+from slate.core.domain.production_summary import build_summary
+from slate.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
 
 
 TODAY = date(2026, 9, 9)
@@ -239,7 +239,7 @@ class TestSummaryDialog:
         return [a, b, c]
 
     def test_dialog_builds(self, qtbot):
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.production_summary_dialog import (
+        from slate.gui.tabs.vfx_dashboard_pro.ui.production_summary_dialog import (
             ProductionSummaryDialog,
         )
 
@@ -254,7 +254,7 @@ class TestSummaryDialog:
         assert summary.unassigned == ["SH030"]
 
     def test_dialog_handles_an_empty_project(self, qtbot):
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.production_summary_dialog import (
+        from slate.gui.tabs.vfx_dashboard_pro.ui.production_summary_dialog import (
             ProductionSummaryDialog,
         )
 

@@ -8,7 +8,7 @@ import json
 # Add project root
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from ut_vfx.core.domain.metadata_engine import SmartMetadataManager
+from slate.core.domain.metadata_engine import SmartMetadataManager
 
 class TestMetadataEngine(unittest.TestCase):
     
@@ -42,8 +42,8 @@ class TestMetadataEngine(unittest.TestCase):
             self.assertEqual(result, expected, f"Failed on {fname}: Got {result}")
 
     # --- 2. TECHNICAL METADATA (FFPROBE MOCK) ---
-    @patch('ut_vfx.core.domain.metadata_engine.os.path.exists')
-    @patch('ut_vfx.core.domain.metadata_engine.proxy_manager_meta')
+    @patch('slate.core.domain.metadata_engine.os.path.exists')
+    @patch('slate.core.domain.metadata_engine.proxy_manager_meta')
     @patch('subprocess.run')
     def test_extract_tech_metadata_valid_json(self, mock_run, mock_meta, mock_exists):
         """Test metadata extraction when ffprobe returns valid JSON."""

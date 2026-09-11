@@ -2,7 +2,7 @@ import unittest
 import sys, os
 sys.path.insert(0, os.path.abspath("."))
 from types import SimpleNamespace
-from ut_vfx.gui.tabs.vfx_dashboard_pro.viewmodels.dashboard_viewmodel import DashboardViewModel
+from slate.gui.tabs.vfx_dashboard_pro.viewmodels.dashboard_viewmodel import DashboardViewModel
 
 
 class TestDashboardViewModel(unittest.TestCase):

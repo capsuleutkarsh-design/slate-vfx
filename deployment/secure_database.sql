@@ -5,7 +5,7 @@
 -- This repository is public. Do not put a literal back in here.
 
 -- =====================================================================
--- UT VFX - secure the studio database
+-- Slate - secure the studio database
 -- =====================================================================
 --
 -- WHAT THIS DOES
@@ -13,7 +13,7 @@
 --      one, because the old settings said "don't ask for a password".
 --   2. Creates an ordinary account (ut_vfx_app) for the software to use,
 --      instead of the software logging in as the administrator.
---   3. Hands the ut_vfx database over to that ordinary account, so the
+--   3. Hands the slate database over to that ordinary account, so the
 --      software can still create and change its own tables.
 --
 --   The password is NOT changed. It stays exactly what every workstation's
@@ -27,8 +27,8 @@
 -- HOW TO RUN IT
 --   From the folder holding this file, on the server:
 --
---     ut_server\bin\pgsql\bin\psql.exe -h 127.0.0.1 -p 5440 -U postgres ^
---         -d ut_vfx -f deployment\secure_database.sql
+--     slate_server\bin\pgsql\bin\psql.exe -h 127.0.0.1 -p 5440 -U postgres ^
+--         -d slate -f deployment\secure_database.sql
 --
 --   Run it while the old "no password needed" settings are still in place,
 --   or it will not be able to connect. Change pg_hba.conf afterwards.
@@ -72,7 +72,7 @@ $do$;
 -- administrator, and cannot reach any other database on the machine.
 ALTER ROLE ut_vfx_app NOSUPERUSER NOCREATEROLE NOCREATEDB;
 
-\echo '--- 3. hand the ut_vfx database to that account'
+\echo '--- 3. hand the slate database to that account'
 
 GRANT CONNECT ON DATABASE ut_vfx TO ut_vfx_app;
 ALTER DATABASE ut_vfx OWNER TO ut_vfx_app;

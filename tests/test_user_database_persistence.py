@@ -9,8 +9,8 @@ root_dir = Path(__file__).resolve().parent.parent
 if str(root_dir) not in sys.path:
     sys.path.insert(0, str(root_dir))
 
-from ut_vfx.core.domain.user_manager import UserManager
-from ut_vfx.core.infra.database_manager import database_manager
+from slate.core.domain.user_manager import UserManager
+from slate.core.infra.database_manager import database_manager
 
 class TestUserDatabasePersistence(unittest.TestCase):
     def setUp(self):

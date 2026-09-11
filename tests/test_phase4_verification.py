@@ -1,7 +1,7 @@
 """End-to-end verification of Phase 4 against real objects, not fakes."""
 import pytest
-from ut_vfx.core.domain.deliveries import DeliveryStore
-from ut_vfx.core.domain.versions import VersionStore
+from slate.core.domain.deliveries import DeliveryStore
+from slate.core.domain.versions import VersionStore
 
 
 class TestDeliveriesAgainstARealDatabase:
@@ -58,10 +58,10 @@ class TestDeliveriesAgainstARealDatabase:
 class TestColumnLayoutsAgainstARealDatabase:
     def test_a_published_default_does_not_destroy_project_config(self, qtbot, mock_db):
         from PySide6.QtWidgets import QTableView
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.components.column_layout_manager import (
+        from slate.gui.tabs.vfx_dashboard_pro.ui.components.column_layout_manager import (
             ColumnLayoutManager,
         )
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.shot_table_model import ShotTableModel
+        from slate.gui.tabs.vfx_dashboard_pro.ui.shot_table_model import ShotTableModel
         import json
 
         mock_db.save_tracking_project("PRJ", "Test Project", json.dumps({
@@ -88,7 +88,7 @@ class TestColumnLayoutsAgainstARealDatabase:
 
 class TestReviewPlayerBuilds:
     def test_the_player_dialog_opens_for_a_version(self, qtbot, mock_db):
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.review_player_dialog import (
+        from slate.gui.tabs.vfx_dashboard_pro.ui.review_player_dialog import (
             ReviewPlayerDialog,
         )
         store = VersionStore(db=mock_db)
@@ -100,7 +100,7 @@ class TestReviewPlayerBuilds:
         assert "SH010" in dlg.title_label.text()
 
     def test_a_missing_media_path_is_reported_not_crashed_on(self, qtbot, mock_db):
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.review_player_dialog import (
+        from slate.gui.tabs.vfx_dashboard_pro.ui.review_player_dialog import (
             ReviewPlayerDialog,
         )
         store = VersionStore(db=mock_db)
@@ -112,7 +112,7 @@ class TestReviewPlayerBuilds:
         assert "not found" in dlg.media_path_label.text().lower()
 
     def test_a_verdict_is_written_to_the_version(self, qtbot, mock_db):
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.review_player_dialog import (
+        from slate.gui.tabs.vfx_dashboard_pro.ui.review_player_dialog import (
             ReviewPlayerDialog,
         )
         store = VersionStore(db=mock_db)

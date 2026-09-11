@@ -8,8 +8,8 @@ sys.path.append(str(root_dir))
 print(f"Added {root_dir} to sys.path")
 
 try:
-    from ut_vfx.core.infra.global_config import GlobalConfig
-    from ut_vfx.core.infra.postgres_manager import PostgresManager
+    from slate.core.infra.global_config import GlobalConfig
+    from slate.core.infra.postgres_manager import PostgresManager
 
     print("--- GLOBAL CONFIG ---")
     try:

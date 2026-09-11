@@ -2,7 +2,7 @@
 The department list is data, not code.
 
 These tests guard the promise that adding a department to
-ut_vfx/data/departments.json is enough - no code change, no migration, and no
+slate/data/departments.json is enough - no code change, no migration, and no
 loss of shots written before the department existed.
 """
 
@@ -11,11 +11,11 @@ import io
 
 import pytest
 
-from ut_vfx.core.domain import departments as dept_module
-from ut_vfx.core.domain.departments import (
+from slate.core.domain import departments as dept_module
+from slate.core.domain.departments import (
     load_departments, department_keys, get_department, families, reset_cache,
 )
-from ut_vfx.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot, DepartmentInfo
+from slate.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot, DepartmentInfo
 
 
 @pytest.fixture(autouse=True)
@@ -43,7 +43,7 @@ class TestRegistry:
 
     def test_every_department_maps_to_a_project_folder(self):
         """A department with no folder has nowhere for its work to live."""
-        with io.open("ut_vfx/data/templates.json", encoding="utf-8") as handle:
+        with io.open("slate/data/templates.json", encoding="utf-8") as handle:
             templates = json.load(handle)
         standard = templates["standard"].get("structure", templates["standard"])
         tops = {f.split("/")[0] for f in standard["shot_folders"]}
@@ -119,7 +119,7 @@ class TestShotDepartments:
 class TestTableColumns:
 
     def test_every_department_gets_a_column(self, qtbot):
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.shot_table_model import ShotTableModel
+        from slate.gui.tabs.vfx_dashboard_pro.ui.shot_table_model import ShotTableModel
 
         model = ShotTableModel()
         column_keys = [col[0] for col in model.COLUMNS]
@@ -129,7 +129,7 @@ class TestTableColumns:
 
     def test_department_columns_show_their_status(self, qtbot):
         from PySide6.QtCore import Qt
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.shot_table_model import ShotTableModel
+        from slate.gui.tabs.vfx_dashboard_pro.ui.shot_table_model import ShotTableModel
 
         shot = Shot(shot_name="SH010")
         shot.dept("matchmove").status = "WIP"
@@ -148,7 +148,7 @@ class TestTableColumns:
 
     def test_department_columns_are_editable_by_a_supervisor(self, qtbot):
         from PySide6.QtCore import Qt
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.shot_table_model import ShotTableModel
+        from slate.gui.tabs.vfx_dashboard_pro.ui.shot_table_model import ShotTableModel
 
         shot = Shot(shot_name="SH010")
         model = ShotTableModel(shots=[shot], user_role="supervisor")
@@ -165,7 +165,7 @@ class TestDetailPanel:
     """The detail panel is where coordinators assign artists and bid days."""
 
     def test_every_department_gets_a_row(self, qtbot):
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.shot_detail import ShotDetailWidget
+        from slate.gui.tabs.vfx_dashboard_pro.ui.shot_detail import ShotDetailWidget
 
         shot = Shot(shot_name="SH010")
         panel = ShotDetailWidget(shot, user_role="supervisor",
@@ -176,7 +176,7 @@ class TestDetailPanel:
             assert key in panel.depts, f"{key} has no row in the detail panel"
 
     def test_editing_a_new_department_saves_back_to_the_shot(self, qtbot):
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.shot_detail import ShotDetailWidget
+        from slate.gui.tabs.vfx_dashboard_pro.ui.shot_detail import ShotDetailWidget
 
         shot = Shot(shot_name="SH010")
         panel = ShotDetailWidget(shot, user_role="supervisor",

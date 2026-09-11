@@ -7,15 +7,15 @@ import traceback
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
 try:
-    from ut_vfx.core.infra.postgres_manager import PostgresManager
-    from ut_vfx.core.infra.global_config import GlobalConfig
-    from ut_vfx.core.domain.central_attendance import CentralAttendance
+    from slate.core.infra.postgres_manager import PostgresManager
+    from slate.core.infra.global_config import GlobalConfig
+    from slate.core.domain.central_attendance import CentralAttendance
 except ImportError as e:
     print(f"FAILED IMPORT: {e}")
     sys.exit(1)
 
 def run_checkup():
-    print("=== UT_VFX POSTGRES & SOFTWARE HEALTH CHECKUP ===")
+    print("=== Slate POSTGRES & SOFTWARE HEALTH CHECKUP ===")
     print("1. Checking Configuration...")
     mode = GlobalConfig.get('db_mode')
     print(f"   Config DB Mode: {mode}")
@@ -42,7 +42,7 @@ def run_checkup():
     expected_tables = [
         "projects", "operations", "task_details", "stock_library", "tracking_projects",
         "tracking_shots", "tracking_tasks", "users", "change_history", "audit_log",
-        "attendance_log", "ut_vfx_json_write_locks"
+        "attendance_log", "slate_json_write_locks"
     ]
     all_ok = True
     try:

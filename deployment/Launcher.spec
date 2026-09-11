@@ -9,15 +9,15 @@ block_cipher = None
 work_dir = os.path.abspath(os.getcwd())
 
 # Determine project root
-if os.path.exists(os.path.join(work_dir, 'ut_vfx')):
+if os.path.exists(os.path.join(work_dir, 'slate')):
     project_root = work_dir
-    launcher_script = os.path.join(project_root, 'ut_vfx', 'launcher.py')
-    icon_path = os.path.join(project_root, 'ut_vfx', 'icons', 'app_icon_128.ico')
+    launcher_script = os.path.join(project_root, 'slate', 'launcher.py')
+    icon_path = os.path.join(project_root, 'slate', 'icons', 'app_icon_128.ico')
 elif os.path.exists(os.path.join(work_dir, 'core')):
-    # We are inside ut_vfx
+    # We are inside slate
     project_root = os.path.dirname(work_dir)
-    launcher_script = os.path.join(project_root, 'ut_vfx', 'launcher.py')
-    icon_path = os.path.join(project_root, 'ut_vfx', 'icons', 'app_icon_128.ico')
+    launcher_script = os.path.join(project_root, 'slate', 'launcher.py')
+    icon_path = os.path.join(project_root, 'slate', 'icons', 'app_icon_128.ico')
 else:
     # Fallback/Guess
     launcher_script = os.path.join(work_dir, 'launcher.py')
@@ -49,7 +49,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='CapsuleLauncher',
+    name='SlateLauncher',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -71,5 +71,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='CapsuleLauncher',
+    name='SlateLauncher',
 )

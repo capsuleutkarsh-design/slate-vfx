@@ -1,5 +1,5 @@
 """
-Enhanced Build Script for UT_VFX
+Enhanced Build Script for Slate
 Uses PyInstaller to create standalone .exe with optimizations
 """
 
@@ -21,8 +21,8 @@ def build_quick():
     print()
     
     args = [
-        'ut_vfx/gatekeeper_main.py',
-        '--name=UTVFX_Debug',
+        'slate/gatekeeper_main.py',
+        '--name=Slate_Debug',
         '--onefile',
         '--console',  # Show console for debugging
         
@@ -46,17 +46,17 @@ def build_quick():
         '--exclude-module=PyQt5.QtGui',
         
         # Dynamic Plugins
-        '--collect-submodules=ut_vfx.gui.plugins',
-        '--collect-submodules=ut_vfx.plugins',
+        '--collect-submodules=slate.gui.plugins',
+        '--collect-submodules=slate.plugins',
     ]
     
     if os.path.exists('client_config.json'):
         args.append('--add-data=client_config.json;.')
     args.extend([
-        '--add-data=ut_vfx/data;ut_vfx/data',
-        '--add-data=ut_vfx/core/help_content.json;ut_vfx/core',
-        '--add-data=ut_vfx/assets;ut_vfx/assets',
-        '--add-data=ut_vfx/default_config.json;ut_vfx',
+        '--add-data=slate/data;slate/data',
+        '--add-data=slate/core/help_content.json;slate/core',
+        '--add-data=slate/assets;slate/assets',
+        '--add-data=slate/default_config.json;slate',
     ])
     PyInstaller.__main__.run(args)
 
@@ -70,8 +70,8 @@ def build_release():
     
     # Build arguments list
     args = [
-        'ut_vfx/gatekeeper_main.py',
-        '--name=UTVFX',
+        'slate/gatekeeper_main.py',
+        '--name=Slate',
         '--onefile',
         '--windowed',  # No console window
         
@@ -128,55 +128,55 @@ def build_release():
         '--hidden-import=opentimelineio.adapters',
         '--hidden-import=opentimelineio.plugins',
         # Dynamic plugins
-        '--collect-submodules=ut_vfx.gui.plugins',
-        '--collect-submodules=ut_vfx.plugins',
+        '--collect-submodules=slate.gui.plugins',
+        '--collect-submodules=slate.plugins',
     ]
     
     # Add data files (use absolute paths or verify existence)
     if os.path.exists('client_config.json'):
         args.append('--add-data=client_config.json;.')
     
-    if os.path.exists('ut_vfx/data'):
-        args.append('--add-data=ut_vfx/data;ut_vfx/data')
+    if os.path.exists('slate/data'):
+        args.append('--add-data=slate/data;slate/data')
     
-    if os.path.exists('ut_vfx/assets'):
-        args.append('--add-data=ut_vfx/assets;ut_vfx/assets')
+    if os.path.exists('slate/assets'):
+        args.append('--add-data=slate/assets;slate/assets')
         
-    if os.path.exists('ut_vfx/default_config.json'):
-        args.append('--add-data=ut_vfx/default_config.json;ut_vfx')
+    if os.path.exists('slate/default_config.json'):
+        args.append('--add-data=slate/default_config.json;slate')
     
-    if os.path.exists('ut_vfx/icons'):
-        args.append('--add-data=ut_vfx/icons;ut_vfx/icons')
+    if os.path.exists('slate/icons'):
+        args.append('--add-data=slate/icons;slate/icons')
 
-    if os.path.exists('ut_vfx/resources'):
-        args.append('--add-data=ut_vfx/resources;ut_vfx/resources')
+    if os.path.exists('slate/resources'):
+        args.append('--add-data=slate/resources;slate/resources')
         
-    if os.path.exists('ut_vfx/bin'):
-        args.append('--add-data=ut_vfx/bin;ut_vfx/bin')
+    if os.path.exists('slate/bin'):
+        args.append('--add-data=slate/bin;slate/bin')
         
     if os.path.exists('external/olive-editor'):
         args.append('--add-data=external/olive-editor;external/olive-editor')
         
     # Help Content
-    if os.path.exists('ut_vfx/core/help_content.json'):
-         args.append('--add-data=ut_vfx/core/help_content.json;ut_vfx/core')
+    if os.path.exists('slate/core/help_content.json'):
+         args.append('--add-data=slate/core/help_content.json;slate/core')
     
     # Add icon if it exists
-    if os.path.exists('ut_vfx/icons/app_icon.ico'):
-        args.append('--icon=ut_vfx/icons/app_icon.ico')
+    if os.path.exists('slate/icons/app_icon.ico'):
+        args.append('--icon=slate/icons/app_icon.ico')
     
     # Database (In root)
     if os.path.exists('database'):
-        args.append('--add-data=database;ut_vfx/database')
+        args.append('--add-data=database;slate/database')
     
     PyInstaller.__main__.run(args)
 
 def build_server_release():
-    """Build UT Central Server"""
+    """Build Slate Central Server"""
     print("Building SERVER version...")
     
     args = [
-        'ut_server/main.py',
+        'slate_server/main.py',
         '--name=UT_Server',
         '--onefile',
         '--windowed',
@@ -188,11 +188,11 @@ def build_server_release():
         '--hidden-import=psycopg2',
         
         # Add server data
-        '--add-data=ut_server/bin;ut_server/bin',
+        '--add-data=slate_server/bin;slate_server/bin',
     ]
     
-    if os.path.exists('ut_vfx/icons/server_icon.ico'):
-        args.append('--icon=ut_vfx/icons/server_icon.ico')
+    if os.path.exists('slate/icons/server_icon.ico'):
+        args.append('--icon=slate/icons/server_icon.ico')
         
     PyInstaller.__main__.run(args)
 
@@ -206,7 +206,7 @@ def build_onedir():
     
     # USE THE OFFICIAL SPEC FILE
     # This ensures consistent results with bundled config and dependencies
-    spec_file = 'UTVFX.spec'
+    spec_file = 'Slate.spec'
     
     if not os.path.exists(spec_file):
         print(f"ERROR: Spec file not found: {spec_file}")
@@ -215,8 +215,8 @@ def build_onedir():
     print(f"Building using spec file: {spec_file}")
     PyInstaller.__main__.run([spec_file, '--noconfirm'])
     
-    print("\nCopying unmanaged data directories into dist/UTVFX...")
-    dist_folder = os.path.join('dist', 'UTVFX')
+    print("\nCopying unmanaged data directories into dist/Slate...")
+    dist_folder = os.path.join('dist', 'Slate')
     
     def copy_if_exists(src, dst):
         if os.path.exists(src):
@@ -226,8 +226,8 @@ def build_onedir():
                 shutil.rmtree(dst_path)
             shutil.copytree(src, dst_path)
             
-    copy_if_exists('ut_vfx/bin', 'ut_vfx/bin')
-    copy_if_exists('ut_server/bin', 'ut_server/bin')
+    copy_if_exists('slate/bin', 'slate/bin')
+    copy_if_exists('slate_server/bin', 'slate_server/bin')
     copy_if_exists('external/olive-editor', 'external/olive-editor')
     copy_if_exists('database', 'database')
 
@@ -252,7 +252,7 @@ def build_installer(version=None, target="all"):
     
     project_root = Path.cwd().resolve()
     all_scripts = {
-        "vfx": (project_root / "deployment" / "setup_ut_vfx_client.iss").resolve(),
+        "vfx": (project_root / "deployment" / "setup_slate_client.iss").resolve(),
         "ops": (project_root / "deployment" / "setup_ut_studio_ops.iss").resolve(),
         "server": (project_root / "deployment" / "setup_ut_central_server.iss").resolve()
     }
@@ -265,14 +265,14 @@ def build_installer(version=None, target="all"):
         print(f"ERROR: Unknown target '{target}'. Choose from {list(all_scripts.keys())} or 'all'")
         sys.exit(1)
 
-    dist_dir = (project_root / "dist" / "UTVFX").resolve()
+    dist_dir = (project_root / "dist" / "Slate").resolve()
     installer_dir = (project_root / "installers").resolve()
     icon_candidates_client = [
-        (project_root / "ut_vfx" / "icons" / "app_icon.ico").resolve(),
-        (project_root / "ut_vfx" / "icons" / "app_icon_128.ico").resolve(),
+        (project_root / "slate" / "icons" / "app_icon.ico").resolve(),
+        (project_root / "slate" / "icons" / "app_icon_128.ico").resolve(),
     ]
     icon_candidates_server = [
-        (project_root / "ut_vfx" / "icons" / "server_icon.ico").resolve(),
+        (project_root / "slate" / "icons" / "server_icon.ico").resolve(),
     ]
     setup_icon_client = next((p for p in icon_candidates_client if p.exists()), None)
     setup_icon_server = next((p for p in icon_candidates_server if p.exists()), None)
@@ -313,7 +313,7 @@ def build_installer(version=None, target="all"):
     
     # Check if dist folder exists with required files
     if not dist_dir.exists():
-        print("ERROR: dist/UTVFX not found!")
+        print("ERROR: dist/Slate not found!")
         print("Please run PyInstaller build first:")
         print("  python tools/build_pipeline.py --mode onedir")
         sys.exit(1)
@@ -336,7 +336,7 @@ def build_installer(version=None, target="all"):
     
     # Update version in Python __init__.py
     print("Updating version in Python package...")
-    init_file = project_root / "ut_vfx" / "__init__.py"
+    init_file = project_root / "slate" / "__init__.py"
     if init_file.exists():
         with open(init_file, 'r', encoding='utf-8') as f:
             init_content = f.read()
@@ -450,7 +450,7 @@ def build_full(version=None, target="all"):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
-        description='Build UT_VFX executable and installer',
+        description='Build Slate executable and installer',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Build Modes:
@@ -491,15 +491,15 @@ Examples:
     args = parser.parse_args()
     
     # Verify we're in the correct directory (or auto-fix if run from tools/)
-    if not os.path.exists('ut_vfx/gatekeeper_main.py'):
+    if not os.path.exists('slate/gatekeeper_main.py'):
         # Check if we're in the tools directory
-        if os.path.basename(os.getcwd()) == 'tools' and os.path.exists('../ut_vfx/gatekeeper_main.py'):
+        if os.path.basename(os.getcwd()) == 'tools' and os.path.exists('../slate/gatekeeper_main.py'):
             # Change to parent directory (V0040)
             os.chdir('..')
             print(f"Auto-detected: Changed directory to {os.getcwd()}")
             print()
         else:
-            print("ERROR: ut_vfx/gatekeeper_main.py not found!")
+            print("ERROR: slate/gatekeeper_main.py not found!")
             print("Make sure you're running this from the V0040 directory")
             print(f"Current directory: {os.getcwd()}")
             sys.exit(1)
@@ -514,7 +514,7 @@ Examples:
     else:
         # Standard PyInstaller builds
         print("=" * 70)
-        print("  UT_VFX Build Script v2.0")
+        print("  Slate Build Script v2.0")
         print("=" * 70)
         print()
         
@@ -532,9 +532,9 @@ Examples:
         
         # Show output location
         if args.mode == 'quick':
-            exe_name = "UTVFX_Debug.exe"
+            exe_name = "Slate_Debug.exe"
         else:
-            exe_name = "UTVFX.exe" if args.mode == 'release' else "UTVFX"
+            exe_name = "Slate.exe" if args.mode == 'release' else "Slate"
         
         output_path = Path("dist") / exe_name
         if output_path.exists():

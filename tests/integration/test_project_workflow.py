@@ -31,11 +31,11 @@ def temp_project_dir():
 class TestCompleteProjectWorkflow:
     """Test complete project creation workflow end-to-end."""
     
-    @patch('ut_vfx.core.infra.postgres_manager.PostgresManager')
-    @patch('ut_vfx.core.infra.config_manager.ConfigManager')
+    @patch('slate.core.infra.postgres_manager.PostgresManager')
+    @patch('slate.core.infra.config_manager.ConfigManager')
     def test_full_project_creation_flow(self, mock_config, mock_db, qapp_integration, qtbot, temp_project_dir):
         """Test complete flow from template selection to folder creation."""
-        from ut_vfx.gui.tabs.folder_creator_tab import FolderCreatorTab
+        from slate.gui.tabs.folder_creator_tab import FolderCreatorTab
         
         # Setup mocks
         mock_config.return_value.get_templates.return_value = ['VFX_Standard']
@@ -57,11 +57,11 @@ class TestCompleteProjectWorkflow:
         # Verify integrated state
         assert tab is not None
     
-    @patch('ut_vfx.core.domain.user_manager.UserManager')
-    @patch('ut_vfx.core.infra.postgres_manager.PostgresManager')
+    @patch('slate.core.domain.user_manager.UserManager')
+    @patch('slate.core.infra.postgres_manager.PostgresManager')
     def test_user_authentication_to_project_access(self, mock_db, mock_user_mgr, qapp_integration, qtbot):
         """Test authentication flow leading to project access."""
-        from ut_vfx.gui.main_window import VFXFolderCreatorApp
+        from slate.gui.main_window import VFXFolderCreatorApp
         
         # Mock successful authentication
         mock_user_mgr.return_value.authenticate.return_value = True
@@ -83,10 +83,10 @@ class TestCompleteProjectWorkflow:
 class TestDatabaseSyncIntegration:
     """Test database synchronization and concurrent operations."""
     
-    @patch('ut_vfx.core.infra.postgres_manager.PostgresManager')
+    @patch('slate.core.infra.postgres_manager.PostgresManager')
     def test_config_to_database_sync(self, mock_db, qapp_integration, qtbot):
         """Test configuration changes sync to database."""
-        from ut_vfx.core.infra.config_manager import ConfigManager
+        from slate.core.infra.config_manager import ConfigManager
         
         mock_db.return_value.execute_query.return_value = True
         
@@ -95,7 +95,7 @@ class TestDatabaseSyncIntegration:
         # Verify config manager integrates with DB
         assert config_mgr is not None
     
-    @patch('ut_vfx.core.infra.postgres_manager.PostgresManager')
+    @patch('slate.core.infra.postgres_manager.PostgresManager')
     def test_concurrent_user_modifications(self, mock_db, qapp_integration, qtbot):
         """Test multiple users modifying data concurrently."""
         # This tests database transaction handling
@@ -109,11 +109,11 @@ class TestDatabaseSyncIntegration:
 class TestAssetLibraryIntegration:
     """Test asset library integration with project workflow."""
     
-    @patch('ut_vfx.core.domain.library_manager.LibraryManager')
-    @patch('ut_vfx.core.infra.postgres_manager.PostgresManager')
+    @patch('slate.core.domain.library_manager.LibraryManager')
+    @patch('slate.core.infra.postgres_manager.PostgresManager')
     def test_asset_import_to_database(self, mock_db, mock_lib_mgr, qapp_integration, qtbot, temp_project_dir):
         """Test importing asset and verifying database entry."""
-        from ut_vfx.gui.tabs.stock_library_tab import StockLibraryTab
+        from slate.gui.tabs.stock_library_tab import StockLibraryTab
         
         mock_lib_mgr.return_value.get_all_assets.return_value = []
         mock_lib_mgr.return_value.add_asset.return_value = True
@@ -125,7 +125,7 @@ class TestAssetLibraryIntegration:
         # Integration verified
         assert tab is not None
     
-    @patch('ut_vfx.core.domain.library_manager.LibraryManager')
+    @patch('slate.core.domain.library_manager.LibraryManager')
     def test_asset_search_and_export(self, mock_lib_mgr, qapp_integration, qtbot):
         """Test searching asset and exporting to project."""
         mock_lib_mgr.return_value.search_assets.return_value = [
@@ -139,11 +139,11 @@ class TestAssetLibraryIntegration:
 class TestWorkerIntegrationFlow:
     """Test worker thread integration across components."""
     
-    @patch('ut_vfx.core.workers.structure.FolderCreationWorker')
-    @patch('ut_vfx.core.infra.performance_monitor.performance_monitor')
+    @patch('slate.core.workers.structure.FolderCreationWorker')
+    @patch('slate.core.infra.performance_monitor.performance_monitor')
     def test_worker_with_performance_monitoring(self, mock_monitor, mock_worker, qapp_integration, qtbot):
         """Test worker execution with performance tracking."""
-        from ut_vfx.gui.tabs.folder_creator_tab import FolderCreatorTab
+        from slate.gui.tabs.folder_creator_tab import FolderCreatorTab
         
         mock_worker.return_value.run.return_value = None
         
@@ -153,10 +153,10 @@ class TestWorkerIntegrationFlow:
         # Verify worker and monitoring integration
         assert tab is not None
     
-    @patch('ut_vfx.core.workers.structure.FolderCreationWorker')
+    @patch('slate.core.workers.structure.FolderCreationWorker')
     def test_worker_error_propagation_to_gui(self, mock_worker, qapp_integration, qtbot):
         """Test worker errors properly propagate to GUI."""
-        from ut_vfx.gui.tabs.folder_creator_tab import FolderCreatorTab
+        from slate.gui.tabs.folder_creator_tab import FolderCreatorTab
         
         # Setup worker to emit error
         mock_worker_instance = mock_worker.return_value
@@ -172,12 +172,12 @@ class TestWorkerIntegrationFlow:
 class TestSystemHealthIntegration:
     """Test system health monitoring across components."""
     
-    @patch('ut_vfx.core.infra.network_manager.NetworkManager')
-    @patch('ut_vfx.core.infra.postgres_manager.PostgresManager')
-    @patch('ut_vfx.core.infra.performance_monitor.performance_monitor')
+    @patch('slate.core.infra.network_manager.NetworkManager')
+    @patch('slate.core.infra.postgres_manager.PostgresManager')
+    @patch('slate.core.infra.performance_monitor.performance_monitor')
     def test_system_health_check_integration(self, mock_monitor, mock_db, mock_network, qapp_integration, qtbot):
         """Test complete system health check."""
-        from ut_vfx.gui.main_window import VFXFolderCreatorApp
+        from slate.gui.main_window import VFXFolderCreatorApp
         
         # Mock all health systems
         mock_network.return_value.check_connectivity.return_value = True
@@ -194,7 +194,7 @@ class TestSystemHealthIntegration:
 class TestConfigurationIntegration:
     """Test configuration system integration."""
     
-    @patch('ut_vfx.core.infra.config_manager.ConfigManager')
+    @patch('slate.core.infra.config_manager.ConfigManager')
     def test_settings_propagate_to_workers(self, mock_config, qapp_integration, qtbot):
         """Test configuration changes affect worker behavior."""
         mock_config.return_value.load_settings.return_value = {
@@ -204,10 +204,10 @@ class TestConfigurationIntegration:
         # Verify config propagation
         assert mock_config is not None
     
-    @patch('ut_vfx.core.infra.config_manager.ConfigManager')
+    @patch('slate.core.infra.config_manager.ConfigManager')
     def test_template_changes_reflect_in_gui(self, mock_config, qapp_integration, qtbot):
         """Test template modifications appear in GUI."""
-        from ut_vfx.gui.tabs.folder_creator_tab import FolderCreatorTab
+        from slate.gui.tabs.folder_creator_tab import FolderCreatorTab
         
         mock_config.return_value.get_templates.return_value = ['New_Template']
         

@@ -7,14 +7,14 @@ logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
 def verify_dashboard():
     print("="*60)
-    print("UT_VFX - DASHBOARD PRE-FLIGHT CHECK")
+    print("Slate - DASHBOARD PRE-FLIGHT CHECK")
     print("="*60)
     
     # 1. Check dashboard path (current pro path first, legacy fallback second)
     root_dir = Path(__file__).resolve().parents[2]
     path_candidates = [
-        root_dir / "ut_vfx" / "gui" / "tabs" / "vfx_dashboard_pro",
-        root_dir / "ut_vfx" / "vfx_dashboard",
+        root_dir / "slate" / "gui" / "tabs" / "vfx_dashboard_pro",
+        root_dir / "slate" / "vfx_dashboard",
     ]
 
     dash_path = next((p for p in path_candidates if p.exists()), None)
@@ -45,7 +45,7 @@ def verify_dashboard():
         
         # Import current dashboard widget
         sys.path.append(str(root_dir))
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.dashboard_widget import DashboardWidget
+        from slate.gui.tabs.vfx_dashboard_pro.ui.dashboard_widget import DashboardWidget
 
         # Initialize widget directly (main app uses this implementation now)
         widget = DashboardWidget(user_data=mock_user)

@@ -4,9 +4,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import json
 import logging
-from ut_vfx.core.infra.database_manager import DatabaseManager
-from ut_vfx.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler
-from ut_vfx.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
+from slate.core.infra.database_manager import DatabaseManager
+from slate.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler
+from slate.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
 
 def test_rbac_security():
     print("--- 1. Setup ---")

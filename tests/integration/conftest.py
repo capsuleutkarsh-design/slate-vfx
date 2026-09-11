@@ -37,7 +37,7 @@ def deliberate_local_database(monkeypatch):
     that moment, which is a quietly ineffective fixture - and was.
     """
     try:
-        from ut_vfx.core.infra.database_manager import DatabaseManager
+        from slate.core.infra.database_manager import DatabaseManager
     except Exception:                       # pragma: no cover - import guard
         yield
         return

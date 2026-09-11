@@ -3,7 +3,7 @@ Test Suite for Lucidity + Fileseq Integration
 VFX Industry Standards Verification
 
 This test suite verifies the integration of fileseq and lucidity libraries
-into the UT_VFX pipeline.
+into the Slate pipeline.
 
 Run with: python test_vfx_standards_integration.py
 """
@@ -56,7 +56,7 @@ def test_sequence_utils():
     print("="*60)
     
     try:
-        from ut_vfx.utils.sequence_utils import SequenceDetector, detect_sequence
+        from slate.utils.sequence_utils import SequenceDetector, detect_sequence
         print("✅ sequence_utils module imported successfully")
         
         # Check availability
@@ -147,7 +147,7 @@ def test_path_template_manager():
     print("="*60)
     
     try:
-        from ut_vfx.core.services.path_template_manager import (
+        from slate.core.services.path_template_manager import (
             PathTemplateManager, format_render_path, parse_render_path
         )
         print("✅ path_template_manager module imported successfully")
@@ -267,7 +267,7 @@ def main():
     """Run all tests"""
     print("\n" + "="*70)
     print(" VFX INDUSTRY STANDARDS INTEGRATION TEST SUITE")
-    print(" UT_VFX - Lucidity + Fileseq Verification")
+    print(" Slate - Lucidity + Fileseq Verification")
     print("="*70)
     
     results = {}

@@ -8,9 +8,9 @@ tests pin down what the software actually does in each case.
 
 import pytest
 
-from ut_vfx.core.domain.shot_registry import register_ingested_shots
-from ut_vfx.core.workers.structure import FolderCreationWorker
-from ut_vfx.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler
+from slate.core.domain.shot_registry import register_ingested_shots
+from slate.core.workers.structure import FolderCreationWorker
+from slate.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler
 
 
 TEMPLATE = (
@@ -20,7 +20,7 @@ TEMPLATE = (
 
 
 def _run(source, target, mock_db, project="PRJ", overwrite=False):
-    import ut_vfx.core.workers.structure as structure_module
+    import slate.core.workers.structure as structure_module
     structure_module.database_manager = mock_db
 
     worker = FolderCreationWorker(
@@ -180,7 +180,7 @@ REAL_TEMPLATE = (
 
 def _run_real(source, target, mock_db, project="PRJ"):
     """Ingest using a template shaped like the studio's real one."""
-    import ut_vfx.core.workers.structure as structure_module
+    import slate.core.workers.structure as structure_module
     structure_module.database_manager = mock_db
 
     worker = FolderCreationWorker(

@@ -13,12 +13,12 @@ app = QApplication.instance()
 if not app:
     app = QApplication(sys.argv)
 
-from ut_vfx.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot, DepartmentInfo
-from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.shot_table_model import ShotTableModel
-from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.status_delegate import StatusDelegate
-from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.artist_delegate import ArtistDelegate
-from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.batch_edit_dialog import BatchEditDialog
-from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.group_header_delegate import GROUP_HEADER_ROLE
+from slate.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot, DepartmentInfo
+from slate.gui.tabs.vfx_dashboard_pro.ui.shot_table_model import ShotTableModel
+from slate.gui.tabs.vfx_dashboard_pro.ui.status_delegate import StatusDelegate
+from slate.gui.tabs.vfx_dashboard_pro.ui.artist_delegate import ArtistDelegate
+from slate.gui.tabs.vfx_dashboard_pro.ui.batch_edit_dialog import BatchEditDialog
+from slate.gui.tabs.vfx_dashboard_pro.ui.group_header_delegate import GROUP_HEADER_ROLE
 
 
 def create_sample_shots():

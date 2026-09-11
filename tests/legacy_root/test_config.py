@@ -6,7 +6,7 @@ from pathlib import Path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
 
-from ut_vfx.core.infra.global_config import GlobalConfig
+from slate.core.infra.global_config import GlobalConfig
 
 # Print loaded config details
 config = GlobalConfig()

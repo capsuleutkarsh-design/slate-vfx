@@ -10,7 +10,7 @@ logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
 def run_audit():
     print("=========================================")
-    print("      UT_VFX SYSTEM AUDIT           ")
+    print("      Slate SYSTEM AUDIT           ")
     print("=========================================")
     
     errors = []
@@ -31,7 +31,7 @@ def run_audit():
     print("\n[2/5] Checking Database Connectivity...")
     db = None
     try:
-        from ut_vfx.core.infra.postgres_manager import PostgresManager
+        from slate.core.infra.postgres_manager import PostgresManager
         db = PostgresManager()
         # Simple query to verify connection
         res = db.execute_query("SELECT version()", fetch="one")

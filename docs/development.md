@@ -49,7 +49,7 @@ removing the last pair.
 ### 2. Colour comes from `gate.py`
 
 ```python
-from ut_vfx.core.infra.gate import Gate
+from slate.core.infra.gate import Gate
 label.setStyleSheet(f"color: {Gate.TEXT_DIM};")
 ```
 
@@ -131,7 +131,7 @@ machine, check `Slate Server.bat` is running before looking at the code.
 config, not in a maintenance script, not in a test fixture.
 
 ```python
-from ut_vfx.core.infra.local_secrets import db_password
+from slate.core.infra.local_secrets import db_password
 password = db_password()
 ```
 
@@ -139,8 +139,8 @@ That checks `SLATE_DB_PASSWORD` first, then the git-ignored local configs. It
 raises with an explanation when there is nothing configured, rather than
 connecting as nobody and failing later.
 
-`ut_vfx/default_config.json` is committed and carries **settings only**. If you
-find yourself adding a secret to it, the answer is `ut_vfx/config.json`, which
+`slate/default_config.json` is committed and carries **settings only**. If you
+find yourself adding a secret to it, the answer is `slate/config.json`, which
 `.gitignore` already covers.
 
 ---

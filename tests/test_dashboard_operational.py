@@ -6,8 +6,8 @@ they can get shots in, and they can find them.
 import pytest
 from PySide6.QtCore import Qt
 
-from ut_vfx.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
-from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.shot_table_model import ShotTableModel
+from slate.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
+from slate.gui.tabs.vfx_dashboard_pro.ui.shot_table_model import ShotTableModel
 
 
 def _shots():
@@ -99,7 +99,7 @@ class TestAddShotsDialog:
     """Manual shot entry, for what does not arrive on a scan drive."""
 
     def test_parses_one_name_per_line(self, qtbot):
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.add_shots_dialog import AddShotsDialog
+        from slate.gui.tabs.vfx_dashboard_pro.ui.add_shots_dialog import AddShotsDialog
 
         dialog = AddShotsDialog()
         qtbot.addWidget(dialog)
@@ -108,7 +108,7 @@ class TestAddShotsDialog:
         assert dialog.shot_names() == ["SH010", "SH020", "SH030"]
 
     def test_ignores_shots_already_in_the_project(self, qtbot):
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.add_shots_dialog import AddShotsDialog
+        from slate.gui.tabs.vfx_dashboard_pro.ui.add_shots_dialog import AddShotsDialog
 
         dialog = AddShotsDialog(existing_shots=["SH010", "SH020"])
         qtbot.addWidget(dialog)
@@ -118,7 +118,7 @@ class TestAddShotsDialog:
         assert sorted(dialog.skipped_names()) == ["SH010", "sh020"]
 
     def test_duplicates_in_the_pasted_list_are_collapsed(self, qtbot):
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.add_shots_dialog import AddShotsDialog
+        from slate.gui.tabs.vfx_dashboard_pro.ui.add_shots_dialog import AddShotsDialog
 
         dialog = AddShotsDialog()
         qtbot.addWidget(dialog)
@@ -127,7 +127,7 @@ class TestAddShotsDialog:
         assert dialog.shot_names() == ["SH010", "SH020"]
 
     def test_ok_is_disabled_until_there_is_something_to_add(self, qtbot):
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.add_shots_dialog import AddShotsDialog
+        from slate.gui.tabs.vfx_dashboard_pro.ui.add_shots_dialog import AddShotsDialog
 
         dialog = AddShotsDialog(existing_shots=["SH010"])
         qtbot.addWidget(dialog)
@@ -141,7 +141,7 @@ class TestAddShotsDialog:
         assert dialog.ok_button.isEnabled() is True
 
     def test_returns_the_chosen_status_and_priority(self, qtbot):
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.add_shots_dialog import AddShotsDialog
+        from slate.gui.tabs.vfx_dashboard_pro.ui.add_shots_dialog import AddShotsDialog
 
         dialog = AddShotsDialog()
         qtbot.addWidget(dialog)
@@ -163,8 +163,8 @@ class TestNewProjectDefaults:
     """
 
     def test_every_department_gets_excel_columns(self):
-        from ut_vfx.core.domain.departments import department_keys
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.core.project_manager import (
+        from slate.core.domain.departments import department_keys
+        from slate.gui.tabs.vfx_dashboard_pro.core.project_manager import (
             _extend_mapping_with_departments,
         )
 
@@ -186,7 +186,7 @@ class TestNewProjectDefaults:
 
     def test_existing_columns_are_never_moved(self):
         """Re-mapping must not shuffle a sheet layout already in use."""
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.core.project_manager import (
+        from slate.gui.tabs.vfx_dashboard_pro.core.project_manager import (
             _extend_mapping_with_departments,
         )
 
@@ -198,7 +198,7 @@ class TestNewProjectDefaults:
         assert mapping["cg_status"] == "Z"
 
     def test_no_two_fields_share_a_column(self):
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.core.project_manager import (
+        from slate.gui.tabs.vfx_dashboard_pro.core.project_manager import (
             _extend_mapping_with_departments,
         )
 
@@ -209,8 +209,8 @@ class TestNewProjectDefaults:
         assert len(letters) == len(set(letters)), "two fields share a column"
 
     def test_folder_template_matches_the_departments(self):
-        from ut_vfx.core.domain.departments import department_keys
-        from ut_vfx.gui.tabs.vfx_dashboard_pro.core.project_manager import (
+        from slate.core.domain.departments import department_keys
+        from slate.gui.tabs.vfx_dashboard_pro.core.project_manager import (
             _default_folder_template,
         )
 

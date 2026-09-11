@@ -14,9 +14,9 @@ import pytest
 from PySide6.QtCore import Qt, QSettings
 from PySide6.QtWidgets import QApplication, QTableView
 
-from ut_vfx.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
-from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.shot_table_model import ShotTableModel
-from ut_vfx.gui.tabs.vfx_dashboard_pro.ui.components.column_layout_manager import (
+from slate.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
+from slate.gui.tabs.vfx_dashboard_pro.ui.shot_table_model import ShotTableModel
+from slate.gui.tabs.vfx_dashboard_pro.ui.components.column_layout_manager import (
     ColumnLayoutManager,
     SETTINGS_ORGANIZATION,
     SETTINGS_APPLICATION,

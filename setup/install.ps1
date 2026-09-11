@@ -14,7 +14,7 @@
                               so a second run does nothing and an interrupted
                               first run resumes where it stopped.
       no secrets in git       the database password is asked for once and
-                              written to ut_vfx/config.json, which is ignored
+                              written to slate/config.json, which is ignored
                               by git and stays on this machine.
 
     Called by setup.bat. Run it directly if you want the switches:
@@ -22,7 +22,7 @@
         -Check      say what would happen, download nothing
         -Force      re-fetch even what is already in place
         -Server     also install PostgreSQL (the Central Server machine only)
-        -SkipConfig leave ut_vfx/config.json alone
+        -SkipConfig leave slate/config.json alone
 #>
 
 [CmdletBinding()]
@@ -289,10 +289,10 @@ function Write-LocalConfig {
         The value itself does not change - it is the studio's existing database
         password, typed once per machine.
     #>
-    $target = Join-Path $Root "ut_vfx\config.json"
+    $target = Join-Path $Root "slate\config.json"
 
     if ((Test-Path $target) -and -not $Force) {
-        Good "ut_vfx\config.json - already set up (delete it to start over)"
+        Good "slate\config.json - already set up (delete it to start over)"
         return
     }
 
@@ -305,8 +305,8 @@ function Write-LocalConfig {
     if (-not $host_) { $host_ = "localhost" }
     $port     = Read-Host "  Port           [5440]"
     if (-not $port)  { $port = "5440" }
-    $dbname   = Read-Host "  Database name  [ut_vfx]"
-    if (-not $dbname) { $dbname = "ut_vfx" }
+    $dbname   = Read-Host "  Database name  [slate]"
+    if (-not $dbname) { $dbname = "slate" }
     $dbuser   = Read-Host "  Database user  [ut_vfx_app]"
     if (-not $dbuser) { $dbuser = "ut_vfx_app" }
 
@@ -331,7 +331,7 @@ function Write-LocalConfig {
 
     New-Item -ItemType Directory -Force -Path (Split-Path $target) | Out-Null
     $config | ConvertTo-Json -Depth 4 | Set-Content $target -Encoding UTF8
-    Good "wrote ut_vfx\config.json"
+    Good "wrote slate\config.json"
 
     if (-not $dbpass) {
         Warn "No password given, so Slate will start on its local SQLite fallback."
@@ -344,9 +344,9 @@ function Write-LocalConfig {
 function Write-Launchers {
     Step "Launchers"
     $shortcuts = @{
-        "Slate.bat"        = "ut_vfx\vfx_studio_main.py"
-        "Slate Ops.bat"    = "ut_vfx\studio_ops_main.py"
-        "Slate Server.bat" = "ut_server\main.py"
+        "Slate.bat"        = "slate\vfx_studio_main.py"
+        "Slate Ops.bat"    = "slate\studio_ops_main.py"
+        "Slate Server.bat" = "slate_server\main.py"
     }
     foreach ($name in $shortcuts.Keys) {
         $body = @"
