@@ -21,8 +21,10 @@ class CentralAttendance:
     Manages Attendance using the centralized database.
     Works with both PostgreSQL and SQLite backends.
     """
-    def __init__(self):
-        self.db = DatabaseManager()
+    def __init__(self, db=None):
+        # db is the backend to use; left out, it is the studio's own. Passed
+        # in, a test or a tool can point this at a database of its own.
+        self.db = db if db is not None else DatabaseManager()
         self.pc_name = socket.gethostname()
         
         # Configuration
@@ -272,26 +274,56 @@ class CentralAttendance:
     def update_record(self, user_name, year, month, day, in_time, out_time):
         """Admin update of a record."""
         try:
+            target_date = datetime.date(int(year), int(month), int(day))
+        except (TypeError, ValueError) as exc:
+            return False, str(exc)
+        return self.write_day(
+            user_name, target_date, in_time, out_time, pc_name="ADMIN_EDIT",
+            metadata={"admin_edit": True,
+                      "edited_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+
+    def get_day(self, user_name, day):
+        """The recorded punches for one person on one day, or None."""
+        user_id = str(user_name).lower().strip()
+        day_key = day.isoformat() if hasattr(day, "isoformat") else str(day)
+        try:
+            row = self.db.execute_query(
+                "SELECT punch_in, punch_out, pc_name, metadata FROM attendance_log "
+                "WHERE user_id = %s AND day_date = %s",
+                (user_id, day_key), fetch="one")
+        except Exception as exc:
+            logger.error("Could not read attendance for %s on %s: %s", user_id, day_key, exc)
+            return None
+        if not row:
+            return None
+        return dict(row) if hasattr(row, "keys") else {"punch_in": row[0], "punch_out": row[1]}
+
+    def write_day(self, user_name, target_date, in_time, out_time, pc_name="ADMIN_EDIT",
+                  metadata=None):
+        """
+        Set one person's punches for one day, from wherever they came.
+
+        The admin editor and the biometric import both end here. The record
+        says which of them wrote it - pc_name and the metadata - so a day that
+        was corrected by hand can be told from one a machine reported.
+        """
+        try:
             user_id = str(user_name).lower().strip()
             if not user_id:
                 return False, "User is required"
 
-            target_date = datetime.date(int(year), int(month), int(day))
-
             p_in = in_time.strip() if isinstance(in_time, str) and in_time.strip() else None
             p_out = out_time.strip() if isinstance(out_time, str) and out_time.strip() else None
-
-            meta_json = json.dumps({
-                "admin_edit": True,
-                "edited_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            })
+            meta_json = json.dumps(metadata or {})
+            day_key = (target_date.isoformat() if hasattr(target_date, "isoformat")
+                       else str(target_date))
 
             if _is_postgres(self.db):
                 update_sql = """
                 UPDATE attendance_log
                 SET punch_in = %s,
                     punch_out = %s,
-                    pc_name = 'ADMIN_EDIT',
+                    pc_name = %s,
                     metadata = COALESCE(metadata, '{}'::jsonb) || %s::jsonb
                 WHERE user_id = %s AND day_date = %s
                 """
@@ -300,14 +332,14 @@ class CentralAttendance:
                 UPDATE attendance_log
                 SET punch_in = %s,
                     punch_out = %s,
-                    pc_name = 'ADMIN_EDIT',
+                    pc_name = %s,
                     metadata = json_patch(COALESCE(metadata, '{}'), %s)
                 WHERE user_id = %s AND day_date = %s
                 """
 
             updated_rows = self.db.execute_query(
                 update_sql,
-                (p_in, p_out, meta_json, user_id, target_date),
+                (p_in, p_out, pc_name, meta_json, user_id, day_key),
                 fetch="rowcount",
             )
             if updated_rows and int(updated_rows) > 0:
@@ -315,9 +347,10 @@ class CentralAttendance:
 
             insert_sql = """
             INSERT INTO attendance_log (user_id, day_date, punch_in, punch_out, pc_name, metadata)
-            VALUES (%s, %s, %s, %s, 'ADMIN_EDIT', %s)
+            VALUES (%s, %s, %s, %s, %s, %s)
             """
-            inserted = self.db.execute_update(insert_sql, (user_id, target_date, p_in, p_out, meta_json))
+            inserted = self.db.execute_update(
+                insert_sql, (user_id, day_key, p_in, p_out, pc_name, meta_json))
             if inserted:
                 return True, "Inserted"
             return False, "Database rejected attendance edit"

@@ -410,11 +410,21 @@ class AttendanceTab(QWidget):
                     "the days every leave request is charged against.")
                 self.btn_holidays.clicked.connect(self.edit_holidays)
 
+            # The biometric machine's export. Any machine: the columns are
+            # worked out from the file and remembered per studio.
+            self.btn_import = QPushButton("IMPORT BIOMETRIC")
+            self.btn_import.setMinimumSize(130, 30)
+            self.btn_import.setToolTip(
+                "Import punches from the biometric machine's CSV or Excel export. "
+                "Earliest punch becomes IN, latest becomes OUT, one line per person "
+                "per day. Importing the same file twice changes nothing.")
+            self.btn_import.clicked.connect(self.import_biometric)
+
             # Common Control Style
             ctrl_style = """
                 background: #16323A; color: #B4B1AA; border: 1px solid #2C2C34; border-radius: 6px; font-size: 11px; font-weight: 600;
             """
-            controls = [self.combo_month, self.spin_year, btn_ref, btn_exp]
+            controls = [self.combo_month, self.spin_year, btn_ref, btn_exp, self.btn_import]
             if self.btn_holidays is not None:
                 controls.append(self.btn_holidays)
             for w in controls:
@@ -424,6 +434,7 @@ class AttendanceTab(QWidget):
             ah_layout.addWidget(self.spin_year)
             ah_layout.addWidget(btn_ref)
             ah_layout.addWidget(btn_exp)
+            ah_layout.addWidget(self.btn_import)
             if self.btn_holidays is not None:
                 ah_layout.addWidget(self.btn_holidays)
 
@@ -522,6 +533,30 @@ class AttendanceTab(QWidget):
 
         dialog = HolidayCalendarDialog(parent=self, year=self.spin_year.value())
         dialog.exec()
+
+    def import_biometric(self):
+        """
+        Bring in the biometric machine's export.
+
+        Any machine: the dialog works out the columns from the file and keeps
+        the answer in the studio's shared folder, so the second import from
+        the same machine is one click. Every code the machine uses that Slate
+        does not know is listed for HR to match, never guessed.
+        """
+        from slate.gui.dialogs.biometric_import_dialog import BiometricImportDialog
+
+        try:
+            known_ids = list(self.user_manager.get_all_users().keys())
+        except Exception as exc:
+            logging.warning("Could not list users for the biometric import: %s", exc)
+            known_ids = []
+
+        dialog = BiometricImportDialog(self.attendance, known_ids, parent=self)
+        if dialog.exec() and dialog.result_summary:
+            written = dialog.result_summary.get("written", 0)
+            self._notify("Imported %d day(s) of attendance from the machine." % written,
+                         "success" if written else "info")
+            self.refresh_team_view()
 
         # The grid shades holidays from a cache, so it keeps showing the old
         # calendar until that is dropped. A change nobody can see having taken
