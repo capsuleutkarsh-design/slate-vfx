@@ -317,7 +317,15 @@ class DashboardSync:
                         logger.debug("Skipping directory candidate %s: %s", child, exc)
 
         if code:
-            candidates.append(Path("X:/") / code)
+            # Was Path("X:/") / code - one studio's drive letter as the last
+            # resort, which on every other studio is a path that cannot exist.
+            # No configured root means no candidate, which finds exactly as
+            # much and does not pretend otherwise.
+            from slate.core.infra.studio_paths import project_folder
+
+            guess = project_folder(code)
+            if guess is not None:
+                candidates.append(guess)
 
         return self._dedupe_paths(candidates)
 

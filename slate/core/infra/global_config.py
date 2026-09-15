@@ -12,7 +12,7 @@ class GlobalConfig:
     falling back to hardcoded defaults if not found.
     """
     _instance = None
-    
+
     DEFAULTS = {
         "SERVER_ROOT": os.environ.get("SLATE_STUDIO_ROOT", str(Path.home() / "RuntimeData" / "Slate_Central")),
         "LOG_LEVEL": "INFO",
@@ -26,34 +26,46 @@ class GlobalConfig:
         # Priority: LOCALAPPDATA (Machine Config) -> RuntimeData (Legacy User Config)
         self.local_app_data = Path(os.getenv('LOCALAPPDATA')) / "Slate"
         self.config_path = self.local_app_data / "config.json"
-        
+
         self.legacy_config_path = Path.home() / "RuntimeData" / "Slate" / "config.json"
-        
+
         self.data = self.DEFAULTS.copy()
-        
+
 
         # 0. Load Bundled Defaults with Multiple Path Discovery
         import logging
-        
+
         search_paths = []
-        
+
         # A. Executable Directory (Frozen)
         if getattr(sys, 'frozen', False):
             base_dir = os.path.dirname(sys.executable)
-            search_paths.append(Path(base_dir) / "default_config.json")
-            # PyInstaller >= 6 one-dir creates _internal and assigns it to sys._MEIPASS
+
+            # Where the build actually puts it. The spec ships
+            # slate/default_config.json, so in a frozen build it lands under a
+            # "slate" folder - and every path looked at here was the bare
+            # filename at the top. So no frozen client has ever read its own
+            # bundled settings: it worked only on machines that already had a
+            # per-machine config, and a workstation installed from scratch had
+            # no database password, no user and no database name, fell back to
+            # the local SQLite defaults, and never reached the studio at all.
             if hasattr(sys, '_MEIPASS'):
+                search_paths.append(Path(sys._MEIPASS) / "slate" / "default_config.json")
                 search_paths.append(Path(sys._MEIPASS) / "default_config.json")
-            # Try one level up just in case (e.g. inside bin/)
+            search_paths.append(Path(base_dir) / "slate" / "default_config.json")
+            search_paths.append(Path(base_dir) / "default_config.json")
+            # One level up, for a layout that keeps the exe in a bin folder.
             search_paths.append(Path(base_dir).parent / "default_config.json")
-            
-        # B. Source Directory (Dev Environment fallback)
+
+        # B. Source Directory (Dev Environment fallback). This one is already
+        # inside the slate package, which is why it works in a checkout and is
+        # exactly what the frozen paths above were missing.
         try:
             source_root = Path(__file__).resolve().parent.parent.parent
-            search_paths.append(source_root / "default_config.json") 
+            search_paths.append(source_root / "default_config.json")
         except (RuntimeError, ValueError, OSError) as exc:
             logging.debug("GlobalConfig: source root discovery failed (%s)", exc)
-            
+
         config_loaded = False
         for config_path in search_paths:
             if config_path.exists():
@@ -67,36 +79,50 @@ class GlobalConfig:
                         break # Stop after finding the first valid config
                 except Exception as e:
                     logging.exception(f"Failed to load config from {config_path}: {e}")
-        
+
         if not config_loaded:
              logging.warning("No default_config.json found in search paths.")
+
+        # Before anything is read: if an installer has just been run and gave
+        # answers newer than the settings on this machine, fold them in. Without
+        # this the path somebody types into the installer is read, ranked below
+        # the per-machine settings, and ignored - which on any machine that has
+        # had Slate before means the installer appears to accept a path and
+        # nothing uses it.
+        try:
+            from slate.core.infra.install_handoff import apply_install_answers
+            apply_install_answers()
+        except Exception as exc:
+            logging.debug("Install answers were not applied: %s", exc)
 
         self.load()
 
     def load(self):
-        """Load configuration from JSON files (Priority: Local AppData > RuntimeData)."""
-        # 1. Try Dev Config (Source Directory)
+        """
+        Load configuration, lowest priority first.
+
+        The order matters and it used to be wrong. slate/config.json - the file
+        setup.bat writes, and the only one that holds the studio's password - was
+        read first, which made it the weakest: a stale copy under LOCALAPPDATA
+        overrode the details the installer had just been given. It is read last
+        now, so the file the installer and the Settings tab both write is the one
+        that wins.
+        """
         self.dev_config_path = Path(__file__).resolve().parent.parent.parent / "config.json"
-        if self.dev_config_path.exists():
-            try:
-                with open(self.dev_config_path, 'r') as f:
-                    self.data.update(json.load(f))
-            except Exception as e:
-                logging.warning("GlobalConfig: could not load dev config %s (%s)", self.dev_config_path, e)
 
         # 2. Try Client Config Override
         client_configs = []
         if getattr(sys, 'frozen', False):
             client_configs.append(Path(sys._MEIPASS) / "client_config.json")
             client_configs.append(Path(sys.executable).parent / "client_config.json")
-            
+
         client_configs.append(Path.cwd() / "client_config.json")
         try:
             source_root = Path(__file__).parent.parent.parent.parent
             client_configs.append(source_root / "client_config.json")
         except (RuntimeError, ValueError, OSError) as exc:
             pass
-        
+
         for p in client_configs:
             if p.exists():
                 try:
@@ -115,14 +141,28 @@ class GlobalConfig:
             except Exception as e:
                 pass
 
-        # 4. Try Machine Config (Local AppData) - HIGHEST PRIORITY (User Settings)
+        # 4. Try Machine Config (Local AppData)
         if self.config_path.exists():
             try:
                 with open(self.config_path, 'r') as f:
                     self.data.update(json.load(f))
             except Exception as e:
                 logging.warning("GlobalConfig: could not load local config %s (%s)", self.config_path, e)
-                    
+
+        # 5. The local config setup.bat writes - HIGHEST PRIORITY.
+        #
+        # Last, because it is the one file a person is told to edit and the one
+        # the installer writes. Read first, as it used to be, it was the weakest
+        # of the four: re-running setup.bat appeared to do nothing because a
+        # months-old copy under LOCALAPPDATA was still winning.
+        if self.dev_config_path.exists():
+            try:
+                with open(self.dev_config_path, 'r') as f:
+                    self.data.update(json.load(f))
+            except Exception as e:
+                logging.warning("GlobalConfig: could not load %s (%s)",
+                                self.dev_config_path, e)
+
         # 5. Zero-Config Network Discovery
         if not self.data.get('db_host'):
             try:
@@ -138,7 +178,7 @@ class GlobalConfig:
                     logging.info("GlobalConfig: Network Discovery found no server. Falling back to local.")
             except Exception as e:
                 logging.warning(f"GlobalConfig: Network Discovery failed: {e}")
-    
+
     @classmethod
     def get(cls, key, default=None):
         """Get a specific config value."""
@@ -171,9 +211,26 @@ class GlobalConfig:
     @classmethod
     def server_root(cls) -> Path:
         """Get the server root path. Warns if using local fallback."""
-        path_str = cls.get("SERVER_ROOT")
+        path_str = str(cls.get("SERVER_ROOT") or "").strip()
+
+        # Blank is "nobody has said where the studio is", and it needs saying
+        # differently from "the drive is unreachable". It also cannot be handed
+        # to Path: Path("") is Path("."), which exists - so an unset value used
+        # to resolve silently to whatever directory the program was started
+        # from, and everything written there looked like it had worked.
+        if not path_str:
+            if not getattr(cls, "_no_root_warned", False):
+                cls._no_root_warned = True
+                logging.warning(
+                    "No studio folder is configured (SERVER_ROOT). Working "
+                    "locally instead - nothing will be shared between machines. "
+                    "Set it in Settings.")
+            local_root = Path.home() / "RuntimeData" / "Slate_Central"
+            local_root.mkdir(parents=True, exist_ok=True)
+            return local_root
+
         path = Path(path_str)
-        
+
         # Check if path exists
         if not path.exists():
             # Warn once per path, then throttle repeated spam.
@@ -188,14 +245,14 @@ class GlobalConfig:
                 cls._last_network_log_ts = now
             else:
                 logging.debug("Network drive still inaccessible: %s", path)
-            
+
             # Show dialog warning (only once per session)
             if not hasattr(cls, '_network_warning_shown'):
                 cls._network_warning_shown = True
                 try:
                     # Delayed import to avoid circular dependencies
                     from PySide6.QtWidgets import QMessageBox, QApplication
-                    
+
                     # Only show dialog if QApplication exists
                     if QApplication.instance():
                         msg = QMessageBox()
@@ -212,7 +269,7 @@ class GlobalConfig:
                         msg.exec()
                 except Exception as e:
                     logging.debug(f"Could not show network warning dialog: {e}")
-            
+
             local_root = Path.home() / "RuntimeData" / "Slate_Central"
             local_root.mkdir(parents=True, exist_ok=True)
             return local_root
@@ -244,7 +301,7 @@ class GlobalConfig:
         """Check if user is allowed to Ingest/Delete assets."""
         if cls.get("DEVELOPER_MODE", False):
             return True
-        
+
         # Auto-detect Developer Machine (CAPINT)
         try:
              import socket
@@ -256,7 +313,7 @@ class GlobalConfig:
                  return True
         except Exception as exc:
             logging.debug("GlobalConfig: developer auto-detect failed (%s)", exc)
-            
+
         return False
 
     @classmethod
@@ -270,10 +327,10 @@ class GlobalConfig:
         try:
             p = str(Path(path)).replace("\\", "/") # Normalize
             server_root = str(cls.server_root()).replace("\\", "/")
-            
+
             if p.lower().startswith(server_root.lower()):
                 return p.replace(server_root, "$SERVER", 1)
-            
+
             return p
         except Exception as exc:
             logging.debug("GlobalConfig: abstract_path failed for %s (%s)", path, exc)

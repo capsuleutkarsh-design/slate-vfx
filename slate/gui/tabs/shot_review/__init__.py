@@ -1,6 +1,12 @@
-"""Shot Review subpackage - Comparison viewer components"""
+"""
+What is left of the Shot Review package: the Olive lineup editor.
 
-from .image_viewer import ImageViewer
-from .comparison_viewer import ComparisonViewer
+The rest of it - a thousand-line tab, a comparison viewer, an image viewer, a
+tech-check dialog and their workers - was reachable from nothing. The sidebar
+stopped registering the tab when reviewing moved to OpenRV, and the code stayed
+behind: it imported fine, it was maintained by accident, and its Approve button
+would not have worked if anybody had found it, because it started an async sync
+and never awaited it.
 
-__all__ = ['ImageViewer', 'ComparisonViewer']
+Only the lineup editor is still used, by the Timeline Viewer tab.
+"""

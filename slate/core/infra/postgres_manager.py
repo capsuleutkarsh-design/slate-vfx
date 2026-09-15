@@ -61,6 +61,70 @@ def _client_identity() -> str:
     return f"Slate {user}@{host}"[:63]
 
 
+def what_to_do(error, host, port, dbname, user) -> str:
+    """
+    What to actually check, for the failure that actually happened.
+
+    The advice used to be the same five lines whatever went wrong, starting
+    with "verify the database server is running" and "ping the host". For the
+    two failures that happen most often the server is running, the host does
+    ping, the port is open and the database is there - every one of those five
+    checks passes, and the person doing them concludes the software is broken.
+
+    A database refusing a connection and a database that is not there are
+    different problems with nothing in common except the word "connect".
+    """
+    text = str(error).lower()
+
+    if "no pg_hba.conf entry" in text:
+        return (
+            "The server is running and reachable. It has not been told to "
+            "accept connections from this address.\n\n"
+            "On the machine running Slate Server:\n"
+            "1. Open Slate Server and look at the Dashboard for a warning\n"
+            "2. If it says no database password is configured, set it in "
+            "Settings and restart the server - the access rules are written "
+            "when the accounts are created, and that step is skipped without "
+            "a password\n"
+            "3. If it says nothing, the studio network this machine is on "
+            "(%s) is outside the addresses the server allows" % host)
+
+    if "password authentication" in text:
+        return (
+            "The server is running and it refused the password.\n\n"
+            "1. The password on this workstation is not the one the database "
+            "has - they are set together at install time and drift apart when "
+            "one end is reinstalled\n"
+            "2. Check Database Password in Slate Server's Settings, and use "
+            "the same one here\n"
+            "3. Reinstalling only this workstation will not fix it if the "
+            "server is the end that changed")
+
+    if "does not exist" in text and "role" in text:
+        return (
+            "The server is running, and the account '%s' was never created "
+            "on it.\n\n"
+            "1. Restart Slate Server - it creates this account on start\n"
+            "2. If it does not, its Dashboard will say why; the usual reason "
+            "is no database password configured on the server" % user)
+
+    if "does not exist" in text and "database" in text:
+        return (
+            "The server is running and has no database called '%s'.\n\n"
+            "1. Check Database Name in Slate Server's Settings\n"
+            "2. A name that does not match is not an error to PostgreSQL - it "
+            "creates an empty database rather than complaining, so the studio "
+            "can end up with two and its work in the other one" % dbname)
+
+    return (
+        "Troubleshooting:\n"
+        "1. Verify database server is running\n"
+        "2. Check network connectivity (ping %s)\n"
+        "3. Ensure firewall allows port %s\n"
+        "4. Confirm database '%s' exists\n"
+        "5. Verify credentials are correct" % (host, port, dbname))
+
+
 class PostgresManager:
     """
     Enterprise Database Manager using PostgreSQL with Connection Pooling.
@@ -574,12 +638,8 @@ class PostgresManager:
                             raise ConnectionError(
                                 f"Cannot connect to database at {self.host}:{self.port}\n\n"
                                 f"Error: {e}\n\n"
-                                f"Troubleshooting:\n"
-                                f"1. Verify database server is running\n"
-                                f"2. Check network connectivity (ping {self.host})\n"
-                                f"3. Ensure firewall allows port {self.port}\n"
-                                f"4. Confirm database '{self.dbname}' exists\n"
-                                f"5. Verify credentials are correct"
+                                + what_to_do(e, self.host, self.port,
+                                             self.dbname, self.user)
                             )
     
     def _close_pool(self):

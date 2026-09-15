@@ -24,21 +24,50 @@ def R(*parts):
 
 
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_submodules
 
+hiddenimports = [
+    'PySide6.QtCore', 'PySide6.QtWidgets', 'PySide6.QtGui', 'psycopg2',
+    'psutil',
+    # The web API runs inside the server process now (slate_server/core/
+    # api_server.py) instead of being launched through a Python that an
+    # installed machine does not have. uvicorn picks its event loop and
+    # protocol classes by name at run time, so they have to be collected.
+    'fastapi', 'uvicorn',
+]
+hiddenimports += collect_submodules('uvicorn')
+hiddenimports += collect_submodules('slate.api')
+hiddenimports += collect_submodules('slate.core.updater')
 
 a = Analysis(
     [R('slate_server', 'main.py')],
     pathex=[],
     binaries=[],
-    datas=[(R('slate_server', 'bin'), 'slate_server/bin')],
-    hiddenimports=['PySide6.QtCore', 'PySide6.QtWidgets', 'PySide6.QtGui', 'psycopg2'],
+    datas=[
+        # Without this the server ships with no settings at all. It then has no
+        # database password, cannot create the accounts, and hardens the cluster
+        # regardless - which is how an install ends up with a database that
+        # nothing, including the server itself, can ever log in to.
+        (R('slate', 'default_config.json'), 'slate'),
+    ],
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['matplotlib', 'pytest', 'sphinx', 'IPython', 'notebook',
+              'PyQt5', 'PyQt5.QtCore', 'PyQt5.QtWidgets', 'PyQt5.QtGui'],
     noarchive=False,
     optimize=0,
 )
+
+# The bundled PostgreSQL, minus what the server never runs. A one-file build
+# unpacks everything it carries to %TEMP% on every start, and the folder held
+# 190 MB of pgAdmin 4 and 20 MB of HTML documentation beside the 70 MB of
+# binaries that matter. 'bin', 'lib' and 'share' are the working database.
+a.datas += Tree(R('slate_server', 'bin'), prefix='slate_server/bin',
+                excludes=['pgAdmin 4', 'doc', 'include', 'symbols',
+                          'StackBuilder', '*.pdb'])
+
 pyz = PYZ(a.pure)
 
 exe = EXE(

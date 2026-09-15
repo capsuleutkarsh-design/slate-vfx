@@ -224,6 +224,18 @@ class Shot:
             "version": self.version
         }
     
+    @staticmethod
+    def normalise_status(value) -> str:
+        """
+        A status as the dashboard compares it: upper case, trimmed.
+
+        The filter compared exactly and the grouping upper-cased, so a status
+        imported from a sheet as "wip" grouped under WIP and then matched
+        nothing in the dropdown - the row was in a group the filter could not
+        find.
+        """
+        return str(value or "").strip().upper()
+
     def matches_filter(self, search_text="", status_filter="All", priority_filter="All"):
         if search_text:
             artists = " ".join(self.get_all_artists())
@@ -251,8 +263,15 @@ class Shot:
     def from_dict(cls, data: dict):
         if not data:
             return cls()
-        
-                
+
+        # Normalised on the way in, so every screen compares like with like. The
+        # filter compared exactly and the grouping upper-cased, so a status that
+        # arrived from a sheet as "wip" grouped under WIP and then matched
+        # nothing in the dropdown.
+        if data.get("status") is not None:
+            data = dict(data)
+            data["status"] = cls.normalise_status(data["status"])
+
         # Lists of objects
         list_fields = {
             "feedback_internal": FeedbackEntry,

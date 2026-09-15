@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 from slate.core.infra.gate import Gate
 from slate.core.domain.service_desk import (
     CATEGORIES, IMPACT, URGENCY, PRIORITY_LABEL, describe_promise,
-    priority_for, priority_tone, status_tone,
+    normalise_status, priority_for, priority_tone, status_tone,
 )
 from ..core.controls import make_button, page_title
 from ..core.empty_state import EmptyState
@@ -148,7 +148,7 @@ class TicketThreadDialog(QDialog):
         outer.setContentsMargins(22, 20, 22, 18)
         outer.setSpacing(Gate.SPACE_3)
 
-        status = (ticket.get("status") or "Open").title()
+        status = normalise_status(ticket.get("status")) or "Open"
         priority = (ticket.get("priority") or "P3").upper()
 
         heading = QLabel((ticket.get("description") or "").splitlines()[0] or "Ticket")
@@ -268,6 +268,18 @@ class TicketThreadDialog(QDialog):
                 "INSERT INTO it_ticket_comments (ticket_id, author, comment_text) "
                 "VALUES (%s, %s, %s)",
                 (self.ticket.get("id"), self.username, message))
+
+            # A reply from anybody but the person who raised it is a response,
+            # and the response clock should stop there. It used to stop only on
+            # a separate button nobody pressed, so IT looked unresponsive on
+            # tickets they had already answered in writing.
+            raised_by = str(self.ticket.get("submitted_by") or "").strip().lower()
+            if raised_by and raised_by != self.username.strip().lower():
+                from datetime import datetime
+                self.db.execute_update(
+                    "UPDATE it_tickets SET first_response_at = "
+                    "COALESCE(first_response_at, %s) WHERE id = %s",
+                    (datetime.now(), self.ticket.get("id")))
         except DatabaseUnavailableError:
             raise
         except Exception as exc:
@@ -338,7 +350,8 @@ class MyTicketsView(QWidget):
     def refresh(self):
         try:
             rows = self.db.execute_query(
-                "SELECT id, category, description, status, priority, created_at, assigned_to "
+                "SELECT id, category, description, status, priority, created_at, "
+                "       assigned_to, submitted_by "
                 "FROM it_tickets WHERE LOWER(submitted_by) = LOWER(%s) "
                 "ORDER BY id DESC",
                 (self.username,), fetch="all") or []
@@ -350,7 +363,7 @@ class MyTicketsView(QWidget):
 
         self.table.setRowCount(len(self._rows))
         for r, row in enumerate(self._rows):
-            status = (row.get("status") or "Open").title()
+            status = normalise_status(row.get("status")) or "Open"
             priority = (row.get("priority") or "P3").upper()
             summary = (row.get("description") or "").splitlines()[0] if row.get("description") else ""
             created = row.get("created_at")

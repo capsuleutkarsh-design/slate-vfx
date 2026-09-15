@@ -1,10 +1,12 @@
 import os
 import re
 
+# Relative to this file, not to one developer's checkout.
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 directories_to_scan = [
-    r"d:\Soft\Slate\V0040\slate",
-    r"d:\Soft\Slate\V0040\ut_messenger",
-    r"d:\Soft\Slate\V0040\tools"
+    os.path.join(_ROOT, "slate"),
+    os.path.join(_ROOT, "ut_messenger"),
+    os.path.join(_ROOT, "tools"),
 ]
 
 replacements = [

@@ -10,9 +10,9 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QCheckBox, QPushButton, QGridLayout, QLabel, QSpinBox, 
     QMessageBox, QInputDialog, QFileDialog, QFrame, QLineEdit,
-    QScrollArea, QApplication, QDoubleSpinBox
+    QScrollArea, QApplication, QDoubleSpinBox, QTimeEdit
 )
-from PySide6.QtCore import Signal, Qt, QUrl
+from PySide6.QtCore import Signal, Qt, QUrl, QTime
 from PySide6.QtGui import QPixmap, QDesktopServices
 
 from ...core.worker_threads import ReportWorker
@@ -251,6 +251,58 @@ class SettingsTab(QWidget):
         card_config.layout().addLayout(save_row)
         
         main_layout.addWidget(card_config)
+
+        # 1a. STUDIO POLICY
+        #
+        # These two used to be literals in two different files: attendance had
+        # its own start time and its own nine-hour day, and the leave rules had
+        # their own. A studio that worked different hours had to be told to
+        # ignore half of what both screens said.
+        card_policy = SettingsCard("Studio Policy")
+        card_policy.layout().setSpacing(10)
+
+        policy_note = QLabel(
+            "What counts as late, and how long a normal day is. Attendance and "
+            "Leave both read these, so they cannot disagree."
+        )
+        policy_note.setWordWrap(True)
+        policy_note.setStyleSheet(f"color: {C.TEXT_GRAY_LIGHTER}; font-size: 11px;")
+        card_policy.layout().addWidget(policy_note)
+
+        from slate.core.domain import leave_policy as _lp
+
+        cutoff_row = QHBoxLayout()
+        cutoff_row.addWidget(QLabel("Late after:"))
+        self.late_cutoff_input = QTimeEdit()
+        self.late_cutoff_input.setDisplayFormat("HH:mm")
+        _hour, _minute = _lp.late_cutoff()
+        self.late_cutoff_input.setTime(QTime(_hour, _minute))
+        self.late_cutoff_input.setStyleSheet(
+            f"background: #1D1D22; color: white; border: 1px solid {C.BORDER_LIGHT}; padding: {S.XS}px;")
+        cutoff_row.addWidget(self.late_cutoff_input)
+        cutoff_row.addStretch(1)
+        card_policy.layout().addLayout(cutoff_row)
+
+        day_row = QHBoxLayout()
+        day_row.addWidget(QLabel("Standard day:"))
+        self.standard_day_input = QDoubleSpinBox()
+        self.standard_day_input.setRange(1.0, 24.0)
+        self.standard_day_input.setSingleStep(0.5)
+        self.standard_day_input.setSuffix(" hours")
+        self.standard_day_input.setValue(_lp.standard_day_hours())
+        self.standard_day_input.setStyleSheet(
+            f"background: #1D1D22; color: white; border: 1px solid {C.BORDER_LIGHT}; padding: {S.XS}px;")
+        day_row.addWidget(self.standard_day_input)
+        day_row.addStretch(1)
+        card_policy.layout().addLayout(day_row)
+
+        policy_save = QHBoxLayout()
+        policy_save.addStretch(1)
+        policy_save.addWidget(make_button("Save policy", "primary",
+                                          on_click=self.save_studio_policy))
+        card_policy.layout().addLayout(policy_save)
+
+        main_layout.addWidget(card_policy)
 
         # 1b. PATHS & CONNECTIONS
         card_paths = SettingsCard("Paths & Connections")
@@ -517,6 +569,33 @@ class SettingsTab(QWidget):
         if selected:
             target_input.setText(selected)
 
+    def save_studio_policy(self):
+        """
+        Save what counts as late and how long a day is, and apply it now.
+
+        Applied immediately rather than on restart, because somebody changing
+        the start time is usually looking at an attendance grid they believe is
+        wrong, and being told to restart before they can check is how a setting
+        gets changed twice.
+        """
+        try:
+            cutoff = self.late_cutoff_input.time().toString("HH:mm")
+            standard = float(self.standard_day_input.value())
+
+            GlobalConfig.set("late_cutoff", cutoff)
+            GlobalConfig.set("standard_day_hours", standard)
+
+            from slate.core.infra.studio_policy import load_into_domain
+            load_into_domain()
+
+            QMessageBox.information(
+                self, "Saved",
+                "Late after %s, standard day %g hours.\n\n"
+                "Attendance and Leave both use this from now on. Re-open the "
+                "Attendance tab to see the grid recount." % (cutoff, standard))
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Could not save the studio policy:\n{e}")
+
     def save_paths_and_connections(self):
         """Persist path and DB connection settings used during daily operations."""
         try:
@@ -548,20 +627,30 @@ class SettingsTab(QWidget):
             if saved_globals:
                 self.global_settings_updated.emit(dict(self.global_settings))
 
+            # The database details go to the one file that holds them -
+            # slate/config.json, which setup.bat writes and which GlobalConfig
+            # now reads last. They used to be written to a second file under
+            # LOCALAPPDATA, so whichever of the two was read last won and
+            # re-running setup.bat looked as though it had done nothing.
+            from slate.core.infra.local_secrets import write_local_config
+            written_to = write_local_config({
+                "db_host": db_host or None,
+                "db_port": db_port,
+                "db_name": db_name or None,
+                "db_user": db_user or None,
+            })
+
+            # SERVER_ROOT stays a per-machine setting: two workstations can map
+            # the same share to different drive letters.
             if server_root:
                 GlobalConfig.set("SERVER_ROOT", server_root)
-            if db_host:
-                GlobalConfig.set("db_host", db_host)
-            GlobalConfig.set("db_port", db_port)
-            if db_name:
-                GlobalConfig.set("db_name", db_name)
-            if db_user:
-                GlobalConfig.set("db_user", db_user)
 
             QMessageBox.information(
                 self,
                 "Saved",
-                "Paths and connections saved.\nBranding updates applied immediately.\nRestart Slate for DB/server updates.",
+                "Paths and connections saved to\n%s\n\nBranding updates apply "
+                "immediately. Restart Slate for the database and server "
+                "changes." % written_to,
             )
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Could not save paths/connections:\n{e}")

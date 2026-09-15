@@ -59,14 +59,26 @@ class TestSeparatedHomeTabs:
         assert hasattr(tab_ops, "attendance_panel")
 
     @patch('slate.core.domain.central_attendance.CentralAttendance.log_action')
-    def test_ops_home_punch_action(self, mock_log_action, qapp, qtbot):
-        """Verify punch action logs attendance in Operations Home."""
+    def test_ops_home_punches_under_the_login_not_the_display_name(
+            self, mock_log_action, qapp, qtbot):
+        """
+        Home must key attendance by the login, as the Attendance tab does.
+
+        This test used to assert the opposite, and so pinned the bug in place.
+        Home passed the display name into log_action, which lower-cases what it
+        is given, so "Test Ops" and "test_ops" became two separate people with
+        separate punch records - and each screen reported the other's punches as
+        missing.
+        """
         user_data = {"username": "test_ops", "display_name": "Test Ops"}
         tab = OpsHomeTab(user_data=user_data)
         qtbot.addWidget(tab)
 
         tab.do_punch("in")
-        mock_log_action.assert_called_with("Test Ops", "in")
+        mock_log_action.assert_called_with("test_ops", "in")
 
         tab.do_punch("out")
-        mock_log_action.assert_called_with("Test Ops", "out")
+        mock_log_action.assert_called_with("test_ops", "out")
+
+        logged = {call.args[0] for call in mock_log_action.call_args_list}
+        assert "Test Ops" not in logged, "the display name must never be the key"

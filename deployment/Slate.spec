@@ -61,6 +61,10 @@ hiddenimports += collect_submodules('slate.plugins')
 # collecting them explicitly removes a class of "works in dev, missing in the
 # build" failure.
 hiddenimports += collect_submodules('slate.core.domain')
+# core.infra as well: studio_policy is imported inside a function in
+# app_context, and a module only reached that way is exactly the kind that
+# builds fine and is missing at runtime.
+hiddenimports += collect_submodules('slate.core.infra')
 hiddenimports += collect_submodules('slate.core.infra.migrations')
 hiddenimports += collect_submodules('slate.gui.tabs.vfx_dashboard_pro')
 
@@ -157,39 +161,12 @@ ops_exe = EXE(
     icon=[R('slate', 'icons', 'app_icon.ico')],
 )
 
-# 3. Slate Central Server
-server_a = Analysis(
-    [R('slate_server', 'main.py')],
-    pathex=[],
-    binaries=[],
-    datas=[],
-    hiddenimports=hiddenimports,
-    hookspath=[],
-    hooksconfig={},
-    runtime_hooks=[],
-    excludes=common_excludes,
-    noarchive=False,
-    optimize=0,
-)
-server_pyz = PYZ(server_a.pure)
-server_exe = EXE(
-    server_pyz,
-    server_a.scripts,
-    [],
-    exclude_binaries=True,
-    name='Slate_Server',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=False,
-    console=False,
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-    icon=[R('slate', 'icons', 'server_icon.ico')],
-)
+# 3. The server is NOT built here.
+#
+# It ships as a one-file executable from Slate_Server.spec, which is what
+# setup_slate_server.iss installs, and both client installers exclude
+# Slate_Server.exe from this folder. A fourth full Analysis of the package for
+# an executable nothing installed was a quarter of every build's time.
 
 # 4. Legacy All-in-One Gatekeeper (Backwards Compatibility)
 legacy_a = Analysis(
@@ -216,7 +193,9 @@ legacy_exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=True,
+    # Windowed like its siblings. It was the only one of the four built with a
+    # console, so the legacy launcher opened a black terminal behind the app.
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
@@ -280,9 +259,6 @@ coll = COLLECT(
     ops_exe,
     ops_a.binaries,
     ops_a.datas,
-    server_exe,
-    server_a.binaries,
-    server_a.datas,
     legacy_exe,
     legacy_a.binaries,
     legacy_a.datas,

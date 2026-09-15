@@ -78,26 +78,44 @@ def test_a_half_day_costs_half():
 
 # ----------------------------------------------------------------- accrual
 
-def test_accrual_counts_completed_months_only():
-    """Two days a month, earned - not twenty-four handed over in January."""
-    joined = date(2026, 1, 15)
-    assert lp.accrued_by(date(2026, 1, 31), joined) == 0
-    assert lp.accrued_by(date(2026, 2, 14), joined) == 0
-    assert lp.accrued_by(date(2026, 2, 15), joined) == 2
-    assert lp.accrued_by(date(2026, 7, 15), joined) == 12
-
-
-def test_a_month_completes_on_the_joining_day_not_the_month_end():
+def test_accrual_counts_whole_months_only():
     """
-    Regression. Accrual counted calendar months, so somebody who joined on the
-    15th was credited a full month's leave on the 31st - two days earned for
-    sixteen days worked.
+    Two days a month, earned - not twenty-four handed over in January.
+
+    A month the person was not there for all of is not credited: somebody who
+    joined on the 15th has not earned January, and paying two days for sixteen
+    days worked over-credits every new starter.
     """
     joined = date(2026, 1, 15)
-    assert lp.accrued_by(date(2026, 1, 31), joined) == 0
+    assert lp.accrued_by(date(2026, 1, 31), joined) == 0   # January not worked whole
+    assert lp.accrued_by(date(2026, 2, 14), joined) == 0   # February not finished
+    assert lp.accrued_by(date(2026, 2, 28), joined) == 2   # February finished
+    assert lp.accrued_by(date(2026, 7, 15), joined) == 10  # Feb to June
 
-    # And the other edge: joined on a 31st, in a month that has no 31st. The
-    # end of February has to count, or that person never accrues in February.
+
+def test_a_full_year_accrues_the_whole_year():
+    """
+    Regression, and the expensive one. Accrual used to count from the joining
+    day's anniversary, so somebody present from 1 January had completed only
+    eleven anniversaries by 31 December. Closing the year then lapsed a balance
+    that was two days short - every person, every year - and it was invisible
+    because the accrued figure and the closing figure agreed with each other.
+
+    A month is credited when the month ends, so the twelfth lands on the 31st
+    and the year closes on the right number.
+    """
+    assert lp.accrued_by(date(2026, 12, 31), date(2026, 1, 1)) == 24
+
+    # And with no joining date recorded at all, which was every person in the
+    # studio before the Users tab could record one.
+    assert lp.accrued_by(date(2026, 12, 31)) == 24
+
+
+def test_the_month_a_short_month_ends_still_counts():
+    """
+    Joined on a 31st, in a month that has no 31st. February has to count, or
+    that person never accrues in February at all.
+    """
     end_of_month = date(2026, 1, 31)
     assert lp.accrued_by(date(2026, 2, 27), end_of_month) == 0
     assert lp.accrued_by(date(2026, 2, 28), end_of_month) == 2

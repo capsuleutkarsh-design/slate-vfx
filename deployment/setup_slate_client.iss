@@ -3,7 +3,7 @@
 ; Features: Auto-Updater, Cleanup Old Configs, Bundled Dependencies.
 
 #define MyAppName "Slate"
-#define MyAppVersion "BETA 2.0.25"
+#define MyAppVersion "BETA 2.0.27"
 #define MyAppPublisher "UT Studio"
 #define MyAppURL "https://github.com/capsuleutkarsh-design/slate-vfx"
 #define MyAppExeName "Slate_Studio.exe"
@@ -29,8 +29,12 @@ AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
 
-; --- INSTALL LOCATION: User AppData (Fixes Network Drive Visibility) ---
-DefaultDirName={localappdata}\{#MyAppName}
+; --- INSTALL LOCATION ---
+; Under the per-user Programs folder. Not {localappdata}\Slate: that is where
+; GlobalConfig keeps this machine's config.json, the offline database, the
+; cache and the logs, and installing the program there meant every upgrade
+; wiped them - and wiped the server path Slate Operations had written there.
+DefaultDirName={localappdata}\Programs\Slate Studio
 DisableProgramGroupPage=yes
 
 ; Helper Options
@@ -90,6 +94,8 @@ Type: filesandordirs; Name: "{commonpf32}\{#MyAppName}"
 Type: filesandordirs; Name: "{app}"
 
 [Code]
+#include "inc_slate_data.iss"
+
 var
   CleanupDone: Boolean;
   ServerPathPage: TInputDirWizardPage;
@@ -101,7 +107,17 @@ begin
     'Select the network folder where the shared databases and caches will be stored, then click Next.'#13#10#13#10'For best compatibility with older VFX tools, mapping your server to a Drive Letter (like Z:\) is recommended.',
     False, 'New Folder');
   ServerPathPage.Add('Server Root Path (e.g., Z:\Slate_Central or \\Server\Shared\Slate_Central):');
-  ServerPathPage.Values[0] := 'X:\Extra\Slate_Central';
+  // Deliberately blank. A pre-filled drive letter is one studio's
+  // answer to a question every studio answers differently, and it
+  // reads as a setting rather than as a guess.
+  ServerPathPage.Values[0] := '';
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+  if CurPageID = ServerPathPage.ID then
+    Result := StudioFolderAccepted(Trim(ServerPathPage.Values[0]));
 end;
 
 procedure ForceKillSlateProcesses();
@@ -112,28 +128,6 @@ begin
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM "Slate.exe"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM "Slate_Debug.exe"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM "gatekeeper_main.exe"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-end;
-
-procedure TryDeleteFileIfExists(const FilePath: String);
-begin
-  if FileExists(FilePath) then
-  begin
-    if DeleteFile(FilePath) then
-      Log('Deleted file: ' + FilePath)
-    else
-      Log('Failed to delete file: ' + FilePath);
-  end;
-end;
-
-procedure TryDeleteDirIfExists(const DirPath: String);
-begin
-  if DirExists(DirPath) then
-  begin
-    if DelTree(DirPath, True, True, True) then
-      Log('Deleted directory: ' + DirPath)
-    else
-      Log('Failed to delete directory: ' + DirPath);
-  end;
 end;
 
 procedure CleanupLegacyRegistry();
@@ -156,10 +150,13 @@ begin
     exit;
   CleanupDone := True;
 
-  Log('Starting aggressive pre-install cleanup...');
+  Log('Starting pre-install cleanup...');
   ForceKillSlateProcesses();
 
-  TryDeleteDirIfExists(ExpandConstant('{localappdata}\{#MyAppName}'));
+  // The previous location, which is also the settings folder. Only the
+  // program files an older install left there are removed; config.json, the
+  // offline database, the cache and Slate Operations' server path stay.
+  RemoveOldProgramFiles(ExpandConstant('{localappdata}\{#MyAppName}'));
   TryDeleteDirIfExists(ExpandConstant('{pf}\{#MyAppName}'));
   TryDeleteDirIfExists(ExpandConstant('{pf32}\{#MyAppName}'));
 
@@ -185,6 +182,40 @@ begin
   end;
 end;
 
+function KeptWhenOpsInstalled(): String;
+begin
+  // The install answer Slate Operations reads from the shared settings folder.
+  // Blank means "keep nothing", which is right when Operations is not here.
+  Result := '';
+  if FileExists(ExpandConstant('{localappdata}\Programs\Slate Operations\Slate_Ops.exe'))
+     or FileExists(ExpandConstant('{localappdata}\Slate Operations\Slate_Ops.exe')) then
+    Result := 'client_config.json';
+end;
+
+procedure PurgeClientData();
+begin
+  // Everything this workstation keeps for itself. The studio's own data lives
+  // on the server and is not reachable from here, which is what makes this
+  // safe to offer at all.
+  Log('Removing Slate settings and data from this workstation...');
+
+  PurgeDirectory(ExpandConstant('{app}'));
+  // The settings folder is shared with Slate Operations. Its server path
+  // (client_config.json) is the one file kept when Operations is still
+  // installed, so removing Studio does not send Operations to the wrong
+  // server on its next start.
+  PurgeDirectoryKeeping(ExpandConstant('{localappdata}\{#MyAppName}'),
+    KeptWhenOpsInstalled());
+  TryDeleteDirIfExists(ExpandConstant('{%USERPROFILE}\RuntimeData\Slate'));
+
+  // Window positions, the remembered username, saved column layouts. Harmless
+  // on their own and confusing when they survive a reinstall that was meant to
+  // start clean.
+  RegDeleteKeyIncludingSubkeys(HKCU, 'Software\UTStudio\Slate');
+  RegDeleteKeyIncludingSubkeys(HKCU, 'Software\UT_Software\Slate');
+  RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Slate');
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then
@@ -192,5 +223,24 @@ begin
     Log('Starting uninstall cleanup...');
     ForceKillSlateProcesses();
     CleanupLegacyRegistry();
+  end;
+
+  // After the files Setup installed have gone, so anything left here is the
+  // settings and caches the software wrote for itself.
+  if CurUninstallStep = usPostUninstall then
+  begin
+    if ShouldRemoveData('Slate',
+      'This deletes, on this computer only:' + #13#10 +
+      '  -  the server path and login settings' + #13#10 +
+      '  -  cached thumbnails, previews and temporary files' + #13#10 +
+      '  -  local logs and the offline database' + #13#10#13#10 +
+      'The studio database on the server is NOT touched. Nobody else is ' +
+      'affected, and no shot, review or attendance record is removed.') then
+    begin
+      PurgeClientData();
+      ReportPurgeFailures();
+    end
+    else
+      Log('Keeping the Slate settings and data on this workstation.');
   end;
 end;

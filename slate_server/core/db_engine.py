@@ -10,6 +10,25 @@ import atexit
 import threading
 import shutil
 
+class NoDatabaseHere(Exception):
+    """
+    The data directory holds no cluster, and nobody has said to build one.
+
+    Raised instead of running initdb. Building a database is the one thing
+    this engine must never do on its own: a new empty cluster is
+    indistinguishable from the studio's real one by every figure on the
+    dashboard, and four of them were found on one machine in a single day -
+    each created because a path resolved to an empty folder.
+    """
+
+    def __init__(self, data_dir):
+        self.data_dir = str(data_dir)
+        super().__init__(
+            "There is no database in %s. Choose the folder that holds the "
+            "studio's database, or say explicitly that a new empty one should "
+            "be created there." % self.data_dir)
+
+
 class DatabaseEngine:
     """
     Manages the embedded PostgreSQL instance.
@@ -17,9 +36,12 @@ class DatabaseEngine:
     Assumes PostgreSQL binaries are bundled in the `bin/pgsql` directory.
     """
     
-    def __init__(self, data_dir: str, port: int = 5440):
+    def __init__(self, data_dir: str, port: int = 5440, allow_create: bool = False):
         self.data_dir = Path(data_dir)
         self.port = port
+        # Off by default. Only the first-run choice in the window sets it, and
+        # only after the person has said "create a new empty database here".
+        self.allow_create = bool(allow_create)
         
         # Resolve the bundled bin directory
         # When running in dev: slate_server/bin/pgsql/bin
@@ -166,7 +188,12 @@ class DatabaseEngine:
                 # software no longer logs in as a superuser.
                 f.write("superuser_reserved_connections = 5\n")
 
-    def _bootstrap(self):
+    # The first line of the pg_hba.conf this software writes. Its presence is
+    # how a cluster locked out by this software is told apart from one an
+    # administrator has secured by hand.
+    HBA_SIGNATURE = "# Written by Slate Central Server."
+
+    def _bootstrap(self, progress_callback=None):
         """
         Get a running cluster into a state the software can actually use.
 
@@ -181,10 +208,164 @@ class DatabaseEngine:
 
         Harden first and the cluster locks out the very step that would have
         given it credentials - a fresh install that can never be finished.
+
+        That last sentence described a hypothetical when it was written and an
+        installed build the week after. Hardening used to happen whether or not
+        the accounts were created, so a server with no password configured -
+        which every frozen build was, because it could not find its settings -
+        built a cluster, created nothing in it, and then demanded a password
+        from everybody including itself. The database survives inside it and
+        nothing can reach it. So hardening is now conditional, and a cluster
+        already in that state is let back in rather than left there.
         """
+        from slate_server.core.db_credentials import admin_password
+
+        def say(message):
+            logging.warning(message)
+            if progress_callback:
+                progress_callback("> " + message)
+
+        if not admin_password():
+            # Deliberately not hardened. An unhardened cluster on a studio
+            # network is a problem; a hardened one with no accounts is a
+            # database nobody will ever open again.
+            say("No database password is configured, so the accounts cannot be "
+                "created and access has been left as it is. Set the password in "
+                "Settings and restart the server.")
+            self._ensure_slate_database()
+            return False
+
+        if not self._can_authenticate():
+            if not self._recover_locked_out_cluster(say):
+                say("The database will not accept this server's own password. "
+                    "Nothing has been changed. Check the password in Settings.")
+                return False
+
         self._ensure_slate_database()
-        self._ensure_application_role()
-        self._harden_access()
+        if self._ensure_application_role():
+            self._harden_access()
+            return True
+
+        reason = getattr(self, "_last_role_error", "")
+        say("The application account could not be set up, so access has been "
+            "left as it is rather than locking the database to credentials it "
+            "does not have." + (" The database said: %s" % reason if reason else ""))
+        return False
+
+    def _can_authenticate(self) -> bool:
+        """Whether this server can log in to its own database at all."""
+        try:
+            import psycopg2
+            from slate_server.core.db_credentials import connect_kwargs
+        except ImportError:
+            return False
+
+        try:
+            conn = psycopg2.connect(
+                **connect_kwargs(self.port, "postgres", connect_timeout=5))
+        except Exception as exc:
+            first = str(exc).strip().splitlines()
+            logging.warning("This server cannot log in to its own database: %s",
+                            first[0] if first else exc)
+            return False
+        conn.close()
+        return True
+
+    def _trust_rules(self) -> str:
+        """Loopback and local only, and only for as long as a repair takes."""
+        return "\n".join([
+            self.HBA_SIGNATURE,
+            "# TEMPORARY - written while the accounts are repaired, and replaced",
+            "# with the hardened rules in the same run. If this file is still",
+            "# here, the repair did not finish: stop the server and say so.",
+            "local   all   all                    trust",
+            "host    all   all   127.0.0.1/32     trust",
+            "host    all   all   ::1/128          trust",
+            "",
+        ])
+
+    def _recover_locked_out_cluster(self, say) -> bool:
+        """
+        Let a cluster back in that was hardened before it had any credentials.
+
+        An install with no password configured created its cluster, created no
+        accounts because it had nothing to create them with, and then replaced
+        pg_hba.conf with rules demanding one. Nothing can log into the result -
+        not this server, not a workstation, not psql - and the studio's data
+        sits inside it, intact and unreachable. Reinstalling does not help: the
+        cluster outlives the uninstall and the next install adopts it.
+
+        Only attempted on a file this software wrote. An administrator who has
+        secured this cluster by hand gets an error message instead, because the
+        repair resets the passwords to whatever the settings say, and that is
+        not a thing to do to somebody else's decision.
+
+        The window in which loopback connections are trusted lasts as long as
+        two ALTER ROLE statements, and closing it again is in a finally.
+        """
+        hba_path = self.data_dir / "pg_hba.conf"
+        try:
+            current = hba_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            logging.error("Could not read %s: %s", hba_path, exc)
+            return False
+
+        if not current.startswith(self.HBA_SIGNATURE):
+            logging.error("pg_hba.conf was not written by this software, so it "
+                          "is left alone.")
+            return False
+
+        say("This database was locked before it had any accounts. Repairing it.")
+        keep = hba_path.with_suffix(".conf.locked-out")
+        recovered = False
+        try:
+            try:
+                if not keep.exists():
+                    shutil.copy2(hba_path, keep)
+            except OSError as exc:
+                logging.warning("Could not keep a copy of the locked-out "
+                                "pg_hba.conf: %s", exc)
+
+            hba_path.write_text(self._trust_rules(), encoding="utf-8")
+            if not self._reload_configuration():
+                return False
+
+            recovered = self._can_authenticate()
+            if not recovered:
+                say("The database still will not accept a connection after the "
+                    "access rules were reset. Nothing else has been changed.")
+        except OSError as exc:
+            logging.error("Could not repair pg_hba.conf: %s", exc)
+            return False
+        finally:
+            if not recovered:
+                # Put it back exactly as it was. A failed repair must not be
+                # the thing that leaves a studio database open.
+                try:
+                    hba_path.write_text(current, encoding="utf-8")
+                    self._reload_configuration()
+                except OSError as exc:
+                    logging.error("Could not restore %s: %s", hba_path, exc)
+
+        return recovered
+
+    def _reload_configuration(self) -> bool:
+        """Ask a running cluster to re-read pg_hba.conf. No restart needed."""
+        pg_ctl = str(self.bin_dir / "pg_ctl.exe")
+        if not os.path.exists(pg_ctl):
+            logging.error("pg_ctl is missing, so the access rules cannot be "
+                          "reloaded.")
+            return False
+        try:
+            subprocess.run([pg_ctl, "-D", str(self.data_dir), "reload"],
+                           capture_output=True, text=True, timeout=15,
+                           creationflags=(subprocess.CREATE_NO_WINDOW
+                                          if sys.platform == "win32" else 0))
+        except (OSError, subprocess.SubprocessError) as exc:
+            logging.error("Could not reload the access rules: %s", exc)
+            return False
+        time.sleep(0.5)
+        return True
 
     def _ensure_application_role(self):
         """
@@ -271,23 +452,33 @@ class DatabaseEngine:
 
                 # Tables made earlier - by an older build, or by the superuser -
                 # must change hands too, or the next migration is refused.
-                cur.execute("""
+                # The role is composed into the statement rather than passed
+                # as a parameter, and nothing is passed to execute() at all.
+                #
+                # psycopg2 only substitutes when it is given parameters, and
+                # when it does, every % in the statement is a placeholder. This
+                # block is PL/pgSQL calling format(), so it is full of %I - and
+                # psycopg2 stopped at the first one, every time, on every
+                # server. The account was therefore never created, and until
+                # the access rules were made conditional the cluster was then
+                # hardened against credentials that did not exist.
+                cur.execute(sql.SQL("""
                     DO $do$
                     DECLARE r record;
                     BEGIN
                         FOR r IN SELECT tablename FROM pg_tables
                                  WHERE schemaname = 'public' LOOP
                             EXECUTE format('ALTER TABLE public.%I OWNER TO %I',
-                                           r.tablename, %s);
+                                           r.tablename, {owner});
                         END LOOP;
                         FOR r IN SELECT sequencename FROM pg_sequences
                                  WHERE schemaname = 'public' LOOP
                             EXECUTE format('ALTER SEQUENCE public.%I OWNER TO %I',
-                                           r.sequencename, %s);
+                                           r.sequencename, {owner});
                         END LOOP;
                     END
                     $do$;
-                """, (role, role))
+                """).format(owner=sql.Literal(role)))
 
             # The administrator account is what the hardened settings below will
             # start demanding a password for. Setting it here, while the cluster
@@ -300,6 +491,8 @@ class DatabaseEngine:
             logging.info("Administrator password set from the settings.")
             return True
         except Exception as exc:
+            first = str(exc).strip().splitlines()
+            self._last_role_error = first[0] if first else str(exc)
             logging.error("Failed to set up the application account %s: %s",
                           role, exc)
             return False
@@ -334,7 +527,7 @@ class DatabaseEngine:
             return False           # already hardened, or hand-edited
 
         rules = [
-            "# Written by Slate Central Server.",
+            self.HBA_SIGNATURE,
             "#",
             "# The first matching line wins, which is why this file is replaced",
             "# rather than added to. initdb writes 'trust' rules for local and",
@@ -372,16 +565,7 @@ class DatabaseEngine:
         # A reload is enough - pg_hba.conf does not need a restart - and it has
         # to happen now, or the cluster keeps trusting until something else
         # restarts it.
-        pg_ctl = str(self.bin_dir / "pg_ctl.exe")
-        if os.path.exists(pg_ctl):
-            try:
-                subprocess.run([pg_ctl, "-D", str(self.data_dir), "reload"],
-                               capture_output=True, text=True, timeout=15,
-                               creationflags=(subprocess.CREATE_NO_WINDOW
-                                              if sys.platform == "win32" else 0))
-            except (OSError, subprocess.SubprocessError) as exc:
-                logging.error("Wrote the hardened pg_hba.conf but could not "
-                              "reload it: %s", exc)
+        self._reload_configuration()
         return True
 
     def _ensure_pg_directories(self):
@@ -453,11 +637,13 @@ class DatabaseEngine:
         if self.is_ready():
             if progress_callback:
                 progress_callback("Database server already running.")
-            self._bootstrap()
+            self._bootstrap(progress_callback)
             return True
             
         is_first_run = not self.is_initialized()
         if is_first_run:
+            if not self.allow_create:
+                raise NoDatabaseHere(self.data_dir)
             self.initialize_database(progress_callback)
         else:
             self._ensure_pg_directories()
@@ -507,7 +693,7 @@ class DatabaseEngine:
         if not ready:
             raise Exception(f"Failed to start server. Check log at {log_file}")
 
-        self._bootstrap()
+        self._bootstrap(progress_callback)
         try:
             atexit.register(self.stop)
         except Exception:

@@ -603,12 +603,25 @@ class FolderCreatorTab(QWidget):
             "dry_run": bool(getattr(worker, "dry_run", False)),
         }
         ingested_shots = list(getattr(worker, "ingested_shots", []) or [])
-        stats["report"] = self._write_delivery_report(worker)
 
-        if success and not stats["dry_run"]:
-            stats["dashboard"] = self._register_shots_on_dashboard(ingested_shots)
+        # The report and the dashboard registration happen after the worker is
+        # let go, so a failure in either cannot hold anything open - and both are
+        # surfaced in the completion dialog rather than only in the log, which is
+        # where an ingest that moved every frame and registered nothing used to
+        # report plain success.
         if not self._release_finished_worker("folder_creation_thread", worker):
             return
+
+        stats["report"] = self._write_delivery_report(worker)
+        if stats["report"] is None:
+            stats["report_failed"] = True
+
+        if success and not stats["dry_run"]:
+            try:
+                stats["dashboard"] = self._register_shots_on_dashboard(ingested_shots)
+            except Exception as exc:
+                logging.exception("Dashboard registration failed: %s", exc)
+                stats["dashboard_error"] = str(exc)
         self.on_folder_creation_finished(
             success, total_projects, reels_created, shots_created, folders_created,
             message, stats
@@ -754,6 +767,10 @@ class FolderCreatorTab(QWidget):
             summary_lines.append(f"Skipped (already present): {skipped}")
         if errors:
             summary_lines.append(f"FAILED: {errors}")
+        if stats.get("report_failed"):
+            summary_lines.append("The delivery report could not be written")
+        if stats.get("dashboard_error"):
+            summary_lines.append("Dashboard not updated: %s" % stats["dashboard_error"])
 
         delivery = stats.get("report") or {}
         report = delivery.get("report")

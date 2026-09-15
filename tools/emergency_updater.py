@@ -1,155 +1,204 @@
-import os
-import sys
-import json
-import shutil
+"""
+Slate emergency updater.
+
+Forces an update from the studio's shared folder without starting the
+application - for the morning the application will not start at all.
+
+    runtime\\python\\python.exe tools\\emergency_updater.py
+    runtime\\python\\python.exe tools\\emergency_updater.py --target server --install-dir "C:\\...\\Slate Server"
+
+It reads the same settings the application reads, looks for the same manifest
+the application looks for (SERVER_ROOT/Updates/releases/manifest_<target>.json),
+verifies the package the same way, and hands it to the same sidecar updater.
+
+The previous version of this tool could not have worked on any machine: it
+read a settings file under ~/.slate_vfx that nothing has ever written, looked
+for an updater_script.exe that no build produces, and told the sidecar to
+relaunch slate.exe, which is not what the product is called.
+"""
+
+from __future__ import annotations
+
+import argparse
 import hashlib
-import logging
-import traceback
+import json
+import os
+import shutil
 import subprocess
+import sys
+import tempfile
+import traceback
 from pathlib import Path
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
-def verify_file_hash(file_path, expected_hash):
-    """Verify SHA256 hash of a file."""
-    sha256_hash = hashlib.sha256()
+# What the sidecar relaunches, per target, in the order to look for it.
+EXE_NAMES = {
+    "client": ("Slate_Studio.exe", "Slate_Ops.exe", "Slate.exe"),
+    "server": ("Slate_Server.exe",),
+}
+
+
+def sha256_of(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(65536), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def studio_root() -> Path:
+    """
+    Where the studio's shared folder is, resolved the way the application does.
+
+    GlobalConfig reads only the standard library at import time, so it is safe
+    to use here even when the rest of the application cannot start.
+    """
     try:
-        with open(file_path, "rb") as f:
-            for byte_block in iter(lambda: f.read(4096), b""):
-                sha256_hash.update(byte_block)
-        return sha256_hash.hexdigest() == expected_hash
-    except OSError as e:
-        logging.error(f"Failed to read file for hashing: {e}")
-        return False
+        from slate.core.infra.global_config import GlobalConfig
+        root = Path(str(GlobalConfig.get("SERVER_ROOT") or "").strip())
+        if str(root) and root.exists():
+            return root
+    except Exception as exc:
+        print(f"  (could not read the application's settings: {exc})")
 
-def main():
-    print("========================================")
-    print("    Slate Emergency Recovery Updater   ")
-    print("========================================")
-    print("This tool will force an update from the Central Server without launching the application.")
-    print("Use this if the application crashes on startup and cannot update normally.\n")
+    # The same files, read by hand, in case the application's own reader is
+    # what is broken this morning.
+    candidates = []
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        candidates.append(Path(local) / "Slate" / "config.json")
+    candidates.append(Path.home() / "RuntimeData" / "Slate" / "config.json")
+    candidates.append(ROOT / "slate" / "config.json")
+    candidates.append(ROOT / "client_config.json")
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate.read_text(encoding="utf-8"))
+            value = str(data.get("SERVER_ROOT") or "").strip()
+            if value and Path(value).exists():
+                return Path(value)
+        except (OSError, ValueError):
+            continue
+    raise SystemExit("Cannot find the studio's shared folder (SERVER_ROOT) in any "
+                     "settings file. Set it in Slate's Settings, or pass --server-root.")
 
-    target = input("Are you updating the 'client' or 'server'? [client/server]: ").strip().lower()
-    if target not in ["client", "server"]:
-        print("Invalid target. Must be 'client' or 'server'. Exiting.")
-        sys.exit(1)
-        
-    exe_name = "slate.exe" if target == "client" else "slate_server.exe"
 
-    # Find Central Directory.
-    #
-    # Older builds kept this under .capsule_vfx, and an update preserves the
-    # folder rather than renaming it, so on most machines that is still where it
-    # is. This tool runs when the application will not start at all, which is the
-    # worst possible moment to refuse over a folder name, so try both.
-    candidates = [Path.home() / ".slate_vfx" / "local_config.json",
-                  Path.home() / ".capsule_vfx" / "local_config.json",
-                  Path.home() / ".ut_vfx" / "local_config.json"]
-    config_path = next((p for p in candidates if p.exists()), None)
-    if config_path is None:
-        print("ERROR: Local config not found. Looked in:")
-        for p in candidates:
-            print(f"         {p}")
-        print("Cannot determine Central Server path.")
-        sys.exit(1)
-        
-    try:
-        with open(config_path, "r") as f:
-            config = json.load(f)
-        central_path = Path(config.get("server_root", ""))
-    except Exception as e:
-        print(f"ERROR: Failed to read local config: {e}")
-        sys.exit(1)
-        
-    if not central_path.exists():
-        print(f"ERROR: Central Server path does not exist: {central_path}")
-        sys.exit(1)
-        
-    manifest_path = central_path / "Updates" / "releases" / f"manifest_{target}.json"
+def find_install_dir(target: str, given: str | None) -> Path:
+    if given:
+        return Path(given)
+    local = os.environ.get("LOCALAPPDATA", "")
+    names = {"client": ("Slate Studio", "Slate Operations", "Slate"),
+             "server": ("Slate Server",)}[target]
+    for name in names:
+        for base in (Path(local) / "Programs", Path(local)):
+            folder = base / name
+            if any((folder / exe).exists() for exe in EXE_NAMES[target]):
+                return folder
+    raise SystemExit("Cannot find an installed %s. Pass --install-dir." % target)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--target", choices=("client", "server"),
+                        help="which half of the product to update (asked if omitted)")
+    parser.add_argument("--install-dir", help="the folder the software is installed in")
+    parser.add_argument("--server-root", help="the studio's shared folder, if settings are unreadable")
+    args = parser.parse_args()
+
+    print("=" * 50)
+    print("   Slate Emergency Recovery Updater")
+    print("=" * 50)
+    print("Forces an update from the studio's shared folder without starting "
+          "the application.\n")
+
+    target = args.target or input("Update the 'client' or the 'server'? [client/server]: ").strip().lower()
+    if target not in EXE_NAMES:
+        print("Invalid target. Must be 'client' or 'server'.")
+        return 1
+
+    root = Path(args.server_root) if args.server_root else studio_root()
+    print(f"Studio folder: {root}")
+
+    from slate.core.updater.manifest import manifest_name, problems, releases_dir
+    releases = releases_dir(root / "Updates")
+    manifest_path = releases / manifest_name(target)
     if not manifest_path.exists():
-        print(f"ERROR: Manifest not found at {manifest_path}")
-        sys.exit(1)
-        
+        print(f"ERROR: No {target} update has been published: {manifest_path} is not there.")
+        return 1
+
     try:
-        with open(manifest_path, "r") as f:
-            manifest = json.load(f)
-    except Exception as e:
-        print(f"ERROR: Failed to read manifest: {e}")
-        sys.exit(1)
-        
-    version = manifest.get("version", "Unknown")
-    download_url = manifest.get("download_url", "")
-    file_hash = manifest.get("hash", "")
-    
-    print(f"\nFound Update: v{version}")
-    
-    # Resolve the download path
-    if download_url.startswith("file:///"):
-        source_zip = Path(download_url.replace("file:///", ""))
-    else:
-        # Fallback, assume it's next to the manifest
-        source_zip = manifest_path.parent / f"v{version}" / download_url.split("/")[-1]
-        if not source_zip.exists():
-            source_zip = central_path / download_url
-            
-    if not source_zip.exists():
-        print(f"ERROR: Update package not found at {source_zip}")
-        sys.exit(1)
-        
-    print(f"Staging update package...")
-    
-    # Get current application directory (where this script is located, tools folder parent)
-    app_dir = Path(__file__).resolve().parent.parent
-    staging_dir = app_dir / "Updates" / "Staging"
-    staging_dir.mkdir(parents=True, exist_ok=True)
-    
-    dest_zip = staging_dir / "Slate_Update.zip"
-    
-    try:
-        shutil.copy2(source_zip, dest_zip)
-    except Exception as e:
-        print(f"ERROR: Failed to copy update package: {e}")
-        sys.exit(1)
-        
-    print("Verifying hash...")
-    if not verify_file_hash(dest_zip, file_hash):
-        print("ERROR: Hash verification failed. The update package may be corrupted.")
-        sys.exit(1)
-        
-    print("Hash verified successfully.")
-    
-    # Locate sidecar updater
-    updater_exe = app_dir / "slate" / "core" / "updater" / "updater_script.exe"
-    updater_py = app_dir / "slate" / "core" / "updater" / "updater_script.py"
-    
-    if updater_exe.exists():
-        updater_path = updater_exe
-        is_python = False
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        print(f"ERROR: The manifest could not be read: {exc}")
+        return 1
+
+    faults = problems(manifest)
+    if faults:
+        print("ERROR: This update cannot be installed: " + "; ".join(faults))
+        return 1
+
+    package = releases / manifest["package_name"]
+    if not package.exists():
+        print(f"ERROR: The manifest names {manifest['package_name']}, which is not in {releases}.")
+        return 1
+    print(f"Found update: v{manifest['version']} ({package.name})")
+
+    install_dir = find_install_dir(target, args.install_dir)
+    exe_name = next((n for n in EXE_NAMES[target] if (install_dir / n).exists()),
+                    EXE_NAMES[target][0])
+    print(f"Install folder: {install_dir}")
+    print(f"Will relaunch:  {exe_name}")
+
+    staging = Path(os.environ.get("TEMP") or tempfile.gettempdir()) / "SlateUpdate"
+    staging.mkdir(parents=True, exist_ok=True)
+    staged = staging / package.name
+    print("Copying the package...")
+    shutil.copy2(package, staged)
+
+    print("Verifying the package...")
+    actual = sha256_of(staged)
+    if actual != manifest["hash_sha256"]:
+        staged.unlink(missing_ok=True)
+        print("ERROR: The package does not match its manifest. It was not installed.")
+        return 1
+    print("Package verified.")
+
+    # The same sidecar the application uses, from the same places it looks.
+    updater_exe = next((p for p in (install_dir / "SlateUpdater.exe",
+                                    ROOT / "dist" / "Slate" / "SlateUpdater.exe")
+                        if p.exists()), None)
+    updater_py = ROOT / "slate" / "core" / "updater" / "updater_script.py"
+    if updater_exe is not None:
+        cmd = [str(updater_exe)]
     elif updater_py.exists():
-        updater_path = updater_py
-        is_python = True
+        cmd = [sys.executable, str(updater_py)]
     else:
-        print(f"ERROR: Sidecar updater not found in {app_dir / 'slate' / 'core' / 'updater'}")
-        sys.exit(1)
-        
-    print("\nLaunching Sidecar Updater...")
-    # PID=0 skips the kill check
-    cmd = []
-    if is_python:
-        cmd.append(sys.executable)
-    cmd.extend([str(updater_path), "0", str(dest_zip), str(app_dir), exe_name])
-    
+        print("ERROR: No SlateUpdater.exe beside the installed software and no "
+              "updater_script.py in this checkout.")
+        return 1
+
+    # PID 0: nothing to wait for, the application is not running.
+    cmd += ["0", str(staged), str(install_dir), exe_name]
+    print("\nStarting the updater...")
     try:
-        subprocess.Popen(cmd, cwd=str(app_dir))
-        print("Update initiated! This console will now close, and the updater will take over in the background.")
-    except Exception as e:
-        print(f"ERROR: Failed to launch updater: {e}")
-        sys.exit(1)
-        
+        subprocess.Popen(cmd, cwd=str(install_dir))
+    except OSError as exc:
+        print(f"ERROR: The updater would not start: {exc}")
+        return 1
+    print("The updater has taken over. This window can be closed.")
+    return 0
+
+
 if __name__ == "__main__":
     try:
-        main()
-    except Exception as e:
-        print(f"Critical Error: {traceback.format_exc()}")
+        code = main()
+    except SystemExit as exc:
+        code = exc.code if isinstance(exc.code, int) else 1
+        if exc.code and not isinstance(exc.code, int):
+            print(exc.code)
+    except Exception:
+        print("Critical error:\n" + traceback.format_exc())
+        code = 1
     input("Press Enter to exit...")
+    sys.exit(code)

@@ -20,8 +20,13 @@ What it puts in, and why:
     leave_requests +    a two-stage approval chain, and the charged day count
                         stored at the time of the decision so a later policy
                         change cannot silently rewrite history
-    it_tickets +        an owner, impact and urgency, and the first-response
-                        timestamp an SLA is measured from
+    it_tickets +        an owner, impact and urgency, the first-response
+                        timestamp an SLA is measured from, and how long the
+                        ticket sat waiting on the person who raised it
+    ut_users +          joining date, employment type, who they report to,
+                        location and last working day. Leave accrual, holiday
+                        location, supervisor scoping and offboarding each need
+                        one of these, and none of them had anywhere to live
 """
 
 import logging
@@ -37,6 +42,32 @@ def _is_postgres(db) -> bool:
 
 
 TABLES_PG = {
+    # The table the whole Leave tab reads and writes.
+    #
+    # It was created in exactly two places, and neither of them was this one:
+    # sqlite_manager's base schema, and a single Alembic revision. Alembic runs
+    # on PostgreSQL only, is not bundled into an installed build, and cannot
+    # reach one - there is no alembic.ini, no versions folder and no alembic
+    # program on a workstation. So on SQLite the table existed and on every
+    # PostgreSQL studio it did not, which is why the Leave tab worked in local
+    # fallback and failed against the real database.
+    #
+    # The columns below are the base ones. The approval chain's columns are in
+    # COLUMNS further down, and were already being added to a table that on
+    # PostgreSQL had never been created.
+    "leave_requests": """
+        CREATE TABLE IF NOT EXISTS leave_requests (
+            id SERIAL PRIMARY KEY,
+            user_id VARCHAR(80) NOT NULL,
+            type VARCHAR(50) NOT NULL,
+            start_date DATE NOT NULL,
+            end_date DATE NOT NULL,
+            half_day BOOLEAN DEFAULT FALSE,
+            reason VARCHAR(255),
+            status VARCHAR(30) DEFAULT 'Pending',
+            approved_by VARCHAR(80),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
     "holiday_calendar": """
         CREATE TABLE IF NOT EXISTS holiday_calendar (
             id SERIAL PRIMARY KEY,
@@ -78,6 +109,20 @@ TABLES_PG = {
             closed_by VARCHAR(80),
             UNIQUE (user_id, leave_year)
         )""",
+    # The purchase side of a licence. This existed only in an Alembic revision,
+    # and Alembic runs on PostgreSQL alone - so on the local database the table
+    # was never created at all, the repository caught the error and returned
+    # nothing, and the Licences tab showed "no licences recorded" for ever. A
+    # studio running without a server had a tab that could not work and did not
+    # say so.
+    "software_licenses": """
+        CREATE TABLE IF NOT EXISTS software_licenses (
+            id SERIAL PRIMARY KEY,
+            software_name VARCHAR(100) NOT NULL,
+            total_seats INTEGER DEFAULT 0,
+            active_seats INTEGER DEFAULT 0,
+            expiration_date DATE
+        )""",
     "licence_readings": """
         CREATE TABLE IF NOT EXISTS licence_readings (
             id SERIAL PRIMARY KEY,
@@ -89,6 +134,23 @@ TABLES_PG = {
 }
 
 TABLES_SQLITE = {
+    # Also here, even though sqlite_manager's base schema creates it. This
+    # module is meant to be able to bring either backend up to the shape the
+    # workplace code expects, and one that quietly depends on another file
+    # having run first is the reason this was missing on PostgreSQL.
+    "leave_requests": """
+        CREATE TABLE IF NOT EXISTS leave_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            type TEXT NOT NULL,
+            start_date TEXT NOT NULL,
+            end_date TEXT NOT NULL,
+            half_day BOOLEAN DEFAULT 0,
+            reason TEXT,
+            status TEXT DEFAULT 'Pending',
+            approved_by TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        )""",
     "holiday_calendar": """
         CREATE TABLE IF NOT EXISTS holiday_calendar (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -130,6 +192,14 @@ TABLES_SQLITE = {
             closed_by TEXT,
             UNIQUE (user_id, leave_year)
         )""",
+    "software_licenses": """
+        CREATE TABLE IF NOT EXISTS software_licenses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            software_name TEXT NOT NULL,
+            total_seats INTEGER DEFAULT 0,
+            active_seats INTEGER DEFAULT 0,
+            expiration_date DATE
+        )""",
     "licence_readings": """
         CREATE TABLE IF NOT EXISTS licence_readings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -142,6 +212,25 @@ TABLES_SQLITE = {
 
 # Columns added to tables that already exist. (table, column, postgres type, sqlite type)
 COLUMNS = [
+    # The last five columns that existed only in an Alembic revision, and so
+    # existed nowhere a studio could reach. it_tickets.priority is read in
+    # twenty-five files; the IT service desk has been querying a column that is
+    # not there on every PostgreSQL studio. Types are taken from the revisions
+    # they came from, so a database that did once get Alembic applied sees no
+    # change at all.
+    ("hardware_inventory", "cpu", "VARCHAR(100)", "TEXT"),
+    ("hardware_inventory", "location", "VARCHAR(255) DEFAULT 'N/A'", "TEXT DEFAULT 'N/A'"),
+    ("it_tickets", "priority", "VARCHAR(20) DEFAULT 'Medium'", "TEXT DEFAULT 'Medium'"),
+    ("it_tickets", "resolved_at", "TIMESTAMP", "TIMESTAMP"),
+    ("payroll_records", "overtime_hours", "NUMERIC(5,2) DEFAULT 0", "REAL DEFAULT 0"),
+
+    # A studio whose leave_requests was made by the old Alembic revision has
+    # the thin version of it - no half day, no reason, no created_at - so those
+    # are added here too rather than only in the CREATE above, which does
+    # nothing to a table that already exists.
+    ("leave_requests", "half_day", "BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT 0"),
+    ("leave_requests", "reason", "VARCHAR(255)", "TEXT"),
+    ("leave_requests", "created_at", "TIMESTAMP", "TIMESTAMP"),
     ("leave_requests", "days_charged", "NUMERIC(4,2)", "REAL"),
     ("leave_requests", "supervisor_by", "VARCHAR(80)", "TEXT"),
     ("leave_requests", "supervisor_at", "TIMESTAMP", "TIMESTAMP"),
@@ -162,6 +251,37 @@ COLUMNS = [
     ("ut_users", "joined_on", "DATE", "DATE"),
     ("ut_users", "employment", "VARCHAR(20)", "TEXT"),
     ("ut_users", "reports_to", "VARCHAR(80)", "TEXT"),
+    # A holiday is a holiday somewhere. Without the person's location, a
+    # Chennai-only holiday is charged against a Mumbai artist's leave.
+    ("ut_users", "location", "VARCHAR(40)", "TEXT"),
+    # When somebody actually leaves. Offboarding had no date, so "kit not
+    # returned" fired on the day notice was given rather than after the last
+    # working day.
+    ("ut_users", "last_day", "DATE", "DATE"),
+
+    # Readings were matched to a purchase by software name, so two contracts
+    # for the same product shared one peak and both were reported as
+    # over-subscribed.
+    ("licence_readings", "licence_id", "INTEGER", "INTEGER"),
+
+    # The resolution clock ran while a ticket was waiting on the person who
+    # raised it. These two record how long it was parked so the SLA measures
+    # time IT actually had the ticket.
+    ("it_tickets", "waiting_since", "TIMESTAMP", "TIMESTAMP"),
+    ("it_tickets", "waiting_seconds", "INTEGER", "INTEGER"),
+
+    # The bidding tab writes all six of these, and the base schema on both
+    # backends has none of them - they were added by an Alembic revision, and
+    # Alembic runs on PostgreSQL alone. So saving a bid worked on a studio
+    # server that had been migrated and raised UndefinedColumn everywhere else,
+    # including on every local database.
+    ("prod_bidding", "project_name", "TEXT", "TEXT"),
+    ("prod_bidding", "project_code", "VARCHAR(255)", "TEXT"),
+    ("prod_bidding", "shot_count", "INTEGER", "INTEGER"),
+    ("prod_bidding", "complexity", "VARCHAR(50)", "TEXT"),
+    ("prod_bidding", "estimated_days", "NUMERIC(15,2)", "REAL"),
+    ("prod_bidding", "target_margin", "NUMERIC(5,2)", "REAL"),
+    ("prod_bidding", "estimated_cost", "NUMERIC(15,2)", "REAL"),
 
     ("onboarding_workflows", "direction", "VARCHAR(16)", "TEXT"),
     ("onboarding_workflows", "owner_team", "VARCHAR(16)", "TEXT"),
@@ -176,6 +296,7 @@ INDEXES = [
     ("idx_holiday_date", "holiday_calendar (holiday_date)"),
     ("idx_onboarding_user", "onboarding_workflows (user_id)"),
     ("idx_leave_close_user", "leave_year_close (user_id)"),
+    ("idx_readings_licence", "licence_readings (licence_id, taken_at)"),
 ]
 
 
@@ -207,6 +328,27 @@ def _column_exists(db, table: str, column: str) -> bool:
         return column in names
     except Exception:
         return False
+
+
+# (table, column, PostgreSQL type it must have, USING expression to convert
+#  what is there, new default). Only consulted on PostgreSQL; SQLite does not
+# enforce column types and takes 1, 0, true and false alike.
+TYPE_FIXES = (
+    ("leave_requests", "half_day", "boolean", "(half_day::int <> 0)", "FALSE"),
+)
+
+
+def _column_type(db, table: str, column: str) -> str:
+    """The column's data_type as information_schema reports it, or '' if unknown."""
+    try:
+        row = db.execute_query(
+            "SELECT data_type FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = %s AND column_name = %s",
+            (table, column), fetch="one")
+        return str((row or {}).get("data_type") or "").lower()
+    except Exception as exc:
+        logger.debug("Could not read the type of %s.%s: %s", table, column, exc)
+        return ""
 
 
 def apply_migration(db) -> bool:
@@ -242,11 +384,41 @@ def apply_migration(db) -> bool:
         except Exception as exc:
             logger.debug("Column %s.%s skipped: %s", table, column, exc)
 
+    # Columns whose type drifted between the database this software created
+    # a year ago and the one it creates today. PostgreSQL is strict about
+    # them: an INTEGER column refuses a boolean and a BOOLEAN column refuses
+    # a 1 - so whichever the repository wrote, half the studios' databases
+    # rejected it, and the repository reported the save as done anyway. One
+    # type, made so here, and the repositories write that type.
+    converted = 0
+    if postgres:
+        for table, column, wanted, using, default in TYPE_FIXES:
+            if not _table_exists(db, table):
+                continue
+            current = _column_type(db, table, column)
+            if not current or current == wanted:
+                continue
+            try:
+                db.execute_update(
+                    "ALTER TABLE %s ALTER COLUMN %s DROP DEFAULT, "
+                    "ALTER COLUMN %s TYPE %s USING %s, "
+                    "ALTER COLUMN %s SET DEFAULT %s"
+                    % (table, column, column, wanted, using, column, default))
+                if _column_type(db, table, column) == wanted:
+                    converted += 1
+                    logger.info("Converted %s.%s from %s to %s.", table, column, current, wanted)
+                else:
+                    logger.error("Could not convert %s.%s from %s to %s; leave "
+                                 "requests will not save until it is.", table, column, current, wanted)
+            except Exception as exc:
+                logger.error("Converting %s.%s to %s failed: %s", table, column, wanted, exc)
+
     for name, definition in INDEXES:
         try:
             db.execute_update("CREATE INDEX IF NOT EXISTS %s ON %s" % (name, definition))
         except Exception as exc:
             logger.debug("Index %s skipped: %s", name, exc)
 
-    logger.info("Workplace schema checked (%d table(s), %d column(s) added).", made, added)
+    logger.info("Workplace schema checked (%d table(s), %d column(s) added, %d column type(s) converted).",
+                made, added, converted)
     return True

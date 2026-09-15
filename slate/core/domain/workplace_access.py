@@ -49,14 +49,19 @@ def manages_leave(roles=None, allowed_tabs=None) -> bool:
     """
     if has_permission(allowed_tabs, MANAGES_LEAVE):
         return True
-    return bool(_names(roles) & {"hr", "human resources", "developer"})
+    # The role names come from access.json, not from here. This module used
+    # to carry its own literal set, which is how Attendance, Users & Roles and
+    # Leave each ended up with a different idea of who HR is.
+    from .access import can
+    return can(_names(roles), "manage_leave")
 
 
 def manages_it(roles=None, allowed_tabs=None) -> bool:
     """True for the people who work the IT queue."""
     if has_permission(allowed_tabs, MANAGES_IT):
         return True
-    return bool(_names(roles) & {"it", "it support", "developer"})
+    from .access import can
+    return can(_names(roles), "manage_it")
 
 
 # ---------------------------------------------------------------------------

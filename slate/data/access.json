@@ -41,5 +41,48 @@
   "_department_scoped": "Roles in dashboard_write that may edit only their own department's columns. The department comes from the person's job title.",
   "department_scoped": [
     "lead"
+  ],
+  "_manage_leave": "Works the leave approval queue at the HR stage, keeps the holiday calendar and closes the leave year.",
+  "manage_leave": [
+    "hr",
+    "human resources",
+    "developer",
+    "admin"
+  ],
+  "_manage_it": "Works the IT service desk and the IT half of joining and leaving.",
+  "manage_it": [
+    "it",
+    "it support",
+    "developer",
+    "admin"
+  ],
+  "_manage_users": "Creates, edits and deletes user accounts on the Users & Roles tab.",
+  "manage_users": [
+    "hr",
+    "human resources",
+    "admin",
+    "developer",
+    "supervisor"
+  ],
+  "_view_team_attendance": "Sees the whole team's attendance grid, corrects punches and exports timesheets.",
+  "view_team_attendance": [
+    "hr",
+    "human resources",
+    "supervisor",
+    "developer",
+    "admin"
+  ],
+  "_ingest_stock": "Ingests into and deletes from the stock library.",
+  "ingest_stock": [
+    "admin",
+    "lead",
+    "supervisor",
+    "developer",
+    "dev"
+  ],
+  "_wipe_fleet_caches": "Clears thumbnail and proxy caches on every connected workstation.",
+  "wipe_fleet_caches": [
+    "admin",
+    "developer"
   ]
 }

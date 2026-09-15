@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 
 
@@ -74,6 +75,67 @@ def db_password(required: bool = True) -> str:
             % ENV_VAR
         )
     return password or ""
+
+
+def local_config_path() -> Path:
+    """
+    The file the studio's own settings belong in.
+
+    The first candidate that already exists, so a machine set up by setup.bat
+    keeps using the file setup.bat wrote.
+
+    Where there is none yet, the choice is about what can actually be written.
+    A setup.bat install lives in a folder the person owns, so the package-local
+    file is right and is the one GlobalConfig reads last. An installed build
+    lives under Program Files, where the package directory is read-only for a
+    normal user - so writing there fails, and the first attempt to save the
+    database details from Settings would fail with it. Those get the per-user
+    file instead, which is the one GlobalConfig already reads for an installed
+    build.
+    """
+    for path in _candidates():
+        if path.is_file():
+            return path
+
+    if not getattr(sys, "frozen", False):
+        return _PACKAGE / "config.json"
+
+    local_app_data = os.getenv("LOCALAPPDATA")
+    if local_app_data:
+        return Path(local_app_data) / "Slate" / "config.json"
+    return _PACKAGE / "config.json"
+
+
+def write_local_config(values: dict) -> Path:
+    """
+    Merge settings into the local config, and say where they went.
+
+    There were two writers. setup.bat wrote the database details here, and the
+    Settings tab wrote them to a second file under LOCALAPPDATA which
+    GlobalConfig read last - so the values somebody typed into Settings won over
+    the ones the installer had put in, until a reinstall reversed it. Two files,
+    each authoritative depending on which read them.
+
+    Everything database-shaped now comes here, and GlobalConfig reads this file
+    last. One writer, one winner.
+    """
+    path = local_config_path()
+    existing = {}
+    try:
+        if path.is_file():
+            with open(path, "r", encoding="utf-8") as handle:
+                loaded = json.load(handle)
+            if isinstance(loaded, dict):
+                existing = loaded
+    except (OSError, ValueError):
+        existing = {}
+
+    existing.update({k: v for k, v in (values or {}).items() if v is not None})
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(existing, handle, indent=4)
+    return path
 
 
 def db_settings() -> dict:

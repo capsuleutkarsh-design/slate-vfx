@@ -20,20 +20,37 @@ class MainWindowBuilderMixin:
     # for what they actually do.
 
     def _build_leave_tab(self):
+        from PySide6.QtWidgets import QTabWidget
         from ..tabs.leave_approvals_view import LeaveApprovalsView
         from ..tabs.my_leave_view import MyLeaveView
         from ...core.domain.workplace_access import manages_leave
 
         roles = {str(r).strip().lower() for r in (getattr(self, "user_roles", None) or [])}
+        username = self._current_username()
 
-        # HR own the final stage; a supervisor owns the first one. Everybody
-        # else gets their own balance - including HR and supervisors, who take
-        # leave like anyone and reach that through their own Home.
+        # HR own the final stage; a supervisor owns the first one.
+        stage = None
         if manages_leave(getattr(self, "user_roles", None), self.allowed_tabs):
-            return LeaveApprovalsView(self._current_username(), stage="HR")
-        if roles & {"supervisor", "lead"}:
-            return LeaveApprovalsView(self._current_username(), stage="Supervisor")
-        return MyLeaveView(self._current_username())
+            stage = "HR"
+        elif roles & {"supervisor", "lead"}:
+            stage = "Supervisor"
+
+        if stage is None:
+            return MyLeaveView(username)
+
+        # An approver takes leave like anybody else. They used to get the queue
+        # and nothing else, with a comment claiming they reached their own
+        # balance through Home - which has no such entry, so HR and supervisors
+        # simply could not ask for leave at all.
+        queue = LeaveApprovalsView(username, stage=stage)
+        mine = MyLeaveView(username)
+        queue.changed.connect(mine.refresh)
+        mine.changed.connect(queue.refresh)
+
+        both = QTabWidget()
+        both.addTab(queue, "Queue")
+        both.addTab(mine, "My leave")
+        return both
 
     def _build_joining_tab(self):
         """
@@ -401,7 +418,7 @@ class MainWindowBuilderMixin:
                 # Hardware Inventory
                 self.tab_coordinator.register_tab_factory(
                     "Hardware",
-                    lambda: ItInventoryTab(),
+                    lambda: ItInventoryTab(user_data=self.user_data),
                     icon="🖥️",
                     permission_key="IT",
                     user_role=self.user_role,

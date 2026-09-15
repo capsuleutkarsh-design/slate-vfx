@@ -26,8 +26,11 @@ class CentralAttendance:
         self.pc_name = socket.gethostname()
         
         # Configuration
-        self.LATE_CUTOFF_HOUR = 10
-        self.LATE_CUTOFF_MINUTE = 45
+        # The studio's start time, from the one place that holds it. These two
+        # were literals here, and the leave policy had its own idea of the
+        # working day - so the two halves of the same module disagreed.
+        from slate.core.domain.leave_policy import late_cutoff
+        self.LATE_CUTOFF_HOUR, self.LATE_CUTOFF_MINUTE = late_cutoff()
 
     def _json_merge_sql(self, column: str, param_placeholder: str = "%s") -> str:
         """

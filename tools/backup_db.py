@@ -14,18 +14,59 @@ import glob
 from datetime import datetime
 import logging
 
-# Configuration
-BACKUP_DIR = r"X:\Extra\Slate_Central\Backups"
-PG_DUMP_PATH = r"C:\Program Files\PostgreSQL\18\bin\pg_dump.exe"
-DB_HOST = "127.0.0.1"
-DB_PORT = "5432"
-DB_USER = "postgres"
-DB_NAME = "slate"
+# Everything here used to be a literal: one studio's backup drive, one
+# machine's PostgreSQL install path, port 5432 and a database called "slate".
+# The studio's database is on 5440 and is called ut_vfx, so the script as
+# written backed up nothing, on a drive most studios do not have. It now asks
+# the same settings the software uses.
+
+
+def _settings():
+    from slate.core.infra.local_secrets import db_settings
+    return db_settings()
+
+
+def _backup_dir():
+    override = os.environ.get("SLATE_BACKUP_DIR")
+    if override:
+        return override
+    try:
+        from slate.core.infra.global_config import GlobalConfig
+        root = _Path(str(GlobalConfig.server_root()))
+        if str(root):
+            return str(root / "Backups")
+    except Exception:
+        pass
+    # Somewhere that exists on this machine, rather than a drive letter that
+    # might not.
+    return os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+                        "Slate", "Backups", "Database")
+
+
+def _pg_dump():
+    override = os.environ.get("SLATE_PG_DUMP")
+    if override:
+        return override
+    # The copy the server ships with, which is the one that matches the cluster.
+    bundled = (_Path(__file__).resolve().parents[1] / "slate_server" / "bin"
+               / "pgsql" / "bin" / "pg_dump.exe")
+    if bundled.exists():
+        return str(bundled)
+    return "pg_dump"
+
+
+_DB = _settings()
+BACKUP_DIR = _backup_dir()
+PG_DUMP_PATH = _pg_dump()
+DB_HOST = _DB["host"]
+DB_PORT = str(_DB["port"])
+DB_USER = _DB["user"]
+DB_NAME = _DB["dbname"]
 # Note: PGPASSWORD environment variable is safer than passing via command line,
 # but for this script we will set it in the env dict for the subprocess.
-DB_PASS = _db_password()
+DB_PASS = _db_password(required=False) or _DB["password"]
 
-RETENTION_DAYS = 30
+RETENTION_DAYS = int(os.environ.get("SLATE_BACKUP_RETENTION_DAYS", "30"))
 
 def backup_database():
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")

@@ -10,12 +10,14 @@ list. Somebody leaves and the machine they were given on day one is already
 named on the row - nobody has to remember it.
 """
 
-from PySide6.QtCore import Qt, Signal
+from datetime import date
+
+from PySide6.QtCore import Qt, QDate, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QFormLayout, QHBoxLayout, QHeaderView, QInputDialog,
-    QLabel, QLineEdit, QMessageBox, QSizePolicy, QSplitter, QTableWidget,
-    QTableWidgetItem, QVBoxLayout, QWidget,
+    QComboBox, QDateEdit, QDialog, QFormLayout, QHBoxLayout, QHeaderView,
+    QInputDialog, QLabel, QLineEdit, QMessageBox, QSizePolicy, QSplitter,
+    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from slate.core.infra.gate import Gate
@@ -63,14 +65,24 @@ class StartPersonDialog(QDialog):
         self.department = QLineEdit()
         self.department.setPlaceholderText("Comp, Roto, Pipeline...")
         form.addRow("Department", self.department)
+
+        # Joining needs a start date, because leave accrues from it. Leaving
+        # needs a last day, because "kit not returned" is measured against it -
+        # without one the alert fired the moment notice was given.
+        self.effective = QDateEdit()
+        self.effective.setCalendarPopup(True)
+        self.effective.setDate(QDate.currentDate())
+        form.addRow("Joining on" if joining else "Last working day", self.effective)
         root.addLayout(form)
 
         note = QLabel(
-            "This lays down the checklist. HR see the paperwork lines, IT see the "
+            "This lays down the checklist and records the joining date, which is "
+            "what leave accrues from. HR see the paperwork lines, IT see the "
             "provisioning lines, and each team ticks its own."
             if joining else
-            "This lays down the leaving checklist - the reverse of joining. Anything "
-            "still issued to this person will show up on it.")
+            "This lays down the leaving checklist - the reverse of joining. "
+            "Anything still issued to this person shows up on it, and is chased "
+            "from the last working day onwards rather than from today.")
         note.setWordWrap(True)
         note.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: 12px;")
         root.addWidget(note)
@@ -84,8 +96,10 @@ class StartPersonDialog(QDialog):
 
     def payload(self):
         username = self.person.currentData() or self.person.currentText().strip()
+        day = self.effective.date()
         return (str(username), self.employment.currentData(),
-                self.department.text().strip())
+                self.department.text().strip(),
+                date(day.year(), day.month(), day.day()))
 
 
 class JoiningLeavingView(QWidget):
@@ -395,10 +409,11 @@ class JoiningLeavingView(QWidget):
         dialog = StartPersonDialog(self.service, direction, self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        username, employment, department = dialog.payload()
+        username, employment, department, effective = dialog.payload()
         if not username:
             return
-        made = self.service.start(username, direction, employment, department)
+        made = self.service.start(username, direction, employment, department,
+                                  effective_date=effective)
         if not made:
             QMessageBox.information(
                 self, "Already on the list",

@@ -70,6 +70,12 @@ class _FakeDB:
         yield _FakeConnection(self.state)
 
 
+# A path on shared storage. UNC rather than a mapped letter, because a
+# mapped letter is only shared storage on the studio that mapped it - which
+# is exactly the assumption this coordinator used to make.
+SHARED_PATH = "//studio-server/slate/Slate_Central/Config/users.json"
+
+
 def test_local_fallback_lock_when_db_unavailable(tmp_path):
     coordinator = SharedJsonWriteCoordinator(
         db_manager=_BrokenDB(),
@@ -94,7 +100,7 @@ def test_network_path_requires_distributed_lock_when_db_unavailable():
     )
     handle = coordinator.acquire(
         "users_lock",
-        target_path=Path("X:/Extra/Slate_Central/Config/users.json"),
+        target_path=Path(SHARED_PATH),
         timeout_seconds=1.0,
     )
     assert handle is None
@@ -109,7 +115,7 @@ def test_db_lock_acquire_and_release():
     )
     handle = coordinator.acquire(
         "users_lock",
-        target_path=Path("X:/Extra/Slate_Central/Config/users.json"),
+        target_path=Path(SHARED_PATH),
         timeout_seconds=1.0,
     )
     assert handle is not None
@@ -124,9 +130,61 @@ def test_db_lock_acquire_and_release():
     )
     handle_b = coordinator_b.acquire(
         "users_lock",
-        target_path=Path("X:/Extra/Slate_Central/Config/users.json"),
+        target_path=Path(SHARED_PATH),
         timeout_seconds=1.0,
     )
     assert handle_b is not None
     assert handle_b.mode == "db"
     coordinator_b.release(handle_b)
+
+
+def test_a_studio_folder_on_a_mapped_drive_is_shared_storage(monkeypatch):
+    """
+    The coordinator used to decide this by asking whether the path began with
+    "x:/". Any studio whose share is on another letter had its shared files
+    written under a local lock, so two machines could write the same file at
+    the same time and neither knew.
+    """
+    from slate.core.infra import studio_paths
+
+    monkeypatch.setattr(studio_paths, "_global_setting",
+                        lambda key: r"Q:\Studio\Slate_Central"
+                        if key == "SERVER_ROOT" else "")
+    monkeypatch.setattr(studio_paths, "_machine_setting", lambda key: "")
+    for name in studio_paths.STUDIO_ROOT_VARS:
+        monkeypatch.delenv(name, raising=False)
+
+    coordinator = SharedJsonWriteCoordinator(
+        db_manager=_BrokenDB(),
+        owner_id="owner-a",
+        allow_local_fallback=True,
+    )
+    handle = coordinator.acquire(
+        "users_lock",
+        target_path=Path(r"Q:\Studio\Slate_Central\Config\users.json"),
+        timeout_seconds=1.0,
+    )
+    assert handle is None, \
+        "a shared file must not be written under a lock only this machine sees"
+
+
+def test_a_local_path_under_no_studio_folder_is_not_shared(monkeypatch, tmp_path):
+    from slate.core.infra import studio_paths
+
+    monkeypatch.setattr(studio_paths, "_global_setting", lambda key: "")
+    monkeypatch.setattr(studio_paths, "_machine_setting", lambda key: "")
+    for name in studio_paths.STUDIO_ROOT_VARS:
+        monkeypatch.delenv(name, raising=False)
+
+    coordinator = SharedJsonWriteCoordinator(
+        db_manager=_BrokenDB(),
+        owner_id="owner-a",
+        allow_local_fallback=True,
+    )
+    handle = coordinator.acquire(
+        "users_lock",
+        target_path=tmp_path / "users.json",
+        timeout_seconds=1.0,
+    )
+    assert handle is not None and handle.mode == "local"
+    coordinator.release(handle)

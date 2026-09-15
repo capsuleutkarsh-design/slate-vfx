@@ -68,6 +68,28 @@ _DEFAULTS = {
     "department_scoped": [
         "lead",
     ],
+    # ------------------------------------------------------------ workplace
+    # These used to be five separate literal lists in five widgets, and they
+    # disagreed: the same HR person was an approver in Leave, refused by
+    # Users & Roles, and a plain artist in Attendance. One table, one answer.
+    "manage_leave": [
+        "hr", "human resources", "developer", "admin",
+    ],
+    "manage_it": [
+        "it", "it support", "developer", "admin",
+    ],
+    "manage_users": [
+        "hr", "human resources", "admin", "developer", "supervisor",
+    ],
+    "view_team_attendance": [
+        "hr", "human resources", "supervisor", "developer", "admin",
+    ],
+    "ingest_stock": [
+        "admin", "lead", "supervisor", "developer", "dev",
+    ],
+    "wipe_fleet_caches": [
+        "admin", "developer",
+    ],
 }
 
 
@@ -115,6 +137,18 @@ def roles_for(action: str) -> Set[str]:
 
 def _allowed(action: str, roles: Iterable) -> bool:
     return bool(_normalize(roles) & roles_for(action))
+
+
+def can(roles, action: str) -> bool:
+    """
+    Whether any of these roles may perform the named action.
+
+    The one entry point for a permission that has no dedicated helper. A
+    widget that asks ``can(roles, "manage_users")`` is answered from
+    access.json, so a studio adds a role name there once and every screen
+    agrees. An action the file does not know is refused, never granted.
+    """
+    return _allowed(action, roles)
 
 
 def can_edit_dashboard(roles) -> bool:

@@ -245,21 +245,66 @@ class VFXReviewDualModeTab(QWidget):
         self.lineup_editor.set_shots(shots)
 
     def refresh_from_dashboard(self):
-        """Pull the current shots straight from the dashboard tab."""
+        """
+        Pull the current shots - from the dashboard tab if it is open, and from
+        the database if it is not.
+
+        Tabs are built on first use, so this used to work only if somebody had
+        already visited the dashboard this session. Otherwise it said "open the
+        VFX Dashboard and pick a project first", which is a reasonable sentence
+        and a poor answer: the project is already chosen and stored, and this
+        tab can read it.
+        """
         dashboard = self._find_dashboard()
-        if dashboard is None:
-            self.lineup_editor.status_label.setText(
-                "Open the VFX Dashboard and pick a project first."
+        if dashboard is not None:
+            project = getattr(dashboard, "current_project", None)
+            self.set_shots(
+                getattr(dashboard, "all_shots", None) or [],
+                project_root=getattr(project, "folder_base", "") or None,
+                folder_resolver=getattr(dashboard, "_shot_folder_resolver", None),
+                project_name=getattr(project, "code", "") or "",
             )
             return
 
-        project = getattr(dashboard, "current_project", None)
-        self.set_shots(
-            getattr(dashboard, "all_shots", None) or [],
-            project_root=getattr(project, "folder_base", "") or None,
-            folder_resolver=getattr(dashboard, "_shot_folder_resolver", None),
-            project_name=getattr(project, "code", "") or "",
-        )
+        self._refresh_from_database()
+
+    def _refresh_from_database(self):
+        """Load the stored project's shots without the dashboard tab."""
+        try:
+            from .vfx_dashboard_pro.core.project_manager import ProjectManager
+            from .vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler
+
+            manager = ProjectManager()
+            projects = manager.get_all_projects()
+            if not projects:
+                self.lineup_editor.status_label.setText(
+                    "No projects yet. Build one in Build & Ingest, or add it on "
+                    "the VFX Dashboard."
+                )
+                return
+
+            code = getattr(manager, "default_project", None) or projects[0].code
+            project = manager.get_project(code) or projects[0]
+
+            shots = SQLiteHandler(project.code).read_shots()
+            if not shots:
+                self.lineup_editor.status_label.setText(
+                    "%s has no shots yet, so there is no lineup to build."
+                    % project.code)
+                return
+
+            self.set_shots(
+                shots,
+                project_root=getattr(project, "folder_base", "") or None,
+                folder_resolver=None,
+                project_name=project.code or "",
+            )
+        except Exception as exc:
+            logger.warning("Could not load the lineup from the database: %s", exc)
+            self.lineup_editor.status_label.setText(
+                "Could not read the project from the database. Open the VFX "
+                "Dashboard to load it, or check the connection."
+            )
 
     def _find_dashboard(self):
         """The dashboard widget, wherever this tab has been put."""

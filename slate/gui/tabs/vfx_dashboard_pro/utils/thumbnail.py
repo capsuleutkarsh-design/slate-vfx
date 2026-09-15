@@ -94,7 +94,8 @@ class ThumbnailGenerator:
             root = Path(project_root)
             candidates.extend([root, root / code_text])
 
-            # If root is a drive-level path (e.g. X:/), try matching project folders.
+            # If the root is a drive or share rather than one project, look
+            # for a folder inside it whose name carries the project code.
             if root.exists() and root.is_dir():
                 try:
                     for child in root.iterdir():
@@ -108,9 +109,14 @@ class ThumbnailGenerator:
                 except OSError:
                     logger.debug("ThumbnailGen: failed listing project root candidates under %s", root)
 
-        # Default fallback when project root is empty or not specific enough.
+        # Fallback when the project root is empty or not specific enough. It
+        # was Path("X:/") / code - a drive letter from one studio, compiled in.
         if code_text:
-            candidates.append(Path("X:/") / code_text)
+            from slate.core.infra.studio_paths import project_folder
+
+            guess = project_folder(code_text)
+            if guess is not None:
+                candidates.append(guess)
 
         return self._dedupe_paths(candidates)
 
@@ -187,7 +193,19 @@ class ThumbnailGenerator:
         # Return a deterministic strict candidate for debugging/logging purposes.
         if strict_candidates:
             return str(strict_candidates[0])
-        fallback_root = Path(project_root) if project_root else Path("X:/") / code_text
+        if project_root:
+            fallback_root = Path(project_root)
+        else:
+            # Was Path("X:/") / code - a drive letter from one studio. With no
+            # configured root there is no path worth returning, so the caller
+            # gets an empty string and can say "not found" rather than print a
+            # location that never existed.
+            from slate.core.infra.studio_paths import project_folder
+
+            guess = project_folder(code_text)
+            if guess is None:
+                return ""
+            fallback_root = guess
         return str(fallback_root / "05_Reels" / reel_folder / shot_folder / "01_Scan")
     
     def find_first_frame(self, scan_path: str) -> str:

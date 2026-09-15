@@ -1,7 +1,19 @@
 import os
 import re
 
-pg_dir = r"C:\Program Files\PostgreSQL\18\data"
+# The cluster to edit. One machine's PostgreSQL 18 install was written in
+# here, which is neither the version nor the location the studio server
+# uses - it ships its own and keeps its data wherever Settings says.
+import sys
+
+if len(sys.argv) > 1:
+    pg_dir = sys.argv[1]
+else:
+    pg_dir = os.environ.get("SLATE_DB_PATH", "")
+if not pg_dir:
+    raise SystemExit(
+        "Give the data directory as an argument, or set SLATE_DB_PATH.\n"
+        "Slate Server shows it on its Dashboard as Data Directory.")
 conf_path = os.path.join(pg_dir, "postgresql.conf")
 hba_path = os.path.join(pg_dir, "pg_hba.conf")
 

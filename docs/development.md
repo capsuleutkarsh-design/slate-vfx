@@ -22,7 +22,7 @@ runtime\python\python.exe -m pytest tests/ -q -k leave         by name
 runtime\python\python.exe -m pytest tests/ -q --no-cov         faster
 ```
 
-**994 tests.** They run in about a minute. Run them before you push.
+**1,193 tests.** They run in about a minute. Run them before you push.
 
 Some skip on a machine with no PostgreSQL cluster and no configured
 credentials — the skip message says which and why. That is correct on a fresh

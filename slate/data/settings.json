@@ -34,5 +34,15 @@
     "last_destination_root": "",
     "last_shot_subfolders_target": "",
     "window_state": {},
-    "_comment": "Shipped defaults. Anything machine-specific is blank on purpose - it is filled in on the machine and must not be committed."
+    "_comment": "Shipped defaults. Anything machine-specific is blank on purpose - it is filled in on the machine and must not be committed.",
+    "bidding": {
+        "_comment": "Artist days per shot by complexity, the day rate, and the margin the studio bids at. Read by core/domain/bidding.py.",
+        "multipliers": {
+            "Simple": 1.5,
+            "Medium": 3.0,
+            "Hard": 7.0
+        },
+        "day_rate": 300.0,
+        "margin_percent": 20.0
+    }
 }

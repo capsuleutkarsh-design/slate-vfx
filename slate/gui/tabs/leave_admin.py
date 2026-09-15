@@ -16,8 +16,9 @@ from datetime import date
 from PySide6.QtCore import Qt, QDate
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QComboBox, QDateEdit, QDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-    QMessageBox, QTableWidget, QTableWidgetItem, QVBoxLayout,
+    QComboBox, QDateEdit, QDialog, QFormLayout, QHBoxLayout, QHeaderView,
+    QLabel, QLineEdit, QMessageBox, QTableWidget, QTableWidgetItem,
+    QVBoxLayout,
 )
 
 from slate.core.infra.gate import Gate
@@ -27,15 +28,92 @@ from ..core.controls import make_button
 from slate.gui.core.offline_notice import on_database_error
 
 
+class HolidayEditDialog(QDialog):
+    """
+    One holiday, on its own, so it can be corrected rather than re-entered.
+
+    Editing did not exist. A date announced wrongly or a name typed wrongly had
+    to be removed and added back - two steps, of which the destructive one
+    succeeds on its own. An interruption between them loses the day silently,
+    and every leave request spanning it quietly changes price.
+    """
+
+    def __init__(self, locations, row=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Edit holiday" if row else "Add holiday")
+        self.setMinimumWidth(360)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(Gate.SPACE_4, Gate.SPACE_4, Gate.SPACE_4, Gate.SPACE_4)
+        root.setSpacing(Gate.SPACE_3)
+
+        form = QFormLayout()
+        form.setSpacing(Gate.SPACE_2)
+
+        self.day = QDateEdit()
+        self.day.setCalendarPopup(True)
+        self.day.setDisplayFormat("d MMMM yyyy")
+        form.addRow("Date", self.day)
+
+        self.name = QLineEdit()
+        self.name.setPlaceholderText("Diwali, Republic Day...")
+        form.addRow("Holiday", self.name)
+
+        self.location = QComboBox()
+        self.location.setEditable(True)
+        self.location.addItem("All")
+        for place in locations:
+            self.location.addItem(place)
+        self.location.setToolTip(
+            "All means everybody. A place name means only the people whose "
+            "record says that place, spelled the same way.")
+        form.addRow("Applies to", self.location)
+        root.addLayout(form)
+
+        if row:
+            existing = row.get("holiday_date")
+            existing = existing.date() if hasattr(existing, "date") else existing
+            if isinstance(existing, date):
+                self.day.setDate(QDate(existing.year, existing.month, existing.day))
+            self.name.setText(str(row.get("name") or ""))
+            self.location.setCurrentText(str(row.get("location") or "All"))
+        else:
+            self.day.setDate(QDate.currentDate())
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        buttons.addWidget(make_button("Cancel", "secondary", on_click=self.reject))
+        buttons.addWidget(make_button("Save", "primary", on_click=self._accept))
+        root.addLayout(buttons)
+
+    def _accept(self):
+        if not self.name.text().strip():
+            QMessageBox.information(self, "Name it", "A holiday needs a name.")
+            return
+        self.accept()
+
+    def values(self) -> dict:
+        d = self.day.date()
+        return {
+            "holiday_date": date(d.year(), d.month(), d.day()),
+            "name": self.name.text().strip(),
+            "location": self.location.currentText().strip() or "All",
+        }
+
+
 class HolidayCalendarDialog(QDialog):
     """The studio's public holidays - the list the day count is charged against."""
 
-    def __init__(self, repo: LeaveRepository = None, parent=None):
+    ANY_YEAR = "All years"
+
+    def __init__(self, repo: LeaveRepository = None, parent=None, year=None):
         super().__init__(parent)
         self.repo = repo or LeaveRepository()
         self.setWindowTitle("Holiday calendar")
-        self.resize(620, 520)
+        self.resize(660, 560)
         self._rows = []
+        self._locations = []
+        self._wanted_year = year
 
         root = QVBoxLayout(self)
         root.setContentsMargins(Gate.SPACE_4, Gate.SPACE_4, Gate.SPACE_4, Gate.SPACE_4)
@@ -48,6 +126,21 @@ class HolidayCalendarDialog(QDialog):
         note.setWordWrap(True)
         note.setStyleSheet(f"color: {Gate.TEXT_2}; font-size: 12px;")
         root.addWidget(note)
+
+        # The calendar is every holiday the studio has ever had. Without this
+        # the year somebody came to fix is somewhere in the middle of it.
+        filter_row = QHBoxLayout()
+        filter_row.setSpacing(Gate.SPACE_2)
+        filter_row.addWidget(QLabel("Year"))
+        self.combo_year = QComboBox()
+        self.combo_year.setMinimumWidth(120)
+        self.combo_year.currentIndexChanged.connect(lambda *_: self.refresh())
+        filter_row.addWidget(self.combo_year)
+        filter_row.addStretch(1)
+        self.lbl_count = QLabel("")
+        self.lbl_count.setStyleSheet(f"color: {Gate.TEXT_2}; font-size: 12px;")
+        filter_row.addWidget(self.lbl_count)
+        root.addLayout(filter_row)
 
         entry = QHBoxLayout()
         entry.setSpacing(Gate.SPACE_2)
@@ -62,9 +155,12 @@ class HolidayCalendarDialog(QDialog):
         self.name.returnPressed.connect(self.add)
         entry.addWidget(self.name, 1)
 
+        # Offered from the places the studio's own user records name, rather
+        # than a fixed list of three cities belonging to whoever this was
+        # written for. A holiday applies to a location only when the spelling
+        # matches, so guessing it is worse than not offering it.
         self.location = QComboBox()
         self.location.setEditable(True)
-        self.location.addItems(["All", "Mumbai", "Chennai", "Remote"])
         entry.addWidget(self.location)
 
         entry.addWidget(make_button("Add", "primary", on_click=self.add))
@@ -81,20 +177,53 @@ class HolidayCalendarDialog(QDialog):
             head.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
         head.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         self.table.itemSelectionChanged.connect(self._sync)
+        self.table.cellDoubleClicked.connect(lambda *_: self.edit())
         root.addWidget(self.table, 1)
 
         buttons = QHBoxLayout()
+        self.btn_edit = make_button("Edit", "secondary", on_click=self.edit)
         self.btn_remove = make_button("Remove", "danger", on_click=self.remove)
+        buttons.addWidget(self.btn_edit)
         buttons.addWidget(self.btn_remove)
         buttons.addStretch(1)
         buttons.addWidget(make_button("Done", "secondary", on_click=self.accept))
         root.addLayout(buttons)
 
+        self._load_years()
         self.refresh()
+
+    # ------------------------------------------------------------- loading
+
+    @on_database_error
+    def _load_years(self):
+        """Which years to offer, including the ones nothing is booked in yet."""
+        this_year = date.today().year
+        years = set(self.repo.holiday_years())
+        years.update({this_year, this_year + 1})
+
+        self.combo_year.blockSignals(True)
+        self.combo_year.clear()
+        self.combo_year.addItem(self.ANY_YEAR, None)
+        for year in sorted(years, reverse=True):
+            self.combo_year.addItem(str(year), year)
+        wanted = self._wanted_year or this_year
+        index = self.combo_year.findData(wanted)
+        self.combo_year.setCurrentIndex(index if index >= 0 else 0)
+        self.combo_year.blockSignals(False)
 
     @on_database_error
     def refresh(self):
-        self._rows = self.repo.holiday_rows()
+        self._locations = self.repo.locations()
+        current = self.location.currentText()
+        self.location.clear()
+        self.location.addItem("All")
+        for place in self._locations:
+            self.location.addItem(place)
+        if current:
+            self.location.setCurrentText(current)
+
+        year = self.combo_year.currentData() if self.combo_year.count() else None
+        self._rows = self.repo.holiday_rows(year)
         self.table.setRowCount(len(self._rows))
         today = date.today()
         for r, row in enumerate(self._rows):
@@ -112,10 +241,21 @@ class HolidayCalendarDialog(QDialog):
                 if isinstance(day, date) and day < today:
                     item.setForeground(QColor(Gate.TEXT_DIM))
                 self.table.setItem(r, c, item)
+
+        self.lbl_count.setText(
+            "%d holiday%s" % (len(self._rows), "" if len(self._rows) == 1 else "s"))
         self._sync()
 
     def _sync(self, *_):
-        self.btn_remove.setEnabled(bool(self.table.selectedIndexes()))
+        picked = bool(self.table.selectedIndexes())
+        self.btn_remove.setEnabled(picked)
+        self.btn_edit.setEnabled(picked)
+
+    def _selected(self) -> list:
+        rows = sorted({i.row() for i in self.table.selectedIndexes()})
+        return [self._rows[r] for r in rows if r < len(self._rows)]
+
+    # ------------------------------------------------------------- editing
 
     def add(self):
         name = self.name.text().strip()
@@ -127,11 +267,33 @@ class HolidayCalendarDialog(QDialog):
                                      self.location.currentText().strip() or "All"):
             QMessageBox.warning(self, "Not saved", "That holiday could not be added.")
         self.name.clear()
+        self._load_years()
+        self.refresh()
+
+    def edit(self):
+        picked = self._selected()
+        if len(picked) != 1:
+            QMessageBox.information(
+                self, "Pick one", "Choose a single holiday to edit.")
+            return
+
+        row = picked[0]
+        dialog = HolidayEditDialog(self._locations, row, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        values = dialog.values()
+        if not self.repo.update_holiday(row.get("id"), values["holiday_date"],
+                                        values["name"], values["location"]):
+            QMessageBox.warning(
+                self, "Not saved",
+                "That change could not be saved. If another holiday is already "
+                "on that date for the same place, this one cannot move onto it.")
+        self._load_years()
         self.refresh()
 
     def remove(self):
-        rows = sorted({i.row() for i in self.table.selectedIndexes()})
-        picked = [self._rows[r] for r in rows if r < len(self._rows)]
+        picked = self._selected()
         if not picked:
             return
         if QMessageBox.question(
@@ -143,6 +305,143 @@ class HolidayCalendarDialog(QDialog):
             return
         for row in picked:
             self.repo.remove_holiday(row.get("id"))
+        self._load_years()
+        self.refresh()
+
+
+class CompOffReviewDialog(QDialog):
+    """
+    What the attendance record says people have earned back, before it is given.
+
+    The service that works this out has been in the codebase all along and
+    nothing ever called it, so comp-off was credited to nobody: the ledger the
+    balance reads from stayed empty for ever and the figure on the artist's
+    screen was always zero.
+
+    Shown as a preview first, and every row says why it qualified. A ledger
+    nobody can audit is worse than no ledger, because people believe it.
+    """
+
+    def __init__(self, repo: LeaveRepository = None, parent=None):
+        super().__init__(parent)
+        self.repo = repo or LeaveRepository()
+        self.setWindowTitle("Comp off earned")
+        self.resize(680, 520)
+        self._entries = []
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(Gate.SPACE_4, Gate.SPACE_4, Gate.SPACE_4, Gate.SPACE_4)
+        root.setSpacing(Gate.SPACE_3)
+
+        self.note = QLabel("")
+        self.note.setWordWrap(True)
+        self.note.setStyleSheet(f"color: {Gate.TEXT_2}; font-size: 12px;")
+        root.addWidget(self.note)
+
+        picker = QHBoxLayout()
+        picker.setSpacing(Gate.SPACE_2)
+        picker.addWidget(QLabel("Look back"))
+        self.window_pick = QComboBox()
+        for label, days in (("90 days", 90), ("30 days", 30), ("A year", 365)):
+            self.window_pick.addItem(label, days)
+        self.window_pick.currentIndexChanged.connect(self.refresh)
+        picker.addWidget(self.window_pick)
+        picker.addStretch(1)
+        root.addLayout(picker)
+
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels(
+            ["Person", "Day", "Hours", "Earns", "Why"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
+        head = self.table.horizontalHeader()
+        for i in range(4):
+            head.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
+        head.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        root.addWidget(self.table, 1)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        buttons.addWidget(make_button("Close", "ghost", on_click=self.reject))
+        self.btn_credit = make_button("Credit these", "primary", on_click=self.credit)
+        buttons.addWidget(self.btn_credit)
+        root.addLayout(buttons)
+
+        self.refresh()
+
+    def _service(self):
+        from slate.core.domain.comp_off_service import CompOffService
+        return CompOffService(repo=self.repo)
+
+    @on_database_error
+    def refresh(self, *_):
+        from datetime import timedelta
+
+        rules = lp.policy(None)
+        if not rules.get("comp_off_enabled"):
+            self.note.setText(
+                "This studio does not operate comp off, so nothing is earned back "
+                "for working a day off. Turn it on in the studio policy first.")
+            self.btn_credit.setEnabled(False)
+            self.table.setRowCount(0)
+            self._entries = []
+            return
+
+        days = self.window_pick.currentData() or 90
+        since = date.today() - timedelta(days=int(days))
+        self._entries = self._service().review(since)
+
+        if not self._entries:
+            self.note.setText(
+                "Nothing in the last %d days qualifies. Comp off is earned by "
+                "working a weekly off, working a public holiday, or a long "
+                "enough day - and a day already credited is never counted twice."
+                % days)
+        else:
+            total = sum(float(e["days"]) for e in self._entries)
+            self.note.setText(
+                "%d day(s) of work qualify, worth %g day(s) of comp off in total. "
+                "Nothing is credited until you confirm."
+                % (len(self._entries), total))
+        self.btn_credit.setEnabled(bool(self._entries))
+
+        self.table.setRowCount(len(self._entries))
+        for r, entry in enumerate(self._entries):
+            cells = [
+                str(entry.get("user_id") or ""),
+                str(entry.get("day") or ""),
+                "%.1f" % float(entry.get("hours") or 0),
+                "%g" % float(entry.get("days") or 0),
+                str(entry.get("reason") or ""),
+            ]
+            for c, text in enumerate(cells):
+                item = QTableWidgetItem(text)
+                if c in (2, 3):
+                    item.setTextAlignment(
+                        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                if c == 3:
+                    item.setForeground(QColor(Gate.OK))
+                self.table.setItem(r, c, item)
+
+    def credit(self):
+        if not self._entries:
+            return
+        total = sum(float(e["days"]) for e in self._entries)
+        if QMessageBox.question(
+            self, "Credit comp off",
+            "Credit %g day(s) of comp off to %d entry(ies)?\n\nEach one is "
+            "written to the ledger with its reason and an expiry, and a day "
+            "already credited is never credited twice."
+            % (total, len(self._entries)),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
+        ) != QMessageBox.StandardButton.Yes:
+            return
+
+        written = self._service().credit(self._entries)
+        QMessageBox.information(
+            self, "Credited",
+            "%d of %d written to the ledger." % (written, len(self._entries)))
         self.refresh()
 
 

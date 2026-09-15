@@ -74,3 +74,18 @@ crash_log.txt
 # Studio state that predates the database. users.json and roles.json were
 # migrated into ut_users; the files are historical and hold password hashes.
 RuntimeData/
+
+# The development server's own settings and log - this machine's, not the project's
+slate_server_config.json
+pg_server.log
+
+# ------------------------------------------------------------ never source
+# ffprobe is 100 MB and GitHub refuses it; setup.bat fetches it beside ffmpeg.
+slate/bin/ffprobe.exe
+# Built installers, and the pool state the development server writes.
+installers/
+pgbouncer/
+
+# Backups and keys the tests and the dashboard write while running.
+slate/gui/tabs/vfx_dashboard_pro/backups/
+tests/gui/backups/

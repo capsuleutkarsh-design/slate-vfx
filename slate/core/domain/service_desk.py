@@ -67,6 +67,32 @@ MATRIX = {
 }
 
 
+def normalise_status(status: str) -> str:
+    """
+    Match a stored status to the canonical one.
+
+    Never use .title() on these. "Waiting on You" title-cases to "Waiting On
+    You", which matches nothing in STATUSES - so those tickets dropped out of
+    the open list, out of the Open count, and out of their own status filter.
+    They were still in the database, still waiting on somebody, and invisible
+    on the one screen that exists to show them.
+
+    This is the same bug, and the same fix, as normalise_status in
+    leave_policy. A status is a value from a known set, not a sentence to be
+    capitalised.
+    """
+    text = (status or "").strip()
+    for known in STATUSES:
+        if known.lower() == text.lower():
+            return known
+    return text
+
+
+def is_open(status: str) -> bool:
+    """Whether a ticket in this state is still somebody's problem."""
+    return normalise_status(status) in OPEN_STATUSES
+
+
 def priority_for(impact: str, urgency: str) -> str:
     """The priority these two answers produce."""
     row = MATRIX.get(str(impact).strip().title(), MATRIX["Low"])
@@ -106,6 +132,28 @@ def resolution_due(created_at, priority: str):
     return created + timedelta(hours=SLA_RESOLUTION_HOURS.get(priority, 120.0))
 
 
+def waiting_hours(ticket: dict, now: datetime = None) -> float:
+    """
+    How long this ticket has sat waiting on the person who raised it.
+
+    Time IT spend waiting for an answer is not time IT are failing to fix
+    something. The clock used to run straight through it, so a ticket parked for
+    a week on "Waiting on You" breached while the queue was doing exactly what
+    it should.
+    """
+    now = now or datetime.now()
+    banked = 0.0
+    try:
+        banked = float(ticket.get("waiting_seconds") or 0) / 3600.0
+    except (TypeError, ValueError):
+        banked = 0.0
+
+    since = _as_datetime(ticket.get("waiting_since"))
+    if since is not None and normalise_status(ticket.get("status")) == "Waiting on You":
+        banked += max(0.0, (now - since).total_seconds() / 3600.0)
+    return banked
+
+
 def sla_state(ticket: dict, now: datetime = None) -> dict:
     """
     Where this ticket stands against what was promised.
@@ -113,9 +161,12 @@ def sla_state(ticket: dict, now: datetime = None) -> dict:
     Returns a state of 'met', 'at risk', 'breached' or 'closed', and the hours
     remaining - negative once it has gone past. A queue sorted on this shows
     what is about to go wrong rather than merely what is old.
+
+    Time the ticket spent waiting on the person who raised it is added back, so
+    the measure is of the time IT actually had it.
     """
     now = now or datetime.now()
-    status = (ticket.get("status") or "Open").title()
+    status = normalise_status(ticket.get("status")) or "Open"
     priority = (ticket.get("priority") or "P3").upper()
     if priority not in SLA_RESPONSE_HOURS:
         priority = "P3"
@@ -134,7 +185,7 @@ def sla_state(ticket: dict, now: datetime = None) -> dict:
     if due is None:
         return {"state": "met", "hours_left": None, "against": against}
 
-    hours_left = (due - now).total_seconds() / 3600.0
+    hours_left = (due - now).total_seconds() / 3600.0 + waiting_hours(ticket, now)
     if hours_left < 0:
         state = "breached"
     elif hours_left < max(0.25, SLA_RESPONSE_HOURS.get(priority, 1) * 0.5):
@@ -156,7 +207,7 @@ def sla_tone(state: str) -> str:
 
 
 def status_tone(status: str) -> str:
-    s = (status or "").strip().lower()
+    s = normalise_status(status).lower()
     if s in ("resolved", "closed"):
         return "OK"
     if s == "waiting on you":

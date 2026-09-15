@@ -250,3 +250,66 @@ class TestTheOtherStores:
         for table in ("ut_users", "ut_roles"):
             assert pg_db.execute_query(
                 f"SELECT count(*) AS c FROM {table}", fetch="one") is not None
+
+
+class TestLeaveRequestsOnPostgres:
+    """
+    A leave request has to reach the database, not only the log.
+
+    On SQLite this always passed: SQLite takes 1 and 0 for a boolean. On
+    PostgreSQL the half_day column is a real BOOLEAN, the insert was refused,
+    and the repository reported success anyway - so nobody in the studio could
+    file leave, and nothing said so.
+    """
+
+    def test_a_request_is_saved_and_read_back(self, pg_db):
+        from datetime import date, timedelta
+        from slate.core.infra.leave_repository import LeaveRepository
+
+        repo = LeaveRepository(db=pg_db)
+        start = date.today() + timedelta(days=40)
+        assert repo.submit("EMP0090", "Casual", start, start, True, "dentist") is True
+
+        rows = pg_db.execute_query(
+            "SELECT id, half_day, days_charged FROM leave_requests WHERE user_id = %s",
+            ("EMP0090",), fetch="all")
+        assert len(rows) == 1, "the request must be in the table, not just reported"
+        assert rows[0]["half_day"] is True
+
+        again = repo.request(rows[0]["id"])
+        assert again["user_id"] == "EMP0090"
+        assert again["reason"] == "dentist"
+
+    def test_a_refused_insert_is_not_reported_as_saved(self, pg_db, monkeypatch):
+        from datetime import date, timedelta
+        from slate.core.infra.leave_repository import LeaveRepository
+
+        repo = LeaveRepository(db=pg_db)
+        monkeypatch.setattr(pg_db, "execute_update", lambda *a, **k: False)
+        start = date.today() + timedelta(days=50)
+        assert repo.submit("EMP0091", "Casual", start, start, False, "x") is False
+
+    def test_an_older_integer_column_is_converted_so_requests_still_save(self, pg_db):
+        """
+        Databases made by an earlier build have half_day as INTEGER. A fresh
+        one has BOOLEAN. The migration makes them the same, and a request
+        saves on both.
+        """
+        from datetime import date, timedelta
+        from slate.core.infra.leave_repository import LeaveRepository
+        from slate.core.infra.migrations import workplace_schema
+
+        pg_db.execute_update(
+            "ALTER TABLE leave_requests ALTER COLUMN half_day DROP DEFAULT, "
+            "ALTER COLUMN half_day TYPE INTEGER USING (CASE WHEN half_day THEN 1 ELSE 0 END), "
+            "ALTER COLUMN half_day SET DEFAULT 0")
+        assert workplace_schema._column_type(pg_db, "leave_requests", "half_day") == "integer"
+
+        assert workplace_schema.apply_migration(pg_db) is True
+        assert workplace_schema._column_type(pg_db, "leave_requests", "half_day") == "boolean"
+
+        start = date.today() + timedelta(days=60)
+        assert LeaveRepository(db=pg_db).submit("EMP0092", "Casual", start, start, True, "x") is True
+        row = pg_db.execute_query(
+            "SELECT half_day FROM leave_requests WHERE user_id = %s", ("EMP0092",), fetch="one")
+        assert row["half_day"] is True

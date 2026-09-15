@@ -293,7 +293,19 @@ class LoginDialog(QDialog):
             return
 
         logging.warning(f"Login failed for {username}")
-        self.show_error("Invalid credentials. Please try again.")
+        try:
+            fresh = self.user_manager.is_fresh_seed()
+        except Exception:
+            fresh = False
+        if fresh and username.lower() != "admin":
+            # A new studio database. The account being tried does not exist
+            # here yet, and the one that does is the built-in administrator.
+            self.show_error(
+                "This studio's database is new and has no accounts yet.\n"
+                "Sign in as  admin  /  admin123  to create them, then change\n"
+                "that password from the Users tab.")
+        else:
+            self.show_error("Invalid credentials. Please try again.")
         self.pass_input.selectAll()
         self.shake_window()
 

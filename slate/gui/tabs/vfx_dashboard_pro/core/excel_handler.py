@@ -171,8 +171,16 @@ class ExcelHandler:
 
         shot_col = self._get_col_idx("shot_name")
         if shot_col < 0:
-            # Fallback to common AK74/standard column D
-            shot_col = 3
+            # No guessing. This used to fall back to column D, which is right
+            # for the sheet it was written against and wrong for any other - and
+            # when it was wrong every shot matched nothing, so the handler
+            # quietly treated a full sheet as empty and wrote every row again
+            # at the bottom.
+            raise ValueError(
+                "This project has no column mapped to the shot name, so there "
+                "is no way to tell which row belongs to which shot. Map it in "
+                "Edit Project before saving to the sheet."
+            )
 
         for row_idx, row in enumerate(
             self.worksheet.iter_rows(min_row=start_row, values_only=True), start=start_row

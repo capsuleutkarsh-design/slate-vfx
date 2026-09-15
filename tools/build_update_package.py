@@ -84,30 +84,46 @@ def build_single_target(target="vfx", project_root=None):
         zip_filename = "Slate_Client_Update"
     elif target == "server":
         print("\nStep 1: Running Server build...")
-        # Same move as above: the specs live in deployment/ now.
-        server_spec = next(
-            (p for p in (Path("deployment") / "Slate_Server.spec",
-                         Path("Slate_Server.spec")) if p.exists()), None)
-        if server_spec is None:
-            print("ERROR: Slate_Server.spec not found in deployment/ or the project root.")
+        # The specs live in deployment/. Only that one is used: a spec at the
+        # project root is a stray from a hand-run PyInstaller and the pipeline
+        # refuses it for the same reason.
+        server_spec = project_root / "deployment" / "Slate_Server.spec"
+        if not server_spec.exists():
+            print("ERROR: deployment/Slate_Server.spec not found.")
             sys.exit(1)
-        subprocess.run([sys.executable, "-m", "PyInstaller", str(server_spec), "--noconfirm"])
-        
+
+        # Checked, and the file is checked too. This used to ignore the exit
+        # code and then package whatever Slate_Server.exe happened to be in
+        # dist - which is how a studio gets a server older than its clients.
+        server_exe = project_root / "dist" / "Slate_Server.exe"
+        stamp_before = server_exe.stat().st_mtime if server_exe.exists() else 0
+        result = subprocess.run(
+            [sys.executable, "-m", "PyInstaller", str(server_spec), "--noconfirm"])
+        if result.returncode != 0:
+            print(f"ERROR: The server did not build (exit code {result.returncode}).")
+            sys.exit(1)
+        if not server_exe.exists() or server_exe.stat().st_mtime <= stamp_before:
+            print("ERROR: dist/Slate_Server.exe was not rewritten by this build. "
+                  "Refusing to package a stale server.")
+            sys.exit(1)
+
         dist_dir = project_root / "dist" / "Slate_Server_Update"
         if dist_dir.exists():
             shutil.rmtree(dist_dir)
         dist_dir.mkdir(parents=True)
-        
-        server_exe = project_root / "dist" / "Slate_Server.exe"
-        if not server_exe.exists():
-            print("ERROR: Slate_Server.exe not found. Did the build fail?")
-            sys.exit(1)
+
+        # The one-file executable already carries slate_server/bin inside it,
+        # so the folder is not copied beside it a second time.
         shutil.copy2(server_exe, dist_dir / "Slate_Server.exe")
-        
-        bin_dir = project_root / "slate_server" / "bin"
-        if bin_dir.exists():
-            shutil.copytree(bin_dir, dist_dir / "bin")
-            
+
+        # The sidecar that applies the update on the server machine.
+        updater = project_root / "dist" / "Slate" / "SlateUpdater.exe"
+        if updater.exists():
+            shutil.copy2(updater, dist_dir / "SlateUpdater.exe")
+        else:
+            print("  (dist/Slate/SlateUpdater.exe not built yet - run the onedir "
+                  "build first so the server package can carry the updater)")
+
         zip_filename = "Slate_Server_Update"
     else:
         print(f"ERROR: Unknown target '{target}'")
@@ -148,8 +164,20 @@ def build_single_target(target="vfx", project_root=None):
     # called manifest_vfx.json is simply never found.
     app_target = "server" if target == "server" else "client"
 
+    # The real version, read from slate/__init__.py. This used to say "latest",
+    # which the update checker treats as newer than anything - so once the
+    # package was published every workstation was offered it on every start,
+    # installed it, and was offered it again.
+    sys.path.insert(0, str(project_root / "tools"))
+    from bump_version import current_version
+    version = current_version(project_root)
+    if version == "0.0.0":
+        print("ERROR: slate/__init__.py has no __version__; refusing to publish "
+              "a package no client could compare itself against.")
+        sys.exit(1)
+
     external_manifest = build_manifest(
-        version="latest",
+        version=version,
         package_name=f"{zip_filename}.zip",
         hash_sha256=file_hash,
         target=app_target,
@@ -165,6 +193,7 @@ def build_single_target(target="vfx", project_root=None):
     print("=" * 70)
     print(f"Package: {zip_filepath}")
     print(f"Manifest: {external_manifest_path}")
+    print(f"Version: {version}")
     print(f"SHA-256: {file_hash}")
 
     published = publish(zip_filepath, external_manifest_path, project_root)

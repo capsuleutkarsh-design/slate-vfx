@@ -37,15 +37,22 @@ class DatabaseManager:
         self.backend, self.active_mode, self.fallback_used = self._bootstrap_backend(db_path=db_path)
 
         # Trigger Phase 1 Auto-Migrations (Postgres only)
-        if self.active_mode == "postgres" and not self.fallback_used:
-            try:
-                from .migrations.auto_migrate import run_auto_migrations
-                logger.info("Executing Automated Database Migrations...")
-                # Pass our own state: the global manager does not exist yet.
-                run_auto_migrations(active_mode=self.active_mode,
-                                    fallback_used=self.fallback_used)
-            except Exception as e:
-                logger.error(f"Auto-migration check failed: {e}")
+        # Alembic is deliberately not run here any more, and the schema has one
+        # owner instead of two.
+        #
+        # It could never work from an installed build: it shells out to an
+        # alembic program and needs alembic.ini and a versions folder, none of
+        # which are bundled or present on a workstation. And on a machine where
+        # it could run, it failed on the first statement every time - the
+        # revisions add columns that _ensure_db has already created, so it
+        # aborted before stamping a version and could never make progress. No
+        # PostgreSQL database in this studio carries an alembic_version row.
+        #
+        # Everything the application needs is now created by _ensure_db and by
+        # this module, both of which run on both backends and inside an
+        # installed build. Alembic remains for development; it is no longer in
+        # the path of a studio starting up, where it only ever produced a
+        # traceback in the log.
 
         # Runs on both backends and on every start. Widening the shot key is
         # safe on existing data, so there is no gate on it.

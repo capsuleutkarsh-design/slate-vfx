@@ -75,11 +75,25 @@ class SharedJsonWriteCoordinator:
         text = str(target_path).replace("\\", "/").strip().lower()
         if not text:
             return False
-        # UNC shares and known mapped studio drive roots.
+        # UNC shares, and anything under the folder this studio shares. The
+        # second test used to be startswith("x:/") - one studio's drive letter,
+        # so on every other studio a shared file was treated as a local one and
+        # written without taking the lock that stops two machines doing it at
+        # once.
         if text.startswith("//"):
             return True
-        if text.startswith("x:/"):
-            return True
+
+        try:
+            from slate.core.infra.studio_paths import studio_root
+            root = studio_root()
+        except Exception:
+            root = None
+
+        if root is not None:
+            shared = str(root).replace("\\", "/").strip().lower().rstrip("/")
+            if shared and text.startswith(shared + "/"):
+                return True
+
         return False
 
     def _ensure_lock_table(self) -> None:

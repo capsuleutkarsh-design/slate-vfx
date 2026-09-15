@@ -45,10 +45,22 @@
       "required": true
     },
     {
+      "name": "ffprobe",
+      "title": "FFprobe",
+      "why": "Reads media metadata for ingest and the review tabs. Same archive as FFmpeg - the download is reused.",
+      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
+      "kind": "zip",
+      "dest": "runtime/ffmpeg",
+      "extract_glob": "**/bin/ffprobe.exe",
+      "install_to": "slate/bin/ffprobe.exe",
+      "probe": "slate/bin/ffprobe.exe",
+      "required": true
+    },
+    {
       "name": "postgresql",
-      "title": "PostgreSQL 16 (binaries only)",
-      "why": "The studio database. Only needed on the machine that runs Slate Central Server - a workstation that connects to an existing server can skip it.",
-      "url": "https://get.enterprisedb.com/postgresql/postgresql-16.9-1-windows-x64-binaries.zip",
+      "title": "PostgreSQL 14 (binaries only)",
+      "why": "The studio database. Only needed on the machine that runs Slate Central Server - a workstation that connects to an existing server can skip it. Pinned to 14: every existing data directory is PG_VERSION 14, and a 16 server cannot open one - move to 16 with pg_upgrade, not by changing this line.",
+      "url": "https://get.enterprisedb.com/postgresql/postgresql-14.15-1-windows-x64-binaries.zip",
       "kind": "zip",
       "dest": "slate_server/bin",
       "strip_root": "pgsql",

@@ -3,6 +3,7 @@ import sys
 import os
 import time
 import shutil
+import tempfile
 import zipfile
 import traceback
 import subprocess
@@ -13,7 +14,10 @@ def log(msg):
     logging.info(f"[Updater] {msg}")
     # In a real scenario, write to a log file in Temp for debugging
     try:
-        temp_dir = os.environ.get('TEMP', 'C:\\Temp')
+        # C:\Temp was the fallback, and a default Windows install has no
+        # such folder - so on a machine with no TEMP set the updater's log
+        # went nowhere, which is the one moment a log is worth having.
+        temp_dir = os.environ.get('TEMP') or tempfile.gettempdir()
         with open(Path(temp_dir) / "slate_update_log.txt", "a") as f:
             f.write(f"{msg}\n")
     except OSError as exc:
@@ -77,8 +81,50 @@ def kill_process(pid):
         return False
 
 
+# What an update must not touch. This list does three jobs: these are skipped
+# when the backup copy is made, they are left alone by a rollback, and - the
+# dangerous half - anything whose top-level name is NOT here and is not in the
+# new package gets deleted by the cleanup after extraction.
+#
+# So the names from before the product was renamed have to stay. A machine
+# updating off an older build still has .capsule_vfx and ut_server_config.json
+# sitting at the install root, under those names, because the previous update
+# preserved them rather than renaming them. Drop them from this list and the
+# next update deletes the file that says which database to use - and the
+# server, finding no settings, treats it as a first run and builds an empty
+# one. Keeping both spellings costs nothing; guessing wrong costs a studio
+# its server settings.
+PERSISTENT_ITEMS = [
+    "LocalDatabase", "database", "logs", "payload.json", "Backups",
+    # current names
+    ".slate_vfx", "slate_server_config.json", "client_config.json",
+    # names still on disk from earlier builds
+    ".capsule_vfx", ".ut_vfx", "ut_server_config.json",
+]
+
+# Not backed up because they are regenerated, and for the same reason not
+# something a rollback should delete.
+PERSISTENT_PATTERNS = ["Cache", "*.log", "tmp"]
+
+
+def is_persistent(name: str) -> bool:
+    """Whether a top-level entry in the install folder belongs to the studio, not the build."""
+    import fnmatch
+    if name in PERSISTENT_ITEMS:
+        return True
+    return any(fnmatch.fnmatch(name, pattern) for pattern in PERSISTENT_PATTERNS)
+
+
 def restore_backup(backup_dir: Path, install_dir: Path) -> bool:
-    """Restore installation from backup directory."""
+    """
+    Put the previous build back, leaving the studio's own files where they are.
+
+    The backup was made without the persistent items - the database, the logs,
+    the settings files - so this must not clear the install folder and copy the
+    backup over the gap: that deleted exactly the things the exclusion list
+    existed to protect, and a failed update then cost a studio its server
+    settings on the way back. Only the build's own files are replaced.
+    """
     try:
         if not backup_dir.exists():
             log(f"Rollback skipped: backup not found at {backup_dir}")
@@ -86,8 +132,17 @@ def restore_backup(backup_dir: Path, install_dir: Path) -> bool:
 
         log("Restoring backup...")
         if install_dir.exists():
-            shutil.rmtree(install_dir, ignore_errors=True)
-        shutil.copytree(backup_dir, install_dir)
+            for entry in list(install_dir.iterdir()):
+                if is_persistent(entry.name):
+                    continue
+                try:
+                    if entry.is_dir() and not entry.is_symlink():
+                        shutil.rmtree(entry, ignore_errors=True)
+                    else:
+                        entry.unlink()
+                except OSError as exc:
+                    log(f"Could not remove {entry.name} before restoring: {exc}")
+        shutil.copytree(backup_dir, install_dir, dirs_exist_ok=True)
         log("Rollback completed.")
         return True
     except (OSError, shutil.Error) as e:
@@ -124,34 +179,13 @@ def main():
     # 2. Backup Current Version
     backup_dir = install_dir.parent / "Backups" / f"Backup_{int(time.time())}"
     log(f" Creating Backup at {backup_dir}...")
-    
-    # What an update must not touch. This list does two jobs: these are skipped
-    # when the backup copy is made, and - the dangerous half - anything whose
-    # top-level name is NOT here and is not in the new package gets deleted by
-    # the cleanup further down.
-    #
-    # So the names from before the product was renamed have to stay. A machine
-    # updating off an older build still has .capsule_vfx and ut_server_config.json
-    # sitting at the install root, under those names, because the previous update
-    # preserved them rather than renaming them. Drop them from this list and the
-    # next update deletes the file that says which database to use - and the
-    # server, finding no settings, treats it as a first run and builds an empty
-    # one. Keeping both spellings costs nothing; guessing wrong costs a studio
-    # its server settings.
-    PERSISTENT_ITEMS = [
-        "LocalDatabase", "database", "logs", "payload.json", "Backups",
-        # current names
-        ".slate_vfx", "slate_server_config.json",
-        # names still on disk from earlier builds
-        ".capsule_vfx", ".ut_vfx", "ut_server_config.json",
-    ]
-    
+
     try:
         backup_dir.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(
-            install_dir, 
-            backup_dir, 
-            ignore=shutil.ignore_patterns(*PERSISTENT_ITEMS, "Cache", "*.log", "tmp")
+            install_dir,
+            backup_dir,
+            ignore=shutil.ignore_patterns(*PERSISTENT_ITEMS, *PERSISTENT_PATTERNS)
         )
     except (OSError, shutil.Error) as e:
         error_exit(f"Backup failed, aborting update: {e}")
@@ -175,7 +209,7 @@ def main():
             
             for old_file in old_files:
                 top_level = old_file.split("/")[0]
-                if top_level not in PERSISTENT_ITEMS and old_file not in zip_namelist:
+                if not is_persistent(top_level) and old_file not in zip_namelist:
                     file_to_remove = install_dir / old_file
                     if file_to_remove.exists():
                         try:

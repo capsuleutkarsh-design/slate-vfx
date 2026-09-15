@@ -110,9 +110,13 @@ class HomeLoaderWorker(QThread):
     data_loaded = Signal(list, dict)
     telemetry_loaded = Signal(str, str, str, str, str)
     
-    def __init__(self, display_name, app_context, parent=None, mode="vfx"):
+    def __init__(self, username, app_context, parent=None, mode="vfx"):
         super().__init__(parent)
-        self.display_name = display_name
+        # The login, not the name on screen. Attendance rows are keyed by the
+        # username; looking them up by display name meant Home and the
+        # Attendance tab maintained two separate records for one person, and
+        # each screen reported the other's punches as missing.
+        self.username = username
         self.app_context = app_context
         self.mode = mode
         
@@ -142,7 +146,7 @@ class HomeLoaderWorker(QThread):
             # Operations Mode: Fetch Attendance for today & recent HRMS pulse
             self.progress.emit(80, "Verifying User Attendance...")
             try:
-                uid = self.display_name.lower().strip()
+                uid = (self.username or "").lower().strip()
                 sql = "SELECT punch_in, punch_out FROM attendance_log WHERE user_id = %s AND day_date = %s"
                 from datetime import datetime
                 today_str = datetime.now().strftime('%Y-%m-%d')
@@ -215,9 +219,22 @@ class HomeLoaderWorker(QThread):
             from datetime import datetime
             today_str = datetime.now().strftime('%Y-%m-%d')
             active_projects = database_manager.execute_query("SELECT COUNT(*) AS c FROM tracking_projects WHERE active = 1", fetch="one")
-            pending_review = database_manager.execute_query("SELECT COUNT(*) AS c FROM projects", fetch="one")
+            # Shots waiting to be looked at. This used to count every row in
+            # the projects table, so a card labelled "pending review" reported
+            # how many projects the studio had ever had.
+            pending_review = database_manager.execute_query(
+                "SELECT COUNT(*) AS c FROM tracking_shots "
+                "WHERE UPPER(COALESCE(status, '')) IN ('REVIEW', 'SENT FOR REVIEW', 'PENDING REVIEW')",
+                fetch="one")
             artists_online = database_manager.execute_query("SELECT COUNT(DISTINCT user_id) AS c FROM attendance_log WHERE day_date = %s AND punch_out IS NULL", (today_str,), fetch="one")
-            open_tickets = database_manager.execute_query("SELECT COUNT(*) AS c FROM it_tickets WHERE status != 'Resolved'", fetch="one")
+            # Open means open, and the service desk decides what that is. The
+            # test was status != 'Resolved', which counted every Closed ticket
+            # the studio had ever finished.
+            from slate.core.domain.service_desk import OPEN_STATUSES
+            open_tickets = database_manager.execute_query(
+                "SELECT COUNT(*) AS c FROM it_tickets WHERE status IN (%s)"
+                % ", ".join(["%s"] * len(OPEN_STATUSES)),
+                tuple(OPEN_STATUSES), fetch="one")
             upcoming_leaves = database_manager.execute_query("SELECT COUNT(*) AS c FROM leave_requests WHERE status = 'Approved' AND end_date >= %s", (today_str,), fetch="one")
             
             ap_count = active_projects['c'] if isinstance(active_projects, dict) else (active_projects[0] if active_projects else 0)
@@ -251,6 +268,11 @@ class HomeTab(QWidget):
         self.app_context = app_context
         default_name = 'Artist' if self.mode == 'vfx' else 'Operator'
         self.user_display_name = self.user_data.get('display_name', self.user_data.get('username', default_name))
+        # What the attendance record is keyed by, which is not what is greeted
+        # on screen. The Attendance tab uses exactly this, and the two screens
+        # have to agree or the studio ends up with two records per person.
+        self.username = str(self.user_data.get('user_id')
+                            or self.user_data.get('username') or '').strip()
         
         # Only initialize CentralAttendance if in Ops mode
         if self.mode == "ops":
@@ -264,7 +286,7 @@ class HomeTab(QWidget):
         self.init_ui()
         
         # Start real background loading sequence
-        self.loader_worker = HomeLoaderWorker(self.user_display_name, self.app_context, self, mode=self.mode)
+        self.loader_worker = HomeLoaderWorker(self.username, self.app_context, self, mode=self.mode)
         self.loader_worker.progress.connect(self._on_load_progress)
         self.loader_worker.data_loaded.connect(self._on_data_loaded)
         self.loader_worker.telemetry_loaded.connect(self._update_telemetry_ui)
@@ -655,7 +677,6 @@ class HomeTab(QWidget):
                 
         # Update punch status in Ops mode only
         if self.mode == "ops":
-            self._cached_punch = punch_status
             self._refresh_punch_buttons(punch_status)
 
     def _on_title_changed(self, title):
@@ -708,26 +729,70 @@ class HomeTab(QWidget):
             self.btn_punch_in.setEnabled(False)
             self.btn_punch_out.setEnabled(False)
             
+    def _read_todays_punch(self) -> dict:
+        """
+        Today's punch row, read now rather than remembered.
+
+        This used to paint from a copy taken when the tab was built, so the
+        moment somebody punched in the buttons disagreed with the database
+        until the tab was rebuilt - and the obvious next move, pressing Punch
+        In again, was refused by a screen that still said they were out.
+        """
+        from datetime import datetime
+
+        status = {}
+        uid = (self.username or "").lower().strip()
+        if not uid:
+            return status
+        try:
+            row = database_manager.execute_query(
+                "SELECT punch_in, punch_out FROM attendance_log "
+                "WHERE user_id = %s AND day_date = %s",
+                (uid, datetime.now().strftime('%Y-%m-%d')), fetch="one")
+            if row:
+                status['punch_in'] = row['punch_in'] if isinstance(row, dict) else row[0]
+                status['punch_out'] = row['punch_out'] if isinstance(row, dict) else row[1]
+        except DatabaseUnavailableError:
+            # An outage is not an empty day. Letting it past means the caller
+            # can say so, rather than the buttons quietly resetting to "not
+            # punched in" while the database is down.
+            raise
+        except Exception as exc:
+            logging.debug("Could not re-read today's attendance: %s", exc)
+        return status
+
     def _update_punch_ui(self):
         if self.mode != "ops":
             return
-        if hasattr(self, '_cached_punch'):
-            self._refresh_punch_buttons(self._cached_punch)
+        self._refresh_punch_buttons(self._read_todays_punch())
 
     def do_punch(self, action: str):
         if self.mode != "ops" or not self.attendance:
             return
+        host = self.window()
+
         try:
-            self.attendance.log_action(self.user_display_name, action)
-            self._update_punch_ui()
-            
-            host = self.window()
-            if host and hasattr(host, "show_feedback"):
-                host.show_feedback(f"Successfully Punched {action.upper()}", "success", 4000)
+            self.attendance.log_action(self.username, action)
         except Exception as e:
-            host = self.window()
             if host and hasattr(host, "show_feedback"):
                 host.show_feedback(f"Punch failed: {e}", "error", 4000)
+            return
+
+        # The punch is in the database. Failing to read it back is a different
+        # problem, and reporting it as a failed punch would send somebody to
+        # press the button again for a punch that already landed.
+        try:
+            self._update_punch_ui()
+        except Exception as e:
+            logging.debug("Punched, but could not refresh the buttons: %s", e)
+            if host and hasattr(host, "show_feedback"):
+                host.show_feedback(
+                    f"Punched {action.upper()}. The screen could not be "
+                    "refreshed - reopen the tab to confirm.", "warning", 5000)
+            return
+
+        if host and hasattr(host, "show_feedback"):
+            host.show_feedback(f"Successfully Punched {action.upper()}", "success", 4000)
 
 
 class VfxHomeTab(HomeTab):

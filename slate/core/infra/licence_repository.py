@@ -73,7 +73,16 @@ class LicenceRepository:
             return False
 
     def remove(self, licence_id) -> bool:
+        """
+        Delete a licence and the readings taken against it.
+
+        Leaving the readings behind would leave a peak with nothing to compare
+        it to, and it would keep counting towards the name-keyed fallback - so
+        a deleted contract would go on flagging its replacement.
+        """
         try:
+            self.db.execute_update(
+                "DELETE FROM licence_readings WHERE licence_id = %s", (licence_id,))
             self.db.execute_update(
                 "DELETE FROM software_licenses WHERE id = %s", (licence_id,))
             return True
@@ -84,9 +93,15 @@ class LicenceRepository:
             return False
 
     # -------------------------------------------------------------- readings
-    def record(self, software_name, seats_in_use, seats_total, taken_at=None) -> bool:
+    def record(self, software_name, seats_in_use, seats_total, taken_at=None,
+               licence_id=None) -> bool:
         """
         Write down what the licence server said at one moment.
+
+        Tied to the licence, not to the product name. Two contracts for the
+        same product - a studio one and a project one - shared a single peak
+        when readings were matched by name, so both were reported as
+        over-subscribed on the strength of the other's usage.
 
         active_seats on the purchase row is kept as the latest reading, so a
         screen that only knows about the purchase table is not left stale.
@@ -94,13 +109,18 @@ class LicenceRepository:
         try:
             self.db.execute_update(
                 "INSERT INTO licence_readings "
-                "(software_name, taken_at, seats_in_use, seats_total) "
-                "VALUES (%s, %s, %s, %s)",
-                (software_name, taken_at or datetime.now(),
+                "(software_name, licence_id, taken_at, seats_in_use, seats_total) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (software_name, licence_id, taken_at or datetime.now(),
                  int(seats_in_use or 0), int(seats_total or 0)))
-            self.db.execute_update(
-                "UPDATE software_licenses SET active_seats = %s WHERE software_name = %s",
-                (int(seats_in_use or 0), software_name))
+            if licence_id:
+                self.db.execute_update(
+                    "UPDATE software_licenses SET active_seats = %s WHERE id = %s",
+                    (int(seats_in_use or 0), licence_id))
+            else:
+                self.db.execute_update(
+                    "UPDATE software_licenses SET active_seats = %s WHERE software_name = %s",
+                    (int(seats_in_use or 0), software_name))
             return True
         except DatabaseUnavailableError:
             raise
@@ -110,18 +130,23 @@ class LicenceRepository:
 
     def peaks(self, days: int = 90) -> dict:
         """
-        Highest concurrent use per product over a window.
+        Highest concurrent use per licence over a window.
 
         The peak is the number that decides a renewal. An average hides exactly
-        the moment everybody was comping at once, which is the moment the
-        studio is either fine or stuck.
+        the moment everybody was comping at once, which is the moment the studio
+        is either fine or stuck.
+
+        Keyed by licence id where a reading has one, and by name for readings
+        taken before the id existed - so an existing studio's history still
+        counts rather than vanishing the day this shipped.
         """
         since = datetime.now() - timedelta(days=max(1, days))
         try:
             rows = self.db.execute_query(
-                "SELECT software_name, MAX(seats_in_use) AS peak, COUNT(*) AS samples "
+                "SELECT licence_id, software_name, MAX(seats_in_use) AS peak, "
+                "       COUNT(*) AS samples "
                 "FROM licence_readings WHERE taken_at >= %s "
-                "GROUP BY software_name", (since,), fetch="all") or []
+                "GROUP BY licence_id, software_name", (since,), fetch="all") or []
         except DatabaseUnavailableError:
             raise
         except Exception:
@@ -131,10 +156,19 @@ class LicenceRepository:
         out = {}
         for row in rows:
             row = dict(row)
-            name = row.get("software_name")
-            if name:
-                out[name] = {"peak": int(row.get("peak") or 0),
-                             "samples": int(row.get("samples") or 0)}
+            peak = int(row.get("peak") or 0)
+            samples = int(row.get("samples") or 0)
+            for key in (row.get("licence_id"), row.get("software_name")):
+                if key in (None, ""):
+                    continue
+                existing = out.get(key)
+                if existing is None:
+                    out[key] = {"peak": peak, "samples": samples}
+                else:
+                    # Readings for the same licence under both keys: the peak is
+                    # the highest either saw.
+                    existing["peak"] = max(existing["peak"], peak)
+                    existing["samples"] += samples
         return out
 
     def history(self, software_name, days: int = 90) -> list:
@@ -164,7 +198,9 @@ class LicenceRepository:
         for row in self.licences():
             name = row.get("software_name") or ""
             seats = int(row.get("total_seats") or 0)
-            reading = peaks.get(name)
+            # The licence's own readings first; the name only as a fallback for
+            # history recorded before readings carried an id.
+            reading = peaks.get(row.get("id")) or peaks.get(name)
             peak = reading["peak"] if reading else None
             expiry = row.get("expiration_date")
 

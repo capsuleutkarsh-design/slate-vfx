@@ -22,7 +22,8 @@ from PySide6.QtWidgets import (
 from slate.core.infra.gate import Gate
 from slate.core.domain.service_desk import (
     CATEGORIES, OPEN_STATUSES, PRIORITY_LABEL, STATUSES,
-    priority_rank, priority_tone, sla_state, sla_tone, status_tone,
+    is_open, normalise_status, priority_rank, priority_tone, sla_state,
+    sla_tone, status_tone, waiting_hours as sd_waiting_hours,
 )
 from ..core.controls import make_button, page_title
 from ..core.empty_state import EmptyState
@@ -160,7 +161,8 @@ class ServiceDeskView(QWidget):
         try:
             rows = self.db.execute_query(
                 "SELECT id, submitted_by, category, description, status, priority, "
-                "       created_at, assigned_to, first_response_at, impact, urgency "
+                "       created_at, assigned_to, first_response_at, impact, urgency, "
+                "       waiting_since, waiting_seconds "
                 "FROM it_tickets ORDER BY id DESC", fetch="all") or []
             return [dict(r) for r in rows]
         except DatabaseUnavailableError:
@@ -170,13 +172,17 @@ class ServiceDeskView(QWidget):
 
     @on_database_error
     def refresh(self, *_):
-        rows = self._fetch()
+        # One read. This used to call _fetch() twice per refresh - once for the
+        # rows and again for the figures above them - so every keystroke in the
+        # search box was two full table scans.
+        everything = self._fetch()
+        rows = list(everything)
 
         wanted = self.filter_status.currentData()
         if wanted == "open":
-            rows = [r for r in rows if (r.get("status") or "Open").title() in OPEN_STATUSES]
+            rows = [r for r in rows if is_open(r.get("status") or "Open")]
         elif wanted not in ("all", None):
-            rows = [r for r in rows if (r.get("status") or "").title() == wanted]
+            rows = [r for r in rows if normalise_status(r.get("status")) == wanted]
 
         owner = self.filter_mine.currentData()
         if owner == "__none__":
@@ -202,7 +208,7 @@ class ServiceDeskView(QWidget):
         ))
         self._rows = rows
 
-        self._paint_stats(self._fetch())
+        self._paint_stats(everything)
         self._paint_rows(rows)
         self.empty.refresh()
         self._sync_buttons()
@@ -215,7 +221,7 @@ class ServiceDeskView(QWidget):
                 w.setParent(None)
                 w.deleteLater()
 
-        live = [r for r in everything if (r.get("status") or "Open").title() in OPEN_STATUSES]
+        live = [r for r in everything if is_open(r.get("status") or "Open")]
         states = [sla_state(r) for r in live]
         breached = sum(1 for s in states if s["state"] == "breached")
         at_risk = sum(1 for s in states if s["state"] == "at risk")
@@ -237,7 +243,7 @@ class ServiceDeskView(QWidget):
     def _paint_rows(self, rows):
         self.table.setRowCount(len(rows))
         for r, row in enumerate(rows):
-            status = (row.get("status") or "Open").title()
+            status = normalise_status(row.get("status")) or "Open"
             priority = (row.get("priority") or "P3").upper()
             summary = (row.get("description") or "").splitlines()[0] if row.get("description") else ""
             state = row["_sla"]
@@ -294,10 +300,16 @@ class ServiceDeskView(QWidget):
             return False
 
     def take(self):
+        # Picking a ticket up IS responding to it. The response clock used to
+        # stop only when somebody remembered to press "Mark responded", so
+        # almost every ticket in the queue read as having breached its response
+        # promise while IT were already working on it.
+        now = datetime.now()
         for row in self._selected():
             self._write("UPDATE it_tickets SET assigned_to = %s, "
+                        "first_response_at = COALESCE(first_response_at, %s), "
                         "status = CASE WHEN status = 'Open' THEN 'In Progress' ELSE status END "
-                        "WHERE id = %s", (self.username, row.get("id")))
+                        "WHERE id = %s", (self.username, now, row.get("id")))
         self.refresh()
         self.changed.emit()
 
@@ -322,10 +334,28 @@ class ServiceDeskView(QWidget):
             list(STATUSES), 0, False)
         if not ok or not choice:
             return
+        now = datetime.now()
         for row in picked:
             resolved = "CURRENT_TIMESTAMP" if choice in ("Resolved", "Closed") else "resolved_at"
-            self._write("UPDATE it_tickets SET status = %%s, resolved_at = %s WHERE id = %%s"
-                        % resolved, (choice, row.get("id")))
+
+            # Parking a ticket on the person who raised it stops the clock, and
+            # un-parking it banks however long it was parked. Without this the
+            # resolution promise was measured against time IT never had.
+            was_waiting = normalise_status(row.get("status")) == "Waiting on You"
+            if choice == "Waiting on You":
+                self._write(
+                    "UPDATE it_tickets SET status = %%s, waiting_since = %%s, "
+                    "resolved_at = %s WHERE id = %%s" % resolved,
+                    (choice, now, row.get("id")))
+            elif was_waiting:
+                banked = int(sd_waiting_hours(row, now) * 3600)
+                self._write(
+                    "UPDATE it_tickets SET status = %%s, waiting_since = NULL, "
+                    "waiting_seconds = %%s, resolved_at = %s WHERE id = %%s" % resolved,
+                    (choice, banked, row.get("id")))
+            else:
+                self._write("UPDATE it_tickets SET status = %%s, resolved_at = %s WHERE id = %%s"
+                            % resolved, (choice, row.get("id")))
         self.refresh()
         self.changed.emit()
 

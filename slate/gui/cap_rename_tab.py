@@ -15,6 +15,7 @@ from PySide6.QtCore import Qt, QThread, Signal, Slot
 from PySide6.QtGui import QColor, QBrush
 
 from ..core.infra.config_manager import ConfigManager
+from ..utils.security import SecurityValidator
 from ..core.infra.design_tokens import ColorTokens as C, TypographyTokens as T, RadiusTokens as R, SpacingTokens as S
 from .core.icons import icon as draw_icon
 
@@ -31,56 +32,104 @@ class RenameWorker(QThread):
         self.is_running = True
 
     def run(self):
+        """
+        Rename in two passes, writing the undo script as it goes.
+
+        Two passes because a single one is order-dependent: renaming file 2 to
+        what file 3 is currently called either clobbers file 3 or fails,
+        depending which the loop reaches first. Every file goes to a unique
+        temporary name and only then to its final one - so a set of renames that
+        merely shuffles names around works, which is exactly what serialising an
+        existing sequence does.
+
+        The undo script is written line by line rather than at the end, because
+        the run that most needs undoing is the one that did not finish.
+        """
+        import uuid
+
         count = 0
-        errors = 0
         total = len(self.rename_pairs)
-        undo_lines = ["@echo off", "chcp 65001 > nul", 'echo Restoring files...']
-        
+        undo_file = None
+        handle = None
+
         try:
-            # Determine location for undo script (use first file's directory)
             undo_dir = self.rename_pairs[0][0].parent if self.rename_pairs else Path.home()
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             undo_file = undo_dir / f"undo_rename_{timestamp}.bat"
 
+            try:
+                handle = open(undo_file, "w", encoding="utf-8")
+                handle.write("@echo off\n")
+                handle.write("chcp 65001 > nul\n")
+                handle.write("echo Restoring files...\n")
+                handle.flush()
+            except OSError as exc:
+                logging.warning("Could not open the undo script: %s", exc)
+                handle = None
+
+            # Pass one: everything out of the way, under a name nothing can
+            # collide with.
+            staged = []
             for i, (old_path, new_path) in enumerate(self.rename_pairs):
-                if not self.is_running:
+                if not self._is_running:
                     break
-                
                 try:
-                    if old_path != new_path:
-                        if not new_path.parent.exists():
-                            new_path.parent.mkdir(parents=True, exist_ok=True)
-                        
-                        os.rename(old_path, new_path)
-                        
-                        # Add to Undo Script (Use 'move' for safety with full paths)
-                        # escape quotes just in case
-                        src = str(new_path).replace('"', '')
-                        dst = str(old_path).replace('"', '')
-                        undo_lines.append(f'move "{src}" "{dst}" > nul')
-                        
-                        count += 1
-                except Exception as e:
-                    logging.exception(f"Failed to rename {old_path.name}: {e}")
-                    errors += 1
-                
-                progress = int(((i + 1) / total) * 100)
-                self.progress_signal.emit(progress, f"Renaming: {old_path.name} -> {new_path.name}")
-            
-            # Write Undo Script
-            if count > 0:
-                with open(undo_file, "w", encoding="utf-8") as f:
-                    f.write("\n".join(undo_lines))
-                    f.write(f'\necho Restore complete ({count} files).\npause')
-            
-            msg = f"Completed. Renamed {count} files.\nUndo script saved to:\n{undo_file.name}"
-            if errors > 0:
-                msg += f"\n({errors} errors occurred - check logs)"
-            
+                    if not old_path.exists():
+                        continue
+                    if not new_path.parent.exists():
+                        new_path.parent.mkdir(parents=True, exist_ok=True)
+
+                    holding = old_path.parent / f".slate_rename_{uuid.uuid4().hex}.tmp"
+                    os.rename(old_path, holding)
+                    staged.append((holding, old_path, new_path))
+                except OSError as exc:
+                    logging.exception(f"Failed to stage {old_path.name}: {exc}")
+
+                self.progress_signal.emit(
+                    int(((i + 1) / max(1, total)) * 50), f"Preparing {old_path.name}")
+
+            # Pass two: into place, recording each one as it lands.
+            for i, (holding, old_path, new_path) in enumerate(staged):
+                try:
+                    os.rename(holding, new_path)
+                    count += 1
+                    if handle is not None:
+                        src = str(new_path).replace("/", "\\")
+                        dst = str(old_path).replace("/", "\\")
+                        handle.write(f'move "{src}" "{dst}" > nul\n')
+                        handle.flush()
+                except OSError as exc:
+                    logging.exception(f"Failed to rename to {new_path.name}: {exc}")
+                    # Put it back under its own name rather than leaving a
+                    # temporary file nobody would recognise.
+                    try:
+                        os.rename(holding, old_path)
+                    except OSError:
+                        logging.error("Left %s staged as %s", old_path.name, holding.name)
+
+                self.progress_signal.emit(
+                    50 + int(((i + 1) / max(1, len(staged))) * 50),
+                    f"Renaming {new_path.name}")
+
+            if handle is not None:
+                handle.write("echo Done.\n")
+                handle.write("pause\n")
+                handle.flush()
+
+            msg = f"Completed. Renamed {count} files."
+            if undo_file is not None and handle is not None:
+                msg += f"\nUndo script saved to:\n{undo_file.name}"
             self.finished_signal.emit(True, msg, count)
-            
-        except Exception as e:
-            self.finished_signal.emit(False, str(e), count)
+
+        except Exception as exc:
+            logging.exception("Rename run failed: %s", exc)
+            self.finished_signal.emit(False, f"Rename failed: {exc}", count)
+        finally:
+            if handle is not None:
+                try:
+                    handle.close()
+                except OSError:
+                    pass
 
     def stop(self):
         self.is_running = False
@@ -91,11 +140,18 @@ class CapRenameTab(QWidget):
     A PowerRename-style utility with VFX-specific features.
     """
     
+    # Proposed names go through the same validator the rest of the pipeline
+    # uses, so a pattern that produces something Windows will refuse is caught
+    # in the preview rather than part way through the run.
     def __init__(self, config_manager: Optional[ConfigManager] = None):
         super().__init__()
         self.config_manager = config_manager
         self.files: List[Path] = []
-        self.preview_map: List[Tuple[Path, Path]] = [] 
+        self.preview_map: List[Tuple[Path, Path]] = []
+        self.security_validator = SecurityValidator()
+        self._conflicts: List[str] = []
+        self._claimed = set()
+        self._sources = set()
         self.worker = None
         self._is_closing = False
         self._is_cleaned = False
@@ -505,6 +561,13 @@ class CapRenameTab(QWidget):
     def update_preview(self):
         self.table.setRowCount(0)
         self.preview_map = []
+        # What the proposed names claim, and what the loaded files currently
+        # occupy. Renaming onto a name held by another file in this same batch
+        # is fine - the worker stages everything first - but renaming onto an
+        # unrelated file already on disk is not.
+        self._claimed = set()
+        self._conflicts = []
+        self._sources = {str(p.resolve()).lower() for p in self.files}
         self.table.setRowCount(len(self.files))
         
         # Check current mode
@@ -582,21 +645,73 @@ class CapRenameTab(QWidget):
                 new_filename = processed + ext if item_only else processed
                 self._add_row(row, file_path, new_filename)
 
+        self._sync_rename_button()
+
+    def _sync_rename_button(self):
+        """
+        Renaming is offered only when every row can actually be renamed.
+
+        A partial run is the worst outcome here: half a sequence renamed and
+        half not, with nothing in the filenames to say which half.
+        """
+        if not hasattr(self, "rename_btn"):
+            return
+        conflicts = getattr(self, "_conflicts", None) or []
+        self.rename_btn.setEnabled(bool(self.preview_map) and not conflicts)
+        if conflicts:
+            self.rename_btn.setToolTip(
+                "%d row(s) cannot be renamed:\n%s"
+                % (len(conflicts), "\n".join(conflicts[:6])))
+        else:
+            self.rename_btn.setToolTip("")
+
     def _add_row(self, row, file_path, new_name):
-        """Helper to add row to table"""
+        """
+        Show one proposed rename, and refuse the ones that cannot work.
+
+        Nothing used to check for a collision. Two files mapping to one name, or
+        a name already taken on disk, were queued anyway and found out one at a
+        time part way through the run - by which point some files had been
+        renamed and some had not, and the filenames no longer said which.
+        """
         original = file_path.name
+        target = file_path.parent / new_name
         status = "Unchanged"
         color = None
-        
-        if new_name != original and "ERROR" not in new_name:
+        conflict = ""
+
+        if "ERROR" in new_name:
+            conflict = "Check the search pattern"
+        elif new_name != original:
+            # The validator cleans a name rather than refusing it, so what
+            # matters is whether it had to change anything: if it did, the name
+            # the pattern produced is not one the filesystem will take.
+            ok, sanitized, why = self.security_validator.sanitize_filename(new_name)
+            if not ok:
+                conflict = why or "Not a valid filename"
+            elif sanitized != new_name:
+                conflict = "Not a valid filename - would become %s" % sanitized
+            elif str(target).lower() in self._claimed:
+                conflict = "Two files would take this name"
+            elif target.exists() and str(target.resolve()).lower() not in self._sources:
+                conflict = "A file with this name is already there"
+
+        if conflict:
+            status = "CONFLICT"
+            color = QColor(217, 99, 95, 60)
+            self._conflicts.append("%s - %s" % (original, conflict))
+        elif new_name != original:
             status = "Will Rename"
-            color = QColor(0, 180, 216, 40) # Cyan highlight
-            self.preview_map.append((file_path, file_path.parent / new_name))
-        
+            color = QColor(0, 180, 216, 40)  # Cyan highlight
+            self._claimed.add(str(target).lower())
+            self.preview_map.append((file_path, target))
+
         self.table.setItem(row, 0, QTableWidgetItem(original))
         item_new = QTableWidgetItem(new_name)
         if color:
             item_new.setBackground(QBrush(color))
+        if conflict:
+            item_new.setToolTip(conflict)
         self.table.setItem(row, 1, item_new)
         self.table.setItem(row, 2, QTableWidgetItem(status))
 
@@ -607,11 +722,15 @@ class CapRenameTab(QWidget):
         )
         if files:
             self.files = [Path(f) for f in files]
+            # update_preview decides whether renaming is possible at all, so it
+            # owns the button. Switching it on here as well re-enabled it over a
+            # list full of collisions.
             self.update_preview()
-            self.rename_btn.setEnabled(True)
 
     def clear_list(self):
         self.files = []
+        self._conflicts = []
+        self.preview_map = []
         self.table.setRowCount(0)
         self.rename_btn.setEnabled(False)
 
@@ -619,6 +738,14 @@ class CapRenameTab(QWidget):
         """Starts the Worker Thread to perform renaming."""
         if not self.preview_map:
             QMessageBox.information(self, "No Changes", "No files need renaming based on your current rules.")
+            return
+        if getattr(self, "_conflicts", None):
+            QMessageBox.warning(
+                self, "Cannot rename yet",
+                "%d row(s) would collide or are not valid filenames, so nothing "
+                "has been renamed:\n\n%s\n\nChange the pattern, or take those "
+                "files out of the list."
+                % (len(self._conflicts), "\n".join(self._conflicts[:8])))
             return
             
         confirm = QMessageBox.question(

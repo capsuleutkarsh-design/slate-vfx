@@ -168,6 +168,6 @@ It wins over every config file.
 runtime\python\python.exe -m pytest tests/ -q
 ```
 
-994 tests. Some skip where this machine has no PostgreSQL cluster and no
+1,193 tests. Some skip where this machine has no PostgreSQL cluster and no
 credentials configured — that is expected on a fresh workstation and the skip
 messages say so.

@@ -5,9 +5,9 @@ Uses PyInstaller to create standalone .exe with optimizations
 
 import PyInstaller.__main__
 import argparse
+import collections
 import sys
 import os
-import re
 import shutil
 import subprocess
 import time
@@ -23,11 +23,28 @@ def find_spec(name):
     spec steps back to the project root itself before its relative paths
     resolve - see the preamble at the top of any of them.
     """
-    for folder in ("deployment", "."):
-        candidate = os.path.join(folder, name)
-        if os.path.exists(candidate):
-            return candidate
-    return None
+    found = [os.path.join(folder, name)
+             for folder in ("deployment", ".")
+             if os.path.exists(os.path.join(folder, name))]
+
+    if len(found) > 1:
+        # Two specs with the same name, and only one of them is the one this
+        # project maintains. PyInstaller writes a spec into the working
+        # directory whenever it is pointed at a script instead of a spec, so a
+        # single manual "pyinstaller slate_server/main.py" leaves a stripped
+        # copy at the root that knows nothing about the settings the server
+        # needs bundling. Building from it produces an executable that looks
+        # right, is the right size, and has no database password in it.
+        print("ERROR: %s exists in more than one place:" % name)
+        for candidate in found:
+            print("   " + os.path.abspath(candidate))
+        print()
+        print("       The one in deployment/ is this project's. The other is "
+              "almost certainly left over from running PyInstaller against a")
+        print("       script by hand - delete it, then build again.")
+        sys.exit(1)
+
+    return found[0] if found else None
 
 
 def build_quick():
@@ -189,30 +206,13 @@ def build_release():
     
     PyInstaller.__main__.run(args)
 
-def build_server_release():
-    """Build Slate Central Server"""
-    print("Building SERVER version...")
-    
-    args = [
-        'slate_server/main.py',
-        '--name=Slate_Server',
-        '--onefile',
-        '--windowed',
-        
-        # Critical imports
-        '--hidden-import=PySide6.QtCore',
-        '--hidden-import=PySide6.QtWidgets',
-        '--hidden-import=PySide6.QtGui',
-        '--hidden-import=psycopg2',
-        
-        # Add server data
-        '--add-data=slate_server/bin;slate_server/bin',
-    ]
-    
-    if os.path.exists('slate/icons/server_icon.ico'):
-        args.append('--icon=slate/icons/server_icon.ico')
-        
-    PyInstaller.__main__.run(args)
+# There is deliberately no build_server_release() any more. It rebuilt
+# dist/Slate_Server.exe a second time from bare command-line flags - without
+# the settings the spec bundles - straight after build_onedir had built and
+# verified the real one, so the server that shipped was the settings-less one
+# the check below exists to catch. PyInstaller also wrote its generated spec
+# into the project root, which find_spec() then refused on every later build.
+# The spec build inside build_onedir is the only server build.
 
 def build_onedir():
     """Build as directory (faster startup, easier debugging)"""
@@ -237,22 +237,124 @@ def build_onedir():
         
     print(f"Building using spec file: {spec_file}")
     PyInstaller.__main__.run([spec_file, '--noconfirm'])
-    
+
+    # The server is installed on its own, into its own folder, so it is built as
+    # a single self-contained executable rather than as part of the shared
+    # folder above. setup_slate_server.iss takes dist\Slate_Server.exe, and
+    # nothing here used to produce it - so the server installer silently picked
+    # up whatever one-file build happened to be left in dist from an earlier
+    # session. A studio then installed a server weeks older than the client it
+    # was built alongside, and nothing said so.
+    server_spec = find_spec('Slate_Server.spec')
+    if server_spec is None:
+        print("ERROR: Spec file not found: Slate_Server.spec")
+        print("       setup_slate_server.iss needs dist/Slate_Server.exe, and "
+              "without this spec it would install a stale one.")
+        sys.exit(1)
+
+    # Absolute, so nothing here depends on what the first build left the
+    # working directory as.
+    server_spec = os.path.abspath(server_spec)
+    server_exe = os.path.abspath(os.path.join("dist", "Slate_Server.exe"))
+    stamp_before = os.path.getmtime(server_exe) if os.path.exists(server_exe) else 0
+
+    print(f"\nBuilding the standalone server using: {server_spec}")
+
+    # In a separate process rather than a second PyInstaller.__main__.run().
+    # PyInstaller keeps build state in module globals, and a spec changes the
+    # working directory as it loads; two runs in one process share both.
+    #
+    # Streamed and kept. The first version of this reported only "did not
+    # build" and threw away everything PyInstaller had said about why, which
+    # is the same fault it exists to prevent - a build that fails without
+    # saying what it could not do.
+    tail = collections.deque(maxlen=40)
+    try:
+        server_build = subprocess.Popen(
+            [sys.executable, "-m", "PyInstaller", server_spec, "--noconfirm"],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, errors="replace", bufsize=1)
+    except OSError as exc:
+        # No way to re-enter this interpreter. The separate process is a
+        # precaution, not a requirement, so build in-process rather than not
+        # at all - and say that is what happened.
+        print(f"Could not start a second PyInstaller ({exc}).")
+        print("Building the server in this process instead.")
+        PyInstaller.__main__.run([server_spec, "--noconfirm"])
+    else:
+        for line in server_build.stdout:
+            line = line.rstrip()
+            tail.append(line)
+            print(line)
+        server_build.wait()
+
+        if server_build.returncode != 0:
+            print()
+            print("=" * 70)
+            print("ERROR: The standalone server did not build "
+                  f"(exit code {server_build.returncode}).")
+            print("=" * 70)
+            print("The last lines PyInstaller printed:")
+            for line in tail:
+                print("   " + line)
+            print()
+            print("The two usual reasons, in the order worth checking:")
+            print("  1. dist/Slate_Server.exe is in use - close Slate Server, "
+                  "and anything that opened it from dist")
+            print("  2. antivirus is holding the newly written file; "
+                  "exclude the dist and build folders")
+            print()
+            print("Nothing else is stale: setup_slate_server.iss installs "
+                  "dist/Slate_Server.exe, so shipping the old one would put a "
+                  "server older than its clients on a studio machine.")
+            sys.exit(1)
+
+    # A clean exit code is not the same as a new executable. Check the thing
+    # the installer will actually pick up.
+    if not os.path.exists(server_exe):
+        print("ERROR: PyInstaller reported success but dist/Slate_Server.exe "
+              "is not there.")
+        sys.exit(1)
+    if os.path.getmtime(server_exe) <= stamp_before:
+        print("ERROR: dist/Slate_Server.exe was not rewritten, so it is the "
+              "one from a previous build. Refusing to package a stale server.")
+        sys.exit(1)
+
+    size_mb = os.path.getsize(server_exe) / (1024 * 1024)
+    print(f"\nStandalone server built: {server_exe} ({size_mb:.0f} MB)")
+
+    _check_server_carries_its_settings(server_exe)
+    _copy_unmanaged_data()
+
+
+def _copy_unmanaged_data():
+    """
+    Put the folders PyInstaller does not manage next to the executables.
+
+    This used to sit inside _check_server_carries_its_settings, after its early
+    returns - so a bundle that could not be opened skipped the copy as well,
+    and the build shipped without Olive or the database scripts and said
+    nothing. It is its own step now, and it always runs.
+
+    slate/bin is not copied: the spec already places ffmpeg and ffprobe in
+    _internal/slate/bin, which is where ResourcePathManager looks first, so the
+    copy was a second 190 MB of the same two files in every installer.
+    slate_server/bin is not copied either: the server ships as a one-file
+    executable built from Slate_Server.spec, and both client installers exclude
+    the folder - it was 340 MB copied on every build and read by nothing.
+    """
     print("\nCopying unmanaged data directories into dist/Slate...")
     dist_folder = os.path.join('dist', 'Slate')
-    
+
     def force_rmtree(path):
         """
         Remove a tree that Windows is being difficult about.
 
-        slate_server/bin holds a whole PostgreSQL distribution - thousands of
-        small files, some marked read-only - and a plain rmtree over it fails
-        with "The directory is not empty" often enough to break a build that was
-        otherwise finished. The directory is not really non-empty: a file was
-        still being released as the walk passed it.
-
-        So clear the read-only bit on whatever refused, and give the filesystem a
-        moment before each retry.
+        A plain rmtree over a large tree fails with "The directory is not
+        empty" often enough to break a build that was otherwise finished. The
+        directory is not really non-empty: a file was still being released as
+        the walk passed it. So clear the read-only bit on whatever refused,
+        and give the filesystem a moment before each retry.
         """
         def _clear_readonly(func, failed_path, _exc):
             try:
@@ -273,7 +375,7 @@ def build_onedir():
         if os.path.exists(path):
             raise OSError(
                 f"Could not clear {path}. Something is holding a file open in "
-                f"it - a running Slate Server, an antivirus scan, or an open "
+                f"it - a running Slate, an antivirus scan, or an open "
                 f"Explorer window - close it and build again.")
 
     def copy_if_exists(src, dst):
@@ -283,11 +385,71 @@ def build_onedir():
             if os.path.exists(dst_path):
                 force_rmtree(dst_path)
             shutil.copytree(src, dst_path)
-            
-    copy_if_exists('slate/bin', 'slate/bin')
-    copy_if_exists('slate_server/bin', 'slate_server/bin')
+        else:
+            print(f'  ({src} not present - skipped)')
+
     copy_if_exists('external/olive-editor', 'external/olive-editor')
     copy_if_exists('database', 'database')
+
+
+def _check_server_carries_its_settings(server_exe):
+    """
+    Open the finished executable and confirm the settings are inside it.
+
+    Checking the spec is not enough, because the spec that gets used is not
+    always the spec that is meant. A server built without its settings has no
+    database password: it creates none of the accounts, reports that on its own
+    dashboard, and every workstation is turned away at the login screen. The
+    executable is the right size and starts perfectly, so nothing about it looks
+    wrong until a studio tries to log in.
+    """
+    import json
+
+    try:
+        from PyInstaller.archive.readers import CArchiveReader
+    except ImportError as exc:
+        print(f"   (could not verify the bundle: {exc})")
+        return
+
+    try:
+        archive = CArchiveReader(server_exe)
+        entries = list(archive.toc)
+    except Exception as exc:
+        print(f"   (could not read the bundle: {exc})")
+        return
+
+    settings = [name for name in entries if "default_config" in name]
+    if not settings:
+        print()
+        print("=" * 70)
+        print("ERROR: The server was built without its settings.")
+        print("=" * 70)
+        print("dist/Slate_Server.exe contains no default_config.json, so it "
+              "will start with no database password.")
+        print("It will then create none of the accounts, and every workstation "
+              "will be turned away at the login screen.")
+        print()
+        print("The spec that built this is not the one in deployment/. Check "
+              "for a stray Slate_Server.spec at the project root.")
+        sys.exit(1)
+
+    try:
+        raw = archive.extract(settings[0])
+        if isinstance(raw, tuple):
+            raw = raw[1]
+        config = json.loads(raw.decode("utf-8"))
+    except Exception as exc:
+        print(f"   (settings are bundled but could not be read: {exc})")
+        return
+
+    if not config.get("db_password"):
+        print("ERROR: The bundled settings carry no db_password, so the server "
+              "cannot create its accounts.")
+        sys.exit(1)
+
+    print("   settings bundled: %s (database %s, account %s)"
+          % (settings[0], config.get("db_name"), config.get("db_user")))
+
 
 def build_installer(version=None, target="all"):
     """Build Windows installer using Inno Setup"""
@@ -380,44 +542,17 @@ def build_installer(version=None, target="all"):
         print("  python tools/build_pipeline.py --mode onedir")
         sys.exit(1)
     
-    # Update version in .iss files
-    print("Updating version in Inno Setup scripts...")
-    for script in iss_scripts:
-        with open(script, 'r', encoding='utf-8') as f:
-            iss_content = f.read()
-        
-        updated_content = re.sub(
-            r'#define MyAppVersion ".*?"',
-            f'#define MyAppVersion "{version}"',
-            iss_content
-        )
-        
-        with open(script, 'w', encoding='utf-8') as f:
-            f.write(updated_content)
-        print(f"  [OK] Updated {script.name}")
-    
-    # Update version in Python __init__.py
-    print("Updating version in Python package...")
-    init_file = project_root / "slate" / "__init__.py"
-    if init_file.exists():
-        with open(init_file, 'r', encoding='utf-8') as f:
-            init_content = f.read()
-        
-        # Replace __version__ line
-        updated_init = re.sub(
-            r'__version__\s*=\s*["\'].*?["\']',
-            f'__version__ = "{version}"',
-            init_content
-        )
-        
-        with open(init_file, 'w', encoding='utf-8') as f:
-            f.write(updated_init)
-        print(f"  [OK] Updated {init_file}")
-    else:
-        print(f"  [!] Warning: {init_file} not found, skipping")
-    
-    print(f"  [OK] Updated __init__.py")
-    
+    # One writer for the version, over every file that carries it: the three
+    # installer scripts, slate/__init__.py and pyproject.toml. This used to
+    # rewrite the first two here and leave pyproject.toml behind, while
+    # bump_version.py pointed at an installer script that no longer existed -
+    # so the three copies of the version number drifted apart.
+    print("Setting the version everywhere it is recorded...")
+    sys.path.insert(0, str(project_root / "tools"))
+    from bump_version import set_version
+    for path in set_version(version, root=project_root):
+        print(f"  [OK] {path.relative_to(project_root)}")
+
     print(f"Using Inno Setup: {iscc_exe}")
     print(f"DistDir: {dist_dir}")
     print(f"OutputDir: {installer_dir}")
@@ -435,9 +570,11 @@ def build_installer(version=None, target="all"):
     
     for script in iss_scripts:
         print(f"\nBuilding: {script.name}")
+        # The version is not passed as /DMyAppVersion: each script #defines it
+        # unconditionally, so the define on the command line was overridden
+        # anyway. set_version() above wrote it into the scripts.
         iscc_args = [
             iscc_exe,
-            f'/DMyAppVersion={version}',
             f'/DInstallerOutputDir={installer_dir}',
         ]
         if "server" in script.name.lower() and setup_icon_server:
@@ -490,14 +627,12 @@ def build_full(version=None, target="all"):
     print(f"\nBuilding installer for version: {version}")
     print()
     
-    # Step 1: Build with PyInstaller (onedir mode required for Inno Setup)
+    # Step 1: Build with PyInstaller (onedir mode required for Inno Setup).
+    # This also builds and verifies dist/Slate_Server.exe from its spec, for
+    # every target, so there is no separate server step.
     print("Step 1: Building with PyInstaller...")
     build_onedir()
-    
-    if target in ("all", "server"):
-        print("\nStep 1b: Building standalone server executable...")
-        build_server_release()
-    
+
     print()
     print("=" * 70)
     print()

@@ -10,7 +10,6 @@ from PySide6.QtGui import QDesktopServices
 
 # Internal Module Imports
 from ...core.domain.asset_api import create_asset_api
-from ...core.infra.global_config import GlobalConfig
 from ...core.infra.design_tokens import ColorTokens as C
 from ...utils.media_capabilities import is_image, is_video
 from ..stock_model import StockModel
@@ -298,24 +297,23 @@ class StockBrowserTab(
 
     def _resolve_ingest_permission(self, user_roles=None, user_role=None):
         """
-        Determine ingest permission using login roles first, with machine fallback for legacy callers.
+        Whether this person may ingest into, and delete from, the library.
+
+        Answered by access.json like every other permission. This used to be
+        a literal role set here plus a fallback that made anybody on a machine
+        named CAPINT a developer - neither of which a studio could see or
+        change without editing code.
         """
-        normalized_roles = set()
+        from slate.core.domain.access import can
+
+        roles = []
         if isinstance(user_roles, list):
-            normalized_roles.update(str(r).strip().lower() for r in user_roles if r is not None)
+            roles.extend(r for r in user_roles if r is not None)
         elif isinstance(user_roles, str):
-            normalized_roles.add(user_roles.strip().lower())
-
+            roles.append(user_roles)
         if user_role:
-            normalized_roles.add(str(user_role).strip().lower())
-
-        if normalized_roles:
-            # Phase 2: Restrict Ingest/Delete to Admins, Leads, Supervisors, and Developers.
-            # Explicitly deny if the user only has the "Artist" or "Tester" role.
-            allowed_roles = {"admin", "lead", "supervisor", "developer", "dev"}
-            return any(r in allowed_roles for r in normalized_roles)
-
-        return GlobalConfig.is_developer()
+            roles.append(user_role)
+        return can(roles, "ingest_stock")
 
     def start_ingest(self, fast_mode):
         if not self.can_ingest:

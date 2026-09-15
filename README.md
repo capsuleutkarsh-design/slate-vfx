@@ -133,7 +133,7 @@ slate/
     core/          the design system - icons, controls, empty states
     tabs/          one file per screen
 slate_server/         Central Server - PostgreSQL, PgBouncer, sync
-tests/             994 of them
+tests/             1,193 of them
 tools/             seeding and maintenance
 docs/              this site, and the studio guide
 setup/             what setup.bat downloads, and from where

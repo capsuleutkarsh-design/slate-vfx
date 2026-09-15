@@ -1,6 +1,7 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                                QTableWidget, QTableWidgetItem, QHeaderView, QFrame, QAbstractItemView, QGridLayout, QDialog, QPushButton)
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor
 import psycopg2
 from ..design_system import C, T
 
@@ -154,6 +155,9 @@ class DataViewerDialog(QDialog):
 
 
 class AnalyticsView(QWidget):
+    # Emitted when somebody asks for the selected session to be disconnected.
+    disconnect_requested = Signal()
+
     """
     Analytics Dashboard to view database stats and live connections.
     """
@@ -195,14 +199,48 @@ class AnalyticsView(QWidget):
         
         # --- TABLE HEADER ---
         lbl_table_title = QLabel("Live Connected Clients")
+        lbl_table_title.setToolTip(
+            "A session idle in transaction holds its locks until it comes back "
+            "or is disconnected, and it looks identical to a healthy idle one "
+            "without the duration beside it.")
         lbl_table_title.setStyleSheet(f"font-size: 18px; font-weight: {T.WEIGHT_SEMI}; color: {C.TEXT_PRIMARY}; margin-top: 20px;")
-        main_layout.addWidget(lbl_table_title)
+
+        table_header = QHBoxLayout()
+        table_header.addWidget(lbl_table_title)
+        table_header.addStretch()
+
+        # The list was read-only, so when one workstation wedged the database the
+        # only lever was to stop the whole server and put everybody else off it.
+        self.btn_disconnect = QPushButton("Disconnect selected")
+        self.btn_disconnect.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_disconnect.setFixedHeight(32)
+        self.btn_disconnect.setToolTip(
+            "Asks the session to stop its query first. Only one that ignores "
+            "that is cut off.")
+        self.btn_disconnect.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {C.BG_SURFACE_HOVER};
+                color: {C.TEXT_PRIMARY};
+                border: 1px solid {C.BORDER_DEFAULT};
+                border-radius: 6px;
+                padding: 0 14px;
+                font-size: 13px;
+                font-weight: {T.WEIGHT_SEMI};
+            }}
+            QPushButton:hover {{ border-color: #D9635F; color: #D9635F; }}
+        """)
+        self.btn_disconnect.clicked.connect(self.disconnect_requested.emit)
+        table_header.addWidget(self.btn_disconnect, 0, Qt.AlignmentFlag.AlignBottom)
+
+        main_layout.addLayout(table_header)
         
         # --- CONNECTIONS TABLE ---
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["Client IP", "Application", "State", "Query"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.verticalHeader().setVisible(False)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setAlternatingRowColors(True)
@@ -234,6 +272,52 @@ class AnalyticsView(QWidget):
         
         main_layout.addWidget(self.table)
         
+    def set_sessions(self, rows):
+        """
+        Every connected session with how long it has been in that state.
+
+        The duration is the column that matters when the database has gone slow.
+        Without it a session that opened a transaction an hour ago and wandered
+        off is indistinguishable from one that is simply waiting for work.
+        """
+        from slate_server.core.server_facts import session_warning
+
+        self._sessions = list(rows or [])
+        table = self.table
+        table.setRowCount(len(self._sessions))
+        table.setColumnCount(6)
+        table.setHorizontalHeaderLabels(
+            ["PID", "Client", "Application", "State", "For", "Note"])
+
+        for r, row in enumerate(self._sessions):
+            warning = session_warning(row)
+            seconds = row["transaction_seconds"] or row["idle_seconds"]
+            if seconds >= 3600:
+                lasted = "%.1f h" % (seconds / 3600.0)
+            elif seconds >= 60:
+                lasted = "%d min" % int(seconds / 60)
+            else:
+                lasted = "%d s" % int(seconds)
+
+            cells = [str(row["pid"]), row["client"], row["application"] or "-",
+                     row["state"] or "-", lasted, warning or ""]
+            for c, text in enumerate(cells):
+                item = QTableWidgetItem(text)
+                if warning:
+                    item.setForeground(QColor("#D9A441"))
+                if row.get("query"):
+                    item.setToolTip(row["query"])
+                table.setItem(r, c, item)
+
+    def selected_pid(self):
+        rows = {i.row() for i in self.table.selectedIndexes()}
+        if not rows:
+            return None
+        index = sorted(rows)[0]
+        if index >= len(getattr(self, "_sessions", [])):
+            return None
+        return self._sessions[index]
+
     def update_table(self, connections_data):
         """Update the data grid with fresh connections"""
         self.table.setRowCount(len(connections_data))

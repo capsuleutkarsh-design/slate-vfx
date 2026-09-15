@@ -20,7 +20,7 @@ except ImportError:                                  # pragma: no cover
 class AddDeploymentDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("New Software Deployment")
+        self.setWindowTitle("Record a deployment")
         self.setMinimumWidth(440)
         self.setStyleSheet("""
             QDialog {
@@ -60,7 +60,7 @@ class AddDeploymentDialog(QDialog):
         cancel_btn.setObjectName("secondaryButton")
         cancel_btn.clicked.connect(self.reject)
         
-        save_btn = QPushButton("Deploy")
+        save_btn = QPushButton("Record")
         save_btn.setObjectName("primaryButton")
         save_btn.clicked.connect(self.accept)
         
@@ -70,6 +70,20 @@ class AddDeploymentDialog(QDialog):
 
 
 class ItDeploymentTab(QWidget):
+    """
+    A record of software installed on workstations.
+
+    It does not install anything. It never did - the tab was called Deployment
+    and its button said "Deploy New Package", which reads as a promise that
+    something is pushed to the machine named in the row. Nothing is: this is a
+    log somebody fills in, and calling it one is the difference between a
+    useful record and a feature that appears broken.
+
+    If it is ever made real, the channel already exists: ServerHub.post_command
+    is how the admin panel tells workstations to clear their caches, and a
+    deployment is the same shape of instruction.
+    """
+
     def __init__(self, user_data=None, parent=None):
         super().__init__(parent)
         self.user_data = user_data or {}
@@ -105,7 +119,9 @@ class ItDeploymentTab(QWidget):
         return card, v_label
 
     def build_ui(self, main_layout):
-        header_title = page_title('Deployment', 'Packages pushed to workstations')
+        header_title = page_title(
+            'Deployment log',
+            'A record of what was installed where. Slate does not push it.')
         main_layout.addWidget(header_title)
         
         # Summary Cards
@@ -149,7 +165,7 @@ class ItDeploymentTab(QWidget):
         self.filter_cb.currentTextChanged.connect(self.load_data)
         controls.addWidget(self.filter_cb)
         
-        add_btn = QPushButton("+ Deploy New Package")
+        add_btn = QPushButton("+ Record deployment")
         add_btn.setObjectName("primaryButton")
         add_btn.clicked.connect(self.add_deployment)
         controls.addWidget(add_btn)
@@ -215,14 +231,19 @@ class ItDeploymentTab(QWidget):
         
         total = len(all_deps)
         successes = sum(1 for d in all_deps if d.get('status') == 'Success')
+        failures = sum(1 for d in all_deps if d.get('status') == 'Failed')
         pending = sum(1 for d in all_deps if d.get('status') == 'Pending')
-        
+
         self.lbl_total.setText(str(total))
         self.lbl_pending.setText(str(pending))
-        if total > 0:
-            self.lbl_success.setText(f"{int((successes/total)*100)}%")
+        # Out of the ones that finished. Dividing by every row counted anything
+        # still pending as a failure, so the rate fell every time somebody
+        # recorded a job they had not done yet.
+        finished = successes + failures
+        if finished > 0:
+            self.lbl_success.setText(f"{int((successes / finished) * 100)}%")
         else:
-            self.lbl_success.setText("0%")
+            self.lbl_success.setText("-")
 
         for r, row in enumerate(deps):
             self.grid.setItem(r, 0, QTableWidgetItem(str(row.get('id', ''))))

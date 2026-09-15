@@ -2,12 +2,17 @@ from PIL import Image
 import os
 import sys
 
-def convert_images():
-    base_dir = r'C:\Users\utkarsh.tripathi.SQUADVFX-26\.gemini\antigravity-ide\brain\d4409365-132d-49b4-a8c6-071c9d9ffd50'
+def convert_images(base_dir=None, out_dir=None):
+    # Both of these were absolute paths on one developer's machine - a
+    # folder under their user profile and their own checkout - so this
+    # script could only ever run for one person.
+    base_dir = base_dir or (sys.argv[1] if len(sys.argv) > 1 else os.getcwd())
     icon_path = os.path.join(base_dir, 'ut_vfx_app_icon_1779884867415.png')
     banner_path = os.path.join(base_dir, 'slate_installer_banner_1779884890173.png')
 
-    out_dir = r'D:\Soft\Slate\V0040\slate\icons'
+    out_dir = out_dir or os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        'slate', 'icons')
     os.makedirs(out_dir, exist_ok=True)
 
     print("Checking icon path:", icon_path, os.path.exists(icon_path))

@@ -33,8 +33,18 @@ def calculate_streak(
     cutoff_hour: int,
     cutoff_minute: int,
     now_ref: datetime | None = None,
+    non_working=None,
 ) -> int:
-    """Calculate consecutive non-late attendance streak in current month."""
+    """
+    Consecutive days arriving on time, counting back from yesterday.
+
+    non_working says which days nobody was expected in, so a streak survives
+    them. Left out, only Sunday is skipped - which is what this did on its own,
+    and it meant a public holiday broke everybody's streak.
+    """
+    if non_working is None:
+        def non_working(day):
+            return day.weekday() == 6
     streak = 0
     now = now_ref or datetime.now()
     today = now.day
@@ -55,12 +65,12 @@ def calculate_streak(
                     break
             else:
                 dt = datetime(year, month, day)
-                if dt.weekday() == 6:
+                if non_working(dt.date()):
                     continue
                 break
         else:
             dt = datetime(year, month, day)
-            if dt.weekday() == 6:
+            if non_working(dt.date()):
                 continue
             break
     return streak

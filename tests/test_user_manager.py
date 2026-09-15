@@ -255,3 +255,17 @@ class TestUserManager:
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
+
+
+def test_a_freshly_seeded_database_is_recognised(mock_db):
+    """
+    The login screen says "sign in as admin" only while nobody has made an
+    account. The moment a real one exists, the hint goes away.
+    """
+    from slate.core.domain.user_manager import UserManager
+
+    manager = UserManager(db=mock_db)
+    assert manager.is_fresh_seed() is True
+
+    assert manager.add_user("EMP0012", "secret", ["Artist"], "First Artist", "Roto")
+    assert manager.is_fresh_seed() is False

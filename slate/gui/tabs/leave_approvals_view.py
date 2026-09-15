@@ -97,6 +97,9 @@ class LeaveApprovalsView(QWidget):
             controls.addWidget(make_button(
                 "Year end", "ghost", on_click=self.close_year,
                 tooltip="Carry over what the cap allows and lapse the rest"))
+            controls.addWidget(make_button(
+                "Comp off", "ghost", on_click=self.review_comp_off,
+                tooltip="What the attendance record says people have earned back"))
         root.addLayout(controls)
 
         self.table = QTableWidget(0, 8)
@@ -129,6 +132,23 @@ class LeaveApprovalsView(QWidget):
         everything = self.repo.all_requests()
         for row in everything:
             row["_status"] = lp.normalise_status(row.get("status"))
+
+        # A supervisor decides for their own team. Every supervisor in the
+        # studio used to see - and could approve - every request in it.
+        if self.stage == "Supervisor":
+            reports = self.repo.reports_to(self.username)
+            if reports:
+                everything = [r for r in everything
+                              if str(r.get("user_id") or "").strip().lower() in reports]
+            else:
+                # Nobody is recorded as reporting to this person. Showing the
+                # whole studio would be the old bug; showing nothing without
+                # saying why reads as broken, so the empty state explains it.
+                everything = []
+                self.empty.set_message(
+                    "Nobody reports to you yet",
+                    "Leave requests appear here once somebody's record names you "
+                    "as their manager. HR set that on the Users & Roles tab.")
 
         wanted = self.filter_state.currentData()
         rows = list(everything)
@@ -267,6 +287,19 @@ class LeaveApprovalsView(QWidget):
         HolidayCalendarDialog(self.repo, self).exec()
         # Day counts are charged against this list, so anything on screen that
         # was computed from it is now stale.
+        self.refresh()
+        self.changed.emit()
+
+    def review_comp_off(self):
+        """
+        What the attendance record says people have earned back.
+
+        The service that works this out has existed all along and nothing ever
+        called it, so comp-off was never credited to anybody. It is shown as a
+        preview first: a ledger nobody can audit is worse than no ledger.
+        """
+        from .leave_admin import CompOffReviewDialog
+        CompOffReviewDialog(self.repo, self).exec()
         self.refresh()
         self.changed.emit()
 

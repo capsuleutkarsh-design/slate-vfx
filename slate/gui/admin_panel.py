@@ -322,9 +322,14 @@ class AdminPanelTab(QWidget):
         self.log_action(f"Broadcast Alert: {msg}")
 
     def wipe_remote_caches(self):
-        if QMessageBox.question(self, "Confirm", "Wipe thumbnails/cache on ALL connected PCs?") == QMessageBox.StandardButton.Yes:
-            self.hub.post_command("wipe_cache", "all")
-            self.log_action("Triggered Remote Cache Wipe")
+        # Fleet-wide and irreversible, so it takes the same re-authentication
+        # restart and shutdown do. It used to ask only yes/no.
+        if QMessageBox.question(self, "Confirm", "Wipe thumbnails/cache on ALL connected PCs?") != QMessageBox.StandardButton.Yes:
+            return
+        if not self.verify_admin_action():
+            return
+        self.hub.post_command("wipe_cache", "all")
+        self.log_action("Triggered Remote Cache Wipe")
 
     def export_fleet_report(self):
         run_fleet_report_export(self, self.hub, self.log_action)

@@ -147,7 +147,7 @@ class ReadingDialog(QDialog):
     def payload(self):
         row = self.software.currentData() or {}
         return (str(row.get("software_name") or ""), self.in_use.value(),
-                int(row.get("total_seats") or 0))
+                int(row.get("total_seats") or 0), row.get("id"))
 
 
 class LicenceView(QWidget):
@@ -188,6 +188,8 @@ class LicenceView(QWidget):
         controls.addWidget(make_button("Add licence", "secondary", on_click=self.add_licence))
         self.btn_edit = make_button("Edit", "ghost", on_click=self.edit_licence)
         controls.addWidget(self.btn_edit)
+        self.btn_remove = make_button("Remove", "danger", on_click=self.remove_licence)
+        controls.addWidget(self.btn_remove)
         root.addLayout(controls)
 
         self.table = QTableWidget(0, 7)
@@ -297,7 +299,9 @@ class LicenceView(QWidget):
         return self._rows[rows[0]] if rows and rows[0] < len(self._rows) else None
 
     def _sync_buttons(self, *_):
-        self.btn_edit.setEnabled(self._selected() is not None)
+        picked = self._selected() is not None
+        self.btn_edit.setEnabled(picked)
+        self.btn_remove.setEnabled(picked)
 
     # --------------------------------------------------------------- actions
     def add_licence(self):
@@ -323,6 +327,35 @@ class LicenceView(QWidget):
         self.refresh()
         self.changed.emit()
 
+    def remove_licence(self):
+        """
+        Delete a licence the studio no longer holds.
+
+        The repository has been able to do this all along and no screen ever
+        called it, so a cancelled contract stayed on the compliance list for
+        ever - reported as expired, month after month, with nothing anybody
+        could do about it from here.
+        """
+        row = self._selected()
+        if not row:
+            return
+        name = row.get("software_name") or "this licence"
+        if QMessageBox.question(
+            self, "Remove %s" % name,
+            "Remove %s and the %d usage reading(s) taken against it?\n\n"
+            "The readings go too - keeping them would leave a peak with nothing "
+            "to compare it against. This cannot be undone."
+            % (name, int(row.get("samples") or 0)),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
+        ) != QMessageBox.StandardButton.Yes:
+            return
+
+        if not self.repo.remove(row.get("id")):
+            QMessageBox.warning(self, "Not removed",
+                                "The licence could not be removed.")
+        self.refresh()
+        self.changed.emit()
+
     def record_reading(self):
         licences = self.repo.licences()
         if not licences:
@@ -333,8 +366,8 @@ class LicenceView(QWidget):
         dialog = ReadingDialog(licences, self._selected(), parent=self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        name, in_use, total = dialog.payload()
-        if self.repo.record(name, in_use, total):
+        name, in_use, total, licence_id = dialog.payload()
+        if self.repo.record(name, in_use, total, licence_id=licence_id):
             if total and in_use > total:
                 QMessageBox.warning(
                     self, "More in use than we own",

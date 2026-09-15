@@ -50,11 +50,15 @@ class PathTemplateManager:
         Initialize path template manager.
 
         Args:
-            root_path: Optional root path for all templates (default: X:/Projects)
+            root_path: where this studio keeps its projects. Taken from the
+                studio settings when not given, and empty when the studio has
+                not said - the default used to be X:/Projects, which is one
+                studio's drive letter and nobody else's.
         """
-        import os
+        from slate.core.infra.studio_paths import projects_root
 
-        self.root_path = root_path or os.environ.get("Slate_PROJECTS_ROOT", "X:/Projects")
+        resolved = root_path or projects_root()
+        self.root_path = str(resolved) if resolved else ''
         self.templates = {}
         self._init_templates()
 

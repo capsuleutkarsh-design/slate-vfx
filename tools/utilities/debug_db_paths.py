@@ -1,7 +1,18 @@
 import sqlite3
 import os
 
-db_path = r"X:\Extra\Slate_Central\Database\slate.db"
+# Was one studio's drive letter. Given as an argument, or taken from where
+# this machine's settings say the studio folder is.
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+if len(sys.argv) > 1:
+    db_path = sys.argv[1]
+else:
+    from slate.core.infra.global_config import GlobalConfig
+    db_path = str(Path(GlobalConfig.server_root()) / "Database" / "slate.db")
 
 if not os.path.exists(db_path):
     print(f"DB not found at {db_path}")

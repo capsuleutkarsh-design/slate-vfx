@@ -33,7 +33,12 @@ class ProcessRunner(QThread):
                 text=True,
                 shell=True, # Allow batch files/shell commands
                 startupinfo=startupinfo,
-                encoding='cp1252' # Windows console default
+                encoding='cp1252', # Windows console default
+                # PyInstaller and Inno both print the odd character outside
+                # cp1252. Without this the reader thread died on the first one
+                # with a decode error, and the console reported a build that
+                # was still running as failed.
+                errors='replace',
             )
 
             # Stream output

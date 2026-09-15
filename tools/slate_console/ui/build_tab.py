@@ -294,8 +294,13 @@ class BuildTab(QWidget):
         # "rd" on a folder that is not there prints "The system cannot find the
         # file specified" and exits 2, so cleaning an already-clean tree was
         # reported as a failed operation. Nothing to delete is the success case.
+        # A spec at the project root is a stray from running PyInstaller against
+        # a script by hand; the pipeline refuses to build while one is there,
+        # so cleaning takes it away too. The maintained specs are in deployment/.
         cmd = ('(if exist build rd /s /q build) & '
                '(if exist dist rd /s /q dist) & '
+               '(if exist Slate_Server.spec del /q Slate_Server.spec) & '
+               '(if exist Slate.spec del /q Slate.spec) & '
                'echo Build artifacts cleared.')
         self.start_process(cmd, "Clean Artifacts")
 

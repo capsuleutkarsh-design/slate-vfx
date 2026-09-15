@@ -31,9 +31,12 @@ ROOT = Path(__file__).resolve().parents[1]
 # whatever cluster this machine happens to have, and skip when it has none -
 # they still fail loudly wherever a database actually exists, which is the only
 # place the door can be left open.
+# One location: the development server's home is the checkout (see
+# _server_home in slate_server/gui/app_window.py). The cluster that used to
+# sit under slate_server/gui was a stray from an older working directory, and
+# listing it here kept it looking legitimate.
 CLUSTERS = [
     ROOT / "LocalDatabase",
-    ROOT / "slate_server" / "gui" / "LocalDatabase",
 ]
 HBA_FILES = [c / "pg_hba.conf" for c in CLUSTERS]
 CONF_FILES = [c / "postgresql.conf" for c in CLUSTERS]
@@ -403,15 +406,31 @@ class TestStartupDoesNotEatItself:
         assert "active_mode" in params
         assert "fallback_used" in params
 
-    def test_the_constructor_passes_its_own_state(self):
+    def test_the_constructor_does_not_run_the_migration_at_all_now(self):
+        """
+        The recursion came from calling run_auto_migrations inside the
+        constructor. That call has gone for a different reason - Alembic cannot
+        run on an installed studio and aborted everywhere else - and with it,
+        this hazard.
+
+        The guard is kept pointed at the constructor rather than deleted: if
+        anyone puts a migration call back here, it has to hand over its own
+        state, which is what the test above and _get_manager's refusal below
+        exist to enforce.
+        """
         import inspect
         from slate.core.infra.database_manager import DatabaseManager
 
         source = inspect.getsource(DatabaseManager.__init__)
+        live = [l for l in source.splitlines()
+                if l.strip() and not l.strip().startswith("#")]
 
-        assert "active_mode=self.active_mode" in source, (
-            "the constructor still lets the migration reach for the global manager"
-        )
+        calls_it = any("run_auto_migrations(" in l for l in live)
+        if calls_it:
+            assert "active_mode=self.active_mode" in source, (
+                "the constructor lets the migration reach for the global "
+                "manager, which builds another one, and another"
+            )
 
     def test_asking_for_the_manager_while_it_builds_is_refused(self):
         """

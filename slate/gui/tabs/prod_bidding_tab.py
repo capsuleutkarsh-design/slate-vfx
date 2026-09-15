@@ -32,12 +32,14 @@ class AddBidDialog(QDialog):
         self.cost_input = QDoubleSpinBox()
         self.cost_input.setRange(0, 1000000)
         self.cost_input.setPrefix("$ ")
-        self.cost_input.setValue(300.0) # Default day rate
+        from slate.core.domain.bidding import day_rate as _day_rate
+        self.cost_input.setValue(_day_rate())
         self.cost_input.setGroupSeparatorShown(True)
         self.cost_input.valueChanged.connect(self.update_budget)
 
+        from slate.core.domain.bidding import COMPLEXITIES, day_rate
         self.complexity_input = QComboBox()
-        self.complexity_input.addItems(["Simple", "Medium", "Hard"])
+        self.complexity_input.addItems(list(COMPLEXITIES))
         self.complexity_input.setCurrentText("Medium")
         self.complexity_input.currentTextChanged.connect(self.update_budget)
 
@@ -94,6 +96,7 @@ class AddBidDialog(QDialog):
         except Exception as e:
             print(f"Error loading projects: {e}")
 
+    @on_database_error
     def on_project_changed(self, proj_code):
         if not proj_code:
             return
@@ -109,25 +112,17 @@ class AddBidDialog(QDialog):
             print(f"Error fetching shots: {e}")
 
     def update_budget(self):
-        shots = self.shot_count_input.value()
-        rate = self.cost_input.value()
-        margin = self.margin_input.value()
-        comp = self.complexity_input.currentText()
-        
-        multiplier = 1.5
-        if comp == "Medium": multiplier = 3.0
-        elif comp == "Hard": multiplier = 7.0
-        
-        est_days = shots * multiplier
-        est_cost = est_days * rate
-        
-        if margin < 100:
-            final_budget = est_cost / (1 - (margin / 100.0))
-        else:
-            final_budget = est_cost
-            
-        self.days_input.setValue(est_days)
-        self.budget_input.setValue(final_budget)
+        # The days-per-shot figures used to be three literals here, so a studio
+        # whose comp runs heavier than the default had no way to say so.
+        from slate.core.domain.bidding import estimate
+
+        result = estimate(self.shot_count_input.value(),
+                          self.complexity_input.currentText(),
+                          rate=self.cost_input.value(),
+                          margin=self.margin_input.value())
+
+        self.days_input.setValue(result["days"])
+        self.budget_input.setValue(result["price"])
 
 class ProdBiddingTab(QWidget):
     def __init__(self, parent=None):
@@ -193,9 +188,19 @@ class ProdBiddingTab(QWidget):
         controls.addWidget(approve_btn)
 
         reject_btn = QPushButton("Reject Bid")
-        reject_btn.setObjectName("dangerButton")
+        reject_btn.setObjectName("secondaryButton")
         reject_btn.clicked.connect(lambda: self.update_status("Rejected"))
         controls.addWidget(reject_btn)
+
+        edit_btn = QPushButton("Edit Bid")
+        edit_btn.setObjectName("secondaryButton")
+        edit_btn.clicked.connect(self.edit_bid)
+        controls.addWidget(edit_btn)
+
+        del_btn = QPushButton("Delete Bid")
+        del_btn.setObjectName("dangerButton")
+        del_btn.clicked.connect(self.delete_bid)
+        controls.addWidget(del_btn)
 
         controls.addStretch()
         main_layout.addLayout(controls)
@@ -222,7 +227,10 @@ class ProdBiddingTab(QWidget):
         self.grid.setRowCount(len(bids))
         
         total = len(bids)
-        total_val = sum(row.get('estimated_budget', 0) for row in bids)
+        # Pipeline value is work that might still happen. Rejected bids were
+        # counted in it, so the figure grew every time the studio lost a job.
+        total_val = sum(row.get('estimated_budget', 0) or 0 for row in bids
+                        if str(row.get('status') or '') in ('Draft', 'Approved'))
         approved = sum(1 for row in bids if row.get('status') == 'Approved')
         
         self.lbl_total.setText(str(total))
@@ -249,7 +257,8 @@ class ProdBiddingTab(QWidget):
     def add_bid(self):
         dialog = AddBidDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            proj = dialog.proj_input.currentText().replace("'", "''")
+            # No quote doubling: the insert below is parameterised.
+            proj = dialog.proj_input.currentText().strip()
             shots = dialog.shot_count_input.value()
             comp = dialog.complexity_input.currentText()
             margin = dialog.margin_input.value()
@@ -273,6 +282,67 @@ class ProdBiddingTab(QWidget):
             if database_manager.execute_query(query, params, fetch=False):
                 QMessageBox.information(self, "Success", "Added new draft bid.")
                 self.load_data()
+
+    def _selected_bid_id(self):
+        rows = sorted({item.row() for item in self.grid.selectedItems()})
+        if not rows:
+            return None
+        item = self.grid.item(rows[0], 0)
+        if not item or not item.text():
+            return None
+        return int(item.text())
+
+    def edit_bid(self):
+        """
+        Change a bid. There was no way to - a typo meant a second bid for the
+        same project and two rows in the pipeline value.
+        """
+        bid_id = self._selected_bid_id()
+        if bid_id is None:
+            QMessageBox.warning(self, "Selection Empty", "Please select a bid to edit.")
+            return
+
+        dialog = AddBidDialog(self)
+        row = database_manager.execute_query(
+            "SELECT * FROM prod_bidding WHERE id = %s", (bid_id,), fetch="one")
+        if row:
+            row = dict(row)
+            index = dialog.proj_input.findText(str(row.get("project_code") or ""))
+            if index >= 0:
+                dialog.proj_input.setCurrentIndex(index)
+            dialog.complexity_input.setCurrentText(str(row.get("complexity") or "Medium"))
+            try:
+                dialog.margin_input.setValue(float(row.get("target_margin") or 0))
+            except (TypeError, ValueError):
+                pass
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        days = dialog.days_input.value()
+        database_manager.execute_query(
+            "UPDATE prod_bidding SET complexity = %s, shot_count = %s, "
+            "estimated_days = %s, target_margin = %s, estimated_cost = %s, "
+            "estimated_budget = %s WHERE id = %s",
+            (dialog.complexity_input.currentText(), dialog.shot_count_input.value(),
+             days, dialog.margin_input.value(), days * dialog.cost_input.value(),
+             dialog.budget_input.value(), bid_id), fetch=False)
+        self.load_data()
+
+    def delete_bid(self):
+        bid_id = self._selected_bid_id()
+        if bid_id is None:
+            QMessageBox.warning(self, "Selection Empty", "Please select a bid to delete.")
+            return
+        if QMessageBox.question(
+            self, "Delete bid",
+            "Delete this bid? It disappears from the pipeline value as well.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        database_manager.execute_query(
+            "DELETE FROM prod_bidding WHERE id = %s", (bid_id,), fetch=False)
+        self.load_data()
 
     def update_status(self, new_status):
         selected_rows = set(item.row() for item in self.grid.selectedItems())

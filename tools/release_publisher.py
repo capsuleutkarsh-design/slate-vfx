@@ -12,9 +12,14 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DIST_DIR = PROJECT_ROOT / "dist" / "Slate"
 
-# Default shared path - can be overridden at runtime if missing
-DEFAULT_RELEASE_DIR = Path(r"X:\Extra\Slate_Central\Updates\releases")
-DEFAULT_LATEST_POINTER = Path(r"X:\Extra\Slate_Central\Updates\latest.json")
+# No default path. It used to be one studio's drive letter, which on any other
+# studio is a folder that cannot exist - so the tool prompted anyway, having
+# first printed a path nobody recognised as a suggestion.
+DEFAULT_UPDATES_ROOT = os.environ.get("SLATE_UPDATES_ROOT", "")
+DEFAULT_RELEASE_DIR = (Path(DEFAULT_UPDATES_ROOT) / "releases"
+                       if DEFAULT_UPDATES_ROOT else None)
+DEFAULT_LATEST_POINTER = (Path(DEFAULT_UPDATES_ROOT) / "latest.json"
+                          if DEFAULT_UPDATES_ROOT else None)
 
 def configured_updates_root():
     """
@@ -44,7 +49,7 @@ def resolve_paths():
     rel_dir = DEFAULT_RELEASE_DIR
     pointer = DEFAULT_LATEST_POINTER
 
-    if not rel_dir.parent.exists(): # Check if Updates folder exists
+    if rel_dir is None or not rel_dir.parent.exists():
         print(f"⚠️  Network Drive Path not found: {rel_dir.parent}")
         print("Please enter the path to the 'Updates' folder (or 'q' to quit):")
         while True:

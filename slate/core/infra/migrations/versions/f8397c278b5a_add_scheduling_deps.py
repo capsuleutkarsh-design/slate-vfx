@@ -19,8 +19,15 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column('prod_scheduling', sa.Column('depends_on_id', sa.Integer(), sa.ForeignKey('prod_scheduling.id'), nullable=True))
+    # prod_scheduling is created by postgres_manager with this column already
+    # on it, so a bare ADD COLUMN aborts on any database that has ever had a
+    # client connect to it. Alembic then stamps no version, which leaves it
+    # permanently unable to apply this or any later revision - the failure is
+    # in the log and nowhere else.
+    op.execute("ALTER TABLE prod_scheduling "
+               "ADD COLUMN IF NOT EXISTS depends_on_id INTEGER "
+               "REFERENCES prod_scheduling(id)")
 
 
 def downgrade() -> None:
-    op.drop_column('prod_scheduling', 'depends_on_id')
+    op.execute("ALTER TABLE prod_scheduling DROP COLUMN IF EXISTS depends_on_id")

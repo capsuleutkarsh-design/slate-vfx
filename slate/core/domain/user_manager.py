@@ -14,18 +14,28 @@ class UserManager:
     Centralized User Management backed by native SQL (PostgreSQL/SQLite).
     No file locking, purely relational with JSON fallback for data migration.
     """
-    def __init__(self):
+    def __init__(self, db=None):
+        """
+        db is the backend to use. Left out, it is the studio's own - which is
+        what the application always wants. Every repository in core/infra takes
+        it the same way, and for the same reason: without it there is no way to
+        exercise this class against a database of your own, and the user record
+        is not something to learn about in production.
+        """
+        self._db = db
         self.hub = ServerHub()
         self.audit = AuditLogger()
         self.users_file = self.hub.get_users_file()
         self.roles_file = self.hub.get_config_dir() / "roles.json"
-        
+
         self._ensure_schema()
         self._run_migration()
         self._ensure_default_roles()
         self._ensure_essential_accounts()
 
     def _get_db(self):
+        if self._db is not None:
+            return self._db
         from ..infra.database_manager import database_manager
         return database_manager
 
@@ -208,7 +218,6 @@ class UserManager:
             ("admin", "admin123", ["Developer"], "System Admin", "Dev"),
             ("artist", "artist123", ["Artist"], "Test Artist", "Roto"),
             ("tester", "tester123", ["Tester"], "QA Tester", "QA"),
-            ("EMP0012", "admin123", ["Developer"], "Dev User", "Dev")
         ]
         for uid, pw, roles, disp, job in defaults:
             pw_hash = self._hash_password(pw)
@@ -240,21 +249,39 @@ class UserManager:
                     ("admin", pw_hash, "System Admin", "Dev", json.dumps(["Developer"]))
                 )
 
-            # Check for EMP0012
-            emp_row = db.execute_query("SELECT username FROM ut_users WHERE username='EMP0012'", fetch="one")
-            if not emp_row:
-                logging.info("Injecting default EMP0012 user...")
-                pw_hash = self._hash_password("admin123")
-                db.execute_update(
-                    "INSERT INTO ut_users (username, password_hash, display_name, job_title, roles) VALUES (%s, %s, %s, %s, %s)",
-                    ("EMP0012", pw_hash, "Dev User", "Dev", json.dumps(["Developer"]))
-                )
+            # EMP0012 used to be re-created here on every start, with a known
+            # password and Developer rights, so deleting it on the Users tab
+            # did nothing at all - it was back on the next launch. One
+            # administrator account is enough to guarantee nobody is locked
+            # out; a second one nobody asked for is an account nobody watches.
         except Exception as e:
             logging.error(f"Failed to ensure essential accounts: {e}")
 
     def _ensure_admin_exists(self):
         """Backward-compatible alias for _ensure_essential_accounts."""
         self._ensure_essential_accounts()
+
+    # The accounts a brand new database is seeded with, and nothing else.
+    SEEDED_ACCOUNTS = frozenset({"admin", "artist", "tester"})
+
+    def is_fresh_seed(self) -> bool:
+        """
+        Whether nobody has made an account yet.
+
+        True when the user table holds exactly the seeded defaults. The login
+        screen uses it to say "this is a new studio, sign in as admin" instead
+        of "invalid credentials" - which is what somebody typing the account
+        they had on the old server was told, three times, with no way to know
+        that the account they needed was a different one.
+        """
+        try:
+            rows = self._get_db().execute_query(
+                "SELECT username FROM ut_users", fetch="all") or []
+        except Exception as exc:
+            logging.debug("Could not tell whether the database is freshly seeded: %s", exc)
+            return False
+        names = {str(r.get("username") or "").strip().lower() for r in rows}
+        return bool(names) and names <= self.SEEDED_ACCOUNTS
 
     # --- PASSWORD HASHING ---
 
@@ -369,11 +396,28 @@ class UserManager:
                 "job_title": r.get('job_title', ''),
                 "roles": roles,
                 "role": roles[0] if roles else "Artist",
-                "profile_pic_path": r.get('profile_pic_path', '')
+                "profile_pic_path": r.get('profile_pic_path', ''),
+                # The employment record. Read with .get so a database that has
+                # not run the migration yet reports empty rather than raising.
+                "joined_on": r.get('joined_on'),
+                "employment": r.get('employment') or '',
+                "reports_to": r.get('reports_to') or '',
+                "location": r.get('location') or '',
+                "last_day": r.get('last_day'),
             }
         return users_dict
 
-    def add_user(self, u: str, p: str, roles: Any = None, n: str = "", j: str = "", pic: str = "", r: Any = None) -> bool:
+    # The employment record, as opposed to the login. Each of these is read by
+    # something that had nowhere to read it from: accrual needs joined_on, the
+    # holiday calendar needs location, supervisor scoping needs reports_to, and
+    # offboarding needs last_day. They are keyword-only and default to None,
+    # which means "leave whatever is there alone" - so the existing callers
+    # that know nothing about them cannot blank them out.
+    EMPLOYMENT_FIELDS = ("joined_on", "employment", "reports_to", "location", "last_day")
+
+    def add_user(self, u: str, p: str, roles: Any = None, n: str = "", j: str = "",
+                 pic: str = "", r: Any = None, *, joined_on=None, employment=None,
+                 reports_to=None, location=None, last_day=None) -> bool:
         if roles is None and r is not None:
             roles = r
         if roles is None:
@@ -383,10 +427,10 @@ class UserManager:
 
         db = self._get_db()
         uid = u.strip()
-        
+
         # Check if user exists (case-insensitive)
         existing = db.execute_query("SELECT username, password_hash, profile_pic_path, display_name, job_title FROM ut_users WHERE LOWER(username)=LOWER(%s)", (uid,), fetch="one")
-        
+
         if p == "KEEP_OLD":
             if existing:
                 pw_hash = existing['password_hash']
@@ -396,25 +440,48 @@ class UserManager:
                 pw_hash = self._hash_password("password123")
         else:
             pw_hash = self._hash_password(p)
-            
+
         roles_str = json.dumps(roles if isinstance(roles, list) else [roles])
         display_name = n.strip() if n and n.strip() else (existing.get('display_name', uid) if existing else uid)
         job_title = j.strip() if j and j.strip() else (existing.get('job_title', '') if existing else '')
-        
+
+        supplied = {
+            "joined_on": joined_on,
+            "employment": employment,
+            "reports_to": reports_to,
+            "location": location,
+            "last_day": last_day,
+        }
+        supplied = {field: value for field, value in supplied.items() if value is not None}
+
         if existing:
             # UPDATE existing row using the stored username
             target_username = existing['username']
+            sets = ["password_hash=%s", "display_name=%s", "job_title=%s",
+                    "roles=%s", "profile_pic_path=%s"]
+            values = [pw_hash, display_name, job_title, roles_str, pic.strip()]
+            for field, value in supplied.items():
+                sets.append(field + "=%s")
+                values.append(value)
+            values.append(target_username)
             success = db.execute_update(
-                "UPDATE ut_users SET password_hash=%s, display_name=%s, job_title=%s, roles=%s, profile_pic_path=%s WHERE username=%s",
-                (pw_hash, display_name, job_title, roles_str, pic.strip(), target_username)
+                "UPDATE ut_users SET " + ", ".join(sets) + " WHERE username=%s",
+                tuple(values)
             )
         else:
             # INSERT
+            columns = ["username", "password_hash", "display_name", "job_title",
+                       "roles", "profile_pic_path"]
+            values = [uid, pw_hash, display_name, job_title, roles_str, pic.strip()]
+            for field, value in supplied.items():
+                columns.append(field)
+                values.append(value)
             success = db.execute_update(
-                "INSERT INTO ut_users (username, password_hash, display_name, job_title, roles, profile_pic_path) VALUES (%s, %s, %s, %s, %s, %s)",
-                (uid, pw_hash, display_name, job_title, roles_str, pic.strip())
+                "INSERT INTO ut_users (" + ", ".join(columns) + ") VALUES ("
+                + ", ".join(["%s"] * len(columns)) + ")",
+                tuple(values)
             )
-            
+
         if success:
             self.audit.log_user_change("System", uid, f"Updated roles: {roles}")
         return success
@@ -429,8 +496,12 @@ class UserManager:
         display_name = kwargs.get("display_name", existing.get("display_name", username))
         job_title = kwargs.get("job_title", existing.get("job_title", ""))
         pic = kwargs.get("profile_pic_path", existing.get("profile_pic_path", ""))
-        
-        return self.add_user(username, password, roles, display_name, job_title, pic)
+
+        extras = {field: kwargs[field] for field in self.EMPLOYMENT_FIELDS
+                  if kwargs.get(field) is not None}
+
+        return self.add_user(username, password, roles, display_name, job_title,
+                             pic, **extras)
 
     def delete_user(self, u: str) -> bool:
         db = self._get_db()

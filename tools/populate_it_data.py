@@ -1,7 +1,8 @@
 import sys
 
 # Ensure the module can be loaded
-sys.path.append('d:/Soft/Slate/V0040')
+from pathlib import Path as _Path
+sys.path.append(str(_Path(__file__).resolve().parent.parent))
 
 from slate.core.infra.database_manager import database_manager
 

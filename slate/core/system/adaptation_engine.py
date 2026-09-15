@@ -206,15 +206,13 @@ class SystemAdaptationEngine:
         else:
             logger.info(f"Mount config not found at {config_file}, using defaults")
         
-        # Fallback to defaults if file doesn't exist or fails to load
-        return {
-            # Windows -> Mac/Linux Mappings
-            "Z:/": "/Volumes/Projects/",
-            "Y:/": "/Volumes/Assets/",
-            # Mac/Linux -> Windows Mappings
-            "/Volumes/Projects/": "Z:/",
-            "/Volumes/Assets/": "Y:/"
-        }
+        # No mappings rather than invented ones. These used to be four
+        # example rows naming Z: and Y: - drive letters belonging to the studio
+        # this was written for. A studio that does not use them got paths
+        # rewritten to somewhere that does not exist, which is worse than not
+        # rewriting them at all. The shipped slate/data/mount_config.json is
+        # where a studio puts its own, and it is meant to be edited.
+        return {}
 
     def resolve_path(self, raw_path):
         """

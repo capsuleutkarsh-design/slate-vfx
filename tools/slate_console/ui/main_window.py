@@ -58,4 +58,6 @@ class MainWindow(QMainWindow):
         # Ensure active build subprocess trees are stopped when console closes.
         if hasattr(self, "build_tab") and self.build_tab:
             self.build_tab.stop_running_process()
+        if hasattr(self, "test_tab") and self.test_tab:
+            self.test_tab.stop_running_process()
         super().closeEvent(event)

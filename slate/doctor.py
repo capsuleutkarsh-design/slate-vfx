@@ -76,13 +76,29 @@ def config_layers():
     local = Path(os.getenv("LOCALAPPDATA", Path.home()))
     source_root = Path(__file__).resolve().parent.parent
 
-    return [
+    layers = [
         ("bundled defaults", source_root / "slate" / "default_config.json"),
         ("source config", source_root / "slate" / "config.json"),
         ("client config", source_root / "client_config.json"),
+    ]
+
+    # An installed build keeps its settings beside the executable, not beside
+    # the code - the code is unpacked into a temporary folder that holds none
+    # of them. Leaving these out is how a diagnostics report says the defaults
+    # are absent on the one kind of machine where that matters.
+    if getattr(sys, "frozen", False):
+        beside_exe = Path(sys.executable).resolve().parent
+        layers += [
+            ("installed defaults", beside_exe / "slate" / "default_config.json"),
+            ("installed config", beside_exe / "config.json"),
+            ("installed client config", beside_exe / "client_config.json"),
+        ]
+
+    layers += [
         ("legacy user config", Path.home() / "RuntimeData" / "Slate" / "config.json"),
         ("machine config", local / "Slate" / "config.json"),
     ]
+    return layers
 
 
 SECRET_HINTS = ("pass", "secret", "token", "key")

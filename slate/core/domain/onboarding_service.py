@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 
-from datetime import date
+from datetime import date, datetime
 
 # A database that is down must not look like a studio with no data. The
 # manager raises DatabaseUnavailableError precisely so a read cannot quietly
@@ -149,15 +149,23 @@ class OnboardingService:
         return out
 
     def start(self, username: str, direction: str = JOINING,
-              employment: str = "staff", department: str = "") -> int:
+              employment: str = "staff", department: str = "",
+              effective_date=None) -> int:
         """
         Lay down the checklist for somebody joining or leaving.
 
         Returns how many tasks were created. Existing tasks for the same
         direction are left alone, so running this twice does not duplicate a
         half-finished list.
+
+        The answers the dialog collects are also written to the person's record.
+        They used to be used for one thing - skipping the payroll lines for a
+        freelancer - and then discarded, which is why leave accrual had no
+        joining date to count from and offboarding had no last day to measure
+        against.
         """
         already = {t["task_name"] for t in self.tasks_for(username, direction)}
+        self._record_employment(username, direction, employment, effective_date)
         template = ONBOARD_TASKS if direction == JOINING else OFFBOARD_TASKS
         freelance = str(employment or "").strip().lower() in ("freelance", "freelancer", "contract")
 
@@ -180,6 +188,61 @@ class OnboardingService:
                 logger.exception("start failed")
                 continue
         return made
+
+    def _record_employment(self, username, direction, employment, effective_date):
+        """
+        Put the dialog's answers on the person's record.
+
+        Joining sets the joining date only if there is not one already: the
+        checklist can be re-laid months later, and moving somebody's joining
+        date would silently change the leave they have accrued.
+        """
+        try:
+            if employment:
+                self.db.execute_update(
+                    "UPDATE ut_users SET employment = %s "
+                    "WHERE LOWER(username) = LOWER(%s)",
+                    (str(employment), username))
+
+            if direction == JOINING:
+                self.db.execute_update(
+                    "UPDATE ut_users SET joined_on = %s "
+                    "WHERE LOWER(username) = LOWER(%s) AND joined_on IS NULL",
+                    (effective_date or date.today(), username))
+            else:
+                self.db.execute_update(
+                    "UPDATE ut_users SET last_day = %s "
+                    "WHERE LOWER(username) = LOWER(%s)",
+                    (effective_date or date.today(), username))
+        except DatabaseUnavailableError:
+            raise
+        except Exception:
+            logger.exception("_record_employment failed")
+
+    def last_day(self, username: str):
+        """The last working day recorded for somebody, if any."""
+        try:
+            row = self.db.execute_query(
+                "SELECT last_day FROM ut_users WHERE LOWER(username) = LOWER(%s)",
+                (username,), fetch="one")
+        except DatabaseUnavailableError:
+            raise
+        except Exception:
+            logger.exception("last_day failed")
+            return None
+        if not row:
+            return None
+        value = row["last_day"] if isinstance(row, dict) else row[0]
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(str(value)[:10]).date()
+        except (TypeError, ValueError):
+            return None
 
     def complete(self, task_id, done: bool = True) -> bool:
         try:
@@ -264,6 +327,26 @@ class OnboardingService:
             logger.exception("_mark_asset_task failed")
             pass
 
+    def held_by_machine(self, machine_name: str) -> list:
+        """
+        Who currently has this machine, if anybody.
+
+        The inventory's own assigned_to column is a copy; this is the ledger,
+        and the ledger is what offboarding reads. Asking the copy is how a
+        machine came to be deleted while a loan for it was still open.
+        """
+        try:
+            rows = self.db.execute_query(
+                "SELECT user_id, issued_on, note FROM asset_assignments "
+                "WHERE LOWER(machine_name) = LOWER(%s) AND returned_on IS NULL "
+                "ORDER BY issued_on", (machine_name,), fetch="all") or []
+            return [dict(r) for r in rows]
+        except DatabaseUnavailableError:
+            raise
+        except Exception:
+            logger.exception("held_by_machine failed")
+            return []
+
     def held_by(self, username: str) -> list:
         """What this person currently has out. Offboarding's shopping list."""
         try:
@@ -280,26 +363,61 @@ class OnboardingService:
 
     def unreturned(self) -> list:
         """
-        Everything out on loan to somebody who has already been offboarded.
+        Kit still out on loan to somebody who has actually left.
 
         This is the report that pays for the module - a machine nobody asked
-        for back is invisible until something asks this question.
+        for back is invisible until something asks this question. But it only
+        means anything once the person has gone. It used to fire on anybody
+        with an open leaving checklist, so it shouted on the day notice was
+        given and kept shouting for the whole notice period, while the person
+        was still sitting at the machine using it. An alert that is wrong for a
+        month is an alert people learn to close.
+
+        Somebody counts as gone when their last working day has passed, or when
+        IT have ticked the line that says the workstation came back.
         """
         try:
             rows = self.db.execute_query(
-                "SELECT a.machine_name, a.user_id, a.issued_on "
+                "SELECT a.machine_name, a.user_id, a.issued_on, u.last_day "
                 "FROM asset_assignments a "
+                "LEFT JOIN ut_users u ON LOWER(u.username) = LOWER(a.user_id) "
                 "WHERE a.returned_on IS NULL "
                 "AND EXISTS (SELECT 1 FROM onboarding_workflows w "
                 "            WHERE LOWER(w.user_id) = LOWER(a.user_id) "
                 "            AND w.direction = 'offboard') "
                 "ORDER BY a.issued_on", fetch="all") or []
-            return [dict(r) for r in rows]
         except DatabaseUnavailableError:
             raise
         except Exception:
             logger.exception("unreturned failed")
             return []
+
+        today = date.today()
+        out = []
+        for row in rows:
+            row = dict(row)
+            last = row.get("last_day")
+            if isinstance(last, datetime):
+                last = last.date()
+            elif last and not isinstance(last, date):
+                try:
+                    last = datetime.fromisoformat(str(last)[:10]).date()
+                except (TypeError, ValueError):
+                    last = None
+
+            # No last day recorded at all: fall back to the checklist, which is
+            # the only other evidence that the person has actually gone.
+            if last is None:
+                tasks = self.tasks_for(row.get("user_id"), LEAVING)
+                gone = any(t.get("is_completed") for t in tasks
+                           if str(t.get("task_name") or "").strip().lower()
+                           == "last working day confirmed")
+            else:
+                gone = last <= today
+
+            if gone:
+                out.append(row)
+        return out
 
     def available_machines(self) -> list:
         try:

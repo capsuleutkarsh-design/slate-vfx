@@ -34,29 +34,41 @@ class AddMilestoneDialog(QDialog):
         # from a database that is down.
         from slate.core.infra.database_manager import database_manager
         try:
+            # The column is "code". This asked for "project_code", which does
+            # not exist on tracking_projects - so the query raised, the list was
+            # always empty, and no milestone could be created at all. The tab
+            # was unusable and said nothing about why.
             projects = database_manager.execute_query(
-                "SELECT DISTINCT project_code FROM tracking_projects") or []
+                "SELECT code FROM tracking_projects WHERE active = 1 "
+                "ORDER BY code") or []
         except DatabaseUnavailableError:
             projects = []
             self.proj_cb.addItem("Database unavailable")
             self.proj_cb.setEnabled(False)
         else:
             for p in projects:
-                self.proj_cb.addItem(p.get("project_code"))
+                code = p.get("code") if isinstance(p, dict) else p[0]
+                if code:
+                    self.proj_cb.addItem(str(code))
 
-            if not projects:
+            if not self.proj_cb.count():
                 self.proj_cb.addItem("N/A")
             
         self.dep_cb = QComboBox()
         self.dep_cb.setStyleSheet("background: #26262D; color: white; padding: 4px;")
         
         self.proj_cb.currentTextChanged.connect(self.update_deps)
-            
+
         self.ms_input = QLineEdit()
         self.start_input = QDateEdit(QDate.currentDate())
         self.start_input.setCalendarPopup(True)
         self.end_input = QDateEdit(QDate.currentDate().addDays(14))
         self.end_input.setCalendarPopup(True)
+        # A milestone cannot finish before it starts, and cannot start before
+        # the thing it waits on has finished. Neither was checked, so a Gantt
+        # chart could be built that described an impossible schedule.
+        self.start_input.dateChanged.connect(self._start_moved)
+        self.dep_cb.currentIndexChanged.connect(self._dependency_changed)
 
         layout.addRow("Project Code:", self.proj_cb)
         layout.addRow("Milestone Name:", self.ms_input)
@@ -78,6 +90,37 @@ class AddMilestoneDialog(QDialog):
         btn_layout.addWidget(cancel_btn)
         layout.addRow(btn_layout)
         
+    def _start_moved(self, value):
+        if self.end_input.date() < value:
+            self.end_input.setDate(value)
+
+    def _dependency_changed(self, *_):
+        """Nothing can start before what it waits on has finished."""
+        dep_id = self.dep_cb.currentData()
+        if not dep_id:
+            self.start_input.setMinimumDate(QDate(1900, 1, 1))
+            return
+        from slate.core.infra.database_manager import database_manager
+        try:
+            row = database_manager.execute_query(
+                "SELECT end_date FROM prod_scheduling WHERE id = %s",
+                (int(dep_id),), fetch="one")
+        except DatabaseUnavailableError:
+            # An outage must not silently drop the constraint - a milestone
+            # could then be scheduled before the one it waits on.
+            raise
+        except Exception:
+            return
+        if not row:
+            return
+        raw = str(dict(row).get("end_date") or "")[:10]
+        earliest = QDate.fromString(raw, "yyyy-MM-dd")
+        if earliest.isValid():
+            earliest = earliest.addDays(1)
+            self.start_input.setMinimumDate(earliest)
+            if self.start_input.date() < earliest:
+                self.start_input.setDate(earliest)
+
     @on_database_error
     def update_deps(self):
         self.dep_cb.clear()
@@ -159,7 +202,7 @@ class ProdSchedulingTab(QWidget):
         cards_lay = QHBoxLayout()
         cards_lay.setSpacing(12)
         card1, self.lbl_active = self.create_stat_card("Active Projects", "0", "#3EA8BF")
-        card2, self.lbl_upcoming = self.create_stat_card("Upcoming Milestones", "0", "#D9A441")
+        card2, self.lbl_upcoming = self.create_stat_card("In Progress", "0", "#D9A441")
         card3, self.lbl_completed = self.create_stat_card("Completed Milestones", "0", "#5FBF8F")
         cards_lay.addWidget(card1)
         cards_lay.addWidget(card2)
@@ -208,12 +251,38 @@ class ProdSchedulingTab(QWidget):
             
         self.grid.setRowCount(len(sched))
         
-        projects = set(row.get('project_code') for row in sched)
+        from datetime import date as _date
+
         completed = sum(1 for row in sched if row.get('status') == 'Completed')
-        upcoming = len(sched) - completed
-        
-        self.lbl_active.setText(str(len(projects)))
-        self.lbl_upcoming.setText(str(upcoming))
+
+        # Active projects means active projects, not "projects that happen to
+        # have a milestone". And an overdue milestone is not "upcoming" - it was
+        # counted as one, so the card that should have been shouting was the one
+        # reporting healthy numbers.
+        try:
+            from slate.core.infra.database_manager import database_manager
+            row = database_manager.execute_query(
+                "SELECT COUNT(*) AS c FROM tracking_projects WHERE active = 1",
+                fetch="one")
+            active_projects = int(dict(row).get("c", 0)) if row else 0
+        except DatabaseUnavailableError:
+            raise
+        except Exception:
+            # The table is missing rather than unreachable. Counting the
+            # projects that have milestones is the old behaviour, and is better
+            # than a zero that reads as "no projects".
+            active_projects = len({row.get('project_code') for row in sched})
+
+        today = _date.today().isoformat()
+        overdue = sum(1 for row in sched
+                      if row.get('status') != 'Completed'
+                      and str(row.get('end_date') or '')[:10]
+                      and str(row.get('end_date'))[:10] < today)
+        in_progress = len(sched) - completed - overdue
+
+        self.lbl_active.setText(str(active_projects))
+        self.lbl_upcoming.setText("%d  (%d overdue)" % (in_progress, overdue)
+                                  if overdue else str(in_progress))
         self.lbl_completed.setText(str(completed))
 
         for r, row in enumerate(sched):
@@ -242,13 +311,21 @@ class ProdSchedulingTab(QWidget):
         dialog = AddMilestoneDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             proj = dialog.proj_cb.currentText()
-            ms = dialog.ms_input.text().replace("'", "''")
+            # No quote doubling. The query below is parameterised, so the driver
+            # escapes it - doubling first stored "Director''s cut" verbatim.
+            ms = dialog.ms_input.text().strip()
             start = dialog.start_input.date().toString("yyyy-MM-dd")
             end = dialog.end_input.date().toString("yyyy-MM-dd")
             dep_id = dialog.dep_cb.currentData()
             
             if not proj or not ms or proj == "N/A":
                 QMessageBox.warning(self, "Error", "Project Code and Milestone Name are required.")
+                return
+            if dialog.end_input.date() < dialog.start_input.date():
+                QMessageBox.warning(
+                    self, "Dates the wrong way round",
+                    "The end date is before the start date, so this milestone "
+                    "would finish before it began.")
                 return
                 
             from slate.core.infra.database_manager import database_manager

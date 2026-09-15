@@ -204,7 +204,8 @@ class FirstRunSetupDialog(QDialog):
         server_row = QHBoxLayout(server_wrap)
         server_row.setContentsMargins(0, 0, 0, 0)
         self.server_root_input = QLineEdit(str(GlobalConfig.get("SERVER_ROOT", "")))
-        self.server_root_input.setPlaceholderText("e.g. X:/Extra/Slate_Central")
+        self.server_root_input.setPlaceholderText(
+            "The studio's shared folder - a mapped drive or a \\\\server\\share path")
         browse_server_btn = QPushButton("Browse")
         browse_server_btn.clicked.connect(self._browse_server_root)
         server_row.addWidget(self.server_root_input, 1)

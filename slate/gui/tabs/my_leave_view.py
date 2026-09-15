@@ -85,11 +85,16 @@ class Figure(QFrame):
 class RequestLeaveDialog(QDialog):
     """Ask for time off, and see what it will cost before committing."""
 
-    def __init__(self, repo: LeaveRepository, available: float, comp_off: float, parent=None):
+    def __init__(self, repo: LeaveRepository, available: float, comp_off: float,
+                 username: str = "", parent=None):
         super().__init__(parent)
         self.repo = repo
         self.available = available
         self.comp_off = comp_off
+        # Whose request this is. The holidays a request is charged against
+        # depend on where the person works, and whether it clashes with
+        # something depends on what they have already asked for.
+        self.username = (username or "").strip()
         self.setWindowTitle("Request leave")
         self.setMinimumWidth(460)
         self.setStyleSheet(f"background-color: {Gate.GROUND}; color: {Gate.TEXT};")
@@ -147,10 +152,27 @@ class RequestLeaveDialog(QDialog):
 
         for widget in (self.start, self.end):
             widget.dateChanged.connect(self._recost)
+            widget.dateChanged.connect(self._sync_half_day)
         self.half_day.currentIndexChanged.connect(self._recost)
         self.kind.currentIndexChanged.connect(self._recost)
         self.start.dateChanged.connect(self._sync_end)
+        self._sync_half_day()
         self._recost()
+
+    def _sync_half_day(self, *_):
+        """
+        Half day is only offered on a single day.
+
+        Left enabled on a range it read as a discount on the whole request -
+        five days away for 4.5 days of leave - so it is switched off rather
+        than silently ignored.
+        """
+        single = self.start.date() == self.end.date()
+        self.half_day.setEnabled(single)
+        if not single and self.half_day.currentIndex() == 1:
+            self.half_day.setCurrentIndex(0)
+        self.half_day.setToolTip(
+            "" if single else "A half day only applies to a single day.")
 
     def _sync_end(self, value):
         if self.end.date() < value:
@@ -159,8 +181,12 @@ class RequestLeaveDialog(QDialog):
     def charge(self) -> dict:
         start = self.start.date().toPython()
         end = self.end.date().toPython()
-        return lp.days_charged(start, end, self.repo.holidays(start.year),
-                               half_day=self.half_day.currentIndex() == 1)
+        # A half day on a range took half a day off the whole request, so five
+        # days away cost 4.5. It only means anything on a single day.
+        half = self.half_day.currentIndex() == 1 and start == end
+        return lp.days_charged(
+            start, end, self.repo.holidays_for(self.username, start, end),
+            half_day=half)
 
     def _recost(self, *_):
         charge = self.charge()
@@ -201,6 +227,20 @@ class RequestLeaveDialog(QDialog):
         charge = self.charge()
         if not charge["working_days"]:
             self.note.setText("Those dates contain no working days.")
+            self.note.show()
+            return
+
+        # Asking twice for the same week held both against the balance, so a
+        # fortnight vanished for one week away.
+        clashes = self.repo.clash(self.username, self.start.date().toPython(),
+                                  self.end.date().toPython())
+        if clashes:
+            first = clashes[0]
+            self.note.setText(
+                "You already have a request covering those days: %s to %s (%s, %s). "
+                "Cancel that one first, or pick different dates."
+                % (first.get("start_date"), first.get("end_date"),
+                   (first.get("type") or "Leave"), lp.normalise_status(first.get("status"))))
             self.note.show()
             return
 
@@ -250,6 +290,12 @@ class MyLeaveView(QWidget):
         header.addStretch(1)
         header.addWidget(make_button("Request leave", "primary", on_click=self.request_leave),
                          0, Qt.AlignmentFlag.AlignTop)
+        # There was no way to withdraw a request. One sent by mistake held days
+        # against the balance until somebody happened to reject it.
+        self.btn_cancel = make_button("Cancel request", "ghost",
+                                      on_click=self.cancel_request)
+        self.btn_cancel.setEnabled(False)
+        header.addWidget(self.btn_cancel, 0, Qt.AlignmentFlag.AlignTop)
         root.addLayout(header)
 
         self.figures = QHBoxLayout()
@@ -273,6 +319,7 @@ class MyLeaveView(QWidget):
         for i in range(6):
             head.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
         head.setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
+        self.table.itemSelectionChanged.connect(self._sync_cancel)
         root.addWidget(self.table, 1)
 
         self.empty = EmptyState(
@@ -315,6 +362,7 @@ class MyLeaveView(QWidget):
             card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             self.figures.addWidget(card)
 
+        self._requests = list(requests)
         self.table.setRowCount(len(requests))
         for r, row in enumerate(requests):
             status = lp.normalise_status(row.get("status")) or lp.STATUS_PENDING_SUPERVISOR
@@ -337,12 +385,29 @@ class MyLeaveView(QWidget):
                 self.table.setItem(r, c, item)
 
         self.empty.refresh()
+        self._sync_cancel()
+
+    def _selected_request(self):
+        rows = sorted({i.row() for i in self.table.selectedIndexes()})
+        if not rows or rows[0] >= len(getattr(self, "_requests", [])):
+            return None
+        return self._requests[rows[0]]
+
+    def _sync_cancel(self, *_):
+        """Cancel is offered only for a request still waiting on somebody."""
+        row = self._selected_request()
+        pending = row is not None and lp.normalise_status(row.get("status")) in (
+            lp.STATUS_PENDING_SUPERVISOR, lp.STATUS_PENDING_HR)
+        self.btn_cancel.setEnabled(bool(pending))
+        self.btn_cancel.setToolTip(
+            "" if pending else
+            "Only a request still waiting on an approver can be withdrawn.")
 
     # --------------------------------------------------------------- actions
     def request_leave(self):
         dialog = RequestLeaveDialog(
             self.repo, self._balance.get("available", 0.0),
-            self._balance.get("comp_off", 0.0), self)
+            self._balance.get("comp_off", 0.0), self.username, self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
 
@@ -350,9 +415,32 @@ class MyLeaveView(QWidget):
         ok = self.repo.submit(self.username, values["type"], values["start"],
                               values["end"], values["half_day"], values["reason"])
         if not ok:
-            QMessageBox.warning(self, "Not sent",
-                                "The request was not saved. Nothing has been deducted.")
+            QMessageBox.warning(
+                self, "Not sent",
+                "The request was not saved, so nothing has been deducted. If you "
+                "already have a request covering those days, cancel it first.")
             return
 
+        self.refresh()
+        self.changed.emit()
+
+    def cancel_request(self):
+        row = self._selected_request()
+        if row is None:
+            return
+        if QMessageBox.question(
+            self, "Withdraw this request",
+            "Withdraw your leave from %s to %s?\n\nThe days it is holding go "
+            "back into your balance straight away."
+            % (row.get("start_date"), row.get("end_date")),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
+        ) != QMessageBox.StandardButton.Yes:
+            return
+
+        if not self.repo.cancel(row.get("id"), self.username):
+            QMessageBox.warning(
+                self, "Not withdrawn",
+                "That request could not be withdrawn. Somebody may have decided "
+                "on it already - refresh and look at its status.")
         self.refresh()
         self.changed.emit()

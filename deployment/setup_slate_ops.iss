@@ -3,7 +3,7 @@
 ; Features: HRMS Attendance, Leaves, Onboarding, IT Inventory, DCC Licenses, Ticketing, Deployment, Users & Roles.
 
 #define MyAppName "Slate Operations"
-#define MyAppVersion "BETA 2.0.25"
+#define MyAppVersion "BETA 2.0.27"
 #define MyAppPublisher "UT Studio"
 #define MyAppURL "https://github.com/capsuleutkarsh-design/slate-vfx"
 #define MyAppExeName "Slate_Ops.exe"
@@ -29,8 +29,10 @@ AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
 
-; --- INSTALL LOCATION: User AppData ---
-DefaultDirName={localappdata}\{#MyAppName}
+; --- INSTALL LOCATION ---
+; Under the per-user Programs folder, beside Slate Studio, and away from
+; {localappdata}\Slate where the shared settings live.
+DefaultDirName={localappdata}\Programs\{#MyAppName}
 DisableProgramGroupPage=yes
 
 ; Helper Options
@@ -82,6 +84,8 @@ Type: filesandordirs; Name: "{app}"
 Type: filesandordirs; Name: "{app}"
 
 [Code]
+#include "inc_slate_data.iss"
+
 var
   CleanupDone: Boolean;
   ServerPathPage: TInputDirWizardPage;
@@ -93,7 +97,17 @@ begin
     'Select the network folder where the shared databases and caches will be stored, then click Next.'#13#10#13#10'For best compatibility with studio tools, mapping your server to a Drive Letter (like Z:\) is recommended.',
     False, 'New Folder');
   ServerPathPage.Add('Server Root Path (e.g., Z:\Slate_Central or \\Server\Shared\Slate_Central):');
-  ServerPathPage.Values[0] := 'X:\Extra\Slate_Central';
+  // Deliberately blank. A pre-filled drive letter is one studio's
+  // answer to a question every studio answers differently, and it
+  // reads as a setting rather than as a guess.
+  ServerPathPage.Values[0] := '';
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+  if CurPageID = ServerPathPage.ID then
+    Result := StudioFolderAccepted(Trim(ServerPathPage.Values[0]));
 end;
 
 procedure ForceKillSlateProcesses();
@@ -115,6 +129,13 @@ var
   ConfigPath, LocalConfigPath, ServerRootVal: String;
   JsonContent: String;
 begin
+  if CurStep = ssInstall then
+  begin
+    // Where this used to install. That folder held only program files, so
+    // whatever an older build left there can go whole.
+    TryDeleteDirIfExists(ExpandConstant('{localappdata}\{#MyAppName}'));
+  end;
+
   if CurStep = ssPostInstall then
   begin
     ServerRootVal := ServerPathPage.Values[0];
@@ -130,5 +151,59 @@ begin
     SaveStringToFile(ConfigPath, JsonContent, False);
     ForceDirectories(ExpandConstant('{localappdata}\Slate'));
     SaveStringToFile(LocalConfigPath, JsonContent, False);
+  end;
+end;
+
+procedure PurgeOpsData();
+begin
+  Log('Removing Slate Operations settings and data from this workstation...');
+
+  PurgeDirectory(ExpandConstant('{app}'));
+  // The previous program folder, if an older build is still there.
+  TryDeleteDirIfExists(ExpandConstant('{localappdata}\{#MyAppName}'));
+
+  // Setup writes the server path to the shared Slate folder as well as its own,
+  // so a purge that skipped it would leave behind the very file that sends the
+  // next install back to the wrong server.
+  TryDeleteFileIfExists(ExpandConstant('{localappdata}\Slate\client_config.json'));
+  TryDeleteFileIfExists(ExpandConstant('{localappdata}\Slate\config.json'));
+
+  // Regenerated on demand, and stale copies of them are a large part of why a
+  // reinstall can look like it changed nothing.
+  TryDeleteDirIfExists(ExpandConstant('{localappdata}\Slate\Cache'));
+  TryDeleteDirIfExists(ExpandConstant('{localappdata}\Slate\Logs'));
+  TryDeleteDirIfExists(ExpandConstant('{localappdata}\Slate\logs'));
+  TryDeleteDirIfExists(ExpandConstant('{localappdata}\Slate\Temp'));
+  TryDeleteDirIfExists(ExpandConstant('{localappdata}\Slate\telemetry'));
+  TryDeleteDirIfExists(ExpandConstant('{%USERPROFILE}\RuntimeData\Slate'));
+
+  RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'UTStudioOps');
+  RegDeleteKeyIncludingSubkeys(HKCU, 'Software\UTStudio\Slate');
+  RegDeleteKeyIncludingSubkeys(HKCU, 'Software\UT_Software\Slate');
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usUninstall then
+    ForceKillSlateProcesses();
+
+  // After Setup has removed what it installed, so what is left here is only
+  // what the software wrote for itself.
+  if CurUninstallStep = usPostUninstall then
+  begin
+    if ShouldRemoveData('Slate Operations',
+      'This deletes, on this computer only:' + #13#10 +
+      '  -  the server path and login settings' + #13#10 +
+      '  -  cached data, temporary files and local logs' + #13#10#13#10 +
+      'The shared Slate settings under AppData\Local\Slate go with them, so a ' +
+      'Slate client on this machine will ask for the server path again.' + #13#10#13#10 +
+      'The studio database on the server is NOT touched. No attendance, leave, ' +
+      'ticket or inventory record is removed.') then
+    begin
+      PurgeOpsData();
+      ReportPurgeFailures();
+    end
+    else
+      Log('Keeping the Slate Operations settings and data on this workstation.');
   end;
 end;
