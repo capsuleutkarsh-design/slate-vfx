@@ -115,6 +115,18 @@ class DatabaseManager:
         """Create the requested backend and optionally fallback to sqlite."""
         mode = self.requested_mode
 
+        # An explicit path is an explicit instruction: open that SQLite file.
+        # Every caller that passes one is a test or a tool wanting a database
+        # of its own. This used to be ignored whenever the settings said
+        # PostgreSQL, so on any machine that could reach the studio server the
+        # "mock" database in the test suite was the studio's real one - tests
+        # rewrote every account's sync stamp and left projects and leave rows
+        # behind in it.
+        if db_path:
+            from .sqlite_manager import SQLiteManager
+            self.requested_mode = "sqlite"
+            return SQLiteManager(db_path=db_path), "sqlite", False
+
         if mode == "postgres":
             try:
                 from .postgres_manager import PostgresManager

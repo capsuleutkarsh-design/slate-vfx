@@ -15,6 +15,10 @@ from .attendance_export_worker import ExcelExportWorker
 from .attendance_metrics import calculate_hours as compute_hours
 from .attendance_metrics import calculate_streak as compute_streak
 from slate.core.domain import leave_policy as lp
+# At module level: setup_ui asks can(...) for the HOLIDAYS button, and the
+# import used to live inside is_admin() only - so opening the tab as anyone
+# died with "name 'can' is not defined" before a single widget was drawn.
+from slate.core.domain.access import can
 from slate.gui.core.offline_notice import on_database_error
 
 class AttendanceTab(QWidget):

@@ -67,6 +67,10 @@ hiddenimports += collect_submodules('slate.core.domain')
 hiddenimports += collect_submodules('slate.core.infra')
 hiddenimports += collect_submodules('slate.core.infra.migrations')
 hiddenimports += collect_submodules('slate.gui.tabs.vfx_dashboard_pro')
+# imageio loads its format plugins by name at run time. With only the static
+# import collected, "import imageio.v3" failed inside the frozen build and the
+# image engine fell back to the OpenImageIO-only path on every workstation.
+hiddenimports += collect_submodules('imageio')
 
 datas_qasync, binaries_qasync, hiddenimports_qasync = collect_all('qasync')
 hiddenimports += hiddenimports_qasync

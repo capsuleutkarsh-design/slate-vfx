@@ -1,3 +1,4 @@
+import time
 import psycopg2
 from psycopg2 import pool
 from psycopg2.pool import PoolError
@@ -419,9 +420,25 @@ class PostgresManager:
         """
         ports = []
         if self.pooler_port and self.pooler_port != self.port:
-            ports.append(("PgBouncer", self.pooler_port))
+            # Skip the pooler for a while after it has failed once. The
+            # application builds this manager three or four times while it
+            # starts, and a pooler that a firewall silently drops costs a
+            # five-second timeout each time - twenty seconds before the login
+            # screen, on every launch, at every studio without the pool.
+            failed_at = self.__class__._pooler_failed_at.get((self.host, self.pooler_port))
+            if failed_at and (time.monotonic() - failed_at) < self.POOLER_RETRY_AFTER:
+                logging.info("Skipping PgBouncer on %s:%s - it did not answer %.0fs ago.",
+                             self.host, self.pooler_port, time.monotonic() - failed_at)
+            else:
+                ports.append(("PgBouncer", self.pooler_port))
         ports.append(("the database directly", self.port))
         return ports
+
+    # Seconds to leave the pooler alone after it failed to answer, before
+    # trying it again. Long enough to cover one start-up, short enough that a
+    # pool started later is picked up on the next reconnect.
+    POOLER_RETRY_AFTER = 120
+    _pooler_failed_at = {}
 
     @staticmethod
     def _is_worth_retrying(exc: BaseException) -> bool:
@@ -583,6 +600,8 @@ class PostgresManager:
                                         logging.info(
                                             f"{host}:{try_port} ({label}) did not answer: {port_err}"
                                         )
+                                        if label == "PgBouncer":
+                                            self.__class__._pooler_failed_at[(host, try_port)] = time.monotonic()
                                         continue
                                 if connected:
                                     break

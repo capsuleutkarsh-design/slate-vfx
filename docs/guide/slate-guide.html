@@ -1,0 +1,536 @@
+<title>Slate Studio Handbook</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --ground: #F5F4F0; --panel: #FFFFFF; --raised: #ECEAE4; --line: #D3D0C7; --line-soft: #E5E2DA;
+    --text: #1B1B1F; --text-2: #4A4A52; --text-dim: #77767F;
+    --studio: #2A7A8C; --studio-soft: #DCEEF2;
+    --ops: #A8761E; --ops-soft: #F6ECD6;
+    --server: #2F8B5F; --server-soft: #DDF0E5;
+    --bad: #B9433F; --bad-soft: #F7DEDD; --warn: #A8761E; --ok: #2F8B5F; --info: #3F7DA8; --idle: #8A8883;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0D0D0F; --panel: #16161A; --raised: #1D1D22; --line: #2C2C34; --line-soft: #212128;
+      --text: #E8E6E1; --text-2: #B4B1AA; --text-dim: #87857F;
+      --studio: #3EA8BF; --studio-soft: #12343B; --ops: #D9A441; --ops-soft: #3A2C10; --server: #5FBF8F; --server-soft: #12352A;
+      --bad: #D9635F; --bad-soft: #3B1C1B; --warn: #D9A441; --ok: #5FBF8F; --info: #6BA4C9; --idle: #6E6C67;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0D0D0F; --panel: #16161A; --raised: #1D1D22; --line: #2C2C34; --line-soft: #212128;
+    --text: #E8E6E1; --text-2: #B4B1AA; --text-dim: #87857F;
+    --studio: #3EA8BF; --studio-soft: #12343B; --ops: #D9A441; --ops-soft: #3A2C10; --server: #5FBF8F; --server-soft: #12352A;
+    --bad: #D9635F; --bad-soft: #3B1C1B; --warn: #D9A441; --ok: #5FBF8F; --info: #6BA4C9; --idle: #6E6C67;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--ground); color: var(--text); font-family: Inter, "Segoe UI", system-ui, sans-serif; font-size: 17px; line-height: 1.6; padding-inline: clamp(16px, 4vw, 48px); padding-block: 32px 80px; }
+  .wrap { max-width: 960px; margin: 0 auto; }
+  h1, h2, h3, h4 { font-family: "Barlow Semi Condensed", Bahnschrift, "Segoe UI", sans-serif; text-wrap: balance; margin: 0; }
+  h1 { font-size: 46px; font-weight: 700; line-height: 1.05; }
+  h2 { font-size: 34px; font-weight: 700; margin-top: 72px; padding-top: 22px; border-top: 3px solid var(--line); }
+  h3 { font-size: 24px; font-weight: 600; margin-top: 40px; }
+  h4 { font-size: 18px; font-weight: 600; margin-top: 22px; }
+  p { max-width: 62ch; margin: 10px 0; }
+  .eyebrow { font-family: "Barlow Semi Condensed", sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 1.8px; text-transform: uppercase; color: var(--text-dim); }
+  .lede { font-size: 20px; color: var(--text-2); max-width: 60ch; }
+  code { font-family: Consolas, "Cascadia Mono", monospace; font-size: 15px; background: var(--raised); padding: 1px 6px; border-radius: 4px; }
+  ul, ol { max-width: 66ch; }
+  li { margin: 6px 0; }
+  a { color: var(--studio); }
+
+  /* Product colouring */
+  .studio h2, .studio h3 { color: var(--studio); }
+  .ops h2, .ops h3 { color: var(--ops); }
+  .server h2, .server h3 { color: var(--server); }
+
+  /* Cover cards */
+  .covers { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 28px; }
+  .cover { border-radius: 10px; padding: 20px 22px; color: var(--text); text-decoration: none; border: 2px solid var(--line); background: var(--panel); display: block; }
+  .cover.studio { border-color: var(--studio); background: var(--studio-soft); }
+  .cover.ops { border-color: var(--ops); background: var(--ops-soft); }
+  .cover.server { border-color: var(--server); background: var(--server-soft); }
+  .cover .who { font-size: 14px; color: var(--text-2); margin-top: 6px; }
+  .cover h3 { margin: 0; font-size: 26px; }
+  .cover svg { width: 56px; height: 56px; display: block; margin-bottom: 10px; }
+
+  /* Steps */
+  .steps { list-style: none; padding: 0; margin: 18px 0; counter-reset: s; max-width: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; }
+  .steps li { counter-increment: s; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 16px 16px 16px; position: relative; margin: 0; }
+  .steps li::before { content: counter(s); font-family: "Barlow Semi Condensed", sans-serif; font-weight: 700; font-size: 30px; line-height: 1; color: var(--text-dim); display: block; margin-bottom: 8px; }
+  .steps li b { display: block; font-size: 18px; margin-bottom: 4px; }
+  .steps li span { color: var(--text-2); font-size: 15px; }
+  .steps svg { width: 44px; height: 44px; display: block; margin-bottom: 8px; }
+
+  /* Callouts */
+  .note { border-left: 5px solid var(--info); background: var(--panel); padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 18px 0; max-width: 70ch; }
+  .note.bad { border-color: var(--bad); background: var(--bad-soft); }
+  .note.ok { border-color: var(--ok); }
+  .note.warn { border-color: var(--warn); }
+  .note b { display: block; font-family: "Barlow Semi Condensed", sans-serif; font-size: 18px; margin-bottom: 4px; }
+
+  /* Figures */
+  figure { margin: 22px 0; padding: 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  figure svg { width: 100%; height: auto; display: block; }
+  figcaption { margin-top: 10px; font-size: 15px; color: var(--text-2); max-width: 70ch; }
+  svg text { font-family: Inter, "Segoe UI", sans-serif; }
+
+  /* Tables */
+  .tablewrap { overflow-x: auto; margin: 14px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 16px; background: var(--panel); }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  th { font-family: "Barlow Semi Condensed", sans-serif; font-size: 14px; letter-spacing: 1px; text-transform: uppercase; color: var(--text-dim); }
+  .dot { display: inline-block; width: 14px; height: 14px; border-radius: 50%; vertical-align: -2px; margin-right: 6px; }
+
+  /* Sidebar mock */
+  .side { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; margin: 14px 0; }
+  .side .grp { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .side .grp .h { font-family: "Barlow Semi Condensed", sans-serif; font-size: 13px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 8px; }
+  .side .grp div.i { padding: 6px 0; border-top: 1px solid var(--line-soft); font-size: 16px; }
+  .side .grp div.i small { display: block; color: var(--text-2); font-size: 14px; }
+
+  .card-print { page-break-inside: avoid; }
+  @media print {
+    body { background: #fff; color: #000; font-size: 13px; padding: 0; }
+    h2 { page-break-before: always; margin-top: 0; border: 0; }
+    figure, .steps li, .note { break-inside: avoid; }
+    a { color: inherit; text-decoration: none; }
+  }
+  @media (max-width: 480px) { h1 { font-size: 34px; } h2 { font-size: 28px; } }
+</style>
+
+<div class="wrap">
+
+<div class="eyebrow">Slate BETA 2.0 &middot; for everyone in the studio</div>
+<h1 style="margin-top:8px">Slate Studio Handbook</h1>
+<p class="lede">Three programs, one studio. Find your program below, then follow the pictures. Every step is one thing to do.</p>
+
+<div class="covers">
+  <a class="cover studio" href="#studio">
+    <svg viewBox="0 0 56 56" role="img" aria-label="Clapperboard"><rect x="6" y="20" width="44" height="30" rx="4" fill="none" stroke="currentColor" stroke-width="3"/><path d="M6 20 L14 8 L50 8 L42 20 Z" fill="currentColor"/><line x1="22" y1="8" x2="16" y2="20" stroke="var(--panel)" stroke-width="3"/><line x1="34" y1="8" x2="28" y2="20" stroke="var(--panel)" stroke-width="3"/></svg>
+    <h3>Slate Studio</h3>
+    <div class="who">Artists, leads, coordinators, supervisors. Shots, footage, review, dashboard.</div>
+  </a>
+  <a class="cover ops" href="#ops">
+    <svg viewBox="0 0 56 56" role="img" aria-label="People"><circle cx="20" cy="18" r="8" fill="none" stroke="currentColor" stroke-width="3"/><path d="M6 46 C6 32 34 32 34 46" fill="none" stroke="currentColor" stroke-width="3"/><circle cx="40" cy="20" r="6" fill="none" stroke="currentColor" stroke-width="3"/><path d="M34 44 C36 34 52 34 52 44" fill="none" stroke="currentColor" stroke-width="3"/></svg>
+    <h3>Slate Operations</h3>
+    <div class="who">HR, IT, production office. Attendance, leave, joining, hardware, tickets, accounts.</div>
+  </a>
+  <a class="cover server" href="#server">
+    <svg viewBox="0 0 56 56" role="img" aria-label="Server"><rect x="8" y="8" width="40" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><rect x="8" y="32" width="40" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><circle cx="16" cy="16" r="3" fill="currentColor"/><circle cx="16" cy="40" r="3" fill="currentColor"/></svg>
+    <h3>Slate Server</h3>
+    <div class="who">One IT person, one machine. The database everyone else talks to.</div>
+  </a>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="map">How the studio fits together</h2>
+<p>There is one server computer, one shared folder on the network, and everybody's workstations. Slate on your workstation talks to both.</p>
+
+<figure>
+<svg viewBox="0 0 900 340" role="img" aria-label="Workstations send and receive data to the Slate Server machine, and read and write files in the Slate_Central shared folder. The server keeps the database on its own disk.">
+  <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+  <g fill="none" stroke="currentColor" stroke-width="2">
+    <!-- workstations -->
+    <g>
+      <rect x="40" y="60" width="120" height="76" rx="8"/><rect x="60" y="76" width="80" height="40" rx="3"/><line x1="80" y1="136" x2="120" y2="136"/><line x1="100" y1="136" x2="100" y2="148"/>
+      <rect x="40" y="180" width="120" height="76" rx="8"/><rect x="60" y="196" width="80" height="40" rx="3"/><line x1="80" y1="256" x2="120" y2="256"/><line x1="100" y1="256" x2="100" y2="268"/>
+    </g>
+    <!-- server -->
+    <rect x="390" y="70" width="150" height="120" rx="10"/>
+    <rect x="410" y="86" width="110" height="26" rx="4"/><rect x="410" y="122" width="110" height="26" rx="4"/>
+    <!-- database drum inside server -->
+    <ellipse cx="465" cy="164" rx="34" ry="8"/><path d="M431 164 v14 a34 8 0 0 0 68 0 v-14"/>
+    <!-- shared folder -->
+    <path d="M700 84 h44 l14 14 h84 v100 h-142 z"/>
+    <line x1="700" y1="98" x2="842" y2="98"/>
+  </g>
+  <g fill="currentColor" font-size="15" font-weight="600">
+    <text x="100" y="52" text-anchor="middle">Workstations</text>
+    <text x="465" y="60" text-anchor="middle">Slate Server machine</text>
+    <text x="771" y="70" text-anchor="middle">Slate_Central shared folder</text>
+  </g>
+  <g fill="currentColor" font-size="13">
+    <text x="100" y="164" text-anchor="middle">Studio</text>
+    <text x="100" y="284" text-anchor="middle">Operations</text>
+    <text x="465" y="216" text-anchor="middle">the database lives here,</text>
+    <text x="465" y="234" text-anchor="middle">on this computer's own disk</text>
+    <text x="771" y="212" text-anchor="middle">files: footage previews,</text>
+    <text x="771" y="230" text-anchor="middle">attendance, updates, backups</text>
+  </g>
+  <!-- arrows -->
+  <g stroke="var(--studio)" stroke-width="3" fill="none" marker-end="url(#ar)" marker-start="url(#ar)">
+    <line x1="170" y1="110" x2="380" y2="120"/>
+    <line x1="170" y1="220" x2="380" y2="150"/>
+  </g>
+  <g stroke="var(--ops)" stroke-width="3" fill="none" marker-end="url(#ar)" marker-start="url(#ar)">
+    <path d="M100 278 C100 318 771 318 771 208"/>
+  </g>
+  <g fill="currentColor" font-size="13" font-style="italic">
+    <text x="275" y="100" text-anchor="middle">saves and reads shots, people, tickets</text>
+    <text x="436" y="334" text-anchor="middle">reads and writes files (both programs)</text>
+  </g>
+</svg>
+<figcaption>Your work is saved in the database on the server machine. Big files and shared files go to the shared folder. If the server is off, Slate says so at login. If the shared folder is not connected, Slate warns and works on your PC only.</figcaption>
+</figure>
+
+<!-- ============================================================ -->
+<h2 id="everyday">Every day: signing in</h2>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="8" width="32" height="22" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="14" y1="38" x2="30" y2="38" stroke="currentColor" stroke-width="3"/></svg><b>Turn on your PC</b><span>Slate opens by itself when Windows starts.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="8" y="6" width="28" height="32" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="14" y1="16" x2="30" y2="16" stroke="currentColor" stroke-width="3"/><line x1="14" y1="24" x2="30" y2="24" stroke="currentColor" stroke-width="3"/></svg><b>Type your Employee ID</b><span>It looks like <code>EMP0012</code>. Slate remembers it next time.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="10" y="20" width="24" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><path d="M15 20 v-5 a7 7 0 0 1 14 0 v5" fill="none" stroke="currentColor" stroke-width="3"/></svg><b>Type your password</b><span>Dots hide it. That is normal.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="14" width="32" height="16" rx="4" fill="currentColor"/><text x="22" y="26" text-anchor="middle" font-size="9" fill="var(--panel)" font-weight="700">LOGIN</text></svg><b>Press LOGIN</b><span>Your name shows at the top of the window when you are in.</span></li>
+</ol>
+
+<figure>
+<svg viewBox="0 0 900 250" role="img" aria-label="Three login screen messages and what each means: Invalid credentials means the ID or password is wrong; Database unavailable means the server is off; Sign in as admin means the studio is brand new.">
+  <g fill="none" stroke="currentColor" stroke-width="2">
+    <rect x="20" y="20" width="270" height="110" rx="8"/><rect x="315" y="20" width="270" height="110" rx="8"/><rect x="610" y="20" width="270" height="110" rx="8"/>
+  </g>
+  <g fill="var(--bad-soft)" stroke="var(--bad)" stroke-width="2"><rect x="36" y="36" width="238" height="36" rx="5"/><rect x="331" y="36" width="238" height="36" rx="5"/></g>
+  <g fill="var(--studio-soft)" stroke="var(--studio)" stroke-width="2"><rect x="626" y="36" width="238" height="36" rx="5"/></g>
+  <g fill="currentColor" font-size="13" font-weight="600" text-anchor="middle">
+    <text x="155" y="59">Invalid credentials</text>
+    <text x="450" y="59">DATABASE UNAVAILABLE</text>
+    <text x="745" y="59">Sign in as admin / admin123</text>
+  </g>
+  <g fill="currentColor" font-size="14" text-anchor="middle">
+    <text x="155" y="100">Wrong ID or password.</text>
+    <text x="155" y="120">Try again. Still stuck? Ask your admin.</text>
+    <text x="450" y="100">The server computer is off</text>
+    <text x="450" y="120">or unreachable. Tell IT.</text>
+    <text x="745" y="100">New studio, no accounts yet.</text>
+    <text x="745" y="120">The admin creates them first.</text>
+  </g>
+  <g fill="currentColor" font-size="14">
+    <text x="20" y="180">Reconfigure Server / DB <tspan fill="var(--text-dim)">(small link under LOGIN)</tspan></text>
+    <text x="20" y="204">Only IT uses this. It changes which server and which shared folder this PC talks to.</text>
+    <text x="20" y="228">If you clicked it by mistake, press Cancel.</text>
+  </g>
+</svg>
+<figcaption>The red box under the password field tells you what is wrong. Read it before trying again.</figcaption>
+</figure>
+
+<!-- ============================================================ -->
+<section class="studio">
+<h2 id="studio">Slate Studio</h2>
+<p class="lede">For the people who make the shots. Everything is in the list on the left of the window.</p>
+
+<div class="side">
+  <div class="grp"><div class="h">Production</div>
+    <div class="i">Home<small>Your day: shots assigned to you, notices.</small></div>
+    <div class="i">Build &amp; Ingest<small>Make the project folders. Bring footage in.</small></div>
+    <div class="i">CAP Rename<small>Give files the right names.</small></div>
+    <div class="i">Stock Viewer<small>Library of stock footage, textures, references.</small></div>
+    <div class="i">Timeline Viewer<small>Watch shots in order. Review with the supervisor.</small></div>
+    <div class="i">VFX Dashboard<small>Every shot, its status, who has it, what was sent.</small></div>
+    <div class="i">Scheduling<small>Who works on what, when.</small></div>
+    <div class="i">Bidding<small>How many days each shot will take.</small></div>
+  </div>
+  <div class="grp"><div class="h">System</div>
+    <div class="i">Settings<small>Colours, paths, your preferences.</small></div>
+    <div class="i"><span style="color:var(--text-dim)">Not everyone sees every item.</span><small>Your role decides. An artist sees fewer items than a supervisor. That is normal.</small></div>
+  </div>
+</div>
+
+<h3>The life of a shot</h3>
+<figure>
+<svg viewBox="0 0 900 200" role="img" aria-label="A shot moves through five screens: Build and Ingest makes folders and brings footage; CAP Rename names files; the artist works; Timeline Viewer is where it is reviewed; VFX Dashboard shows its status.">
+  <defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+  <g fill="var(--studio-soft)" stroke="var(--studio)" stroke-width="2">
+    <rect x="10" y="50" width="150" height="70" rx="8"/><rect x="195" y="50" width="150" height="70" rx="8"/><rect x="380" y="50" width="150" height="70" rx="8"/><rect x="565" y="50" width="150" height="70" rx="8"/><rect x="750" y="50" width="140" height="70" rx="8"/>
+  </g>
+  <g stroke="currentColor" stroke-width="2.5" fill="none" marker-end="url(#ar2)">
+    <line x1="160" y1="85" x2="192" y2="85"/><line x1="345" y1="85" x2="377" y2="85"/><line x1="530" y1="85" x2="562" y2="85"/><line x1="715" y1="85" x2="747" y2="85"/>
+  </g>
+  <g fill="currentColor" font-size="14" font-weight="600" text-anchor="middle">
+    <text x="85" y="80">Build &amp; Ingest</text><text x="270" y="80">CAP Rename</text><text x="455" y="80">Your work</text><text x="640" y="80">Timeline Viewer</text><text x="820" y="80">VFX Dashboard</text>
+  </g>
+  <g fill="currentColor" font-size="12" text-anchor="middle">
+    <text x="85" y="100">folders + footage</text><text x="270" y="100">right file names</text><text x="455" y="100">Nuke, Silhouette...</text><text x="640" y="100">review, notes</text><text x="820" y="100">status for all</text>
+  </g>
+  <g fill="currentColor" font-size="13" text-anchor="middle">
+    <text x="85" y="150">coordinator</text><text x="270" y="150">coordinator</text><text x="455" y="150">artist</text><text x="640" y="150">supervisor + artist</text><text x="820" y="150">everyone</text>
+  </g>
+  <g stroke="var(--bad)" stroke-width="2.5" fill="none" stroke-dasharray="6 4" marker-end="url(#ar2)">
+    <path d="M640 120 C640 185 455 185 455 122"/>
+  </g>
+  <text x="548" y="182" text-anchor="middle" font-size="12" fill="var(--bad)">RETAKE: back to the artist</text>
+</svg>
+<figcaption>The name under each box says who usually does that step. A shot marked RETAKE in review goes back to the artist.</figcaption>
+</figure>
+
+<h3>Shot colours on the Dashboard</h3>
+<div class="tablewrap"><table>
+  <tr><th>Colour</th><th>Words you will see</th><th>Meaning</th></tr>
+  <tr><td><span class="dot" style="background:var(--ok)"></span>Green</td><td>APPROVED, DONE, FINAL</td><td>Finished. Nothing more to do.</td></tr>
+  <tr><td><span class="dot" style="background:var(--warn)"></span>Amber</td><td>WIP, PENDING</td><td>Someone is working on it now.</td></tr>
+  <tr><td><span class="dot" style="background:var(--info)"></span>Blue</td><td>SENT FOR REVIEW, IN REVIEW</td><td>Waiting for the supervisor or the client to look.</td></tr>
+  <tr><td><span class="dot" style="background:var(--bad)"></span>Red</td><td>RETAKE, FAILED</td><td>Come back to it. Read the note.</td></tr>
+  <tr><td><span class="dot" style="background:var(--idle)"></span>Grey</td><td>NOT STARTED, YTS, OMIT</td><td>Not begun, or dropped from the job.</td></tr>
+</table></div>
+
+<div class="note ok"><b>Saving</b>Slate saves as you go. There is no Save button for the dashboard. If two people edit the same shot at the same time, the second one is told to refresh and try again, so nobody's change is lost silently.</div>
+</section>
+
+<!-- ============================================================ -->
+<section class="ops">
+<h2 id="ops">Slate Operations</h2>
+<p class="lede">For HR, IT and the production office. Also the place where artists mark attendance and ask for leave.</p>
+
+<div class="side">
+  <div class="grp"><div class="h">Operations</div>
+    <div class="i">Home<small>Today at a glance.</small></div>
+    <div class="i">Attendance<small>Punch in, punch out, work from home, holidays.</small></div>
+    <div class="i">Leave<small>Ask for leave. Approve leave. See balances.</small></div>
+    <div class="i">Joining &amp; Leaving<small>New person's checklist. Leaving person's checklist.</small></div>
+  </div>
+  <div class="grp"><div class="h">IT &amp; Infra</div>
+    <div class="i">Hardware<small>Every PC, monitor, tablet: who has it.</small></div>
+    <div class="i">Licences<small>Nuke, Silhouette and other seats: how many, who, when they expire.</small></div>
+    <div class="i">IT Support<small>Tickets. "My PC is slow", "I need Nuke".</small></div>
+    <div class="i">Deployment<small>Which PC got which software, when.</small></div>
+  </div>
+  <div class="grp"><div class="h">Administration</div>
+    <div class="i">Users &amp; Roles<small>Make accounts. Reset passwords. Set who sees what.</small></div>
+    <div class="i">Admin Panel<small>Messages to all PCs, remote restart.</small></div>
+    <div class="i">Settings</div>
+  </div>
+</div>
+
+<h3>Attendance: two buttons a day</h3>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="16" fill="none" stroke="currentColor" stroke-width="3"/><line x1="22" y1="22" x2="22" y2="12" stroke="currentColor" stroke-width="3"/><line x1="22" y1="22" x2="29" y2="26" stroke="currentColor" stroke-width="3"/></svg><b>Morning: PUNCH IN</b><span>Open Attendance, press the green button. Logging in to Slate also records you.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="10" width="32" height="24" rx="4" fill="none" stroke="currentColor" stroke-width="3"/><path d="M12 22 h20" stroke="currentColor" stroke-width="3"/></svg><b>From home: WFH</b><span>Press WFH instead of PUNCH IN. Your day is counted as work from home.</span></li>
+  <li><svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="16" fill="none" stroke="currentColor" stroke-width="3"/><line x1="22" y1="22" x2="22" y2="12" stroke="currentColor" stroke-width="3"/><line x1="22" y1="22" x2="15" y2="28" stroke="currentColor" stroke-width="3"/></svg><b>Evening: PUNCH OUT</b><span>Forgot? Slate closes your day at 19:30 by itself and marks it "auto".</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="8" width="32" height="30" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="6" y1="16" x2="38" y2="16" stroke="currentColor" stroke-width="3"/><circle cx="22" cy="27" r="4" fill="var(--bad)"/></svg><b>HOLIDAYS</b><span>The studio calendar. HR keeps it up to date; you can look.</span></li>
+</ol>
+
+<h3>Leave: who says yes</h3>
+<figure>
+<svg viewBox="0 0 900 230" role="img" aria-label="A leave request goes from you to your supervisor, then to HR, then is approved. Either can reject it. You can cancel it while it is still pending.">
+  <defs><marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+  <g stroke-width="2">
+    <rect x="20" y="60" width="180" height="64" rx="8" fill="var(--ops-soft)" stroke="var(--ops)"/>
+    <rect x="260" y="60" width="180" height="64" rx="8" fill="var(--panel)" stroke="var(--warn)"/>
+    <rect x="500" y="60" width="180" height="64" rx="8" fill="var(--panel)" stroke="var(--warn)"/>
+    <rect x="740" y="60" width="140" height="64" rx="8" fill="var(--server-soft)" stroke="var(--ok)"/>
+    <rect x="380" y="170" width="180" height="44" rx="8" fill="var(--bad-soft)" stroke="var(--bad)"/>
+    <rect x="80" y="170" width="180" height="44" rx="8" fill="var(--panel)" stroke="var(--idle)"/>
+  </g>
+  <g fill="currentColor" font-size="14" font-weight="600" text-anchor="middle">
+    <text x="110" y="87">You ask</text><text x="350" y="87">Pending Supervisor</text><text x="590" y="87">Pending HR</text><text x="810" y="87">Approved</text>
+    <text x="470" y="197">Rejected</text><text x="170" y="197">Cancelled</text>
+  </g>
+  <g fill="currentColor" font-size="12" text-anchor="middle">
+    <text x="110" y="108">Leave &rarr; New request</text><text x="350" y="108">your supervisor decides</text><text x="590" y="108">HR checks the balance</text><text x="810" y="108">days are deducted</text>
+  </g>
+  <g stroke="currentColor" stroke-width="2.5" fill="none" marker-end="url(#ar3)">
+    <line x1="200" y1="92" x2="257" y2="92"/><line x1="440" y1="92" x2="497" y2="92"/><line x1="680" y1="92" x2="737" y2="92"/>
+  </g>
+  <g stroke="var(--bad)" stroke-width="2" fill="none" stroke-dasharray="5 4" marker-end="url(#ar3)">
+    <path d="M350 124 C350 160 420 150 430 168"/><path d="M590 124 C590 160 520 150 510 168"/>
+  </g>
+  <g stroke="var(--idle)" stroke-width="2" fill="none" stroke-dasharray="5 4" marker-end="url(#ar3)">
+    <path d="M110 124 C110 160 150 150 160 168"/>
+  </g>
+  <g fill="currentColor" font-size="12" text-anchor="middle"><text x="170" y="150">you change your mind</text><text x="470" y="150">no, with a note</text></g>
+</svg>
+<figcaption>While a request is still "Pending", you can cancel it yourself from My leave. Once it is Approved or Rejected, only HR can change it.</figcaption>
+</figure>
+
+<div class="tablewrap"><table>
+  <tr><th>Leave type</th><th>Plain meaning</th></tr>
+  <tr><td>Casual</td><td>A day off for personal things. Comes from your yearly balance.</td></tr>
+  <tr><td>Sick</td><td>You are unwell. Comes from your yearly balance.</td></tr>
+  <tr><td>Earned</td><td>Saved-up leave. Comes from your yearly balance.</td></tr>
+  <tr><td>Comp Off</td><td>A day back for a day you worked extra. Slate counts these from attendance.</td></tr>
+  <tr><td>Project Rest</td><td>Rest days given after a hard delivery. Granted by production.</td></tr>
+  <tr><td>Unpaid</td><td>A day off without pay. No balance needed.</td></tr>
+</table></div>
+<div class="note warn"><b>"Not sent"</b>If Slate says the request was not saved, nothing was deducted. Usually you already have a request covering those days. Cancel that one first, then ask again.</div>
+
+<h3>IT Support: a ticket's journey</h3>
+<figure>
+<svg viewBox="0 0 900 200" role="img" aria-label="A ticket goes Open, In Progress, Waiting on You, Resolved, Closed. Waiting on You means IT needs something from you. Priority P1 to P4 sets how fast IT must answer.">
+  <defs><marker id="ar4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+  <g stroke-width="2">
+    <rect x="10" y="40" width="150" height="58" rx="8" fill="var(--panel)" stroke="var(--info)"/>
+    <rect x="195" y="40" width="150" height="58" rx="8" fill="var(--panel)" stroke="var(--warn)"/>
+    <rect x="380" y="40" width="150" height="58" rx="8" fill="var(--ops-soft)" stroke="var(--ops)"/>
+    <rect x="565" y="40" width="150" height="58" rx="8" fill="var(--server-soft)" stroke="var(--ok)"/>
+    <rect x="750" y="40" width="140" height="58" rx="8" fill="var(--panel)" stroke="var(--idle)"/>
+  </g>
+  <g stroke="currentColor" stroke-width="2.5" fill="none" marker-end="url(#ar4)">
+    <line x1="160" y1="69" x2="192" y2="69"/><line x1="345" y1="69" x2="377" y2="69"/><line x1="530" y1="69" x2="562" y2="69"/><line x1="715" y1="69" x2="747" y2="69"/>
+  </g>
+  <g fill="currentColor" font-size="14" font-weight="600" text-anchor="middle">
+    <text x="85" y="66">Open</text><text x="270" y="66">In Progress</text><text x="455" y="66">Waiting on You</text><text x="640" y="66">Resolved</text><text x="820" y="66">Closed</text>
+  </g>
+  <g fill="currentColor" font-size="12" text-anchor="middle">
+    <text x="85" y="86">you raised it</text><text x="270" y="86">IT is on it</text><text x="455" y="86">IT needs your answer</text><text x="640" y="86">fixed, check it</text><text x="820" y="86">done</text>
+  </g>
+  <g fill="currentColor" font-size="13">
+    <text x="10" y="140" font-weight="600">Priority means how fast IT must reply:</text>
+    <text x="10" y="166"><tspan fill="var(--bad)" font-weight="700">P1</tspan> nobody can work: 15 min   <tspan fill="var(--warn)" font-weight="700">P2</tspan> one team blocked: 30 min   <tspan fill="var(--info)" font-weight="700">P3</tspan> slows you down: 2 hours   <tspan fill="var(--idle)" font-weight="700">P4</tspan> nice to have: 4 hours</text>
+  </g>
+</svg>
+<figcaption>When your ticket says "Waiting on You", IT has asked you something. Open the ticket and answer, or it stays stuck.</figcaption>
+</figure>
+<p>When you raise a ticket, pick the closest category: Workstation, Software / Licence, Network, Storage, Render Farm, Peripherals, Access / Account, or Other. Then say what stopped working and since when.</p>
+
+<h3>Users &amp; Roles: for the admin</h3>
+<ol class="steps">
+  <li><b>Open Users &amp; Roles</b><span>Only Developer and admin roles see it.</span></li>
+  <li><b>Add user</b><span>Employee ID, name, job title, a first password, a role. Tell the person to change the password.</span></li>
+  <li><b>Pick a role</b><span>The role decides which items appear in their list on the left. See the table below.</span></li>
+  <li><b>Someone leaves</b><span>Use Joining &amp; Leaving for the checklist, then delete or disable the account here.</span></li>
+</ol>
+<div class="tablewrap"><table>
+  <tr><th>Role</th><th>Who</th><th>Sees</th></tr>
+  <tr><td>Artist</td><td>Comp, roto, paint, 3D artists</td><td>Stock Viewer, CAP Rename, Dashboard, Settings, Attendance, Image Editor</td></tr>
+  <tr><td>Lead</td><td>Runs a department</td><td>Artist items plus Reports and Shot Review</td></tr>
+  <tr><td>Coordinator</td><td>Production office</td><td>Lead items plus Folder Creator and Move/Scan (Build &amp; Ingest)</td></tr>
+  <tr><td>Supervisor</td><td>Approves shots</td><td>Everything a coordinator sees, plus Admin Panel</td></tr>
+  <tr><td>Developer</td><td>Studio admin, IT</td><td>Everything</td></tr>
+</table></div>
+<div class="note"><b>The first account</b>A brand-new studio has one account: <code>admin</code> with password <code>admin123</code>. Sign in with it, create everyone, then change that password. The <code>artist</code> and <code>tester</code> accounts are for testing; delete them if you do not need them.</div>
+</section>
+
+<!-- ============================================================ -->
+<section class="server">
+<h2 id="server">Slate Server</h2>
+<p class="lede">One machine, one switch. The server holds the database. When it is off, nobody can sign in.</p>
+
+<figure>
+<svg viewBox="0 0 900 300" role="img" aria-label="The Slate Server window: a sidebar with Dashboard, Analytics, Operations and Settings; the Dashboard shows a power switch, the server IP and port, connection count, data directory, and a log.">
+  <g fill="none" stroke="currentColor" stroke-width="2">
+    <rect x="20" y="20" width="860" height="260" rx="10"/>
+    <line x1="200" y1="20" x2="200" y2="280"/>
+    <rect x="230" y="70" width="620" height="80" rx="8"/>
+  </g>
+  <g fill="currentColor" font-size="14">
+    <text x="40" y="56" font-weight="700">Slate</text>
+    <text x="40" y="100" fill="var(--server)" font-weight="600">Dashboard</text><text x="40" y="130">Analytics</text><text x="40" y="160">Operations</text><text x="40" y="190">Settings</text>
+    <text x="250" y="102" font-size="16" font-weight="600">Database Server Power</text>
+  </g>
+  <!-- switch -->
+  <rect x="440" y="86" width="52" height="26" rx="13" fill="var(--ok)"/><circle cx="479" cy="99" r="10" fill="var(--panel)"/>
+  <text x="500" y="104" fill="var(--ok)" font-size="13" font-weight="700">ON</text>
+  <!-- buttons -->
+  <g stroke-width="1.5"><rect x="250" y="118" width="90" height="24" rx="4" fill="var(--panel)" stroke="var(--info)"/><rect x="350" y="118" width="130" height="24" rx="4" fill="var(--panel)" stroke="var(--info)"/><rect x="490" y="118" width="130" height="24" rx="4" fill="var(--bad-soft)" stroke="var(--bad)"/></g>
+  <g fill="currentColor" font-size="11" text-anchor="middle"><text x="295" y="134">Restart Pool</text><text x="415" y="134">Open Web Dashboard</text><text x="555" y="134">Force Kill Database</text></g>
+  <!-- cards -->
+  <g fill="currentColor"><text x="230" y="185" font-size="11" letter-spacing="1">SERVER IP</text><text x="230" y="208" font-size="20" font-weight="700">10.100.104.82</text>
+  <text x="420" y="185" font-size="11" letter-spacing="1">PORT</text><text x="420" y="208" font-size="20" font-weight="700">5440</text>
+  <text x="540" y="185" font-size="11" letter-spacing="1">CONNECTIONS</text><text x="540" y="208" font-size="20" font-weight="700">12</text>
+  <text x="700" y="185" font-size="11" letter-spacing="1">TABLES</text><text x="700" y="208" font-size="20" font-weight="700">42</text></g>
+  <g fill="currentColor" font-size="12"><text x="230" y="248">SYSTEM LOGS</text><text x="230" y="266" fill="var(--text-dim)">&gt; Server successfully started on port 5440.</text></g>
+  <!-- callouts -->
+  <g stroke="var(--server)" stroke-width="2" fill="none"><line x1="466" y1="60" x2="466" y2="84"/></g>
+  <text x="466" y="54" text-anchor="middle" font-size="13" fill="var(--server)" font-weight="600">the one switch that matters</text>
+</svg>
+<figcaption>Green switch and a table count above zero means a healthy studio. "Force Kill" is only for when the switch does not respond; it stops the database without letting it finish.</figcaption>
+</figure>
+
+<h3>The four screens</h3>
+<div class="tablewrap"><table>
+  <tr><th>Screen</th><th>What it is for</th><th>How often</th></tr>
+  <tr><td>Dashboard</td><td>Switch the database on or off. See IP, port, how many people are connected, which folder holds the data, how many tables.</td><td>Look every morning</td></tr>
+  <tr><td>Analytics</td><td>Who is connected right now. Disconnect one stuck session without stopping everyone.</td><td>When something is slow</td></tr>
+  <tr><td>Operations</td><td>Back up. Restore. Tidy old backups. Vacuum and reindex. Run Diagnostics. Open or trim the log.</td><td>Back up weekly at least</td></tr>
+  <tr><td>Settings</td><td>Database folder, ports, database name, password, firewall button, Check for Updates.</td><td>Set once</td></tr>
+</table></div>
+
+<h3>Every week: take a backup</h3>
+<ol class="steps">
+  <li><b>Operations &rarr; Back up</b><span>A file is written. The screen shows "Backed up to ... ".</span></li>
+  <li><b>Copy the file away</b><span>It sits in <code>Slate_Central\Backups</code> beside the database. Copy it to the shared folder or a USB drive.</span></li>
+  <li><b>Check the date</b><span>The Operations screen shows "Last backup N days ago". Red means overdue.</span></li>
+  <li><b>Tidy</b><span>"Prune" removes backups older than 30 days but always keeps the newest 7.</span></li>
+</ol>
+
+<h3>The dashboard warnings</h3>
+<div class="note warn"><b>"exists but has no tables"</b>Normal on a brand-new studio until the first workstation signs in and builds the tables. If the studio is not new, the server is pointed at the wrong folder: Settings &rarr; Database Root Path.</div>
+<div class="note bad"><b>"another database on this machine has data"</b>The server is serving an empty database while the real one sits in a folder it names. Point Settings at that folder and restart. Do not create a new one.</div>
+<div class="note"><b>"No database password is configured"</b>Set it in Settings and restart. Without it the server cannot create the accounts workstations sign in with.</div>
+</section>
+
+<!-- ============================================================ -->
+<section class="server">
+<h2 id="it">For IT: installing, moving, updating</h2>
+
+<h3>Install in this order</h3>
+<figure>
+<svg viewBox="0 0 900 190" role="img" aria-label="Install Slate Server on the server machine first, then Slate Studio on artist workstations and Slate Operations on office machines. Every installer asks for the shared folder path.">
+  <defs><marker id="ar5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+  <g stroke-width="2">
+    <rect x="20" y="30" width="250" height="90" rx="10" fill="var(--server-soft)" stroke="var(--server)"/>
+    <rect x="330" y="30" width="250" height="90" rx="10" fill="var(--studio-soft)" stroke="var(--studio)"/>
+    <rect x="640" y="30" width="240" height="90" rx="10" fill="var(--ops-soft)" stroke="var(--ops)"/>
+  </g>
+  <g stroke="currentColor" stroke-width="2.5" fill="none" marker-end="url(#ar5)"><line x1="270" y1="75" x2="327" y2="75"/><line x1="580" y1="75" x2="637" y2="75"/></g>
+  <g fill="currentColor" font-size="30" font-weight="700" text-anchor="middle"><text x="50" y="82">1</text><text x="360" y="82">2</text><text x="670" y="82">3</text></g>
+  <g fill="currentColor" font-size="15" font-weight="600"><text x="75" y="62">Slate Server</text><text x="385" y="62">Slate Studio</text><text x="695" y="62">Slate Operations</text></g>
+  <g fill="currentColor" font-size="12"><text x="75" y="84">setup_Slate Server_v....exe</text><text x="75" y="102">the one database machine</text><text x="385" y="84">setup_Slate_Studio_v....exe</text><text x="385" y="102">every artist workstation</text><text x="695" y="84">setup_Slate_Ops_v....exe</text><text x="695" y="102">HR, IT, production PCs</text></g>
+  <text x="450" y="160" text-anchor="middle" font-size="14" fill="currentColor">Each installer asks one question: <tspan font-weight="600">where is the Slate_Central shared folder?</tspan>  Type the same path on every machine, for example <tspan font-family="Consolas, monospace">Z:\Slate_Central</tspan></text>
+</svg>
+<figcaption>No internet is needed at any point. Everything each program needs is inside its installer.</figcaption>
+</figure>
+
+<h3>First start of the server</h3>
+<ol class="steps">
+  <li><b>Open Slate Server</b><span>Settings: check the database password is filled in. Press the Firewall button once.</span></li>
+  <li><b>Flip the switch</b><span>It asks "Where is the studio's database?"</span></li>
+  <li><b>New studio: create</b><span>Press "Create a new empty database here". Existing studio: press "Use an existing database folder" and pick it.</span></li>
+  <li><b>Sign in from one workstation as admin</b><span>That builds the tables. The dashboard table count goes above zero.</span></li>
+</ol>
+
+<h3>Where things live</h3>
+<div class="tablewrap"><table>
+  <tr><th>What</th><th>Where</th><th>Safe to delete?</th></tr>
+  <tr><td>The programs</td><td><code>C:\Users\&lt;name&gt;\AppData\Local\Programs\Slate Studio</code>, <code>...\Slate Operations</code>, <code>...\Slate Server</code></td><td>Yes, reinstall brings them back</td></tr>
+  <tr><td>The database</td><td><code>C:\Users\&lt;name&gt;\AppData\Local\Slate_Central\LocalDatabase</code> on the server machine</td><td><b>No.</b> This is the studio's data</td></tr>
+  <tr><td>Backups</td><td><code>...\Slate_Central\Backups</code> on the server machine</td><td>Only after copying elsewhere</td></tr>
+  <tr><td>Workstation settings and cache</td><td><code>C:\Users\&lt;name&gt;\AppData\Local\Slate</code></td><td>Yes, Slate asks for the server again</td></tr>
+  <tr><td>Shared files and updates</td><td>The <code>Slate_Central</code> shared folder on the network</td><td>No</td></tr>
+  <tr><td>Temporary unpacked copy of the server</td><td><code>%TEMP%\_MEI...</code></td><td>Yes, when the server is stopped</td></tr>
+</table></div>
+
+<h3>Moving the server to another machine</h3>
+<ol class="steps">
+  <li><b>On the old machine: Back up</b><span>Operations &rarr; Back up. Copy the <code>.dump</code> file to a USB drive. Or, with the server stopped, copy the whole <code>LocalDatabase</code> folder.</span></li>
+  <li><b>Uninstall</b><span>When asked "Delete its settings and data as well?" press <b>No</b> until the new machine works.</span></li>
+  <li><b>On the new machine: install and start</b><span>Choose "Use an existing database folder" and point at the copied folder. Or create new, then Operations &rarr; Restore with the dump.</span></li>
+  <li><b>Point the workstations</b><span>Give the new machine the old one's IP, or on each workstation use Reconfigure Server / DB and type the new IP.</span></li>
+</ol>
+<div class="note bad"><b>Never run two servers on the same data</b>Two machines serving two copies means two sets of edits nobody can merge. Old off, then new on.</div>
+
+<h3>Updates without internet</h3>
+<p>Build the update package on the developer PC with the Launch Console, "Build update package". It writes the package and a manifest into <code>Slate_Central\Updates\releases</code>. Every workstation checks that folder when it starts and offers the update; the server offers it from Settings &rarr; Check for Updates. Nothing else is needed.</p>
+
+<h3>Uninstalling</h3>
+<p>The uninstaller removes the program and then asks one question: delete the settings and data too? <b>No</b> keeps everything, and a reinstall picks it straight back up. <b>Yes</b> on the server deletes the database and every backup on that machine. Answer Yes only when you mean to start over.</p>
+</section>
+
+<!-- ============================================================ -->
+<h2 id="help">When something goes wrong</h2>
+<div class="tablewrap"><table>
+  <tr><th>What you see</th><th>What it means</th><th>What to do</th></tr>
+  <tr><td>Login: <b>DATABASE UNAVAILABLE</b></td><td>The server is off or unreachable</td><td>Tell IT. IT: go to the server machine and check the green switch.</td></tr>
+  <tr><td>Login: <b>Invalid credentials</b></td><td>Wrong Employee ID or password</td><td>Check both. Ask the admin to reset your password in Users &amp; Roles.</td></tr>
+  <tr><td>Login: <b>Sign in as admin / admin123</b></td><td>Brand-new studio database, no accounts yet</td><td>The admin signs in first and creates everyone.</td></tr>
+  <tr><td>Pop-up: <b>Network Drive Not Found</b></td><td>The Slate_Central shared folder is not connected on this PC</td><td>Tell IT. Slate keeps working on this PC only; attendance and files will not sync until fixed.</td></tr>
+  <tr><td>Pop-up: <b>Database fallback active / LOCAL MODE</b></td><td>Slate could not reach the server and is using a local copy</td><td>Tell IT. Do not enter important data until the server is back; it will not reach the studio.</td></tr>
+  <tr><td>Leave: <b>Not sent</b></td><td>The request was refused, usually because of an overlap</td><td>Cancel the earlier request for those days, then ask again.</td></tr>
+  <tr><td>Dashboard: another person's change wins</td><td>Two people edited the same shot</td><td>Refresh, then make your change again.</td></tr>
+  <tr><td>Slate will not open at all</td><td>A broken update or install</td><td>IT: reinstall from the installer. Settings and data are kept.</td></tr>
+  <tr><td>Server: <b>0 tables</b> on an old studio</td><td>The server is pointed at an empty folder</td><td>IT: Settings &rarr; Database Root Path &rarr; the folder holding the real data, then restart.</td></tr>
+  <tr><td>Server: a workstation is stuck and slowing everyone</td><td>One session holds the database</td><td>IT: Analytics, select that session, Disconnect.</td></tr>
+</table></div>
+
+<div class="note"><b>IT: the Diagnostics button</b>Slate Server &rarr; Operations &rarr; Diagnostics checks the settings, the database, the pool and the update folder, and prints what is wrong in plain words. Run it first on any support call.</div>
+
+<p style="margin-top:48px;color:var(--text-dim);font-size:14px">Slate BETA 2.0.27 &middot; This page can be printed. Each part starts on a new page.</p>
+</div>

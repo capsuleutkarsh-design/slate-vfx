@@ -1088,7 +1088,16 @@ class UTServerWindow(QMainWindow):
         import subprocess
         try:
             port = self.settings_view.input_port.text()
-            cmd = f"Start-Process cmd -ArgumentList '/c netsh advfirewall firewall add rule name=\"Slate Central Server (Database)\" dir=in action=allow protocol=TCP localport={port} & netsh advfirewall firewall add rule name=\"Slate Central Server (Discovery)\" dir=in action=allow protocol=UDP localport=54320' -Verb RunAs -WindowStyle Hidden"
+            # The pool's port as well. It was left out, so every workstation
+            # tried PgBouncer, waited five seconds for a port the firewall was
+            # silently dropping, and then connected to the database directly -
+            # four times per start-up, twenty seconds before the login screen.
+            pooler_port = self.settings_view.input_pooler_port.text() or "6432"
+            cmd = (f"Start-Process cmd -ArgumentList '/c "
+                   f"netsh advfirewall firewall add rule name=\"Slate Central Server (Database)\" dir=in action=allow protocol=TCP localport={port} & "
+                   f"netsh advfirewall firewall add rule name=\"Slate Central Server (Pool)\" dir=in action=allow protocol=TCP localport={pooler_port} & "
+                   f"netsh advfirewall firewall add rule name=\"Slate Central Server (Discovery)\" dir=in action=allow protocol=UDP localport=54320' "
+                   f"-Verb RunAs -WindowStyle Hidden")
             subprocess.run(["powershell", "-Command", cmd], creationflags=subprocess.CREATE_NO_WINDOW)
             self._log("> Firewall exception requested. If accepted, connections are allowed.")
             self.dashboard.status_badge.set_status("Firewall Allowed", "ok")
