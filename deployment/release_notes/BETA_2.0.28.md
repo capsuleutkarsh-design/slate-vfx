@@ -4,7 +4,7 @@ Three installers, one per machine role. Install the server first, then the works
 
 | Installer | Install on | What it holds |
 |---|---|---|
-| `setup_Slate Server_vBETA 2.0.28.exe` | the one machine that runs the studio database | Slate Server, PostgreSQL 14, PgBouncer, the updater |
+| `setup_Slate Server_vBETA 2.0.28.exe` | the one machine that runs the studio database | Slate Server, PostgreSQL 17, PgBouncer, the updater |
 | `setup_Slate_Studio_vBETA 2.0.28.exe` | artist, lead and supervisor workstations | Slate Studio, ffmpeg, Olive, OpenRV, the updater |
 | `setup_Slate_Ops_vBETA 2.0.28.exe` | HR, IT and production office machines | Slate Operations, ffmpeg, Olive, the updater |
 
@@ -12,7 +12,9 @@ Nothing needs an internet connection. Every dependency is inside the installer, 
 
 ## Upgrading from 2.0.27
 
-Run the new installers over the old ones. Settings and data are kept.
+Run the new installers over the old ones. Settings are kept.
+
+The database engine moved from PostgreSQL 14 to 17, and a 14 data folder cannot be opened by 17. On a server that is still in testing: stop the server, move `AppData\Local\Slate_Central\LocalDatabase` aside, start the new server and choose "Create a new empty database here", then sign in as admin from one workstation. On a server with real data: take a backup with the old server first, install the new one, create a new empty database, then Operations → Restore with that backup.
 
 The server is now a folder rather than a single file. The installer removes the old `Slate_Server.exe` and puts the folder in its place; the database is untouched because it never lived in the program folder.
 
@@ -28,6 +30,7 @@ The server is now a folder rather than a single file. The installer removes the 
 - The workstation backup thread no longer logs "backup script not found" every twelve hours. Backups are the server's job; the thread says so once and stops.
 
 **Server**
+- PostgreSQL 17.11 replaces 14.15. Version 14 leaves community support in November 2026; 17 is supported to 2029 and adds incremental backups and the `pg_stat_io` view. A data folder written by 14 is refused with a message saying so, instead of a failed start with the reason buried in `pg_server.log`. Studios still testing should create a new empty database; a studio with real data moves it across once with `pg_upgrade` or restores a backup taken with the old server.
 - The server installs as a folder, like the clients. It used to be a single file that unpacked PostgreSQL and everything else into `%TEMP%` on every start and ran from there, so cleaning the temp folder while the server ran broke the running server. Nothing Slate needs lives in temp any more, and the server starts faster.
 - pgAdmin and the PostgreSQL documentation are no longer shipped with the server.
 
@@ -46,5 +49,4 @@ The server is now a folder rather than a single file. The installer removes the 
 ## Known limits
 
 - The cause of a day-long ingest reaching 100 GB has not been found; it could not be reproduced on a test machine. The memory log above and the pause are there so the next such run can be read. Send `AppData\Local\Slate\Logs\latest.log` from the machine it happened on.
-- PostgreSQL stays on version 14. Every existing data directory is 14; moving to 16 needs `pg_upgrade`, not a newer binary.
 - Studio and Operations share the settings folder `AppData\Local\Slate`. Uninstalling Studio with "delete data" keeps the server path if Operations is still installed.

@@ -115,7 +115,9 @@ class TestTheServerCheck:
     def _cluster(self, tmp_path, databases):
         data = tmp_path / "LocalDatabase"
         (data / "base").mkdir(parents=True)
-        (data / "PG_VERSION").write_text("14", encoding="utf-8")
+        # The version the bundled server carries, so this passes on any
+        # checkout; a number would trip the mismatch check on the next upgrade.
+        (data / "PG_VERSION").write_text(str(doctor._bundled_postgres_major() or 17), encoding="utf-8")
         for i in range(databases):
             (data / "base" / str(i + 1)).mkdir()
         return data

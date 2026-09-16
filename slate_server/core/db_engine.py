@@ -10,6 +10,30 @@ import atexit
 import threading
 import shutil
 
+class DataDirectoryFromAnotherVersion(Exception):
+    """
+    The data directory was written by a different PostgreSQL major version.
+
+    The binaries this server carries cannot open it, and starting would only
+    fail deeper down with a less useful message.
+    """
+
+    def __init__(self, data_dir, have, want):
+        self.data_dir = Path(data_dir)
+        self.have = have
+        self.want = want
+        super().__init__(
+            "%s was written by PostgreSQL %d, and this server carries "
+            "PostgreSQL %d, which cannot open it.\n\n"
+            "If the studio has no data worth keeping yet, point the server at "
+            "a new folder (or move this one aside) and create a new empty "
+            "database.\n\n"
+            "If it does, the data has to be moved across once with pg_upgrade "
+            "(from the PostgreSQL %d installation) or restored from a backup "
+            "taken with the old server."
+            % (self.data_dir, have, want, have))
+
+
 class NoDatabaseHere(Exception):
     """
     The data directory holds no cluster, and nobody has said to build one.
@@ -62,6 +86,48 @@ class DatabaseEngine:
     def is_initialized(self) -> bool:
         """Check if the data directory has been initialized"""
         return (self.data_dir / "PG_VERSION").exists()
+
+    def binary_major(self) -> int:
+        """The major version of the bundled PostgreSQL, or 0 if it cannot say."""
+        cached = getattr(self, "_binary_major", None)
+        if cached is not None:
+            return cached
+        major = 0
+        try:
+            result = subprocess.run(
+                [str(self.bin_dir / "postgres.exe"), "--version"],
+                capture_output=True, text=True, timeout=15,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            # "postgres (PostgreSQL) 17.11"
+            number = result.stdout.strip().rsplit(" ", 1)[-1]
+            major = int(number.split(".")[0])
+        except Exception as exc:
+            logging.debug("Could not read the PostgreSQL version: %s", exc)
+        self._binary_major = major
+        return major
+
+    def data_major(self) -> int:
+        """The major version the data directory was written by, or 0."""
+        try:
+            return int((self.data_dir / "PG_VERSION").read_text(encoding="utf-8").strip().split(".")[0])
+        except Exception:
+            return 0
+
+    def check_data_version(self):
+        """
+        Refuse, clearly, a data directory from another major version.
+
+        Without this the server ran pg_ctl, which failed inside PostgreSQL
+        with a line in pg_server.log that nobody reads, and the window said
+        "Failed to start server". A directory from PostgreSQL 14 opened by 17
+        is the one case every studio hits exactly once, at the upgrade, so it
+        is told what it is looking at and what to do.
+        """
+        have = self.data_major()
+        want = self.binary_major()
+        if not have or not want or have == want:
+            return
+        raise DataDirectoryFromAnotherVersion(self.data_dir, have, want)
 
     def is_ready(self) -> bool:
         """Checks if PostgreSQL is currently accepting connections on self.port."""
@@ -646,6 +712,7 @@ class DatabaseEngine:
                 raise NoDatabaseHere(self.data_dir)
             self.initialize_database(progress_callback)
         else:
+            self.check_data_version()
             self._ensure_pg_directories()
             self._update_port_in_conf()
             self._clean_stale_pid_file()

@@ -58,9 +58,9 @@
     },
     {
       "name": "postgresql",
-      "title": "PostgreSQL 14 (binaries only)",
-      "why": "The studio database. Only needed on the machine that runs Slate Central Server - a workstation that connects to an existing server can skip it. Pinned to 14: every existing data directory is PG_VERSION 14, and a 16 server cannot open one - move to 16 with pg_upgrade, not by changing this line.",
-      "url": "https://get.enterprisedb.com/postgresql/postgresql-14.15-1-windows-x64-binaries.zip",
+      "title": "PostgreSQL 17 (binaries only)",
+      "why": "The studio database. Only needed on the machine that runs Slate Central Server - a workstation that connects to an existing server can skip it. A data directory is tied to its major version: a 17 server refuses a 14 directory with a message, and moving one across is pg_upgrade's job, not this line's.",
+      "url": "https://get.enterprisedb.com/postgresql/postgresql-17.11-1-windows-x64-binaries.zip",
       "kind": "zip",
       "dest": "slate_server/bin",
       "strip_root": "pgsql",

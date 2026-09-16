@@ -1014,6 +1014,12 @@ class UTServerWindow(QMainWindow):
         else:
             self.dashboard.status_badge.set_status("Error", "error")
             self._log(f"> ERROR: {error_msg}")
+            if state:
+                # A start that failed is worth a window of its own. The log
+                # line above is one line; a data folder from another
+                # PostgreSQL version, or a locked-out cluster, comes with
+                # instructions that do not fit in it.
+                QMessageBox.warning(self, "The database did not start", str(error_msg))
             # Revert toggle visually without emitting signal
             self.dashboard.toggle_power.blockSignals(True)
             self.dashboard.toggle_power.setChecked(not state)

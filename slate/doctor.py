@@ -234,6 +234,16 @@ def check_database(report, cfg):
 
 # --------------------------------------------------------------------- server
 
+def _bundled_postgres_major() -> int:
+    """The major version of the PostgreSQL shipped with this server, or 0."""
+    try:
+        from slate_server.core.db_engine import DatabaseEngine
+        import tempfile
+        return DatabaseEngine(Path(tempfile.gettempdir()) / "slate-doctor-probe").binary_major()
+    except Exception:
+        return 0
+
+
 def check_server(report, cfg):
     report.section("Server")
 
@@ -267,6 +277,13 @@ def check_server(report, cfg):
     version = (db_path / "PG_VERSION").read_text(encoding="utf-8").strip()
     databases = len(list((db_path / "base").iterdir()))
     report.add(OK, "data directory", "PostgreSQL %s, %d database(s)" % (version, databases))
+
+    bundled = _bundled_postgres_major()
+    if bundled and version.split(".")[0] != str(bundled):
+        report.add(FAIL, "data directory",
+                   "written by PostgreSQL %s but this server carries %d; it "
+                   "cannot be opened until it is moved across with pg_upgrade "
+                   "or restored from a backup" % (version, bundled))
 
     # Three base directories is an untouched initdb: template0, template1 and
     # postgres, and nothing of anybody's.

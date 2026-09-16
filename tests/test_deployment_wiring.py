@@ -328,12 +328,12 @@ def test_one_writer_for_the_version():
     assert "set_version" in (ROOT / "tools" / "build_pipeline.py").read_text(encoding="utf-8")
 
 
-def test_postgres_is_pinned_to_the_version_the_clusters_run():
+def test_postgres_is_pinned_to_the_version_the_server_ships():
     import json
 
     manifest = json.loads((ROOT / "setup" / "components.json").read_text(encoding="utf-8"))
     postgres = next(c for c in manifest["components"] if c["name"] == "postgresql")
-    assert "postgresql-14." in postgres["url"], \
-        "every data directory is PG_VERSION 14; newer binaries cannot open them"
+    assert "postgresql-17." in postgres["url"], \
+        "the bundled server is 17; a data directory from another major is refused by DatabaseEngine.check_data_version"
     assert any(c["name"] == "ffprobe" for c in manifest["components"]), \
         "the specs and ResourcePathManager expect ffprobe beside ffmpeg"
