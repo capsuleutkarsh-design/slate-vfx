@@ -24,6 +24,13 @@ The server is now a folder rather than a single file. The installer removes the 
 - The Attendance tab opens again. It died on open with "name 'can' is not defined" for every Operations user.
 - HR can import attendance from the studio's biometric machine: Attendance → IMPORT BIOMETRIC, choose the CSV or Excel export. Slate works out which column is the employee code, date, time and direction, lets you correct it, remembers the layout for next time, and asks which person an unknown code belongs to. Importing the same file twice changes nothing.
 
+**Ports**
+- If the database port is already held by another program, the server says which program and stops, instead of failing inside PostgreSQL with the reason buried in `pg_server.log`.
+- The server's announcement on the network now carries both its ports. A workstation that knows the server but was set up for an old port follows the change on its own; the announcement used to be ignored whenever the address was already known. Workstations that reach the server through the pool never cared about the database port.
+
+**Operations**
+- Replies under a ticket in My Tickets are now saved on a fresh install. The table they go to was created only by a development-machine migration, so on every studio the thread silently stayed empty.
+
 **Starting up**
 - A workstation whose server firewall drops the pool port no longer waits twenty seconds before the login screen. A pool that did not answer is left alone for two minutes.
 - The server's "Allow firewall" button opens the pool port as well as the database port.

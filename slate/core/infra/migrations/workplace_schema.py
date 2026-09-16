@@ -131,6 +131,19 @@ TABLES_PG = {
             seats_in_use INTEGER NOT NULL DEFAULT 0,
             seats_total INTEGER NOT NULL DEFAULT 0
         )""",
+    # The replies under a ticket in My Tickets. Created, until now, by one
+    # Alembic revision only - so it existed on the development database and
+    # on no studio's. On a fresh install every reply was silently dropped and
+    # the thread read as empty. Same shape as that revision, so a development
+    # database is unchanged.
+    "it_ticket_comments": """
+        CREATE TABLE IF NOT EXISTS it_ticket_comments (
+            id SERIAL PRIMARY KEY,
+            ticket_id INTEGER NOT NULL,
+            author VARCHAR(255) NOT NULL,
+            comment_text TEXT NOT NULL,
+            timestamp VARCHAR(50) DEFAULT TO_CHAR(CURRENT_TIMESTAMP, 'YYYY-MM-DD HH24:MI:SS')
+        )""",
 }
 
 TABLES_SQLITE = {
@@ -207,6 +220,14 @@ TABLES_SQLITE = {
             taken_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             seats_in_use INTEGER NOT NULL DEFAULT 0,
             seats_total INTEGER NOT NULL DEFAULT 0
+        )""",
+    "it_ticket_comments": """
+        CREATE TABLE IF NOT EXISTS it_ticket_comments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticket_id INTEGER NOT NULL,
+            author TEXT NOT NULL,
+            comment_text TEXT NOT NULL,
+            timestamp TEXT DEFAULT (datetime('now'))
         )""",
 }
 

@@ -34,6 +34,67 @@ class DataDirectoryFromAnotherVersion(Exception):
             % (self.data_dir, have, want, have))
 
 
+class PortInUse(Exception):
+    """
+    Something else already listens on the port PostgreSQL was told to use.
+
+    Without this the server ran pg_ctl, PostgreSQL failed to bind, and the
+    window said "Failed to start server. Check log at ..." - the reason was
+    one line among many in pg_server.log. The port and, where Windows will
+    say, the program holding it are named instead.
+    """
+
+    def __init__(self, port, holder=""):
+        self.port = int(port)
+        self.holder = holder
+        held = " by %s" % holder if holder else ""
+        super().__init__(
+            "Port %d is already in use on this machine%s, so PostgreSQL cannot "
+            "listen on it.\n\nChoose another port in Settings, or stop the "
+            "program that holds it. Workstations that reach the server through "
+            "the pool are not affected by the database port; those that connect "
+            "directly pick the new port up from the server's announcement on "
+            "the network, or can be told it under Reconfigure Server / DB."
+            % (self.port, held))
+
+
+def port_holder(port: int) -> str:
+    """Best effort: the name and id of the process listening on a TCP port."""
+    try:
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        out = subprocess.run(["netstat", "-ano", "-p", "tcp"], capture_output=True,
+                             text=True, timeout=10, creationflags=creationflags).stdout
+        pid = ""
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) >= 5 and parts[0].upper() == "TCP" \
+                    and parts[1].endswith(":%d" % int(port)) and parts[3].upper() == "LISTENING":
+                pid = parts[4]
+                break
+        if not pid:
+            return ""
+        out = subprocess.run(["tasklist", "/FI", "PID eq %s" % pid, "/FO", "CSV", "/NH"],
+                             capture_output=True, text=True, timeout=10,
+                             creationflags=creationflags).stdout
+        name = out.strip().split(",")[0].strip('"') if out.strip() else ""
+        return "%s (process %s)" % (name, pid) if name else "process %s" % pid
+    except Exception:
+        return ""
+
+
+def port_is_free(port: int, host: str = "127.0.0.1") -> bool:
+    """Whether a TCP port can be bound on this machine right now."""
+    import socket
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.bind((host, int(port)))
+        return True
+    except OSError:
+        return False
+    finally:
+        probe.close()
+
+
 class NoDatabaseHere(Exception):
     """
     The data directory holds no cluster, and nobody has said to build one.
@@ -128,6 +189,12 @@ class DatabaseEngine:
         if not have or not want or have == want:
             return
         raise DataDirectoryFromAnotherVersion(self.data_dir, have, want)
+
+    def check_port_free(self):
+        """Raise PortInUse when another program already listens on our port."""
+        if port_is_free(self.port):
+            return
+        raise PortInUse(self.port, port_holder(self.port))
 
     def is_ready(self) -> bool:
         """Checks if PostgreSQL is currently accepting connections on self.port."""
@@ -716,6 +783,10 @@ class DatabaseEngine:
             self._ensure_pg_directories()
             self._update_port_in_conf()
             self._clean_stale_pid_file()
+
+        # is_ready() above was false, so nothing of ours is on the port. If
+        # something else is, say which, rather than letting pg_ctl fail.
+        self.check_port_free()
             
         if progress_callback:
             progress_callback("Starting Database Server...")

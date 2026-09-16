@@ -63,9 +63,12 @@ a = Analysis(
 # The bundled PostgreSQL, minus what the server never runs. 'bin', 'lib' and
 # 'share' are the working database; pgAdmin 4 and the HTML documentation were
 # 210 MB the server never opened.
+# Only 'pgsql' and 'pgbouncer' belong in the build. A previous PostgreSQL
+# kept beside them for a rollback ('pgsql.14', 'pgsql.old', ...) is a
+# gigabyte the server would otherwise carry and never run.
 a.datas += Tree(R('slate_server', 'bin'), prefix='slate_server/bin',
                 excludes=['pgAdmin 4', 'doc', 'include', 'symbols',
-                          'StackBuilder', '*.pdb'])
+                          'StackBuilder', '*.pdb', 'pgsql.*', '*.zip'])
 
 pyz = PYZ(a.pure)
 

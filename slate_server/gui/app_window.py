@@ -973,7 +973,9 @@ class UTServerWindow(QMainWindow):
                 self._log(f"> Server successfully started on port {self.settings_view.input_port.text()}.")
 
                 # Start UDP Broadcaster
-                self.broadcaster = NetworkBroadcaster(db_port=int(self.settings_view.input_port.text()))
+                self.broadcaster = NetworkBroadcaster(
+                    db_port=int(self.settings_view.input_port.text()),
+                    pooler_port=int(self.settings_view.input_pooler_port.text().strip() or 0))
                 self.broadcaster.start()
                 self._log(f"> Network Discovery Broadcaster is ONLINE (UDP port {self.broadcaster.listen_port}).")
 

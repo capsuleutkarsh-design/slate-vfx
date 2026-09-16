@@ -166,14 +166,17 @@ class GlobalConfig:
         # 5. Zero-Config Network Discovery
         if not self.data.get('db_host'):
             try:
-                from .network_discovery import discover_server
+                from .network_discovery import discover_server_details
                 logging.info("GlobalConfig: No db_host configured. Attempting UDP Network Discovery...")
-                server_ip, db_port = discover_server(timeout=1.5)
-                if server_ip:
-                    self.data['db_host'] = server_ip
-                    self.data['db_port'] = db_port
+                found = discover_server_details(timeout=1.5)
+                if found:
+                    self.data['db_host'] = found["host"]
+                    self.data['db_port'] = found["db_port"]
+                    if found.get("pooler_port"):
+                        self.data['db_pooler_port'] = found["pooler_port"]
                     self.save()
-                    logging.info(f"GlobalConfig: Successfully auto-discovered Server at {server_ip}:{db_port}!")
+                    logging.info("GlobalConfig: Successfully auto-discovered Server at %s:%s!",
+                                 found["host"], found["db_port"])
                 else:
                     logging.info("GlobalConfig: Network Discovery found no server. Falling back to local.")
             except Exception as e:

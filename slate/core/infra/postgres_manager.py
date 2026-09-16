@@ -409,6 +409,50 @@ class PostgresManager:
 
 
 
+    def adopt_announcement(self, found) -> bool:
+        """
+        Take the server's own word for where it is; True if anything changed.
+
+        A discovered server used to be adopted only when its address was new.
+        A studio that moved the database to another port on the same machine
+        - because something else had taken the old one - had every
+        workstation keep dialling the old port, and discovery, which found
+        the server perfectly well, threw the answer away because the address
+        was already known. The port and the pool port are now taken as well.
+        """
+        host = found.get("host")
+        db_port = int(found.get("db_port") or 0)
+        pooler_port = int(found.get("pooler_port") or 0)
+        if not host:
+            return False
+
+        changed = False
+        from .global_config import GlobalConfig
+        if host not in self.host_candidates:
+            self.host_candidates.insert(0, host)
+            GlobalConfig.set('db_host', host)
+            changed = True
+        elif self.host_candidates[0] != host:
+            self.host_candidates.remove(host)
+            self.host_candidates.insert(0, host)
+            changed = True
+        if db_port and db_port != int(self.port):
+            logging.info("The server at %s now listens on %s (this machine had %s).",
+                         host, db_port, self.port)
+            self.port = db_port
+            GlobalConfig.set('db_port', db_port)
+            changed = True
+        if pooler_port and pooler_port != int(self.pooler_port or 0):
+            self.pooler_port = pooler_port
+            GlobalConfig.set('db_pooler_port', pooler_port)
+            self.__class__._pooler_failed_at.pop((host, pooler_port), None)
+            changed = True
+        if changed:
+            self.host = self.host_candidates[0]
+            logging.info("Following the server's announcement: %s, database port %s, pool port %s.",
+                         host, self.port, self.pooler_port or "none")
+        return changed
+
     def _ports_to_try(self):
         """
         Where to look for the database, best first.
@@ -614,19 +658,11 @@ class PostgresManager:
                                 # Fallback: Try forced network discovery if configured hosts failed
                                 if attempt == 0:  # Only attempt discovery on the first failure round
                                     try:
-                                        from .network_discovery import discover_server
+                                        from .network_discovery import discover_server_details
                                         logging.info("Configured hosts failed. Attempting forced UDP discovery...")
-                                        server_ip, db_port = discover_server(timeout=1.5)
-                                        if server_ip and server_ip not in self.host_candidates:
-                                            logging.info(f"Forced discovery found server at {server_ip}:{db_port}. Retrying connection...")
-                                            # Insert at front to try it first on the next attempt
-                                            self.host_candidates.insert(0, server_ip)
-                                            from .global_config import GlobalConfig
-                                            GlobalConfig.set('db_host', server_ip)
-                                            if db_port:
-                                                GlobalConfig.set('db_port', db_port)
-                                                self.port = int(db_port)
-                                            continue  # Retry outer auth loop with new host
+                                        found = discover_server_details(timeout=1.5)
+                                        if found and self.adopt_announcement(found):
+                                            continue  # Retry outer auth loop with what the server said
                                     except Exception as discovery_exc:
                                         logging.warning(f"Forced discovery failed: {discovery_exc}")
 

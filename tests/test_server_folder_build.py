@@ -44,6 +44,11 @@ class TestTheServerIsBuiltAsAFolder:
         assert "(R('slate', 'default_config.json'), 'slate')" in spec
         assert "prefix='slate_server/bin'" in spec
 
+    def test_a_previous_postgres_kept_beside_the_current_one_is_not_shipped(self):
+        spec = read("Slate_Server.spec")
+        excludes = spec.split("prefix='slate_server/bin'")[1].split("]")[0]
+        assert "'pgsql.*'" in excludes, "pgsql.14 beside pgsql would double the server"
+
     def test_the_pipeline_looks_for_the_folder(self):
         pipeline = (ROOT / "tools" / "build_pipeline.py").read_text(encoding="utf-8")
         assert 'os.path.join("dist", "Slate_Server")' in pipeline
