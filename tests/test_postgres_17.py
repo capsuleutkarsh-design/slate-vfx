@@ -78,7 +78,7 @@ class TestEverythingAgreesOnSeventeen:
         assert "PostgreSQL 17" in postgres["title"]
 
     def test_the_notes_tell_a_studio_what_to_do_with_a_14_folder(self):
-        notes = (ROOT / "deployment" / "release_notes" / "BETA_2.0.28.md").read_text(encoding="utf-8")
+        notes = (ROOT / "deployment" / "release_notes" / "BETA_2.0.29.md").read_text(encoding="utf-8")
         assert "PostgreSQL 17" in notes
         assert "pg_upgrade" in notes and "Restore" in notes
 
