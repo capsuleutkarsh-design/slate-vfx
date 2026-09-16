@@ -92,6 +92,7 @@ class StockIngestController(QObject):
         self.worker.asset_update_signal.connect(self.on_asset_update)
         self.worker.assets_update_batch_signal.connect(self.on_assets_update_batch)
         self.worker.finished_signal.connect(self.on_worker_finished)
+        self.worker.memory_alarm.connect(lambda message: self.status_updated.emit(message, True))
         
         self.worker.start()
         return True

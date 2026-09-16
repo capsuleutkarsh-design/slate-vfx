@@ -3,7 +3,7 @@
 ; Features: Auto-Updater, Cleanup Old Configs, Bundled Dependencies.
 
 #define MyAppName "Slate Server"
-#define MyAppVersion "BETA 2.0.27"
+#define MyAppVersion "BETA 2.0.28"
 #define MyAppPublisher "UT Studio"
 #define MyAppURL "https://github.com/capsuleutkarsh-design/slate-vfx"
 #define MyAppExeName "Slate_Server.exe"
@@ -67,8 +67,11 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 ; --- MAIN APPLICATION COMPONENTS ---
-; We install the Slate_Server executable
-Source: "{#SourceDistDir}\Slate_Server.exe"; DestDir: "{app}"; Flags: ignoreversion
+; The server folder: Slate_Server.exe beside its _internal, which carries
+; PostgreSQL, PgBouncer, Qt and the settings. It used to be a single file
+; that unpacked all of that into %TEMP% on every start; cleaning %TEMP% while
+; the server ran took the database binaries away from under it.
+Source: "{#SourceDistDir}\Slate_Server\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; The sidecar that applies an update after the server has exited. The engine
 ; looks for it beside the running executable, and without it an update on the
 ; server machine downloads, verifies, and then fails to install.
@@ -88,13 +91,17 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch Slate Server"; Flags: nowait postinstall skipifsilent; Components: central_server
 
 [InstallDelete]
-; Clean up previous server executable and logs, but KEEP Database
+; Clean up the previous build, but KEEP the database (it lives in
+; Slate_Central, never in the program folder). _internal goes whole so a
+; library removed from the build does not linger from an older install.
+Type: filesandordirs; Name: "{app}\_internal"
 Type: files; Name: "{app}\{#MyAppExeName}"
 Type: files; Name: "{app}\SlateUpdater.exe"
 Type: files; Name: "{app}\pg_server.log"
 
 [UninstallDelete]
 ; Same as install, preserve Database
+Type: filesandordirs; Name: "{app}\_internal"
 Type: files; Name: "{app}\{#MyAppExeName}"
 Type: files; Name: "{app}\SlateUpdater.exe"
 Type: files; Name: "{app}\pg_server.log"

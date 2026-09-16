@@ -197,8 +197,12 @@ class StockModel(QAbstractListModel):
                 self.loader.request_image(thumb_path)
                 return None  
             
-            # Fallback for Images: If no thumb, try using the source file directly
-            if not thumb_path and path:
+            # Fallback for Images: If no thumb, try using the source file directly.
+            # Not while the ingest is still working on it: its thumbnail is
+            # seconds away, and decoding a full-size source off the share for
+            # every card on screen - twice, once here and once in the ingest -
+            # is what made a large ingest bring the whole machine down.
+            if not thumb_path and path and asset.get('status') not in ('pending', 'ingesting'):
                  suffix = Path(path).suffix.lower()
                  if suffix in ['.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp', '.tif', '.tiff']:
                      # Request load using SOURCE path

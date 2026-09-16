@@ -1,4 +1,6 @@
+import os
 import subprocess
+import threading
 import logging
 from pathlib import Path
 import sys
@@ -51,6 +53,53 @@ class ProxyManager:
         except Exception as e:
             logging.exception(f"Error resolving cache path: {e}")
             return Path.cwd() / "Cache"
+
+    @staticmethod
+    def _usable(path: Path) -> bool:
+        """A cached file counts only if it is there and has something in it."""
+        try:
+            return path.exists() and path.stat().st_size > 0
+        except OSError:
+            return False
+
+    @staticmethod
+    def _partial_name(final: Path) -> Path:
+        """
+        Where a file is written before it is finished.
+
+        ffmpeg writes straight into its output path, so a file appears the
+        moment encoding starts and grows for up to a minute. Anything that
+        checked for it in that window - the gallery asking for a thumbnail,
+        the player asked to show a proxy while the ingest was still making it
+        - opened a half-written file. And if the program was closed or died
+        mid-way, the stump stayed behind under the final name and was taken
+        for finished forever after. Writing next to the final name and
+        renaming at the end means the final name only ever exists complete.
+        The extension is kept because ffmpeg picks the format from it.
+        """
+        # Process and thread in the name: the ingest thread and the proxy
+        # worker can be asked for the same file at the same time.
+        return final.with_name(f"{final.stem}.part{os.getpid()}-{threading.get_ident()}{final.suffix}")
+
+    @staticmethod
+    def _discard(partial: Path):
+        try:
+            if partial.exists():
+                partial.unlink()
+        except OSError:
+            pass
+
+    @classmethod
+    def _commit_partial(cls, partial: Path, final: Path) -> bool:
+        """Move a finished partial file into place, or clean it up."""
+        try:
+            if partial.exists() and partial.stat().st_size > 0:
+                os.replace(partial, final)
+                return True
+        except OSError as exc:
+            logging.warning("Could not finish %s: %s", final.name, exc)
+        cls._discard(partial)
+        return False
 
     def get_hash(self, path: Path) -> str:
         stat = path.stat()
@@ -120,7 +169,7 @@ class ProxyManager:
         file_hash = self.get_hash(input_path)
         output_thumb = self.cache_path_for(
             file_hash, "_thumb.jpg", self.identity_hash(input_path))
-        if output_thumb.exists(): return True, output_thumb
+        if self._usable(output_thumb): return True, output_thumb
 
         if is_seq:
             try:
@@ -154,8 +203,9 @@ class ProxyManager:
                     if not img.isNull():
                         # Scale to 320
                         scaled = img.scaled(320, 180, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                        scaled.save(str(output_thumb), "JPG", 80)
-                        return True, output_thumb
+                        partial = self._partial_name(output_thumb)
+                        if scaled.save(str(partial), "JPG", 80) and self._commit_partial(partial, output_thumb):
+                            return True, output_thumb
                 except Exception as exc:
                     logging.debug("QImage thumbnail path failed, falling back to ffmpeg: %s", exc)
 
@@ -164,10 +214,10 @@ class ProxyManager:
                 self._run_ffmpeg_thumb(input_path, output_thumb, seek_time="1")
             
             # ATTEMPT 2: If failed (or file too short), try Frame 0
-            if not output_thumb.exists():
+            if not self._usable(output_thumb):
                 self._run_ffmpeg_thumb(input_path, output_thumb, seek_time="0")
 
-            return (True, output_thumb) if output_thumb.exists() else (False, None)
+            return (True, output_thumb) if self._usable(output_thumb) else (False, None)
 
 
         except Exception as e:
@@ -176,6 +226,8 @@ class ProxyManager:
 
     def _run_ffmpeg_thumb(self, input_path, output_path, seek_time="0"):
         """Helper to run the ffmpeg command."""
+        output_path = Path(output_path)
+        partial = self._partial_name(output_path)
         cmd = [
             self.ffmpeg_path, "-y",
             "-ss", seek_time,
@@ -183,7 +235,7 @@ class ProxyManager:
             "-vf", "scale=320:-2",
             "-vframes", "1",
             "-q:v", "5",
-            str(output_path)
+            str(partial)
         ]
         startupinfo = None
         if sys.platform == 'win32':
@@ -198,14 +250,18 @@ class ProxyManager:
             if result.returncode != 0:
                  logging.error(f"FFmpeg Failed. Return Code: {result.returncode}")
                  logging.debug(f"FFmpeg Stderr: {result.stderr}")
+                 self._discard(partial)
             else:
                  logging.debug(f"FFmpeg finished cleanly for {input_path}")
+                 self._commit_partial(partial, output_path)
                  
         except subprocess.TimeoutExpired:
             logging.error(f"FFmpeg thumb timeout: {input_path}")
+            self._discard(partial)
             return  # Exit helper function after timeout
         except Exception as e:
             logging.exception(f"FFmpeg Exception: {e}")
+            self._discard(partial)
 
     def parse_resolution(self, res_str: str) -> Tuple[int, int]:
         """Parse resolution string into (width, height) tuple."""
@@ -249,7 +305,8 @@ class ProxyManager:
             output_proxy = self.cache_path_for(
                 file_hash, "_proxy.mp4", self.identity_hash(input_path))
             
-        if output_proxy.exists(): return True, output_proxy
+        if self._usable(output_proxy): return True, output_proxy
+        partial = self._partial_name(output_proxy)
 
         try:
             cmd = [self.ffmpeg_path, "-y"]
@@ -261,7 +318,7 @@ class ProxyManager:
                     "-vf", "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080",
                     "-vframes", "1",
                     "-q:v", "2",  # High quality JPG
-                    str(output_proxy)
+                    str(partial)
                 ])
             else:
                 # Generate MP4 proxy
@@ -294,7 +351,7 @@ class ProxyManager:
                     "-preset", "ultrafast",
                     "-crf", "28",
                     "-an",
-                    str(output_proxy)
+                    str(partial)
                 ])
 
             startupinfo = None
@@ -308,11 +365,15 @@ class ProxyManager:
                 creationflags = subprocess.BELOW_NORMAL_PRIORITY_CLASS | subprocess.CREATE_NO_WINDOW
 
             # Add timeout to prevent hang
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, startupinfo=startupinfo, creationflags=creationflags, timeout=60)
-            return (True, output_proxy) if output_proxy.exists() else (False, None)
+            result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, startupinfo=startupinfo, creationflags=creationflags, timeout=60)
+            if result.returncode == 0 and self._commit_partial(partial, output_proxy):
+                return True, output_proxy
+            self._discard(partial)
+            return False, None
 
         except Exception as e:
             logging.exception(f"Proxy failed {input_path}: {e}")
+            self._discard(partial)
             return False, None
             
 

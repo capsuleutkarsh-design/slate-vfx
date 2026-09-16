@@ -1,4 +1,5 @@
 import re
+import copy
 import hashlib
 import logging
 from pathlib import Path
@@ -13,6 +14,76 @@ from slate.core.domain.asset_api import create_asset_api
 from slate.core.infra.task_registry import task_registry
 
 # --- PROXY WORKER ---
+def current_memory_mb() -> float:
+    """This process's working set, in MB; 0 when it cannot be read."""
+    try:
+        import psutil
+        return psutil.Process().memory_info().rss / (1024 * 1024)
+    except Exception:
+        return 0.0
+
+
+def memory_limit_mb() -> float:
+    """
+    How much this process may use before the ingest stops itself.
+
+    Well above anything the program needs - it runs in a few hundred MB, and
+    the largest picture it ever holds is a couple of GB - and well below the
+    point where Windows starts paging everything else out. Forty percent of
+    the machine's memory, never less than 6 GB.
+    """
+    try:
+        import psutil
+        total = psutil.virtual_memory().total / (1024 * 1024)
+        return max(6144.0, total * 0.4)
+    except Exception:
+        return 6144.0
+
+
+def describe_memory() -> str:
+    """
+    This process's memory, and what it is made of, for the log.
+
+    A 17,000-asset ingest that ran for a day took the program to 100 GB and
+    the machine to a standstill, and the log had nothing to say about when
+    the growth began, how fast it went, or what it consisted of. It could
+    not be reproduced on a test machine; a synthetic run stayed flat. So the
+    real run has to report on itself. Written every few hundred assets this
+    makes the next such report a graph with the suspects named: pictures
+    held in memory, threads, child processes, open handles.
+    """
+    try:
+        import gc
+        import threading
+        import psutil
+        proc = psutil.Process()
+        info = proc.memory_info()
+        kinds = {}
+        for obj in gc.get_objects():
+            name = type(obj).__name__
+            if name in ("QImage", "QPixmap", "ndarray", "dict", "list"):
+                kinds[name] = kinds.get(name, 0) + 1
+        try:
+            handles = proc.num_handles()
+        except Exception:
+            handles = -1
+        try:
+            children = len(proc.children())
+        except Exception:
+            children = -1
+        return ("memory %.0f MB working / %.0f MB private; threads %d; "
+                "children %d; handles %d; QImage %d; QPixmap %d; ndarray %d; "
+                "dict %d; list %d" % (
+                    info.rss / (1024 * 1024),
+                    getattr(info, "private", info.vms) / (1024 * 1024),
+                    threading.active_count(), children, handles,
+                    kinds.get("QImage", 0), kinds.get("QPixmap", 0),
+                    kinds.get("ndarray", 0), kinds.get("dict", 0),
+                    kinds.get("list", 0)))
+    except Exception:
+        return "memory unknown"
+
+
 def _normalise_path(path) -> str:
     """
     One spelling of a path, for comparing what we have with what we found.
@@ -89,9 +160,13 @@ class IngestWorker(QThread):
     asset_update_signal = Signal(dict) # Legacy: For immediate UI feedback if needed
     assets_update_batch_signal = Signal(list) # NEW: For batched DB/JSON updates
     finished_signal = Signal(bool, str)
+    # The ingest has paused itself because the program's memory is far above
+    # anything it should need. Carries a sentence for the person.
+    memory_alarm = Signal(str)
 
     def __init__(self, root_path=None, single_file=None, fast_mode=False):
         super().__init__()
+        self._memory_alarm_raised = False
         self.root_path = Path(root_path) if root_path else None
         self.single_file = Path(single_file) if single_file else None
         self.fast_mode = fast_mode
@@ -135,6 +210,38 @@ class IngestWorker(QThread):
     def stop(self):
         self.is_running = False
         self.resume() 
+
+    def _memory_guard(self, done, total) -> bool:
+        """
+        Pause rather than take the machine down.
+
+        Returns True when the ingest has just paused itself. The limit is far
+        above normal use, so tripping it means something is wrong; the log
+        line says what the memory is made of, and the person is told to save
+        their work and restart the program rather than finding the whole
+        machine unresponsive an hour later. Raised once: resuming after it is
+        the person's decision, and it will not nag.
+        """
+        if self._memory_alarm_raised:
+            return False
+        used = current_memory_mb()
+        limit = memory_limit_mb()
+        if not used or used < limit:
+            return False
+        self._memory_alarm_raised = True
+        logging.critical(
+            "Ingest paused itself: this program is using %.1f GB, over the %.1f GB "
+            "limit, after %d of %d assets. %s",
+            used / 1024, limit / 1024, done, total, describe_memory())
+        message = ("Paused: Slate is using %.0f GB of memory. Save your work and "
+                   "restart Slate, then run the ingest again - it continues "
+                   "where it stopped." % (used / 1024))
+        pct = int(done * 100 / max(1, total))
+        self.progress_signal.emit(pct, message)
+        task_registry.update_progress(self.task_info.task_id, pct, message)
+        self.memory_alarm.emit(message)
+        self.pause()
+        return True
 
     def run(self):
         all_files = []
@@ -298,7 +405,8 @@ class IngestWorker(QThread):
              self.finished_signal.emit(True, f"Scan Complete. Skipped {skipped_count} existing.")
              return
 
-        logging.info(f"Ingest Phase 2: Starting Deep Analysis for {total_analyze} items.")
+        logging.info("Ingest Phase 2: Starting Deep Analysis for %d items (%s).",
+                     total_analyze, describe_memory())
         analyzed_count = 0
         
         for asset, f_path, is_seq in pending_analysis:
@@ -325,13 +433,19 @@ class IngestWorker(QThread):
                 pct = int((analyzed_count / total_analyze) * 100)
                 self.progress_signal.emit(pct, f"Analyzed: {asset['file_name']}")
                 task_registry.update_progress(self.task_info.task_id, pct, f"Analyzed: {asset['file_name']}")
+            if analyzed_count % 250 == 0:
+                logging.info("Ingest Phase 2: %d/%d analysed, %s",
+                             analyzed_count, total_analyze, describe_memory())
+            if analyzed_count % 25 == 0:
+                self._memory_guard(analyzed_count, total_analyze)
 
             # THROTTLING REMOVED: User requested full batch processing
             # We rely on the UI thread checking to keep app responsive
             pass
 
         self._flush_update_buffer()      # whatever is left over
-        logging.info("Ingest Phase 2: All items processed. Emitting finished signal.")
+        logging.info("Ingest Phase 2: All items processed (%s). Emitting finished signal.",
+                     describe_memory())
         task_registry.update_progress(self.task_info.task_id, 100, "Ingest Complete")
         task_registry.finish_task(self.task_info.task_id)
         self.finished_signal.emit(True, "Ingest Complete")
@@ -365,13 +479,26 @@ class IngestWorker(QThread):
             'status': 'ingesting' # UI can use this to show spinner
         }
 
+    @staticmethod
+    def _handover(assets):
+        """
+        Copies for the interface; the worker keeps its own.
+
+        The same dict objects used to be handed across: the gallery model
+        stored them and painted from them while this thread went on writing
+        thumbnail paths, metadata and tags into them during the deep analysis.
+        Two threads on one object is a race whichever way it falls, and the
+        interface reads these during paint, where nothing may go wrong.
+        """
+        return [copy.deepcopy(a) for a in assets]
+
     def _flush_buffer(self):
         if self._buffer:
             # Batch add to DB via LibraryManager
             try:
                 self.lib_manager.add_assets_batch(self._buffer)
                 # Only emit signal if DB save succeeds
-                self.assets_batch_signal.emit(self._buffer)
+                self.assets_batch_signal.emit(self._handover(self._buffer))
             except Exception as e:
                 logging.exception(f"Failed to save batch to DB: {e}")
                 # Don't emit signal if save failed
@@ -380,7 +507,7 @@ class IngestWorker(QThread):
 
     def _flush_update_buffer(self):
         if self._update_buffer:
-            self.assets_update_batch_signal.emit(self._update_buffer)
+            self.assets_update_batch_signal.emit(self._handover(self._update_buffer))
             self._update_buffer = []
 
     def _perform_deep_analysis(self, asset, f_path, is_seq=False):

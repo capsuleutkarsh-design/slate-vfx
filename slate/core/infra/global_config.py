@@ -246,29 +246,11 @@ class GlobalConfig:
             else:
                 logging.debug("Network drive still inaccessible: %s", path)
 
-            # Show dialog warning (only once per session)
+            # Tell the person once per session - on the interface thread,
+            # later, never from here.
             if not hasattr(cls, '_network_warning_shown'):
                 cls._network_warning_shown = True
-                try:
-                    # Delayed import to avoid circular dependencies
-                    from PySide6.QtWidgets import QMessageBox, QApplication
-
-                    # Only show dialog if QApplication exists
-                    if QApplication.instance():
-                        msg = QMessageBox()
-                        msg.setIcon(QMessageBox.Icon.Warning)
-                        msg.setWindowTitle("[WARN] Network Drive Not Found")
-                        msg.setText(f"Server path not accessible:\n\n{path}")
-                        msg.setInformativeText(
-                            "Using LOCAL fallback mode.\n\n"
-                            "[WARN] Attendance data will NOT sync across PCs!\n"
-                            "[WARN] User database will NOT sync!\n\n"
-                            "Contact IT to map the network drive."
-                        )
-                        msg.setStandardButtons(QMessageBox.Ok)
-                        msg.exec()
-                except Exception as e:
-                    logging.debug(f"Could not show network warning dialog: {e}")
+                cls._announce_missing_root(path)
 
             local_root = Path.home() / "RuntimeData" / "Slate_Central"
             local_root.mkdir(parents=True, exist_ok=True)
@@ -278,6 +260,73 @@ class GlobalConfig:
         cls._last_network_log_path = None
         cls._last_network_log_ts = 0.0
         return path
+
+    _notice_bridge = None
+
+    @classmethod
+    def _announce_missing_root(cls, path):
+        """
+        Queue the "studio folder not found" notice for the interface thread.
+
+        server_root() is called from wherever the path is needed: the update
+        checker, the backup thread, the ingest, the live reporter. It used to
+        build a QMessageBox and exec() it right there. A widget on any thread
+        but the interface thread is a hard crash inside Qt - the process dies
+        with nothing in the log - and it only happened when the share dropped
+        out while one of those threads was running, so it was never seen on a
+        machine that could reproduce it. Exec() on the interface thread was
+        not much better: a nested event loop inside whatever asked for the
+        path, which may be half-way through painting or inserting rows.
+
+        The notice now travels as a queued signal to a bridge object owned by
+        the interface thread and is shown there without blocking.
+        """
+        try:
+            from PySide6.QtCore import QObject, Signal, Qt
+            from PySide6.QtWidgets import QApplication, QMessageBox
+        except Exception:
+            return
+        app = QApplication.instance()
+        if app is None:
+            return
+
+        class _Bridge(QObject):
+            missing_root = Signal(str)
+
+            def __init__(self):
+                super().__init__()
+                self.shown = []
+                self.missing_root.connect(self.show_notice)
+
+            def show_notice(self, where):
+                box = QMessageBox()
+                box.setIcon(QMessageBox.Icon.Warning)
+                box.setWindowTitle("Studio folder not found")
+                box.setText(f"The studio folder is not reachable:\n\n{where}")
+                box.setInformativeText(
+                    "Working locally for now.\n\n"
+                    "Attendance, users and stock previews will not be shared "
+                    "with other machines until the folder is back.\n\n"
+                    "Check the network cable or ask IT to map the drive."
+                )
+                box.setStandardButtons(QMessageBox.Ok)
+                box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+                box.setModal(False)
+                box.show()
+                self.shown.append(box)
+
+        try:
+            bridge = cls._notice_bridge
+            if bridge is None:
+                bridge = _Bridge()
+                # Built on whichever thread got here first; hand it to the
+                # interface thread so the slot runs there.
+                if bridge.thread() is not app.thread():
+                    bridge.moveToThread(app.thread())
+                cls._notice_bridge = bridge
+            bridge.missing_root.emit(str(path))
+        except Exception as exc:
+            logging.debug("Could not queue the studio-folder notice: %s", exc)
 
     @classmethod
     def local_cache_dir(cls) -> Path:

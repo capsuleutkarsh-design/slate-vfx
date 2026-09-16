@@ -238,25 +238,37 @@ def build_onedir():
     print(f"Building using spec file: {spec_file}")
     PyInstaller.__main__.run([spec_file, '--noconfirm'])
 
-    # The server is installed on its own, into its own folder, so it is built as
-    # a single self-contained executable rather than as part of the shared
-    # folder above. setup_slate_server.iss takes dist\Slate_Server.exe, and
+    # The server is installed on its own, into its own folder, so it is built
+    # from its own spec into dist\Slate_Server\ rather than as part of the
+    # shared folder above. setup_slate_server.iss takes that folder, and
     # nothing here used to produce it - so the server installer silently picked
-    # up whatever one-file build happened to be left in dist from an earlier
-    # session. A studio then installed a server weeks older than the client it
-    # was built alongside, and nothing said so.
+    # up whatever build happened to be left in dist from an earlier session. A
+    # studio then installed a server weeks older than the client it was built
+    # alongside, and nothing said so.
     server_spec = find_spec('Slate_Server.spec')
     if server_spec is None:
         print("ERROR: Spec file not found: Slate_Server.spec")
-        print("       setup_slate_server.iss needs dist/Slate_Server.exe, and "
+        print("       setup_slate_server.iss needs dist/Slate_Server/, and "
               "without this spec it would install a stale one.")
         sys.exit(1)
 
     # Absolute, so nothing here depends on what the first build left the
     # working directory as.
     server_spec = os.path.abspath(server_spec)
-    server_exe = os.path.abspath(os.path.join("dist", "Slate_Server.exe"))
+    server_dir = os.path.abspath(os.path.join("dist", "Slate_Server"))
+    server_exe = os.path.join(server_dir, "Slate_Server.exe")
     stamp_before = os.path.getmtime(server_exe) if os.path.exists(server_exe) else 0
+
+    # A single Slate_Server.exe left in dist is the old one-file layout. It
+    # would be picked up by nothing now, but it is 300 MB of confusion for
+    # anyone looking in dist, so it goes.
+    stray = os.path.abspath(os.path.join("dist", "Slate_Server.exe"))
+    if os.path.isfile(stray):
+        try:
+            os.remove(stray)
+            print("Removed the old one-file server: dist/Slate_Server.exe")
+        except OSError as exc:
+            print(f"(could not remove the old one-file server: {exc})")
 
     print(f"\nBuilding the standalone server using: {server_spec}")
 
@@ -299,31 +311,35 @@ def build_onedir():
                 print("   " + line)
             print()
             print("The two usual reasons, in the order worth checking:")
-            print("  1. dist/Slate_Server.exe is in use - close Slate Server, "
-                  "and anything that opened it from dist")
-            print("  2. antivirus is holding the newly written file; "
+            print("  1. dist/Slate_Server/Slate_Server.exe is in use - close "
+                  "Slate Server, and anything that opened it from dist")
+            print("  2. antivirus is holding the newly written files; "
                   "exclude the dist and build folders")
             print()
             print("Nothing else is stale: setup_slate_server.iss installs "
-                  "dist/Slate_Server.exe, so shipping the old one would put a "
+                  "dist/Slate_Server/, so shipping the old one would put a "
                   "server older than its clients on a studio machine.")
             sys.exit(1)
 
     # A clean exit code is not the same as a new executable. Check the thing
     # the installer will actually pick up.
     if not os.path.exists(server_exe):
-        print("ERROR: PyInstaller reported success but dist/Slate_Server.exe "
-              "is not there.")
+        print("ERROR: PyInstaller reported success but "
+              "dist/Slate_Server/Slate_Server.exe is not there.")
         sys.exit(1)
     if os.path.getmtime(server_exe) <= stamp_before:
-        print("ERROR: dist/Slate_Server.exe was not rewritten, so it is the "
-              "one from a previous build. Refusing to package a stale server.")
+        print("ERROR: dist/Slate_Server/Slate_Server.exe was not rewritten, so "
+              "it is the one from a previous build. Refusing to package a "
+              "stale server.")
         sys.exit(1)
 
-    size_mb = os.path.getsize(server_exe) / (1024 * 1024)
-    print(f"\nStandalone server built: {server_exe} ({size_mb:.0f} MB)")
+    size_mb = sum(
+        os.path.getsize(os.path.join(folder, name))
+        for folder, _dirs, files in os.walk(server_dir) for name in files
+    ) / (1024 * 1024)
+    print(f"\nServer built: {server_dir} ({size_mb:.0f} MB)")
 
-    _check_server_carries_its_settings(server_exe)
+    _check_server_carries_its_settings(server_dir)
     _copy_unmanaged_data()
 
 
@@ -392,39 +408,38 @@ def _copy_unmanaged_data():
     copy_if_exists('database', 'database')
 
 
-def _check_server_carries_its_settings(server_exe):
+def _check_server_carries_its_settings(server_dir):
     """
-    Open the finished executable and confirm the settings are inside it.
+    Look inside the finished server folder and confirm the settings are there.
 
     Checking the spec is not enough, because the spec that gets used is not
     always the spec that is meant. A server built without its settings has no
     database password: it creates none of the accounts, reports that on its own
     dashboard, and every workstation is turned away at the login screen. The
-    executable is the right size and starts perfectly, so nothing about it looks
+    folder is the right size and starts perfectly, so nothing about it looks
     wrong until a studio tries to log in.
+
+    The server is a folder now, so the settings are a file on disk under
+    _internal rather than an entry in a one-file archive.
     """
     import json
 
-    try:
-        from PyInstaller.archive.readers import CArchiveReader
-    except ImportError as exc:
-        print(f"   (could not verify the bundle: {exc})")
-        return
+    server_dir = str(server_dir)
+    if os.path.isfile(server_dir):
+        # Handed the executable; the folder is what holds the files.
+        server_dir = os.path.dirname(server_dir)
 
-    try:
-        archive = CArchiveReader(server_exe)
-        entries = list(archive.toc)
-    except Exception as exc:
-        print(f"   (could not read the bundle: {exc})")
-        return
-
-    settings = [name for name in entries if "default_config" in name]
+    settings = []
+    for folder, _dirs, files in os.walk(server_dir):
+        for name in files:
+            if name == "default_config.json":
+                settings.append(os.path.join(folder, name))
     if not settings:
         print()
         print("=" * 70)
         print("ERROR: The server was built without its settings.")
         print("=" * 70)
-        print("dist/Slate_Server.exe contains no default_config.json, so it "
+        print("dist/Slate_Server/ contains no default_config.json, so it "
               "will start with no database password.")
         print("It will then create none of the accounts, and every workstation "
               "will be turned away at the login screen.")
@@ -434,10 +449,8 @@ def _check_server_carries_its_settings(server_exe):
         sys.exit(1)
 
     try:
-        raw = archive.extract(settings[0])
-        if isinstance(raw, tuple):
-            raw = raw[1]
-        config = json.loads(raw.decode("utf-8"))
+        with open(settings[0], "r", encoding="utf-8") as handle:
+            config = json.load(handle)
     except Exception as exc:
         print(f"   (settings are bundled but could not be read: {exc})")
         return
@@ -448,7 +461,8 @@ def _check_server_carries_its_settings(server_exe):
         sys.exit(1)
 
     print("   settings bundled: %s (database %s, account %s)"
-          % (settings[0], config.get("db_name"), config.get("db_user")))
+          % (os.path.relpath(settings[0], server_dir), config.get("db_name"),
+             config.get("db_user")))
 
 
 def build_installer(version=None, target="all"):

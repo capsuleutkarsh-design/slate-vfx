@@ -95,7 +95,8 @@ def build_single_target(target="vfx", project_root=None):
         # Checked, and the file is checked too. This used to ignore the exit
         # code and then package whatever Slate_Server.exe happened to be in
         # dist - which is how a studio gets a server older than its clients.
-        server_exe = project_root / "dist" / "Slate_Server.exe"
+        server_dir = project_root / "dist" / "Slate_Server"
+        server_exe = server_dir / "Slate_Server.exe"
         stamp_before = server_exe.stat().st_mtime if server_exe.exists() else 0
         result = subprocess.run(
             [sys.executable, "-m", "PyInstaller", str(server_spec), "--noconfirm"])
@@ -103,18 +104,18 @@ def build_single_target(target="vfx", project_root=None):
             print(f"ERROR: The server did not build (exit code {result.returncode}).")
             sys.exit(1)
         if not server_exe.exists() or server_exe.stat().st_mtime <= stamp_before:
-            print("ERROR: dist/Slate_Server.exe was not rewritten by this build. "
-                  "Refusing to package a stale server.")
+            print("ERROR: dist/Slate_Server/Slate_Server.exe was not rewritten by "
+                  "this build. Refusing to package a stale server.")
             sys.exit(1)
 
         dist_dir = project_root / "dist" / "Slate_Server_Update"
         if dist_dir.exists():
             shutil.rmtree(dist_dir)
-        dist_dir.mkdir(parents=True)
 
-        # The one-file executable already carries slate_server/bin inside it,
-        # so the folder is not copied beside it a second time.
-        shutil.copy2(server_exe, dist_dir / "Slate_Server.exe")
+        # The whole folder: the executable and its _internal, which carries
+        # PostgreSQL, PgBouncer and the settings. The updater replaces the
+        # installed folder with it, the same way as for the clients.
+        shutil.copytree(server_dir, dist_dir)
 
         # The sidecar that applies the update on the server machine.
         updater = project_root / "dist" / "Slate" / "SlateUpdater.exe"

@@ -504,7 +504,7 @@
   <tr><td>Backups</td><td><code>...\Slate_Central\Backups</code> on the server machine</td><td>Only after copying elsewhere</td></tr>
   <tr><td>Workstation settings and cache</td><td><code>C:\Users\&lt;name&gt;\AppData\Local\Slate</code></td><td>Yes, Slate asks for the server again</td></tr>
   <tr><td>Shared files and updates</td><td>The <code>Slate_Central</code> shared folder on the network</td><td>No</td></tr>
-  <tr><td>Temporary unpacked copy of the server</td><td><code>%TEMP%\_MEI...</code></td><td>Yes, when the server is stopped</td></tr>
+  <tr><td>Windows temp folder</td><td><code>%TEMP%</code></td><td>Yes, at any time. Slate keeps nothing it needs there.</td></tr>
 </table></div>
 
 <h3>Moving the server to another machine</h3>
@@ -530,7 +530,8 @@
   <tr><td>Login: <b>DATABASE UNAVAILABLE</b></td><td>The server is off or unreachable</td><td>Tell IT. IT: go to the server machine and check the green switch.</td></tr>
   <tr><td>Login: <b>Invalid credentials</b></td><td>Wrong Employee ID or password</td><td>Check both. Ask the admin to reset your password in Users &amp; Roles.</td></tr>
   <tr><td>Login: <b>Sign in as admin / admin123</b></td><td>Brand-new studio database, no accounts yet</td><td>The admin signs in first and creates everyone.</td></tr>
-  <tr><td>Pop-up: <b>Network Drive Not Found</b></td><td>The Slate_Central shared folder is not connected on this PC</td><td>Tell IT. Slate keeps working on this PC only; attendance and files will not sync until fixed.</td></tr>
+  <tr><td>Pop-up: <b>Studio folder not found</b></td><td>The Slate_Central shared folder is not connected on this PC</td><td>Tell IT. Slate keeps working on this PC only; attendance and files will not sync until fixed.</td></tr>
+  <tr><td>Slate closes by itself, nothing in the log</td><td>A crash inside a picture or video library</td><td>IT: send <code>C:\Users\&lt;name&gt;\AppData\Local\Slate\Logs\native_crash.log</code> with the report. It records where every thread was at that moment.</td></tr>
   <tr><td>Pop-up: <b>Database fallback active / LOCAL MODE</b></td><td>Slate could not reach the server and is using a local copy</td><td>Tell IT. Do not enter important data until the server is back; it will not reach the studio.</td></tr>
   <tr><td>Leave: <b>Not sent</b></td><td>The request was refused, usually because of an overlap</td><td>Cancel the earlier request for those days, then ask again.</td></tr>
   <tr><td>Dashboard: another person's change wins</td><td>Two people edited the same shot</td><td>Refresh, then make your change again.</td></tr>

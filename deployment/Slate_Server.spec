@@ -60,29 +60,34 @@ a = Analysis(
     optimize=0,
 )
 
-# The bundled PostgreSQL, minus what the server never runs. A one-file build
-# unpacks everything it carries to %TEMP% on every start, and the folder held
-# 190 MB of pgAdmin 4 and 20 MB of HTML documentation beside the 70 MB of
-# binaries that matter. 'bin', 'lib' and 'share' are the working database.
+# The bundled PostgreSQL, minus what the server never runs. 'bin', 'lib' and
+# 'share' are the working database; pgAdmin 4 and the HTML documentation were
+# 210 MB the server never opened.
 a.datas += Tree(R('slate_server', 'bin'), prefix='slate_server/bin',
                 excludes=['pgAdmin 4', 'doc', 'include', 'symbols',
                           'StackBuilder', '*.pdb'])
 
 pyz = PYZ(a.pure)
 
+# A folder, like the clients - not a single file.
+#
+# The one-file build unpacked itself into %TEMP%\_MEIxxxx on every start and
+# ran from there: PostgreSQL, PgBouncer, Qt, everything. Studios clean %TEMP%
+# as routine housekeeping, and doing so while the server was running pulled
+# the database binaries out from under it - the server "failed" for no reason
+# anyone could see. Installed as a folder, nothing the server needs lives in a
+# place that gets cleaned, and it no longer spends its start-up unpacking
+# 300 MB.
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name='Slate_Server',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
-    upx_exclude=[],
-    runtime_tmpdir=None,
+    upx=False,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -90,4 +95,14 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=[R('slate', 'icons', 'server_icon.ico')],
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name='Slate_Server',
 )
