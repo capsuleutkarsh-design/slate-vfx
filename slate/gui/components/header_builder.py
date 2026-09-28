@@ -508,8 +508,33 @@ class HeaderBuilder:
         profile_layout.addWidget(text_info)
         profile_layout.addWidget(avatar_label)
         self.profile_text_widget = text_info
-        
+
+        # Click your name for your own account: there was no way at all for a
+        # person to change their own password.
+        profile_widget.setCursor(Qt.CursorShape.PointingHandCursor)
+        profile_widget.setToolTip("Your account - change your password")
+        profile_widget.mousePressEvent = lambda _e: self._show_account_menu(profile_widget)
+
         return profile_widget
+
+    def _show_account_menu(self, anchor):
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(anchor)
+        menu.addAction("Change password…", self._change_password)
+        menu.exec(anchor.mapToGlobal(anchor.rect().bottomLeft()))
+
+    def _change_password(self):
+        from ..dialogs.change_password_dialog import ChangePasswordDialog
+        from PySide6.QtWidgets import QMessageBox
+        username = (getattr(self.parent, "current_user", None)
+                    or self.user_data.get("user_id") or self.user_data.get("username"))
+        manager = getattr(self.parent, "user_manager", None)
+        if not (username and manager):
+            return
+        dialog = ChangePasswordDialog(manager, username, parent=self.parent)
+        if dialog.exec() == dialog.DialogCode.Accepted:
+            QMessageBox.information(self.parent, "Password changed",
+                                    "Your password has been changed. Use it the next time you sign in.")
     
     def _create_avatar(self, display_name, profile_pic):
         """Create circular avatar with image or initials."""

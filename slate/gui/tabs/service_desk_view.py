@@ -155,6 +155,10 @@ class ServiceDeskView(QWidget):
         self.empty.attach_to(self.table)
 
         self.refresh()
+        # New tickets from other workstations, and the SLA clock, without a restart.
+        from slate.gui.components.auto_refresh import AutoRefresh
+        self._auto_refresh = AutoRefresh(self, self.refresh, seconds=30,
+                                         topics=("it_tickets", "it_ticket_comments"))
 
     # ------------------------------------------------------------------ data
     def _fetch(self) -> list:
@@ -206,12 +210,30 @@ class ServiceDeskView(QWidget):
             priority_rank(r.get("priority") or "P3"),
             r["_sla"]["hours_left"] if r["_sla"]["hours_left"] is not None else 9e9,
         ))
+        # Keep what IT had selected and where they had scrolled to: this also
+        # runs on a timer, and must not pull the ticket out from under them.
+        keep = {r.get("id") for r in self._selected()}
+        scroll = self.table.verticalScrollBar().value()
+        self.table.clearSelection()      # by ticket, not by row: the order can change
         self._rows = rows
 
         self._paint_stats(everything)
         self._paint_rows(rows)
+        self._reselect(keep)
+        self.table.verticalScrollBar().setValue(scroll)
         self.empty.refresh()
         self._sync_buttons()
+
+    def _reselect(self, ids):
+        if not ids:
+            return
+        from PySide6.QtCore import QItemSelectionModel
+        model = self.table.selectionModel()
+        for index, row in enumerate(self._rows):
+            if row.get("id") in ids:
+                model.select(self.table.model().index(index, 0),
+                             QItemSelectionModel.SelectionFlag.Select
+                             | QItemSelectionModel.SelectionFlag.Rows)
 
     def _paint_stats(self, everything):
         while self.stats_row.count():
@@ -241,6 +263,7 @@ class ServiceDeskView(QWidget):
             self.stats_row.addWidget(card)
 
     def _paint_rows(self, rows):
+        self.table.clearSpans()      # left by the "database did not answer" note
         self.table.setRowCount(len(rows))
         for r, row in enumerate(rows):
             status = normalise_status(row.get("status")) or "Open"

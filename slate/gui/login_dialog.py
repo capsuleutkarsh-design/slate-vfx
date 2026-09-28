@@ -281,7 +281,20 @@ class LoginDialog(QDialog):
 
         if user:
             logging.info(f"Login successful: {user.get('user_id')}")
-            
+
+            # Imported with the shared first password: they choose their own
+            # before anything opens. Closing the window means not signing in.
+            if user.get("must_change_password"):
+                from .dialogs.change_password_dialog import ChangePasswordDialog
+                dialog = ChangePasswordDialog(self.user_manager, user.get("user_id") or username,
+                                              forced=True, current_password=self.pass_input.text(),
+                                              parent=self)
+                if dialog.exec() != dialog.DialogCode.Accepted:
+                    self.show_error("Choose your own password to sign in.")
+                    self.pass_input.clear()
+                    return
+                user["must_change_password"] = False
+
             # Authenticate API client
             # (Legacy API client removed)
             

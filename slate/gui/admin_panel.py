@@ -1,10 +1,9 @@
-import csv
+import logging
 from datetime import datetime
 from ..core.infra.global_config import GlobalConfig # For initial load reading
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTableWidget,
-    QTableWidgetItem, QHeaderView, QMessageBox, QLineEdit, QFrame, QAbstractItemView, QFileDialog, QInputDialog,
+    QWidget, QVBoxLayout, QHBoxLayout, QMessageBox, QLineEdit, QFrame, QInputDialog,
     QStackedWidget, QListWidget, QListWidgetItem
 )
 from PySide6.QtGui import QDesktopServices
@@ -14,7 +13,6 @@ import os
 import sys
 
 
-from ..core.workers.admin_workers import UserDataWorker
 from ..core.infra.app_context import AppContext
 from ..core.domain.user_manager import UserManager
 from ..core.infra.config_manager import ConfigManager
@@ -23,22 +21,17 @@ from ..core.infra.network_manager import NetworkManager
 from ..core.infra.performance_monitor import performance_monitor
 
 
-# Import Role Editor
-from .role_editor import RoleEditor
 from .database_explorer import DatabaseExplorer
 from .advanced_log_viewer import UnifiedLogViewer
 from .admin_widgets import LiveDashboard
-from .admin_user_dialogs import AddUserDialog
 from .admin_fleet_report_service import run_fleet_report_export
 from .components.queued_worker_controller import QueuedWorkerController
-from .components.qt_safety import safe_single_shot
 
 # Import design tokens for theming
 from ..core.infra.design_tokens import ColorTokens as C, TypographyTokens as T, SpacingTokens as S, RadiusTokens as R
 from ..core.infra.style_builder import StyleBuilder
 from .core.icons import icon as draw_icon
 from .core.controls import make_button
-from slate.gui.core.offline_notice import on_database_error
 
 # Import shared PyToggle widget (no more duplication!)
 
@@ -121,16 +114,9 @@ class AdminPanelTab(QWidget):
             import logging
             logging.warning(f"Could not create audit log directory: {e}")
             
-        # Worker for User Data
-        self.user_worker = UserDataWorker(self.user_manager)
-        self.user_worker.users_loaded.connect(self.on_users_loaded)
-        self.user_refresh_controller = QueuedWorkerController(self.user_worker, self)
-
         self.setStyleSheet(f"background-color: {C.BG_MAIN}; color: {C.TEXT_PRIMARY};")
         self.setup_ui()
         self.destroyed.connect(self.cleanup_resources)
-        # Trigger initial data load
-        safe_single_shot(100, self, self.refresh_table)
 
     def setup_ui(self):
         """
@@ -155,10 +141,11 @@ class AdminPanelTab(QWidget):
         self.sidebar.setStyleSheet(STYLE_SWITCHER)
         self.sidebar.currentRowChanged.connect(self.change_page)
 
+        # Users and roles are managed in one place only: the Users & Roles tab.
+        # This panel carried a second copy of both with no permission check,
+        # so anybody who could open Admin Panel could add or delete accounts.
         items = [
             ("Live Ops", "monitor"),
-            ("User Mgmt", "users"),
-            ("Permissions", "key"),
             ("Audit Logs", "info"),
             ("Data Center", "database"),
         ]
@@ -187,22 +174,13 @@ class AdminPanelTab(QWidget):
         self.live_dashboard.bind_worker_controller(self.live_dashboard_worker_controller)
         self.restore_mission_control(self.live_dashboard)
         self.stack.addWidget(self.live_dashboard)
-        
-        # 2. USER MANAGEMENT
-        self.user_mgmt_widget = QWidget()
-        self.setup_user_mgmt_ui() # Helper to keep init clean
-        self.stack.addWidget(self.user_mgmt_widget)
 
-        # 3. ROLE MANAGEMENT
-        self.role_editor = RoleEditor(self.user_manager)
-        self.stack.addWidget(self.role_editor)
-        
-        # 4. AUDIT LOG
+        # 2. AUDIT LOG
         self.audit_widget = QWidget()
         self.setup_audit_ui()
         self.stack.addWidget(self.audit_widget)
         
-        # 5. DATA CENTER
+        # 3. DATA CENTER
         self.data_center = DatabaseExplorer(self.db, app_context=self.app_context)
         self.stack.addWidget(self.data_center)
         
@@ -213,9 +191,7 @@ class AdminPanelTab(QWidget):
         self.stack.setCurrentIndex(row)
         
         # Refresh logic based on page
-        if row == 4: # Data Center
-            pass 
-        elif row == 3: # Audit
+        if row == 1:  # Audit Logs
             self.load_audit_log()
 
     def load_audit_log(self):
@@ -335,57 +311,6 @@ class AdminPanelTab(QWidget):
         run_fleet_report_export(self, self.hub, self.log_action)
 
 
-    def setup_user_mgmt_ui(self):
-        user_layout = QVBoxLayout(self.user_mgmt_widget)
-        
-        # Top Bar (Search + Actions)
-        top_bar = QHBoxLayout()
-        self.search = QLineEdit()
-        self.search.setPlaceholderText("Search Users...")
-        self.search.setStyleSheet(STYLE_INPUT)
-        self.search.textChanged.connect(self.apply_filters)
-        top_bar.addWidget(self.search)
-        
-        btn_add = QPushButton("Add User")
-        btn_add.setStyleSheet(STYLE_BTN_PRIMARY)
-        btn_add.clicked.connect(self.add_user)
-        top_bar.addWidget(btn_add)
-        
-        btn_export = QPushButton("Export CSV")
-        btn_export.setStyleSheet(f"background-color: {C.BG_SIDEBAR}; color: white; border: 1px solid {C.BORDER_LIGHT}; padding: {S.SM}px {S.MD}px; border-radius: {R.SM}px;")
-        btn_export.clicked.connect(self.export_to_csv)
-        top_bar.addWidget(btn_export)
-        user_layout.addLayout(top_bar)
-        
-        # User Table
-        self.user_table = QTableWidget()
-        self.user_table.setColumnCount(4)
-        self.user_table.setHorizontalHeaderLabels(["ID", "Name", "Roles", "Job Title"])
-        self.user_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.user_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.user_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.user_table.setStyleSheet(f"""
-            QTableWidget {{ background-color: {C.BG_SIDEBAR}; border: 1px solid {C.BORDER_LIGHT}; border-radius: {R.SM}px; gridline-color: {C.BORDER_LIGHT}; }}
-            QHeaderView::section {{ background-color: {C.BG_ELEVATED}; padding: 4px; border: none; font-weight: bold; }}
-            QTableWidget::item {{ padding: 5px; }}
-            QTableWidget::item:selected {{ background-color: {C.ACCENT_PRIMARY}; color: black; }}
-        """)
-        self.user_table.doubleClicked.connect(self.edit_user)
-        user_layout.addWidget(self.user_table)
-        
-        # Bottom Actions
-        action_layout = QHBoxLayout()
-        btn_edit = QPushButton("Edit Selected")
-        btn_edit.clicked.connect(self.edit_user)
-        btn_edit.setStyleSheet(f"background-color: {C.BG_ELEVATED}; color: white; border: 1px solid {C.BORDER_LIGHT}; padding: 6px 12px; border-radius: 4px;")
-        btn_del = QPushButton("Delete Selected")
-        btn_del.setStyleSheet(STYLE_BTN_DANGER)
-        btn_del.clicked.connect(self.delete_user)
-        action_layout.addWidget(btn_edit)
-        action_layout.addWidget(btn_del)
-        action_layout.addStretch()
-        user_layout.addLayout(action_layout)
-
     def setup_audit_ui(self):
         """Initialize the Advanced Audit Log Viewer."""
         layout = QVBoxLayout(self.audit_widget)
@@ -407,118 +332,6 @@ class AdminPanelTab(QWidget):
                 f.write(entry)
         except Exception as e:
             logging.exception("Failed to write audit log: %s", e)
-
-    def data_refresh_sequence(self):
-        # Legacy stub or re-route
-        self.refresh_table() 
-        self.load_permissions()
-    
-    def on_users_loaded(self, users):
-        """Update the table with loaded user data."""
-        # Keep in-memory manager state in sync with what we just displayed.
-        self.user_manager_users = dict(users or {})
-        self.user_table.setRowCount(0)
-
-        for r, (u, d) in enumerate((users or {}).items()):
-            self.user_table.insertRow(r)
-            self.user_table.setItem(r,0,QTableWidgetItem(u))
-            self.user_table.setItem(r,1,QTableWidgetItem(d.get('display_name','')))
-            
-            # Formatting Roles List
-            roles = d.get('roles', [])
-            if not isinstance(roles, list): roles = [roles] if roles is not None else []
-            # Safety: Ensure all items are strings
-            role_str = ", ".join(str(r) for r in roles if r is not None)
-            
-            self.user_table.setItem(r,2,QTableWidgetItem(role_str))
-            self.user_table.setItem(r,3,QTableWidgetItem(d.get('job_title','')))
-        self.apply_filters()
-
-    def _on_user_worker_finished(self):
-        """Legacy no-op retained for backward compatibility."""
-        return
-
-    def refresh_table(self):
-        """Start the background worker."""
-        self.user_refresh_controller.request_refresh()
-
-    def apply_filters(self, *args):
-        txt = self.search.text().lower()
-        for i in range(self.user_table.rowCount()):
-            item0 = self.user_table.item(i, 0)
-            item1 = self.user_table.item(i, 1)
-            text0 = item0.text().lower() if item0 else ""
-            text1 = item1.text().lower() if item1 else ""
-            self.user_table.setRowHidden(i, not (txt in text0 or txt in text1))
-    def add_user(self):
-        d = AddUserDialog(self)
-        if d.exec(): 
-            u,p,r_list,n,j,pic = d.get_data() 
-            self.user_manager.add_user(u,p,r_list,n,j, pic)
-            # Immediate UI feedback, then async refresh from disk.
-            self.on_users_loaded(self.user_manager.get_all_users())
-            self.refresh_table()
-            self.log_action(f"Added user: {u} with roles {r_list}")
-            
-    def edit_user(self):
-        r = self.user_table.currentRow()
-        if r < 0:
-            QMessageBox.warning(self, "Select User", "Please select a user to edit first.")
-            return
-
-        uid = self.user_table.item(r,0).text()
-        ud = self.user_manager.get_all_users().get(uid)
-        
-        if not ud:
-            QMessageBox.critical(self, "Error", "User data not found in database.")
-            return
-
-        # Prepare initial data for dialog
-        # Handle 'roles' list vs legacy 'role' string
-        current_roles = ud.get('roles', [])
-        if not current_roles and 'role' in ud: 
-            current_roles = [ud['role']]
-
-        initial_data = (
-            uid,
-            ud.get('display_name', ''),
-            current_roles,
-            ud.get('job_title', ''),
-            ud.get('profile_pic_path', '')
-        )
-        
-        d = AddUserDialog(self, edit_mode=True, user_data=initial_data)
-        if d.exec(): 
-            login_id, password, role_list, name, job, pic = d.get_data()
-            
-            # If password is empty, pass a flag or None to tell UserManager to NOT update it
-            final_pass = password if password else "KEEP_OLD"
-            
-            self.user_manager.add_user(uid, final_pass, role_list, name, job, pic)
-            # Immediate UI feedback, then async refresh from disk.
-            self.on_users_loaded(self.user_manager.get_all_users())
-            self.refresh_table()
-            self.log_action(f"Edited user: {uid} updated roles: {role_list}")
-
-    def delete_user(self):
-        r = self.user_table.currentRow()
-        if r>=0:
-            uid = self.user_table.item(r,0).text()
-            if QMessageBox.question(self, "Delete", f"Delete {uid}?") == QMessageBox.StandardButton.Yes:
-                self.user_manager.delete_user(uid)
-                # Immediate UI feedback, then async refresh from disk.
-                self.on_users_loaded(self.user_manager.get_all_users())
-                self.refresh_table()
-                self.log_action(f"Deleted user: {uid}")
-    @on_database_error
-    def load_permissions(self):
-        # Permissions now handled by RoleEditor internally
-        if hasattr(self, 'role_editor'):
-            self.role_editor.refresh_roles()
-
-    def save_permissions(self):
-        # Legacy method stub
-        pass
 
     def verify_admin_action(self):
         """Re-authentication callback for destructive operations (restart, shutdown, wipe)."""
@@ -553,19 +366,6 @@ class AdminPanelTab(QWidget):
                 self.live_dashboard.cleanup()
             except Exception:
                 pass
-        if hasattr(self, 'user_refresh_controller') and self.user_refresh_controller:
-            try:
-                self.user_refresh_controller.shutdown(timeout_ms=1000)
-            except Exception:
-                pass
-        if hasattr(self, 'user_worker') and self.user_worker:
-            try:
-                if self.user_worker.isRunning():
-                    self.user_worker.requestInterruption()
-                    self.user_worker.wait(500)
-            except Exception:
-                pass
-        
         # Shutdown API Server
         if hasattr(self, 'api_process') and self.api_process:
             try:
@@ -585,21 +385,6 @@ class AdminPanelTab(QWidget):
         """Ensure all background workers are stopped when the panel closes."""
         self.cleanup_resources()
         super().closeEvent(event)
-
-    def export_to_csv(self):
-        path,_=QFileDialog.getSaveFileName(self,"Export","users.csv","CSV (*.csv)")
-        if path:
-            try:
-                with open(path,'w',newline='') as f:
-                    w=csv.writer(f); w.writerow(["ID","Name","Roles","Job"])
-                    for u,d in self.user_manager.get_all_users().items(): 
-                        roles = d.get('roles', [])
-                        if not isinstance(roles, list): roles = [roles] if roles is not None else []
-                        # Safety: Ensure all items are strings
-                        role_str = "|".join(str(r) for r in roles if r is not None)
-                        w.writerow([u,d.get('display_name'), role_str, d.get('job_title')])
-                QMessageBox.information(self,"Success","Exported.")
-            except Exception as e: QMessageBox.critical(self,"Error",str(e))
 
 class AdminPanel(AdminPanelTab):
     """Backward-compatible wrapper for legacy callers/tests."""

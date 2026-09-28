@@ -79,6 +79,15 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Workplace schema migration failed: {e}")
 
+        # The change feed, after every table it watches exists. Lets open
+        # screens hear about other people's changes without re-reading
+        # everything - see migrations/change_feed.py.
+        try:
+            from .migrations.change_feed import apply_migration as ensure_change_feed
+            ensure_change_feed(self.backend)
+        except Exception as e:
+            logger.error(f"Change feed migration failed: {e}")
+
         if self.fallback_used:
             logger.warning(
                 "Database fallback active: requested=%s -> active=%s. "

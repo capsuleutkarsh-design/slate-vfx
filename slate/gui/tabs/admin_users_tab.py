@@ -1,7 +1,7 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QComboBox, QMessageBox,
-    QDialog, QFormLayout, QLineEdit, QDateEdit, QListWidget, QAbstractItemView
+    QDialog, QFormLayout, QLineEdit, QDateEdit
 )
 from PySide6.QtCore import Qt, QDate
 from PySide6.QtGui import QFont, QColor
@@ -73,29 +73,20 @@ class UserDialog(QDialog):
             self.dept_input.setCurrentText(current_dept)
         form.addRow("Department:", self.dept_input)
 
-        # Every role, not just the first. Multi-select because a person really
-        # can be both a Lead and a Supervisor, and dropping the second one
-        # quietly takes away whatever it granted.
+        # Every role, not just the first: a dropdown of tick boxes, because a
+        # person really can be both a Team Lead and a Compositor, and dropping
+        # the second one quietly takes away whatever it granted. A new person
+        # starts with nothing ticked - it used to tick the first role in the
+        # list, which is Developer, the one with full access.
+        from slate.gui.components.check_combo import CheckComboBox
         available = self.user_manager.get_available_roles() or [
             "Artist", "Coordinator", "Lead", "Supervisor", "HR", "IT",
             "Developer", "Tester",
         ]
-        held = {str(r).strip().lower() for r in (record.get("roles") or [])}
-        self.roles_input = QListWidget()
-        self.roles_input.setSelectionMode(
-            QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.roles_input.setStyleSheet("background: #26262D; padding: 2px;")
-        self.roles_input.setMaximumHeight(120)
-        for role in available:
-            self.roles_input.addItem(str(role))
-        for row in range(self.roles_input.count()):
-            item = self.roles_input.item(row)
-            if item.text().strip().lower() in held:
-                item.setSelected(True)
-        if not self.editing and not held:
-            first = self.roles_input.item(0)
-            if first:
-                first.setSelected(True)
+        self.roles_input = CheckComboBox(placeholder="Choose one or more roles…")
+        self.roles_input.setStyleSheet("background: #26262D; padding: 4px;")
+        self.roles_input.add_items(sorted((str(r) for r in available), key=str.lower))
+        self.roles_input.set_checked(record.get("roles") or [])
         form.addRow("Roles:", self.roles_input)
 
         self.pass_input = None
@@ -184,7 +175,7 @@ class UserDialog(QDialog):
         return parsed if parsed.isValid() else None
 
     def selected_roles(self):
-        return [item.text() for item in self.roles_input.selectedItems()]
+        return self.roles_input.checked()
 
     def _accept_if_valid(self):
         if not self.username_input.text().strip():
@@ -221,38 +212,81 @@ class UserDialog(QDialog):
 
 
 class AdminUsersTab(QWidget):
-    COLUMNS = ["Username", "Display Name", "Department (Job Title)", "Roles",
-               "Joined", "Employment", "Reports To"]
+    """
+    Users & Roles: the one place people are added and given access.
+
+    Two tabs. Users is for whoever may manage users (HR, Admin, ...); Roles &
+    Permissions is for whoever may edit permissions (Admin, IT, HR, ...). Each
+    person sees the tabs their roles allow. Admin Panel used to carry a second,
+    unguarded copy of both; it has been removed.
+    """
 
     def __init__(self, user_role="Admin", user_data=None, parent=None):
         super().__init__(parent)
         self.user_role = user_role
         self.user_data = user_data or {}
         self.user_manager = UserManager()
-        self.users = {}
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(10, 10, 10, 10)
 
-        header_title = QLabel("User Management")
+        header_title = QLabel("Users & Roles")
         header_title.setFont(QFont("Inter", 16, QFont.Weight.Bold))
         header_title.setStyleSheet("color: white;")
         main_layout.addWidget(header_title)
 
-        # Access control. Every role the person holds is considered, and the
-        # names come from access.json - the literal list that was here did not
-        # know "Human Resources", so an HR account made under that name was
-        # refused by the one tab it exists to use.
+        # Access control. Every role the person holds is considered, answered
+        # by access.json and by the abilities ticked on each role.
         from slate.core.domain.access import can
         roles = list(self.user_data.get("roles") or [])
         if self.user_role:
             roles.append(self.user_role)
-        if not can(roles, "manage_users"):
-            lbl = QLabel("You do not have permission to access User Management.")
+        may_manage_users = can(roles, "manage_users")
+        may_edit_roles = can(roles, "manage_permissions")
+
+        self.users_panel = None
+        self.role_editor = None
+        if not (may_manage_users or may_edit_roles):
+            lbl = QLabel("You do not have permission to manage users or roles.")
             lbl.setStyleSheet("color: #D9635F; font-size: 14px;")
             main_layout.addWidget(lbl)
             main_layout.addStretch()
             return
+
+        from PySide6.QtWidgets import QTabWidget
+        self.tabs = QTabWidget()
+        if may_manage_users:
+            self.users_panel = UsersPanel(self.user_manager, self)
+            self.tabs.addTab(self.users_panel, "Users")
+        if may_edit_roles:
+            from slate.gui.role_editor import RoleEditor
+            username = self.user_data.get("user_id") or self.user_data.get("username")
+            self.role_editor = RoleEditor(self.user_manager, editor_username=username)
+            self.tabs.addTab(self.role_editor, "Roles && Permissions")   # a single & is a shortcut marker
+        # Each side shows what the other changed: user counts per role, and
+        # the roles on offer when adding somebody.
+        self.tabs.currentChanged.connect(self._refresh_current)
+        main_layout.addWidget(self.tabs)
+
+    def _refresh_current(self, _index):
+        page = self.tabs.currentWidget()
+        if page is self.role_editor and self.role_editor is not None:
+            self.role_editor.refresh_roles(select=self.role_editor.current_role)
+        elif page is self.users_panel and self.users_panel is not None:
+            self.users_panel.load_data()
+
+
+class UsersPanel(QWidget):
+    COLUMNS = ["Username", "Display Name", "Department (Job Title)", "Roles",
+               "Joined", "Employment", "Reports To"]
+
+    def __init__(self, user_manager, parent=None):
+        super().__init__(parent)
+        self.user_manager = user_manager
+        self.users = {}
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 8, 0, 0)
 
         controls = QHBoxLayout()
         controls.setSpacing(10)
@@ -276,15 +310,61 @@ class AdminUsersTab(QWidget):
         del_btn.clicked.connect(self.delete_user)
         controls.addWidget(del_btn)
 
+        controls.addSpacing(20)
+        import_btn = QPushButton("Import from Excel / CSV…")
+        import_btn.setObjectName("secondaryButton")
+        import_btn.setToolTip("Add many people at once from a list of usernames and names")
+        import_btn.clicked.connect(self.import_users)
+        controls.addWidget(import_btn)
+
+        export_btn = QPushButton("Export CSV")
+        export_btn.setObjectName("secondaryButton")
+        export_btn.clicked.connect(self.export_csv)
+        controls.addWidget(export_btn)
+
         controls.addStretch()
         main_layout.addLayout(controls)
+
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Search by username, name, department or role…")
+        self.search.setStyleSheet("background: #26262D; padding: 6px; border-radius: 4px;")
+        self.search.textChanged.connect(self.apply_filter)
+        main_layout.addWidget(self.search)
 
         self.grid = QTableWidget(0, len(self.COLUMNS))
         self.grid.setHorizontalHeaderLabels(self.COLUMNS)
         self.style_table(self.grid)
+        self.grid.doubleClicked.connect(lambda _index: self.edit_user())
         self.load_data()
 
         main_layout.addWidget(self.grid)
+
+    def apply_filter(self, *_args):
+        text = self.search.text().strip().lower()
+        for row in range(self.grid.rowCount()):
+            cells = [self.grid.item(row, c) for c in range(4)]
+            haystack = " ".join(c.text().lower() for c in cells if c)
+            self.grid.setRowHidden(row, bool(text) and text not in haystack)
+
+    def import_users(self):
+        from slate.gui.dialogs.import_users_dialog import ImportUsersDialog
+        dialog = ImportUsersDialog(self.user_manager, parent=self)
+        dialog.exec()
+        if dialog.imported:
+            self.load_data()
+
+    def export_csv(self):
+        from PySide6.QtWidgets import QFileDialog
+        from slate.core.domain.user_import import export_users_csv
+        path, _ = QFileDialog.getSaveFileName(self, "Export users", "slate_users.csv", "CSV (*.csv)")
+        if not path:
+            return
+        try:
+            export_users_csv(self.user_manager, path)
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Could not export: {e}")
+            return
+        QMessageBox.information(self, "Exported", f"Saved {len(self.users)} users to\n{path}")
 
     # ------------------------------------------------------------------ data
     def load_data(self):
@@ -322,6 +402,8 @@ class AdminUsersTab(QWidget):
                     item.setForeground(QColor("#D9A441"))
                     item.setToolTip("No joining date, so leave accrues from 1 January")
                 self.grid.setItem(r, c, item)
+        if hasattr(self, "search"):
+            self.apply_filter()
 
     def _selected_username(self):
         rows = sorted({item.row() for item in self.grid.selectedItems()})
@@ -429,6 +511,9 @@ class AdminUsersTab(QWidget):
                     curr_user.get("job_title", ""),
                 )
                 if success:
+                    # A password an admin set is not forced to change, even for
+                    # somebody imported who never signed in with the first one.
+                    self.user_manager.set_must_change_password(username, False)
                     QMessageBox.information(self, "Success",
                                             f"Password reset for '{username}'.")
                 else:

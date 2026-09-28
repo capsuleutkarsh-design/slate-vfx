@@ -279,6 +279,9 @@ COLUMNS = [
     # returned" fired on the day notice was given rather than after the last
     # working day.
     ("ut_users", "last_day", "DATE", "DATE"),
+    # Set for people created by an import with a shared first password: they
+    # choose their own at first sign-in. 1 = must change, 0 or empty = no.
+    ("ut_users", "must_change_password", "INTEGER", "INTEGER"),
 
     # Readings were matched to a purchase by software name, so two contracts
     # for the same product shared one peak and both were reported as

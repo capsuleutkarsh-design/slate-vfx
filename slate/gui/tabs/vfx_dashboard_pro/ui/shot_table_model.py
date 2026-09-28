@@ -242,7 +242,14 @@ class ShotTableModel(QAbstractTableModel):
 
         if role == Qt.ItemDataRole.DisplayRole:
             getter = self.COLUMNS[col][2]
-            return getter(shot)
+            value = getter(shot)
+            if getattr(shot, "_remote_changed", False) and self.COLUMNS[col][0] == "shot_name":
+                return f"⚠ {value}"
+            return value
+
+        if role == Qt.ItemDataRole.ToolTipRole and getattr(shot, "_remote_changed", False):
+            return ("Someone else saved this shot after you edited it here. "
+                    "Your unsaved edits are kept - check them before you save.")
 
         if role == Qt.ItemDataRole.TextAlignmentRole:
             if col in [5, 8, 10]:  # Frames, Priority, Version
@@ -503,8 +510,14 @@ class ShotTableModel(QAbstractTableModel):
             return False
         return bool(assigned) and assigned in self.user_identities
 
-    def update_data(self, shots: List[Shot]):
-        self.clear_undo()
+    def update_data(self, shots: List[Shot], keep_undo: bool = False):
+        if keep_undo:
+            # A live update swapped some shots: edits to shots still shown can
+            # still be taken back; edits to replaced ones cannot.
+            still_here = {id(s) for s in shots or []}
+            self._undo_stack = [step for step in self._undo_stack if id(step[0]) in still_here]
+        else:
+            self.clear_undo()
         self.beginResetModel()
         self.shots = shots or []
         self._rebuild_display_items()

@@ -151,11 +151,15 @@ class TabCoordinator(QObject):
                 logging.warning(f"Tab {label} already registered")
                 return False
         
-        # Permission check
-        if permission_key and user_role and allowed_tabs:
-            is_dev = (user_role and user_role.lower() == "developer")
+        # Permission check. A tab with a key needs that key. A person whose
+        # roles grant nothing (a deleted, misspelt or not-yet-created role) gets
+        # nothing - this used to skip the check when the list was empty, which
+        # opened every tab, Admin Panel included, to exactly those people.
+        if permission_key:
+            allowed_tabs = allowed_tabs or []
+            is_dev = str(user_role or "").strip().lower() == "developer"
             has_perm = (permission_key in allowed_tabs) or ("ALL" in allowed_tabs)
-            
+
             # DEBUG LOGGING
             logging.info(f"[SCAN] Tab Registration: '{label}'")
             logging.info(f"   Permission Key: '{permission_key}'")
@@ -471,11 +475,12 @@ class TabCoordinator(QObject):
         is_locked = False
         lock_tooltip = tooltip
 
-        # Permission check
-        if permission_key and user_role and allowed_tabs:
-            is_dev = (user_role and user_role.lower() == "developer")
+        # Permission check. No permissions means no keyed tabs - see register_tab.
+        if permission_key:
+            allowed_tabs = allowed_tabs or []
+            is_dev = str(user_role or "").strip().lower() == "developer"
             has_perm = (permission_key in allowed_tabs) or ("ALL" in allowed_tabs)
-            
+
             logging.info(f"[LAZY] Registering factory: '{label}'")
             logging.info(f"   Permission: '{permission_key}' | Role: '{user_role}'")
             logging.info(f"   Has Permission: {has_perm}")

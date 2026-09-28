@@ -106,6 +106,7 @@ from ..controllers.filter_mixin import DashboardFilterMixin
 from .components.dashboard_builder_mixin import DashboardBuilderMixin
 from .components.dashboard_actions_mixin import DashboardActionsMixin
 from .components.dashboard_project_mixin import DashboardProjectMixin
+from ..controllers.live_update_mixin import DashboardLiveUpdateMixin
 
 # Let an outage reach the @on_database_error decorator rather than becoming an
 # empty grid here. Everything else keeps the fallback it already had.
@@ -119,6 +120,7 @@ class DashboardWidget(
     DashboardBuilderMixin,
     DashboardActionsMixin,
     DashboardProjectMixin,
+    DashboardLiveUpdateMixin,
     DashboardFilterMixin, 
     DashboardThumbnailMixin, 
     DashboardKanbanMixin, 
@@ -513,6 +515,7 @@ class DashboardWidget(
 
     def showEvent(self, event):
         super().showEvent(event)
+        self._apply_pending_live_changes_on_show()
         if self.current_project and self.displayed_shots:
             self._queue_visible_thumbnails()
             if self._thumb_prefetch_queue and not self._thumb_prefetch_timer.isActive():
@@ -722,7 +725,8 @@ class DashboardWidget(
 
     def update_table(self):
         self.update_unsaved_indicator()
-        self.table_model.update_data(self.displayed_shots)
+        self.table_model.update_data(self.displayed_shots,
+                                     keep_undo=getattr(self, "_keep_undo", False))
         self._apply_table_spans()
         self.header_view.update_filters(self.displayed_shots)
         self.stats_widget.update_stats(self.displayed_shots)

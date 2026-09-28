@@ -485,6 +485,59 @@ class SQLiteHandler:
             logging.exception(f"SQLiteHandler read_shots failed: {e}")
             return []
 
+    def read_shots_by_id(self, shot_ids) -> List[Shot]:
+        """
+        Just these shots, loaded exactly as read_shots() loads them.
+
+        For keeping an open dashboard current: when somebody changes three
+        shots, the other screens read those three, not the whole project. Ids
+        that belong to another project, or no longer exist, are simply not
+        returned. A failed read raises: "not returned" must only ever mean
+        "not there", or a hiccup would clear shots off somebody's screen.
+        """
+        ids = sorted({int(i) for i in shot_ids if str(i).strip().lstrip("-").isdigit()})
+        shots: List[Shot] = []
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            marks = ",".join(["%s"] * len(chunk))
+            rows = self.db_manager.execute_query(
+                f"SELECT id, data_json, version FROM tracking_shots "
+                f"WHERE project_code=%s AND id IN ({marks})",
+                (self.project_code, *chunk), fetch="all")
+            if rows is None:
+                raise RuntimeError("tracking_shots could not be read")
+            if not rows:
+                continue
+            found = [int(r["id"]) for r in rows]
+            marks = ",".join(["%s"] * len(found))
+            tasks = self.db_manager.execute_query(
+                f"SELECT * FROM tracking_tasks WHERE shot_id IN ({marks})",
+                tuple(found), fetch="all")
+            if tasks is None:
+                raise RuntimeError("tracking_tasks could not be read")
+            tasks_by_shot: Dict[int, Dict[str, Dict[str, Any]]] = {}
+            for task in tasks:
+                task = dict(task)
+                if task.get("shot_id") is None or not task.get("department"):
+                    continue
+                tasks_by_shot.setdefault(int(task["shot_id"]), {})[task["department"]] = task
+
+            for row in rows:
+                raw = row.get("data_json")
+                if not raw:
+                    continue
+                try:
+                    item = json.loads(raw) if isinstance(raw, str) else dict(raw)
+                    shot = Shot.from_dict(item)
+                    shot.id = int(row["id"])
+                    v_raw = row.get("version")
+                    shot.version = int(v_raw) if v_raw is not None else int(shot.version or 1)
+                    self._apply_task_overrides(shot, tasks_by_shot.get(shot.id, {}))
+                    shots.append(shot)
+                except Exception as e:
+                    logging.exception(f"Failed to deserialize shot id {row.get('id')}: {e}")
+        return shots
+
     def write_shots(self, shots: List[Shot], force: bool = False) -> bool:
         """Serialize and save shots to DB."""
         if not self.project_code:

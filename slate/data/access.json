@@ -84,5 +84,19 @@
   "wipe_fleet_caches": [
     "admin",
     "developer"
-  ]
+  ],
+  "_approve_leave": "Works the first (supervisor) stage of the leave queue.",
+  "approve_leave": [
+    "supervisor",
+    "lead"
+  ],
+  "_manage_permissions": "Changes what every role may open and do, on the Permissions screen.",
+  "manage_permissions": [
+    "admin",
+    "developer",
+    "it",
+    "hr",
+    "human resources"
+  ],
+  "_roles_in_database": "These lists match role names. A role can also be given any of these actions by ticking it under Abilities on the Permissions screen; that is stored with the role and needs no change here."
 }

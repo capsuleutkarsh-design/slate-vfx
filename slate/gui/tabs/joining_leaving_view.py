@@ -235,6 +235,9 @@ class JoiningLeavingView(QWidget):
         root.addWidget(split, 1)
 
         self.refresh()
+        # Other people's changes, without a restart (the change feed; a timer if it is missing).
+        from slate.gui.components.auto_refresh import AutoRefresh
+        self._auto_refresh = AutoRefresh(self, self.refresh, seconds=30, topics=("onboarding_workflows", "asset_assignments", "hardware_inventory"))
 
     # ------------------------------------------------------------------ data
     @on_database_error

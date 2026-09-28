@@ -62,6 +62,14 @@ class UserManager:
             """)
         except Exception as e:
             logging.error(f"Failed to initialize Auth Schema: {e}")
+        # Normally added by the workplace migration when the database opens;
+        # ut_users may not have existed yet at that moment on a new database.
+        try:
+            from ..infra.migrations.workplace_schema import _column_exists
+            if not _column_exists(db, "ut_users", "must_change_password"):
+                db.execute_update("ALTER TABLE ut_users ADD COLUMN must_change_password INTEGER")
+        except Exception as e:
+            logging.warning("Could not add must_change_password: %s", e)
 
     def _run_migration(self):
         """
@@ -176,22 +184,32 @@ class UserManager:
 
     def _ensure_default_roles(self):
         """
-        Create any missing default role. Existing roles are left exactly as
-        they are - this never overwrites permissions someone has customised.
+        Create each default role once. Existing roles are left exactly as they
+        are - this never overwrites permissions someone has customised - and a
+        role the studio deleted stays deleted: ut_role_seeds remembers which
+        roles were already created, so they are not brought back at next start.
         """
+        from slate.core.domain.permissions_catalog import STUDIO_ROLES
+        defaults = {**self.DEFAULT_ROLE_PERMISSIONS, **STUDIO_ROLES}
         try:
             db = self._get_db()
+            db.execute_update("CREATE TABLE IF NOT EXISTS ut_role_seeds (role_name TEXT PRIMARY KEY)")
             rows = db.execute_query("SELECT role_name FROM ut_roles", fetch="all") or []
             existing = {str(r["role_name"]).strip().lower() for r in rows}
+            seeded_rows = db.execute_query("SELECT role_name FROM ut_role_seeds", fetch="all") or []
+            seeded = {str(r["role_name"]).strip().lower() for r in seeded_rows}
 
-            for role_name, permissions in self.DEFAULT_ROLE_PERMISSIONS.items():
-                if role_name.lower() in existing:
+            for role_name, permissions in defaults.items():
+                key = role_name.lower()
+                if key in seeded:
                     continue
-                db.execute_update(
-                    "INSERT INTO ut_roles (role_name, permissions) VALUES (%s, %s)",
-                    (role_name, json.dumps(permissions)),
-                )
-                logging.info("Created missing default role: %s", role_name)
+                if key not in existing:
+                    db.execute_update(
+                        "INSERT INTO ut_roles (role_name, permissions) VALUES (%s, %s)",
+                        (role_name, json.dumps(permissions)),
+                    )
+                    logging.info("Created default role: %s", role_name)
+                db.execute_update("INSERT INTO ut_role_seeds (role_name) VALUES (%s)", (key,))
         except Exception as exc:
             logging.warning("Could not ensure default roles: %s", exc)
 
@@ -353,7 +371,9 @@ class UserManager:
                 "roles": roles,
                 "role": roles[0] if roles else "Artist",
                 "job_title": user_row.get('job_title', ''),
-                "avatar": user_row.get('profile_pic_path', '')
+                "avatar": user_row.get('profile_pic_path', ''),
+                # Imported with a shared first password: choose a new one now.
+                "must_change_password": bool(user_row.get('must_change_password') or 0),
             }
         else:
             logging.warning(f"Authentication failed: Invalid password for user '{uid}'")
@@ -486,6 +506,36 @@ class UserManager:
             self.audit.log_user_change("System", uid, f"Updated roles: {roles}")
         return success
 
+    MIN_PASSWORD_LENGTH = 6
+
+    def set_must_change_password(self, username: str, required: bool) -> bool:
+        db = self._get_db()
+        return db.execute_update(
+            "UPDATE ut_users SET must_change_password=%s WHERE LOWER(username)=LOWER(%s)",
+            (1 if required else 0, username.strip()))
+
+    def change_own_password(self, username: str, current: str, new: str):
+        """
+        A person choosing their own password. Returns (ok, message).
+
+        Needs the current one, so a workstation left signed in cannot be used
+        to take over the account. Clears "must change password".
+        """
+        if not self.authenticate(username, current):
+            return False, "The current password is not right."
+        if len(new or "") < self.MIN_PASSWORD_LENGTH:
+            return False, f"Use at least {self.MIN_PASSWORD_LENGTH} characters."
+        if new == current:
+            return False, "Choose a password different from the current one."
+        db = self._get_db()
+        ok = db.execute_update(
+            "UPDATE ut_users SET password_hash=%s, must_change_password=0 WHERE LOWER(username)=LOWER(%s)",
+            (self._hash_password(new), username.strip()))
+        if ok:
+            self.audit.log_user_change(username, username, "Changed own password")
+            return True, "Password changed."
+        return False, "The password could not be saved. Try again."
+
     def update_user(self, username: str, **kwargs) -> bool:
         """Update specific fields of an existing user or create if not exists."""
         users = self.get_all_users()
@@ -560,16 +610,63 @@ class UserManager:
         # Upsert
         existing = db.execute_query("SELECT 1 FROM ut_roles WHERE role_name=%s", (role,), fetch="one")
         if existing:
-            return db.execute_update("UPDATE ut_roles SET permissions=%s WHERE role_name=%s", (tabs_str, role))
+            ok = db.execute_update("UPDATE ut_roles SET permissions=%s WHERE role_name=%s", (tabs_str, role))
         else:
-            return db.execute_update("INSERT INTO ut_roles (role_name, permissions) VALUES (%s, %s)", (role, tabs_str))
+            ok = db.execute_update("INSERT INTO ut_roles (role_name, permissions) VALUES (%s, %s)", (role, tabs_str))
+        self._forget_cached_abilities()
+        return ok
 
     def create_role(self, role: str, tabs: List[str]) -> bool:
         return self.update_role_permissions(role, tabs)
 
-    def delete_role(self, role: str) -> bool:
+    def role_permissions(self, role: str) -> List[str]:
+        """Exactly what is stored for this role: tab keys, "can:" abilities and anything else."""
         db = self._get_db()
-        return db.execute_update("DELETE FROM ut_roles WHERE role_name=%s", (role,))
+        row = db.execute_query("SELECT permissions FROM ut_roles WHERE LOWER(role_name)=LOWER(%s)",
+                               (role,), fetch="one")
+        if not row:
+            return []
+        try:
+            return list(json.loads(row["permissions"] or "[]"))
+        except Exception:
+            return []
+
+    def role_exists(self, role: str) -> bool:
+        wanted = str(role or "").strip().lower()
+        return any(str(r).strip().lower() == wanted for r in self.get_available_roles())
+
+    def users_with_role(self, role: str) -> List[str]:
+        """Usernames of everybody who holds this role (compared case-insensitively)."""
+        wanted = str(role or "").strip().lower()
+        holders = []
+        for username, data in (self.get_all_users() or {}).items():
+            roles = data.get("roles") or []
+            if isinstance(roles, str):
+                roles = [roles]
+            if any(str(r).strip().lower() == wanted for r in roles):
+                holders.append(username)
+        return sorted(holders)
+
+    def delete_role(self, role: str) -> bool:
+        """
+        Delete a role nobody holds. Refused while anyone still has it: their
+        access would silently change, so move them to another role first.
+        """
+        if self.users_with_role(role):
+            logging.warning("Role %s not deleted: still held by %s", role, self.users_with_role(role))
+            return False
+        db = self._get_db()
+        ok = db.execute_update("DELETE FROM ut_roles WHERE role_name=%s", (role,))
+        self._forget_cached_abilities()
+        return ok
+
+    @staticmethod
+    def _forget_cached_abilities():
+        try:
+            from slate.core.domain import access
+            access.reset_cache()
+        except Exception:
+            pass
 
     @property
     def users(self) -> Dict[str, Dict[str, Any]]:

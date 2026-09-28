@@ -29,40 +29,19 @@ class DashboardFilterMixin:
         self.apply_filters()
         
     def on_project_data_updated(self):
-        """Called by PollWorker when DB changes."""
+        """
+        Called by PollWorker - the fallback when the change feed is not
+        working - when something in the project changed. It cannot say what,
+        so the project is read once and merged: unsaved edits are kept and the
+        selection stays (see live_update_mixin).
+        """
         sender = self.sender()
         if sender is not None and getattr(self, "poll_worker", None) and sender is not self.poll_worker:
             return
         if getattr(self, "_is_closing", False):
             return
-        
-        selection = []
-        if getattr(self, "table", None) and self.table.selectionModel():
-            selection = self.table.selectionModel().selectedRows()
-            
-        selected_ids = []
-        for idx in selection:
-            row = idx.row()
-            if 0 <= row < len(self.displayed_shots):
-                shot_id = getattr(self.displayed_shots[row], "id", None)
-                if shot_id is not None:
-                    selected_ids.append(shot_id)
-        
-        self.log("Auto-refreshing data due to external update...")
-        self.refresh_data()
-        
-        if selected_ids and getattr(self, "table", None) and getattr(self, "table_model", None):
-            id_to_row = {}
-            for row, shot in enumerate(self.displayed_shots):
-                shot_id = getattr(shot, "id", None)
-                if shot_id is not None:
-                    id_to_row[shot_id] = row
-            for shot_id in selected_ids:
-                row = id_to_row.get(shot_id)
-                if row is None or row >= self.table_model.rowCount():
-                    continue
-                idx = self.table_model.index(row, 0)
-                self.table.selectionModel().select(idx, QItemSelectionModel.Select | QItemSelectionModel.Rows)
+        self.log("Merging an external update...")
+        self._queue_live_full()
         
     def _schedule_filter_update(self):
         """Triggered by search input text changes, debounced to avoid UI freezes."""

@@ -90,6 +90,15 @@ _DEFAULTS = {
     "wipe_fleet_caches": [
         "admin", "developer",
     ],
+    # Works the first (supervisor) stage of the leave queue. This was the
+    # literal {"supervisor", "lead"} inside the Leave tab.
+    "approve_leave": [
+        "supervisor", "lead",
+    ],
+    # Changes what roles may open and do, on the Permissions screen.
+    "manage_permissions": [
+        "admin", "developer", "it", "hr", "human resources",
+    ],
 }
 
 
@@ -119,8 +128,46 @@ def _load() -> dict:
 
 
 def reset_cache() -> None:
-    global _cache
+    global _cache, _db_cache
     _cache = None
+    _db_cache = None
+
+
+# Abilities ticked on a role in the Permissions screen live with the role in
+# ut_roles ("can:dashboard_write", ...). They are read here, so every screen
+# that asks can(...) honours them - a new role needs ticks, not code. Kept for
+# a short while: roles change rarely and this is asked for every table cell.
+_DB_TTL_SECONDS = 30.0
+_db_cache = None
+_db_cache_at = 0.0
+
+
+def _role_abilities() -> dict:
+    """{role name (lower-case): set of abilities} from ut_roles; empty if unreachable."""
+    global _db_cache, _db_cache_at
+    import time
+    now = time.monotonic()
+    if _db_cache is not None and now - _db_cache_at < _DB_TTL_SECONDS:
+        return _db_cache
+    from .permissions_catalog import ABILITY_KEYS, RESTRICTIONS, abilities_in, has_all
+    result = {}
+    try:
+        from slate.core.infra.database_manager import database_manager
+        rows = database_manager.execute_query(
+            "SELECT role_name, permissions FROM ut_roles", fetch="all") or []
+        for row in rows:
+            try:
+                perms = json.loads(row["permissions"] or "[]")
+            except Exception:
+                continue
+            found = abilities_in(perms)
+            if has_all(perms):
+                found |= set(ABILITY_KEYS) - RESTRICTIONS
+            result[str(row["role_name"]).strip().lower()] = found
+    except Exception as exc:
+        logging.debug("Role abilities not read from the database: %s", exc)
+    _db_cache, _db_cache_at = result, now
+    return result
 
 
 def _normalize(roles) -> Set[str]:
@@ -135,8 +182,14 @@ def roles_for(action: str) -> Set[str]:
     return set(_load().get(action, set()))
 
 
+def _abilities_of(role: str) -> Set[str]:
+    """What one role may do: access.json by name, plus the role's own ticks."""
+    names = {action for action, members in _load().items() if role in members}
+    return names | _role_abilities().get(role, set())
+
+
 def _allowed(action: str, roles: Iterable) -> bool:
-    return bool(_normalize(roles) & roles_for(action))
+    return any(action in _abilities_of(role) for role in _normalize(roles))
 
 
 def can(roles, action: str) -> bool:
@@ -196,11 +249,16 @@ def is_department_scoped(roles) -> bool:
     department on their job title. Anything with a wider role alongside
     (supervisor, admin) is not scoped.
     """
-    normalized = _normalize(roles)
-    if not normalized & roles_for("department_scoped"):
-        return False
-    wider = roles_for("dashboard_write") - roles_for("department_scoped")
-    return not (normalized & wider)
+    scoped = wider = False
+    for role in _normalize(roles):
+        abilities = _abilities_of(role)
+        if "dashboard_write" not in abilities:
+            continue
+        if "department_scoped" in abilities:
+            scoped = True
+        else:
+            wider = True
+    return scoped and not wider
 
 
 def is_offline_fallback() -> bool:

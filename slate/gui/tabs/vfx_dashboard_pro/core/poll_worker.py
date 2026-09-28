@@ -16,7 +16,7 @@ class PollWorker(QThread):
     """
     updates_available = Signal()
     
-    def __init__(self, project_code, db_manager, interval=3000):
+    def __init__(self, project_code, db_manager, interval=3000, skip_when=None):
         super().__init__()
         self.project_code = project_code
         self.db_manager = db_manager
@@ -24,6 +24,18 @@ class PollWorker(QThread):
         self.running = True
         self.last_known_timestamp = None
         self._mutex = QMutex()
+        # While this returns True (the change feed is working) the worker
+        # sleeps without asking the database anything.
+        self.skip_when = skip_when
+        self._skipping = False
+
+    def _should_skip(self) -> bool:
+        if self.skip_when is None:
+            return False
+        try:
+            return bool(self.skip_when())
+        except Exception:
+            return False
 
     def _sleep_interruptibly(self, total_ms: int, step_ms: int = 100) -> bool:
         elapsed = 0
@@ -45,7 +57,18 @@ class PollWorker(QThread):
             try:
                 if not self._sleep_interruptibly(self.interval):
                     break
-                    
+
+                if self._should_skip():
+                    self._skipping = True
+                    continue
+                if self._skipping:
+                    # The feed just stopped: whatever happened meanwhile was
+                    # heard by nobody, so ask for one catch-up read.
+                    self._skipping = False
+                    self.last_known_timestamp = self._get_max_timestamp()
+                    self.updates_available.emit()
+                    continue
+
                 current_max = self._get_max_timestamp()
                 
                 if current_max and self.last_known_timestamp:

@@ -80,6 +80,39 @@ def mock_gui_dialogs(monkeypatch):
         pass
 
 
+class ManualFeed:
+    """
+    The change feed, driven by hand. The real one runs a thread that polls
+    whichever database is current - in a test run that is a different scratch
+    database every few tests. push() is what the thread would have found.
+    """
+
+    def __init__(self):
+        self.available = False
+        self._subs = []
+
+    def watch(self, owner, topics, callback):
+        self._subs.append((owner, frozenset(topics), callback))
+
+    def push(self, changes):
+        for _owner, topics, callback in list(self._subs):
+            mine = {t: set(keys) for t, keys in changes.items() if t in topics}
+            if mine:
+                callback(mine)
+
+
+@pytest.fixture(autouse=True)
+def manual_change_feed(monkeypatch):
+    try:
+        from slate.gui.components import change_feed
+    except ImportError:
+        yield None
+        return
+    feed = ManualFeed()
+    monkeypatch.setattr(change_feed.ChangeFeed, "_instance", feed)
+    yield feed
+
+
 def pytest_configure(config):
     """
     Stop the suite writing to the developer's own settings file.

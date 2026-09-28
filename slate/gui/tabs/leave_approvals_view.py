@@ -125,6 +125,9 @@ class LeaveApprovalsView(QWidget):
         self.empty.attach_to(self.table)
 
         self.refresh()
+        # Other people's changes, without a restart (the change feed; a timer if it is missing).
+        from slate.gui.components.auto_refresh import AutoRefresh
+        self._auto_refresh = AutoRefresh(self, self.refresh, seconds=30, topics=("leave_requests", "holiday_calendar"))
 
     # ------------------------------------------------------------------ data
     @on_database_error

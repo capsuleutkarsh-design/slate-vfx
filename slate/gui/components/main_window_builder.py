@@ -23,16 +23,19 @@ class MainWindowBuilderMixin:
         from PySide6.QtWidgets import QTabWidget
         from ..tabs.leave_approvals_view import LeaveApprovalsView
         from ..tabs.my_leave_view import MyLeaveView
+        from ...core.domain.access import can
         from ...core.domain.workplace_access import manages_leave
 
-        roles = {str(r).strip().lower() for r in (getattr(self, "user_roles", None) or [])}
+        roles = getattr(self, "user_roles", None)
         username = self._current_username()
 
-        # HR own the final stage; a supervisor owns the first one.
+        # HR own the final stage; a supervisor owns the first one. Who counts
+        # as a supervisor here is the "approve_leave" ability, so a Comp
+        # Supervisor or Team Lead gets the queue without a code change.
         stage = None
-        if manages_leave(getattr(self, "user_roles", None), self.allowed_tabs):
+        if manages_leave(roles, self.allowed_tabs):
             stage = "HR"
-        elif roles & {"supervisor", "lead"}:
+        elif can(roles, "approve_leave"):
             stage = "Supervisor"
 
         if stage is None:
@@ -463,16 +466,25 @@ class MainWindowBuilderMixin:
 
                 self.tab_coordinator.add_category_header("ADMINISTRATION")
 
-                # User Management
-                self.tab_coordinator.register_tab_factory(
-                    "Users & Roles",
-                    lambda: AdminUsersTab(user_role=self.user_role, user_data=self.user_data),
-                    icon="👥",
-                    permission_key="HRMS",
-                    user_role=self.user_role,
-                    allowed_tabs=self.allowed_tabs,
-                    tooltip="Manage users, roles, departments, and access"
-                )
+                # Users & Roles: the only place people and roles are managed.
+                # Shown to HR (the HRMS tab) and to anybody who may manage
+                # users or edit permissions - IT edits permissions without
+                # holding the HR tab. Inside, each sees only their own half.
+                from ...core.domain.access import can
+                from ...core.domain.workplace_access import has_permission
+                roles_for_access = list(getattr(self, "user_roles", None) or []) + [self.user_role]
+                if (has_permission(self.allowed_tabs, "HRMS")
+                        or can(roles_for_access, "manage_users")
+                        or can(roles_for_access, "manage_permissions")):
+                    self.tab_coordinator.register_tab_factory(
+                        "Users & Roles",
+                        lambda: AdminUsersTab(user_role=self.user_role, user_data=self.user_data),
+                        icon="👥",
+                        permission_key=None,
+                        user_role=self.user_role,
+                        allowed_tabs=self.allowed_tabs,
+                        tooltip="Add people, import a list, and set what each role can open and do"
+                    )
 
                 # Admin Panel
                 self.tab_coordinator.register_tab_factory(
@@ -582,10 +594,24 @@ class MainWindowBuilderMixin:
                     self.global_progress.setValue(task.progress)
                     self.global_progress.setToolTip(f"{task.name}: {task.progress}%")
                 
-                def on_task_added(task): update_global_progress(task.task_id)
-                def on_task_removed(task_id): update_global_progress(task_id)
-                def on_task_updated(task_id): update_global_progress(task_id)
-                
+                def safe_update(task_id):
+                    # The registry outlives this window. Once the window is
+                    # gone, stop listening instead of touching a dead widget.
+                    try:
+                        update_global_progress(task_id)
+                    except RuntimeError:
+                        for signal, slot in ((task_registry.task_added, on_task_added),
+                                             (task_registry.task_removed, on_task_removed),
+                                             (task_registry.task_updated, on_task_updated)):
+                            try:
+                                signal.disconnect(slot)
+                            except (RuntimeError, TypeError):
+                                pass
+
+                def on_task_added(task): safe_update(task.task_id)
+                def on_task_removed(task_id): safe_update(task_id)
+                def on_task_updated(task_id): safe_update(task_id)
+
                 task_registry.task_added.connect(on_task_added)
                 task_registry.task_removed.connect(on_task_removed)
                 task_registry.task_updated.connect(on_task_updated)

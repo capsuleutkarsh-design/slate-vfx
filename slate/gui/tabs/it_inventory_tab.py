@@ -256,6 +256,9 @@ class ItInventoryTab(QWidget):
         self.grid.setHorizontalHeaderLabels(["Machine Name", "Assigned To", "Location", "CPU", "GPU", "RAM", "Storage", "Status"])
         self.style_table(self.grid)
         self.load_data()
+        # Other people's changes, without a restart (the change feed; a timer if it is missing).
+        from slate.gui.components.auto_refresh import AutoRefresh
+        self._auto_refresh = AutoRefresh(self, self.load_data, seconds=30, topics=("hardware_inventory", "asset_assignments"))
         
         self.grid.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         main_layout.addWidget(self.grid)

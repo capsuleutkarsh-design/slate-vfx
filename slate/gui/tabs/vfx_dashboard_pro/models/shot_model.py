@@ -99,6 +99,8 @@ class Shot:
     notes: str = ""
     _row_idx: int = field(default=0, repr=False)
     _modified: bool = field(default=False, repr=False)
+    # Somebody else saved this shot while it had unsaved edits here.
+    _remote_changed: bool = field(default=False, repr=False)
     _semantic_embedding: Optional[List[float]] = field(default=None, repr=False)
     version: int = 1 # Optimistic Locking
     

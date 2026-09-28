@@ -9,7 +9,6 @@ import copy
 from slate.gui.tabs.vfx_dashboard_pro.core.excel_handler import ExcelHandler
 from slate.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler, StaleDataError
 from slate.gui.tabs.vfx_dashboard_pro.core.file_lock import FileLock
-from slate.gui.tabs.vfx_dashboard_pro.core.poll_worker import PollWorker
 from slate.core.infra.database_manager import database_manager
 
 class DashboardProjectMixin:
@@ -68,13 +67,8 @@ class DashboardProjectMixin:
                 # copy, so opening a project never reads from it - importing is
                 # a deliberate, confirmed action under Manage Project.
 
-                if not self.local_mode:
-                    self._cleanup_poll_worker(timeout_ms=1500)
-                    self.poll_worker = PollWorker(project_code, database_manager)
-                    self.poll_worker.updates_available.connect(self.on_project_data_updated)
-                    self.poll_worker.start()
-                else:
-                    self.log("LOCAL MODE: real-time DB polling disabled.")
+                # Other people's changes arrive shot by shot from here on.
+                self._start_live_updates(project_code)
             else:
                 self.log("Loading from EXCEL (ExcelHandler)...")
                 self.data_handler = ExcelHandler(self.current_excel_path or excel_path, project)

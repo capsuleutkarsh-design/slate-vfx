@@ -344,10 +344,30 @@ class MyTicketsView(QWidget):
         self.empty.attach_to(self.table)
 
         self.refresh()
+        # IT picking the ticket up, replying or closing it shows without a restart.
+        from slate.gui.components.auto_refresh import AutoRefresh
+        self._auto_refresh = AutoRefresh(self, self.refresh, seconds=30,
+                                         topics=("it_tickets", "it_ticket_comments"))
 
     # ------------------------------------------------------------------ data
     @on_database_error
     def refresh(self):
+        # Keep the selection and scroll: this also runs on a timer.
+        picked = {self._rows[i.row()].get("id") for i in self.table.selectedIndexes()
+                  if i.row() < len(self._rows)}
+        scroll = self.table.verticalScrollBar().value()
+        self.table.clearSelection()      # by ticket, not by row: the order can change
+        self._refill()
+        if picked:
+            from PySide6.QtCore import QItemSelectionModel
+            for index, row in enumerate(self._rows):
+                if row.get("id") in picked:
+                    self.table.selectionModel().select(
+                        self.table.model().index(index, 0),
+                        QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
+        self.table.verticalScrollBar().setValue(scroll)
+
+    def _refill(self):
         try:
             rows = self.db.execute_query(
                 "SELECT id, category, description, status, priority, created_at, "
@@ -361,6 +381,7 @@ class MyTicketsView(QWidget):
         except Exception:
             self._rows = []
 
+        self.table.clearSpans()      # left by the "database did not answer" note
         self.table.setRowCount(len(self._rows))
         for r, row in enumerate(self._rows):
             status = normalise_status(row.get("status")) or "Open"
