@@ -87,6 +87,9 @@ shared_datas = [
     # and a build on one that has not fails with a clear message
     # instead of a PyInstaller stack trace.
 
+    # Licence (UT Community Licence 2.0): slate/licence.py checks these at startup
+    (R('LICENSE.md'), '.'),
+    (R('THIRD_PARTY_NOTICES.md'), '.'),
     (R('slate', 'core', 'help_content.json'), 'slate/core'),
     (R('slate', 'gui', 'tabs', 'vfx_dashboard_pro', 'config'), 'slate/gui/tabs/vfx_dashboard_pro/config'),
     (R('slate', 'gui', 'tabs', 'vfx_dashboard_pro', 'sample_project.xlsx'), 'slate/gui/tabs/vfx_dashboard_pro'),

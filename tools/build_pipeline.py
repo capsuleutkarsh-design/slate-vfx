@@ -581,7 +581,14 @@ def build_installer(version=None, target="all"):
     
     # Run Inno Setup for both scripts
     installer_dir.mkdir(parents=True, exist_ok=True)
-    
+
+    # The installers' licence page (LicenseFile=LICENSE.txt): a plain-text copy of LICENSE.md
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+    from slate.licence import plain_text
+    (project_root / "deployment" / "LICENSE.txt").write_text(
+        plain_text(project_root / "LICENSE.md"), encoding="utf-8-sig")
+
     for script in iss_scripts:
         print(f"\nBuilding: {script.name}")
         # The version is not passed as /DMyAppVersion: each script #defines it

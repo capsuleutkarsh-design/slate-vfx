@@ -36,6 +36,8 @@ AppUpdatesURL={#MyAppURL}
 ; program folder that is also the data folder is wiped by every upgrade.
 DefaultDirName={localappdata}\Programs\{#MyAppName}
 DisableProgramGroupPage=yes
+LicenseFile=LICENSE.txt
+AppCopyright=(c) 2026 Utkarsh Tripathi - UT Community Licence 2.0
 
 ; Helper Options
 PrivilegesRequired=lowest
@@ -66,6 +68,9 @@ Name: "central_server"; Description: "Slate Server (master node and database)"; 
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
+; Licence (UT Community Licence 2.0): the programs check these files at startup
+Source: "..\LICENSE.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 ; --- MAIN APPLICATION COMPONENTS ---
 ; The server folder: Slate_Server.exe beside its _internal, which carries
 ; PostgreSQL, PgBouncer, Qt and the settings. It used to be a single file

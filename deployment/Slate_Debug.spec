@@ -35,7 +35,7 @@ a = Analysis(
     [R('slate', 'gatekeeper_main.py')],
     pathex=[],
     binaries=[],
-    datas=[(R('slate', 'data'), 'slate/data'), (R('slate', 'core', 'help_content.json'), 'slate/core'), (R('slate', 'assets'), 'slate/assets'), (R('slate', 'default_config.json'), 'slate')],
+    datas=[(R('LICENSE.md'), '.'), (R('THIRD_PARTY_NOTICES.md'), '.'), (R('slate', 'data'), 'slate/data'),(R('slate', 'core', 'help_content.json'), 'slate/core'), (R('slate', 'assets'), 'slate/assets'), (R('slate', 'default_config.json'), 'slate')],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},

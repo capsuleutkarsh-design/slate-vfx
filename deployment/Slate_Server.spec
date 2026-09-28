@@ -44,6 +44,9 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[
+        # Licence (UT Community Licence 2.0): slate/licence.py checks these at startup
+        (R('LICENSE.md'), '.'),
+        (R('THIRD_PARTY_NOTICES.md'), '.'),
         # Without this the server ships with no settings at all. It then has no
         # database password, cannot create the accounts, and hardens the cluster
         # regardless - which is how an install ends up with a database that

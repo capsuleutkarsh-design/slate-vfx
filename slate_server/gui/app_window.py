@@ -193,6 +193,11 @@ class UTServerWindow(QMainWindow):
         self.stacked_widget = QStackedWidget()
         self.main_layout.addWidget(self.stacked_widget, 1)
 
+        # Credit line at the bottom of the window (licence section 5: must stay)
+        from slate.licence import credit_label
+        self.statusBar().setSizeGripEnabled(False)
+        self.statusBar().addPermanentWidget(credit_label())
+
         # Initialize Database Engine
         # Store database using config file in a persistent location
         import json

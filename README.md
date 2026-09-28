@@ -174,7 +174,19 @@ people who build it: [artists](docs/guide/artists.md) ·
 
 ## Licence
 
-GPLv3 — see [LICENSE](LICENSE).
+Slate is released under the **[UT Community Licence 2.0](LICENSE.md)** by Utkarsh Tripathi.
+In short: **free to use**, also for paid studio work; **not for sale**; if you change it,
+keep the name as *Slate (modified by …)* and **send your changes back as a pull request**
+within 30 days; keep the credits and the *Slate · © 2026 Utkarsh Tripathi · UT Community
+Licence 2.0* line at the bottom of the windows, or Slate will not start. The Blender and
+Natron plug-in folders are also available under MIT. Copies up to BETA 2.0.29 keep the GPLv3.
 
-Slate bundles nothing. FFmpeg, PostgreSQL, Olive and OpenRV are fetched by
-`setup.bat` from their own projects and keep their own licences.
+Icons by Icons8 - https://icons8.com
+
+The Icons8 icons, the product logos on the launch buttons, and the OpenRV folder
+the Studio installer ships (and what is left out of it on purpose) are covered
+in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+FFmpeg, PostgreSQL, Olive and OpenRV are not in this repository. `setup.bat`
+fetches FFmpeg, PostgreSQL and Olive from their own projects; OpenRV has no
+public Windows build and is supplied by the studio. Each keeps its own licence.

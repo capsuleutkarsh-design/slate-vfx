@@ -34,6 +34,8 @@ AppUpdatesURL={#MyAppURL}
 ; {localappdata}\Slate where the shared settings live.
 DefaultDirName={localappdata}\Programs\{#MyAppName}
 DisableProgramGroupPage=yes
+LicenseFile=LICENSE.txt
+AppCopyright=(c) 2026 Utkarsh Tripathi - UT Community Licence 2.0
 
 ; Helper Options
 PrivilegesRequired=lowest
@@ -64,6 +66,9 @@ Name: "main_ops"; Description: "Slate Operations Software"; Types: ops custom
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
+; Licence (UT Community Licence 2.0): the programs check these files at startup
+Source: "..\LICENSE.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 ; Install the shared runtime folder EXCEPT server and VFX executables
 Source: "{#SourceDistDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "Slate_Server.exe,slate_server\*,Slate_Studio.exe,OpenRV\*,OpenRV"
 

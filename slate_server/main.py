@@ -39,8 +39,13 @@ def main():
     # a parent is drawn in the same dark theme as everything else.
     from slate_server.gui.design_system import GLOBAL_STYLESHEET
     app.setStyleSheet(GLOBAL_STYLESHEET)
-    
+
+    from slate import licence
+    if not licence.check_startup():
+        os._exit(3)
     window = UTServerWindow()
+    if not licence.check_window(window):
+        os._exit(3)
     window.show()
     
     ret = app.exec()

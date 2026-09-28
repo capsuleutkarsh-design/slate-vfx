@@ -332,7 +332,12 @@ class ApplicationEntry:
             ThemeManager.apply_theme(self.app, str(package_dir))
         except Exception as e:
             logging.exception(f"Failed to apply global theme: {e}")
-            
+
+        # Licence section 5: the licence files and credits must be intact
+        from slate import licence
+        if not licence.check_startup():
+            sys.exit(3)
+
         self.app.setQuitOnLastWindowClosed(False)
         self._cleanup_done = False
         self._is_closing = False
@@ -675,6 +680,10 @@ class ApplicationEntry:
                 logging.info("Initializing VFXFolderCreatorApp (all)...")
                 self.main_window = VFXFolderCreatorApp(user_data, app_context=self.app_context, app_mode="all")
             
+            from slate import licence
+            if not licence.check_window(self.main_window):
+                import os
+                os._exit(3)             # licence section 5: the window lacks the credit line
             logging.info("Showing Main Window...")
             self.main_window.showMaximized()
             # Main window is now the primary lifecycle owner.

@@ -36,6 +36,8 @@ AppUpdatesURL={#MyAppURL}
 ; wiped them - and wiped the server path Slate Operations had written there.
 DefaultDirName={localappdata}\Programs\Slate Studio
 DisableProgramGroupPage=yes
+LicenseFile=LICENSE.txt
+AppCopyright=(c) 2026 Utkarsh Tripathi - UT Community Licence 2.0
 
 ; Helper Options
 PrivilegesRequired=lowest
@@ -66,10 +68,19 @@ Name: "main_soft"; Description: "Slate Main Software (Client)"; Types: client cu
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
+; Licence (UT Community Licence 2.0): the programs check these files at startup
+Source: "..\LICENSE.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 ; --- MAIN APPLICATION COMPONENTS ---
 ; We install the entire shared library folder EXCEPT the server and ops components
 Source: "{#SourceDistDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "Slate_Server.exe,slate_server\*,Slate_Ops.exe"
-Source: "..\OpenRV\*"; DestDir: "{app}\OpenRV"; Flags: ignoreversion recursesubdirs createallsubdirs
+; OpenRV is Apache-2.0 and goes in whole, apart from Qt Insight Tracker:
+; Qt5InsightTracker.dll, its QML half (Qt5InsightTrackerQml.dll and the
+; qml\QtInsightTracker folder) and its generic plugin (insighttrackerplugin.dll).
+; That Qt module is available only under a Qt commercial licence, so it cannot be
+; passed on, and RV does not use it - nothing under OpenRV imports or names it
+; except the module's own parts. See THIRD_PARTY_NOTICES.md.
+Source: "..\OpenRV\*"; DestDir: "{app}\OpenRV"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "Qt5InsightTracker.dll,Qt5InsightTrackerQml.dll,insighttrackerplugin.dll,QtInsightTracker"
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppExeName}"; Components: main_soft

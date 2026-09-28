@@ -54,6 +54,10 @@ class MainWindow(QMainWindow):
         
         layout.addWidget(self.tabs)
 
+        # Credit line at the bottom of the window (licence section 5: must stay)
+        from slate.licence import credit_label
+        layout.addWidget(credit_label(), 0, Qt.AlignRight)
+
     def closeEvent(self, event):
         # Ensure active build subprocess trees are stopped when console closes.
         if hasattr(self, "build_tab") and self.build_tab:

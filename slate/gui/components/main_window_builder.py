@@ -635,9 +635,8 @@ class MainWindowBuilderMixin:
             team_label.setFont(QFont("Segoe UI", 8))
             team_label.setStyleSheet("color: #87857F;")
 
-            license_label = QLabel("Copyright (c) 2026 Utkarsh Tripathi | Licensed under GPLv3")
-            license_label.setFont(QFont("Segoe UI", 8))
-            license_label.setStyleSheet("color: #87857F;")
+            from slate.licence import credit_label
+            license_label = credit_label()    # licence section 5: must stay
 
             team_layout.addWidget(team_label)
             team_layout.addStretch()
