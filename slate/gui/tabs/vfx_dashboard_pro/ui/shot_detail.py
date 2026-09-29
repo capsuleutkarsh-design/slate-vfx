@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                              QLineEdit, QTextEdit, QComboBox, QPushButton, 
                              QFormLayout, QTabWidget, QDateEdit, QScrollArea, QFrame, 
                              QGroupBox, QGridLayout, QCheckBox, QSizePolicy, QDoubleSpinBox, QAbstractSpinBox, QToolButton,
-                             QMessageBox, QFileDialog)
+                             QFileDialog)
 from PySide6.QtCore import Qt, QDate, Signal, QSize, QTimer
 from PySide6.QtGui import QPixmap, QColor, QTextOption, QIcon
 from ..models.shot_model import Shot
@@ -13,8 +13,6 @@ import logging
 import os
 import subprocess
 import sys
-from glob import glob
-from shutil import which
 from slate.core.infra.design_tokens import ColorTokens as C, SpacingTokens as S, RadiusTokens as R
 from slate.core.infra.global_config import GlobalConfig
 from slate.core.system.adaptation_engine import system_engine
@@ -26,13 +24,6 @@ class ShotDetailWidget(QWidget):
     save_requested = Signal(object) # Emits the modified Shot object
     quick_look_requested = Signal(object) # Emits Shot object to open QuickLook player
     rv_review_requested = Signal(object)  # Emits Shot object to review in OpenRV
-    _DCC_CONFIG_KEYS = {
-        "nuke": "nuke_path",
-        "after_effects": "after_effects_path",
-        "premiere": "premiere_path",
-        "blender": "blender_path",
-        "rv": "rv_path",
-    }
 
     def __init__(
         self,
@@ -173,7 +164,9 @@ class ShotDetailWidget(QWidget):
         dcc_label = QLabel("Open In:")
         dcc_label.setObjectName("dccLauncherLabel")
         dcc_layout.addWidget(dcc_label)
-        dcc_layout.addWidget(self._create_dcc_button("nuke", "Nuke", "nuke.png"))
+        # Named for how it opens: "NukeX" unless Settings says Nuke or Nuke Studio.
+        from slate.core.dcc_launcher import app_label, get_nuke_mode
+        dcc_layout.addWidget(self._create_dcc_button("nuke", app_label("nuke", get_nuke_mode()), "nuke.png"))
         dcc_layout.addWidget(self._create_dcc_button("natron", "Natron", "natron.png"))
         dcc_layout.addWidget(self._create_dcc_button("silhouette", "Silhouette", "silhouette.png"))
         dcc_layout.addWidget(self._create_dcc_button("after_effects", "After Effects", "after_effects.png"))
@@ -954,50 +947,39 @@ class ShotDetailWidget(QWidget):
         return btn
 
     def _launch_dcc_for_shot(self, app_key: str, app_label: str):
-        if app_key in ["nuke", "blender", "natron", "silhouette"]:
-            from slate.core.dcc_launcher import DCCLauncher
-            launcher = DCCLauncher(self)
-            launcher.launch(app_key, self.shot.id)
+        # The RV button in this row reviews the shot, like the one above it.
+        # It used to fall through to the file search below, find no RV file
+        # type, and do nothing.
+        if app_key == "rv":
+            self.rv_review_requested.emit(self.shot)
             return
 
-        target_file = self._resolve_or_prompt_dcc_target_file(app_key)
-        if not target_file:
-            return
-
-        executable = self._resolve_dcc_executable(app_key)
-        if executable:
-            try:
-                subprocess.Popen([executable, str(target_file)], cwd=str(target_file.parent))
+        if app_key in ("after_effects", "premiere"):
+            # These only open a project, so ask for one if the shot has none.
+            target_file = self._resolve_or_prompt_dcc_target_file(app_key)
+            if not target_file:
                 return
-            except Exception as exc:
-                QMessageBox.warning(
-                    self,
-                    "Launch Failed",
-                    f"Could not open {app_label}.\n\nError:\n{exc}",
-                )
-                return
+        else:
+            # Nuke and Blender open the shot's newest script when it has one,
+            # and start empty when it does not - as they always have.
+            target_file = self._find_dcc_target_file(app_key)
 
-        key = self._DCC_CONFIG_KEYS.get(app_key, f"{app_key}_path")
-        QMessageBox.information(
-            self,
-            "Configure App Path",
-            (
-                f"{app_label} executable was not found automatically.\n\n"
-                f"Please set '{key}' in your config and retry.\n\n"
-                f"Selected file:\n{target_file}"
-            ),
-        )
+        # One launcher for every app: it finds the program (saved path, then
+        # the newest install, then asks), opens Nuke as NukeX unless Settings
+        # says otherwise, and hands the shot to Slate's plugins.
+        from slate.core.dcc_launcher import DCCLauncher
+        DCCLauncher(self).launch(app_key, self.shot.id, file_path=target_file)
 
-    def _resolve_or_prompt_dcc_target_file(self, app_key: str):
-        exts = {
-            "nuke": [".nk", ".nknc"],
-            "after_effects": [".aep", ".aepx"],
-            "premiere": [".prproj"],
-            "blender": [".blend"],
-        }.get(app_key, [])
-        if not exts:
-            return None
+    _DCC_FILE_TYPES = {
+        "nuke": [".nk", ".nknc"],
+        "after_effects": [".aep", ".aepx"],
+        "premiere": [".prproj"],
+        "blender": [".blend"],
+    }
 
+    def _find_dcc_target_file(self, app_key: str):
+        """The shot's most recently saved file for this app, or None."""
+        exts = self._DCC_FILE_TYPES.get(app_key, [])
         candidates = []
         for base in self._candidate_shot_roots():
             if not base.exists():
@@ -1007,8 +989,21 @@ class ShotDetailWidget(QWidget):
                     candidates.extend(base.rglob(f"*{ext}"))
                 except Exception:
                     continue
-        if candidates:
-            return max(candidates, key=lambda p: p.stat().st_mtime)
+
+        def _mtime(p):
+            try:
+                return p.stat().st_mtime
+            except OSError:
+                return 0
+        return max(candidates, key=_mtime) if candidates else None
+
+    def _resolve_or_prompt_dcc_target_file(self, app_key: str):
+        if not self._DCC_FILE_TYPES.get(app_key):
+            return None
+
+        found = self._find_dcc_target_file(app_key)
+        if found:
+            return found
 
         start_dir = ""
         roots = self._candidate_shot_roots()
@@ -1064,56 +1059,4 @@ class ShotDetailWidget(QWidget):
                 seen.add(norm)
                 unique.append(root)
         return unique
-
-    def _resolve_dcc_executable(self, app_key: str):
-        config_key = self._DCC_CONFIG_KEYS.get(app_key, f"{app_key}_path")
-        configured = str(GlobalConfig.get(config_key, "") or "").strip()
-        if configured and Path(configured).exists():
-            return configured
-
-        env_key_map = {
-            "nuke": "Slate_NUKE_PATH",
-            "after_effects": "Slate_AFTER_EFFECTS_PATH",
-            "premiere": "Slate_PREMIERE_PATH",
-            "blender": "Slate_BLENDER_PATH",
-        }
-        env_value = os.getenv(env_key_map.get(app_key, ""), "").strip()
-        if env_value and Path(env_value).exists():
-            return env_value
-
-        prog_files = os.environ.get("PROGRAMFILES", "C:\\Program Files")
-        win_globs = {
-            "nuke": [
-                rf"{prog_files}\Nuke*\Nuke*.exe",
-                rf"{prog_files}\Foundry\Nuke*\Nuke*.exe",
-            ],
-            "after_effects": [
-                rf"{prog_files}\Adobe\Adobe After Effects*\Support Files\AfterFX.exe",
-            ],
-            "premiere": [
-                rf"{prog_files}\Adobe\Adobe Premiere Pro*\Adobe Premiere Pro.exe",
-            ],
-            "blender": [
-                rf"{prog_files}\Blender Foundation\Blender*\blender.exe",
-            ],
-        }
-        if sys.platform == "win32":
-            matches = []
-            for pattern in win_globs.get(app_key, []):
-                matches.extend(glob(pattern))
-            if matches:
-                matches.sort(reverse=True)
-                return matches[0]
-
-        path_names = {
-            "nuke": ["Nuke16.0.exe", "Nuke15.1.exe", "Nuke15.0.exe", "Nuke14.0.exe", "nuke.exe"],
-            "after_effects": ["AfterFX.exe"],
-            "premiere": ["Adobe Premiere Pro.exe", "premiere.exe"],
-            "blender": ["blender.exe"],
-        }
-        for name in path_names.get(app_key, []):
-            resolved = which(name)
-            if resolved:
-                return resolved
-        return None
 

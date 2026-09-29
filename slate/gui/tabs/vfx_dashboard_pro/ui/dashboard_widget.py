@@ -1157,7 +1157,8 @@ class DashboardWidget(
             dcc_menu = menu.addMenu("Launch DCC")
             dcc_launcher = DCCLauncher(self)
             
-            nuke_action = QAction("Foundry Nuke", dcc_menu)
+            # "NukeX" by default - the name of what it will open as.
+            nuke_action = QAction(dcc_launcher.label("nuke"), dcc_menu)
             nuke_action.triggered.connect(lambda: dcc_launcher.launch("nuke", primary_shot.id))
             dcc_menu.addAction(nuke_action)
             

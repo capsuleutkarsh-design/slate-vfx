@@ -10,7 +10,7 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QCheckBox, QPushButton, QGridLayout, QLabel, QSpinBox, 
     QMessageBox, QInputDialog, QFileDialog, QFrame, QLineEdit,
-    QScrollArea, QApplication, QDoubleSpinBox, QTimeEdit
+    QScrollArea, QApplication, QDoubleSpinBox, QTimeEdit, QComboBox
 )
 from PySide6.QtCore import Signal, Qt, QUrl, QTime
 from PySide6.QtGui import QPixmap, QDesktopServices
@@ -237,7 +237,24 @@ class SettingsTab(QWidget):
             "0 = Auto detect. Use 0.90-1.10 for fine tuning and overlap fixes.",
             self.ui_scale_sb,
         )
-        
+
+        # Which Nuke the "Open in" buttons start. One program, three products;
+        # NukeX unless this machine is licensed for something else.
+        from ...core.dcc_launcher import NUKE_MODES, get_nuke_mode
+        self.nuke_mode_combo = QComboBox()
+        for mode, (label, _flags) in NUKE_MODES.items():
+            self.nuke_mode_combo.addItem(label, mode)
+        self.nuke_mode_combo.setCurrentIndex(
+            max(0, self.nuke_mode_combo.findData(get_nuke_mode(self.config_manager))))
+        self.nuke_mode_combo.setFixedWidth(130)
+        self.nuke_mode_combo.setStyleSheet(f"background: #1D1D22; color: white; border: 1px solid {C.BORDER_LIGHT}; padding: {S.XS}px;")
+        add_setting_row(
+            card_config.layout(),
+            "Open Nuke as",
+            "Which Nuke opens when you open a shot in Nuke",
+            self.nuke_mode_combo,
+        )
+
         # Save Button (Bottom of Config)
         card_config.layout().addSpacing(10)
         # A saturated bar the full width of the card is the loudest thing on the
@@ -547,7 +564,8 @@ class SettingsTab(QWidget):
             self.global_settings["ui_scale_override"] = round(float(self.ui_scale_sb.value()), 2)
             self.global_settings["show_advanced_options"] = self.chk_adv.isChecked()
             self.global_settings["max_concurrent_operations"] = self.max_concurrent_sb.value()
-            
+            self.global_settings["nuke_mode"] = self.nuke_mode_combo.currentData() or "nukex"
+
             saved = self.config_manager.update_global_settings(self.global_settings)
             if not saved:
                 raise RuntimeError("Config manager rejected updated settings")
