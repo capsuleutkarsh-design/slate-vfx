@@ -267,70 +267,80 @@ class ValidationWorker(QThread):
     def run(self):
         report = ["**ANALYSIS REPORT**", "-"*30]
         try:
-            # --- MODE A: SMART DATABASE CHECK (Target Scope) ---
-            if self.mode == "smart":
+            # --- MODE A: SMART / GHOST DATABASE CHECK (Target Scope) ---
+            # Both read the scope from the database; ghost mode used to fall
+            # through to the raw comparison below and ask for a source folder.
+            if self.mode in ("smart", "ghost"):
                 target_scope = self.dst_path # In smart mode, dst is the target scope
-                report.append("<b>Smart Verification Mode</b>")
+                if self.mode == "smart": report.append("<b>Smart Verification Mode</b>")
                 report.append(f"Target Scope: {target_scope}")
                 
                 if not target_scope.exists(): raise Exception(f"Target scope not found: {target_scope}")
                 
-                with database_manager.get_connection() as conn:
-                    # Find items in DB that SHOULD be in this path
-                    # We normalize path separators for SQL LIKE query
-                    str(target_scope).replace("\\", "/")
-                    report.append("Querying Database for matches...")
-                    tasks = conn.execute(query).fetchall()
-                    
-                    if self.mode == "smart":
-                         # CHECK A: DB -> DISK (Missing Files)
-                         if not tasks: report.append("No database records found for this path.")
-                         else:
-                             report.append(f"Found {len(tasks)} expected files in DB.")
-                             missing = []; size_mismatch = []
-                             for task in tasks:
-                                  f_path = Path(task['dest_path'])
-                                  if not f_path.exists(): missing.append(task['item_name'])
-                                  elif task['file_size']:
-                                      try:
-                                          if f_path.stat().st_size != int(task['file_size']):
-                                              size_mismatch.append(f"{task['item_name']}")
-                                      except (OSError, ValueError, TypeError) as e:
-                                          logging.debug(f"Size check skipped for {task.get('item_name')}: {e}")
-                             
-                             if not missing and not size_mismatch: report.append("<font color='#5FBF8F'>INTEGRITY PASS</font>")
-                             else:
-                                 report.append("<font color='#D9635F'>FAIL</font>")
-                                 if missing: report.append(f"Missing: {len(missing)}")
-                                 if size_mismatch: report.append(f"Size Mismatch: {len(size_mismatch)}")
-
-                    elif self.mode == "ghost":
-                         # CHECK B: DISK -> DB (Ghost/Untracked Files)
-                         report.append("<b>Ghost Hunter Mode</b>")
-                         # 1. Get all DB paths for this scope
-                         db_paths = set()
-                         for t in tasks:
-                             p = t['dest_path']
-                             if p: db_paths.add(str(Path(p).absolute()))
-                             
-                         # 2. Walk Disk
-                         ghosts = []
-                         report.append("Scanning Disk...")
-                         for root, dirs, files in os.walk(str(target_scope)):
-                             for name in files:
-                                 f_path = Path(root) / name
-                                 abs_path = str(f_path.absolute())
-                                 # Normalize? Windows paths can be tricky.
-                                 # Let's try direct match first
-                                 if abs_path not in db_paths:
-                                     ghosts.append(abs_path)
+                # Find items in DB that SHOULD be in this path. Paths are
+                # compared with forward slashes, whichever way they were saved,
+                # and the scope is passed as a parameter - never written into
+                # the SQL - with LIKE's wildcards escaped so a '_' in a folder
+                # name only matches itself.
+                scope = str(target_scope).replace("\\", "/").rstrip("/")
+                pattern = (scope.replace("!", "!!").replace("%", "!%")
+                           .replace("_", "!_") + "/%")
+                query = (
+                    "SELECT item_name, dest_path, file_size FROM task_details "
+                    "WHERE REPLACE(dest_path, '\\', '/') ILIKE %s ESCAPE '!'"
+                )
+                report.append("Querying Database for matches...")
+                tasks = database_manager.execute_query(query, (pattern,)) or []
+                
+                if self.mode == "smart":
+                     # CHECK A: DB -> DISK (Missing Files)
+                     if not tasks: report.append("No database records found for this path.")
+                     else:
+                         report.append(f"Found {len(tasks)} expected files in DB.")
+                         missing = []; size_mismatch = []
+                         for task in tasks:
+                              f_path = Path(task['dest_path'])
+                              if not f_path.exists(): missing.append(task['item_name'])
+                              elif task['file_size']:
+                                  try:
+                                      if f_path.stat().st_size != int(task['file_size']):
+                                          size_mismatch.append(f"{task['item_name']}")
+                                  except (OSError, ValueError, TypeError) as e:
+                                      logging.debug(f"Size check skipped for {task.get('item_name')}: {e}")
                          
-                         if not ghosts: report.append("<font color='#5FBF8F'>CLEAN: no ghost files found.</font>")
+                         if not missing and not size_mismatch: report.append("<font color='#5FBF8F'>INTEGRITY PASS</font>")
                          else:
-                             report.append(f"<font color='#D9635F'>FOUND {len(ghosts)} GHOST FILES</font>")
-                             report.append("(Files on disk but NOT in Database)")
-                             for g in ghosts[:10]: report.append(f" - {g}")
-                             if len(ghosts) > 10: report.append(f"... and {len(ghosts)-10} more.")
+                             report.append("<font color='#D9635F'>FAIL</font>")
+                             if missing: report.append(f"Missing: {len(missing)}")
+                             if size_mismatch: report.append(f"Size Mismatch: {len(size_mismatch)}")
+
+                elif self.mode == "ghost":
+                     # CHECK B: DISK -> DB (Ghost/Untracked Files)
+                     report.append("<b>Ghost Hunter Mode</b>")
+                     # 1. Get all DB paths for this scope
+                     db_paths = set()
+                     for t in tasks:
+                         p = t['dest_path']
+                         if p: db_paths.add(str(Path(p).absolute()))
+                         
+                     # 2. Walk Disk
+                     ghosts = []
+                     report.append("Scanning Disk...")
+                     for root, dirs, files in os.walk(str(target_scope)):
+                         for name in files:
+                             f_path = Path(root) / name
+                             abs_path = str(f_path.absolute())
+                             # Normalize? Windows paths can be tricky.
+                             # Let's try direct match first
+                             if abs_path not in db_paths:
+                                 ghosts.append(abs_path)
+                     
+                     if not ghosts: report.append("<font color='#5FBF8F'>CLEAN: no ghost files found.</font>")
+                     else:
+                         report.append(f"<font color='#D9635F'>FOUND {len(ghosts)} GHOST FILES</font>")
+                         report.append("(Files on disk but NOT in Database)")
+                         for g in ghosts[:10]: report.append(f" - {g}")
+                         if len(ghosts) > 10: report.append(f"... and {len(ghosts)-10} more.")
 
 
             # --- MODE B: RAW COMPARISON (Source vs Dest) ---

@@ -55,7 +55,7 @@ class ProxySweeper(BaseSweeper):
                                 freed += size
                                 count += 1
                     except Exception as exc:
-                        logger.debug("Skipping proxy cleanup for %s: %s", full_path, exc)
+                        logger.debug("Skipping proxy cleanup for %s: %s", filepath, exc)
                         
         return {
             'freed_bytes': freed,

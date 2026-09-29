@@ -1,5 +1,5 @@
 from typing import Optional, List, Dict, Set
-from PySide6.QtWidgets import (QWidget, QLabel, QLineEdit, QMessageBox, QMenu, QFileDialog, QInputDialog)
+from PySide6.QtWidgets import (QWidget, QLabel, QLineEdit, QMessageBox, QMenu, QFileDialog, QInputDialog, QDialog)
 from PySide6.QtGui import QAction, QPixmap, QCursor
 from slate.core.infra.qt_compat import Qt, QTimer, Signal, QItemSelectionModel
 from openpyxl import Workbook, load_workbook

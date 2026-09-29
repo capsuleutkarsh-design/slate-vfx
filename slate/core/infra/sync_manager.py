@@ -69,18 +69,36 @@ class SyncManager:
             task_info.status = "Pushing local changes..."
             task_info.progress = 20
         
-        self._sync_table(sqlite_db, postgres_db, "stock_library", ["file_path"], "ingest_date")
-        self._sync_table(sqlite_db, postgres_db, "tracking_shots", ["project_code", "shot_name"], "last_updated")
-        self._sync_table(sqlite_db, postgres_db, "users", ["username"], "created_at")
+        # Each call says whether its table synced cleanly; one failed table
+        # must not let the whole run report success.
+        failed_tables = []
+        # The reel is part of a shot's identity (UNIQUE project_code, reel,
+        # shot_name), and the accounts live in ut_users - there is no users table.
+        tables = [
+            ("stock_library", ["file_path"], "ingest_date"),
+            ("tracking_shots", ["project_code", "reel", "shot_name"], "last_updated"),
+            ("ut_users", ["username"], "last_synced"),
+        ]
+        for table_name, keys, ts_col in tables:
+            if not self._sync_table(sqlite_db, postgres_db, table_name, keys, ts_col):
+                failed_tables.append(f"push {table_name}")
 
         # --- Phase 2: Pull Remote to Local ---
         if task_info:
             task_info.status = "Pulling remote changes..."
             task_info.progress = 60
 
-        self._sync_table(postgres_db, sqlite_db, "stock_library", ["file_path"], "ingest_date")
-        self._sync_table(postgres_db, sqlite_db, "tracking_shots", ["project_code", "shot_name"], "last_updated")
-        self._sync_table(postgres_db, sqlite_db, "users", ["username"], "created_at")
+        for table_name, keys, ts_col in tables:
+            if not self._sync_table(postgres_db, sqlite_db, table_name, keys, ts_col):
+                failed_tables.append(f"pull {table_name}")
+
+        if failed_tables:
+            logger.error("Sync finished with errors: %s", ", ".join(failed_tables))
+            if task_info:
+                task_info.status = "Failed"
+                task_info.error_message = "Could not sync: " + ", ".join(failed_tables)
+                task_info.progress = 100
+            return False
 
         if task_info:
             task_info.status = "Completed"
@@ -88,21 +106,23 @@ class SyncManager:
 
         return True
 
-    def _sync_table(self, source_db, target_db, table_name: str, unique_keys: List[str], timestamp_col: str):
+    def _sync_table(self, source_db, target_db, table_name: str, unique_keys: List[str], timestamp_col: str) -> bool:
         """
         Generic single-table sync function.
         Reads all records from source, and UPSERTs into target.
+        Returns False if the table, or any row in it, could not be written.
         """
+        failed_rows = 0
         try:
             source_records = source_db.execute_query(f"SELECT * FROM {table_name}")
             if not source_records:
-                return
+                return True
 
             if isinstance(source_records[0], tuple):
                 # We need column names
                 # For simplicity, if we don't have row dicts, we fetch them via a raw wrapper
                 logger.warning(f"Table {table_name} returned tuples instead of dicts, skipping generic sync.")
-                return
+                return False
 
             for record in source_records:
                 record_dict = dict(record) if not isinstance(record, dict) else record
@@ -144,7 +164,8 @@ class SyncManager:
                     placeholders = ", ".join([placeholder] * len(cols))
                     col_str = ", ".join(cols)
                     ins_query = f"INSERT INTO {table_name} ({col_str}) VALUES ({placeholders})"
-                    target_db.execute_write(ins_query, tuple(vals))
+                    if not target_db.execute_update(ins_query, tuple(vals)):
+                        failed_rows += 1
                     
                 elif should_update:
                     cols = list(record_dict.keys())
@@ -152,7 +173,14 @@ class SyncManager:
                     set_str = ", ".join([f"{c} = {placeholder}" for c in cols])
                     vals.extend(where_vals)
                     upd_query = f"UPDATE {table_name} SET {set_str} WHERE {where_str}"
-                    target_db.execute_write(upd_query, tuple(vals))
+                    if not target_db.execute_update(upd_query, tuple(vals)):
+                        failed_rows += 1
                     
         except Exception as e:
             logger.error(f"Error syncing table {table_name}: {e}")
+            return False
+
+        if failed_rows:
+            logger.error(f"Syncing table {table_name}: {failed_rows} row(s) could not be written.")
+            return False
+        return True
