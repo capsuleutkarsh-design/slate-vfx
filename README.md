@@ -13,6 +13,26 @@ the IT queue, the machines, the licences, and who is joining or leaving this wee
 
 ---
 
+## ⬇ Download
+
+**[Get the installers from the latest release](https://github.com/capsuleutkarsh-design/slate-vfx/releases/latest)** — no Python, no setup scripts, nothing else to download.
+
+| Installer | Install on |
+|---|---|
+| **Slate Server** setup | one always-on machine: it holds the studio database (PostgreSQL is included) |
+| **Slate Studio** setup | artist, lead and supervisor workstations |
+| **Slate Ops** setup | HR, IT and production office machines |
+
+1. Install **Slate Server** first and create the database from its window.
+2. Install **Studio** or **Ops** on the other machines. They find the server on the network by themselves.
+3. Sign in as an admin once, then add people under **Users & Roles** (one by one, or import a CSV / Excel list).
+
+Windows 10 or 11, 64-bit. The installers are not code-signed yet, so Windows may show *"Windows protected your PC"*: click **More info → Run anyway**.
+
+Developers, or anyone who wants to run from the code instead, see [Getting it running](#getting-it-running) below.
+
+---
+
 ## The idea it is built around
 
 **What you see is decided by what you are.** There is no mode switch and no
@@ -71,6 +91,8 @@ screen was listing.
 ---
 
 ## Getting it running
+
+*This is the route from the source code. Most people want the [installers](#-download) instead.*
 
 **Clone or download this repository, then double-click `setup.bat`.**
 
