@@ -1,6 +1,7 @@
 from PySide6.QtWidgets import QStyledItemDelegate, QStyle, QComboBox
 from PySide6.QtCore import Qt, QRect
 from PySide6.QtGui import QPainter, QColor, QFontMetrics
+from slate.core.infra.gate import Gate
 
 class StatusDelegate(QStyledItemDelegate):
     """
@@ -16,15 +17,15 @@ class StatusDelegate(QStyledItemDelegate):
         self._allowed = allowed
 
     STATUS_COLORS = {
-        "APPROVED": QColor("#5FBF8F"),
-        "DONE": QColor("#5FBF8F"),
-        "WIP": QColor("#3EA8BF"),
-        "RETAKE": QColor("#D9635F"),
-        "SENT FOR REVIEW": QColor("#3EA8BF"),
-        "REVIEW": QColor("#3EA8BF"),
-        "YTS": QColor("#D9A441"),
-        "READY": QColor("#3EA8BF"),
-        "OMIT": QColor("#87857F")
+        "APPROVED": QColor(Gate.OK),
+        "DONE": QColor(Gate.OK),
+        "WIP": QColor(Gate.ACCENT),
+        "RETAKE": QColor(Gate.BAD),
+        "SENT FOR REVIEW": QColor(Gate.ACCENT),
+        "REVIEW": QColor(Gate.ACCENT),
+        "YTS": QColor(Gate.WARN),
+        "READY": QColor(Gate.ACCENT),
+        "OMIT": QColor(Gate.TEXT_DIM)
     }
 
     STATUS_CHOICES = [
@@ -46,7 +47,7 @@ class StatusDelegate(QStyledItemDelegate):
         painter.save()
         
         # Determine status colors: translucent background, subtle border, crisp accent text
-        base_color = self.STATUS_COLORS.get(status_text.upper(), QColor("#87857F"))
+        base_color = self.STATUS_COLORS.get(status_text.upper(), QColor(Gate.TEXT_DIM))
         bg_color = QColor(base_color.red(), base_color.green(), base_color.blue(), 38)
         border_color = QColor(base_color.red(), base_color.green(), base_color.blue(), 90)
         text_color = base_color
@@ -105,24 +106,24 @@ class StatusDelegate(QStyledItemDelegate):
             except Exception:
                 pass
         combo.addItems(choices)
-        combo.setStyleSheet("""
-            QComboBox {
-                background-color: #16161A;
-                color: #E8E6E1;
-                border: 1px solid #3EA8BF;
+        combo.setStyleSheet(f"""
+            QComboBox {{
+                background-color: {Gate.PANEL};
+                color: {Gate.TEXT};
+                border: 1px solid {Gate.ACCENT};
                 border-radius: 4px;
                 padding: 2px 8px;
                 font-weight: bold;
                 font-size: 11px;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #16161A;
-                color: #E8E6E1;
-                border: 1px solid #26262D;
-                selection-background-color: #1D1D22;
-                selection-color: #3EA8BF;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {Gate.PANEL};
+                color: {Gate.TEXT};
+                border: 1px solid {Gate.RAISED_HI};
+                selection-background-color: {Gate.RAISED};
+                selection-color: {Gate.ACCENT};
                 padding: 4px;
-            }
+            }}
         """)
         return combo
 

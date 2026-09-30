@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from slate.core.domain import biometric_import as bio
+from slate.core.infra.gate import Gate
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +75,7 @@ class BiometricImportDialog(QDialog):
         col_row = QHBoxLayout()
         col_row.addWidget(QLabel("2. Columns"))
         self.profile_label = QLabel("")
-        self.profile_label.setStyleSheet("color: #87857F;")
+        self.profile_label.setStyleSheet(f"color: {Gate.TEXT_DIM};")
         col_row.addWidget(self.profile_label, 1)
         self.dayfirst = QCheckBox("Dates are day first (31/12/2026)")
         self.dayfirst.setChecked(True)
@@ -96,7 +97,7 @@ class BiometricImportDialog(QDialog):
         unk_row = QHBoxLayout()
         unk_row.addWidget(QLabel("3. Codes Slate does not know"))
         self.unknown_hint = QLabel("Pick the person each code belongs to, or leave it to skip them.")
-        self.unknown_hint.setStyleSheet("color: #87857F;")
+        self.unknown_hint.setStyleSheet(f"color: {Gate.TEXT_DIM};")
         unk_row.addWidget(self.unknown_hint, 1)
         root.addLayout(unk_row)
 
@@ -207,7 +208,7 @@ class BiometricImportDialog(QDialog):
         problems = self.mapping.problems()
         if problems:
             self.mapping_status.setText("Cannot import yet: " + "; ".join(problems) + ".")
-            self.mapping_status.setStyleSheet("color: #D9635F;")
+            self.mapping_status.setStyleSheet(f"color: {Gate.BAD};")
             self.days, self.unknown = [], {}
             self._fill_unknown()
             self.summary.setText("")

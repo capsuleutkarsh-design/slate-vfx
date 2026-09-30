@@ -81,12 +81,12 @@ class HeaderBuilder:
         self.header_widget = header_widget
         
         # Gradient styling
-        header_widget.setStyleSheet("""
-            QFrame#header {
-                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #16323A, stop:1 #16323A);
-                border-bottom: 1px solid #6BA4C9;
-            }
-            QLabel { background: transparent; border: none; } 
+        header_widget.setStyleSheet(f"""
+            QFrame#header {{
+                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {Gate.ACCENT_SURFACE}, stop:1 {Gate.ACCENT_SURFACE});
+                border-bottom: 1px solid {Gate.INFO};
+            }}
+            QLabel {{ background: transparent; border: none; }} 
         """)
         
         header_layout = QHBoxLayout(header_widget)
@@ -135,16 +135,16 @@ class HeaderBuilder:
         # 3c. DB MODE INDICATOR (sqlite/postgres/fallback)
         self.db_mode_label = QLabel("DB: --")
         self.db_mode_label.setStyleSheet(
-            """
-            QLabel {
-                color: #6BA4C9;
+            f"""
+            QLabel {{
+                color: {Gate.INFO};
                 font-size: 11px;
                 font-weight: 600;
-                background: rgba(22, 22, 26, 0.65);
+                background: {Gate.tint(Gate.PANEL, 0.65)};
                 border: 1px solid rgba(148, 163, 184, 0.35);
                 border-radius: 4px;
                 padding: 2px 8px;
-            }
+            }}
             """
         )
         self.db_mode_label.setToolTip("Database runtime mode")
@@ -153,17 +153,17 @@ class HeaderBuilder:
         # 3d. LOCAL MODE BADGE (always visible in fallback mode)
         self.local_mode_label = QLabel("LOCAL MODE")
         self.local_mode_label.setStyleSheet(
-            """
-            QLabel {
-                color: #D9A441;
+            f"""
+            QLabel {{
+                color: {Gate.WARN};
                 font-size: 10px;
                 font-weight: 800;
                 background: rgba(120, 53, 15, 0.45);
-                border: 1px solid rgba(217, 164, 65, 0.55);
+                border: 1px solid {Gate.tint(Gate.WARN, 0.55)};
                 border-radius: 4px;
                 padding: 2px 8px;
                 letter-spacing: 0.4px;
-            }
+            }}
             """
         )
         self.local_mode_label.setToolTip("LOCAL MODE: central sync features are limited")
@@ -173,16 +173,16 @@ class HeaderBuilder:
         # 3e. SYSTEM HEALTH STRIP
         self.health_label = ClickableLabel("Health: --")
         self.health_label.setStyleSheet(
-            """
-            QLabel {
-                color: #6BA4C9;
+            f"""
+            QLabel {{
+                color: {Gate.INFO};
                 font-size: 10px;
                 font-weight: 600;
-                background: rgba(13, 13, 15, 0.75);
+                background: {Gate.tint(Gate.GROUND, 0.75)};
                 border: 1px solid rgba(100, 116, 139, 0.45);
                 border-radius: 4px;
                 padding: 2px 8px;
-            }
+            }}
             """
         )
         self.health_label.setToolTip("Runtime health summary")
@@ -205,7 +205,7 @@ class HeaderBuilder:
     def _create_db_indicator(self):
         """Create a small led indicator for DB status."""
         lbl = QLabel("●")
-        lbl.setStyleSheet("color: #87857F; font-size: 14px; margin-right: 10px;")
+        lbl.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: 14px; margin-right: 10px;")
         lbl.setToolTip("Checking connection...")
         return lbl
 
@@ -244,13 +244,13 @@ class HeaderBuilder:
         self.db_mode_label.setText(f"DB: {label_mode}{suffix}")
 
         if mode == "postgres" and not fallback_used:
-            color = "#5FBF8F"
-            border = "rgba(95, 191, 143, 0.45)"
+            color = Gate.OK
+            border = Gate.tint(Gate.OK, 0.45)
         elif fallback_used:
-            color = "#D9A441"
-            border = "rgba(217, 164, 65, 0.45)"
+            color = Gate.WARN
+            border = Gate.tint(Gate.WARN, 0.45)
         else:
-            color = "#3EA8BF"
+            color = Gate.ACCENT
             border = "rgba(147, 197, 253, 0.45)"
 
         self.db_mode_label.setStyleSheet(
@@ -259,7 +259,7 @@ class HeaderBuilder:
                 color: {color};
                 font-size: 11px;
                 font-weight: 700;
-                background: rgba(22, 22, 26, 0.65);
+                background: {Gate.tint(Gate.PANEL, 0.65)};
                 border: 1px solid {border};
                 border-radius: 4px;
                 padding: 2px 8px;
@@ -285,14 +285,14 @@ class HeaderBuilder:
         self.health_label.setText(f"Health: {server_state} | {exr_state} | {sync_state}")
 
         if server_root_ok and sync_enabled:
-            color = "#5FBF8F"
-            border = "rgba(95, 191, 143, 0.45)"
+            color = Gate.OK
+            border = Gate.tint(Gate.OK, 0.45)
         elif not server_root_ok:
-            color = "#D9635F"
+            color = Gate.BAD
             border = "rgba(248, 113, 113, 0.45)"
         else:
-            color = "#D9A441"
-            border = "rgba(217, 164, 65, 0.45)"
+            color = Gate.WARN
+            border = Gate.tint(Gate.WARN, 0.45)
 
         self.health_label.setStyleSheet(
             f"""
@@ -300,7 +300,7 @@ class HeaderBuilder:
                 color: {color};
                 font-size: 10px;
                 font-weight: 700;
-                background: rgba(13, 13, 15, 0.75);
+                background: {Gate.tint(Gate.GROUND, 0.75)};
                 border: 1px solid {border};
                 border-radius: 4px;
                 padding: 2px 8px;
@@ -488,14 +488,14 @@ class HeaderBuilder:
         lbl_name = QLabel(display_name)
         lbl_name.setAlignment(Qt.AlignmentFlag.AlignRight)
         lbl_name.setStyleSheet(
-            "color: #6BA4C9; font-weight: 600; font-size: 13px; " 
+            f"color: {Gate.INFO}; font-weight: 600; font-size: 13px; " 
             "background: transparent; border: none;"
         )
         
         lbl_role = QLabel(role.upper())
         lbl_role.setAlignment(Qt.AlignmentFlag.AlignRight)
         lbl_role.setStyleSheet(
-            "color: #6BA4C9; font-weight: 600; font-size: 11px; " 
+            f"color: {Gate.INFO}; font-weight: 600; font-size: 11px; " 
             "letter-spacing: 0.5px; background: transparent; border: none;"
         )
         
@@ -566,7 +566,7 @@ class HeaderBuilder:
             painter.drawPixmap(-x_off, -y_off, scaled)
         else:
             # Generate initials avatar
-            painter.setBrush(QBrush(QColor("#3EA8BF")))  # Sky Blue
+            painter.setBrush(QBrush(QColor(Gate.ACCENT)))  # Sky Blue
             painter.setPen(Qt.NoPen)
             painter.drawEllipse(0, 0, avatar_size, avatar_size)
             painter.setPen(QColor("white"))

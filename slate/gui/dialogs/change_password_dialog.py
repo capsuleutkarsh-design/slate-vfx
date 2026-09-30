@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout
 )
+from slate.core.infra.gate import Gate
 
 
 class ChangePasswordDialog(QDialog):
@@ -22,7 +23,7 @@ class ChangePasswordDialog(QDialog):
 
         self.setWindowTitle("Choose your password" if forced else "Change password")
         self.setMinimumWidth(420)
-        self.setStyleSheet("background-color: #1D1D22; color: white;")
+        self.setStyleSheet(f"background-color: {Gate.RAISED}; color: {Gate.TEXT};")
         if forced:
             self.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
 
@@ -32,7 +33,7 @@ class ChangePasswordDialog(QDialog):
             "Choose your own password to continue." if forced else
             f"Change the password for {username}.")
         intro.setWordWrap(True)
-        intro.setStyleSheet("color: #B4B1AA; margin-bottom: 6px;")
+        intro.setStyleSheet(f"color: {Gate.TEXT_2}; margin-bottom: 6px;")
         layout.addWidget(intro)
 
         form = QFormLayout()
@@ -47,12 +48,12 @@ class ChangePasswordDialog(QDialog):
         layout.addLayout(form)
 
         hint = QLabel(f"At least {user_manager.MIN_PASSWORD_LENGTH} characters.")
-        hint.setStyleSheet("color: #87857F; font-size: 11px;")
+        hint.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: 11px;")
         layout.addWidget(hint)
 
         self.error_label = QLabel("")
         self.error_label.setWordWrap(True)
-        self.error_label.setStyleSheet("color: #D9635F;")
+        self.error_label.setStyleSheet(f"color: {Gate.BAD};")
         layout.addWidget(self.error_label)
 
         buttons = QHBoxLayout()
@@ -61,7 +62,7 @@ class ChangePasswordDialog(QDialog):
         cancel.clicked.connect(self.reject)
         save = QPushButton("Save password")
         save.setDefault(True)
-        save.setStyleSheet("background-color: #3EA8BF; color: black; font-weight: bold; padding: 5px 12px;")
+        save.setStyleSheet(f"background-color: {Gate.ACCENT}; color: {Gate.TEXT_ON_ACCENT}; font-weight: bold; padding: 5px 12px;")
         save.clicked.connect(self._save)
         buttons.addWidget(cancel)
         buttons.addWidget(save)
@@ -71,7 +72,7 @@ class ChangePasswordDialog(QDialog):
     def _password_field():
         field = QLineEdit()
         field.setEchoMode(QLineEdit.EchoMode.Password)
-        field.setStyleSheet("background: #26262D; padding: 4px;")
+        field.setStyleSheet(f"background: {Gate.RAISED_HI}; padding: 4px;")
         return field
 
     def _save(self):

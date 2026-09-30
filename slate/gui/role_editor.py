@@ -7,6 +7,7 @@ from PySide6.QtCore import Qt
 
 from slate.core.domain import permissions_catalog as catalog
 from slate.core.domain.user_manager import UserManager
+from slate.core.infra.gate import Gate
 
 ROLE_NAME_ROLE = Qt.ItemDataRole.UserRole
 
@@ -58,47 +59,47 @@ class RoleEditor(QWidget):
         # Wraps everything in a distinct background to avoid the "void" look
         self.card = QFrame()
         self.card.setObjectName("RoleEditorCard")
-        self.card.setStyleSheet("""
-            QFrame#RoleEditorCard {
-                background-color: #1D1D22;
+        self.card.setStyleSheet(f"""
+            QFrame#RoleEditorCard {{
+                background-color: {Gate.RAISED};
                 border-radius: 12px;
-                border: 1px solid #26262D;
-            }
-            QLabel {
+                border: 1px solid {Gate.RAISED_HI};
+            }}
+            QLabel {{
                 border: none;
-                color: #E8E6E1;
-            }
-            QListWidget {
-                background-color: #16161A;
-                border: 1px solid #26262D;
+                color: {Gate.TEXT};
+            }}
+            QListWidget {{
+                background-color: {Gate.PANEL};
+                border: 1px solid {Gate.RAISED_HI};
                 border-radius: 6px;
                 outline: none;
-            }
-            QListWidget::item {
+            }}
+            QListWidget::item {{
                 padding: 10px;
-                color: #B4B1AA;
-            }
-            QListWidget::item:selected {
-                background-color: #3EA8BF;
-                color: black;
+                color: {Gate.TEXT_2};
+            }}
+            QListWidget::item:selected {{
+                background-color: {Gate.ACCENT};
+                color: {Gate.TEXT_ON_ACCENT};
                 border-radius: 4px;
-            }
-            QCheckBox {
-                color: #E8E6E1;
+            }}
+            QCheckBox {{
+                color: {Gate.TEXT};
                 spacing: 8px;
-            }
-            QCheckBox::indicator {
+            }}
+            QCheckBox::indicator {{
                 width: 18px;
                 height: 18px;
                 border-radius: 4px;
-                border: 1px solid #2C2C34;
-                background: #1D1D22;
-            }
-            QCheckBox::indicator:checked {
-                background: #3EA8BF;
-                border: 1px solid #3EA8BF;
-            }
-            QScrollArea { background: transparent; border: none; }
+                border: 1px solid {Gate.LINE};
+                background: {Gate.RAISED};
+            }}
+            QCheckBox::indicator:checked {{
+                background: {Gate.ACCENT};
+                border: 1px solid {Gate.ACCENT};
+            }}
+            QScrollArea {{ background: transparent; border: none; }}
         """)
 
         card_layout = QHBoxLayout(self.card)
@@ -111,7 +112,7 @@ class RoleEditor(QWidget):
         left_layout.setContentsMargins(0, 0, 0, 0)
 
         lbl_roles = QLabel("ROLES")
-        lbl_roles.setStyleSheet("font-size: 14px; font-weight: bold; color: #87857F; letter-spacing: 1px;")
+        lbl_roles.setStyleSheet(f"font-size: 14px; font-weight: bold; color: {Gate.TEXT_DIM}; letter-spacing: 1px;")
         left_layout.addWidget(lbl_roles)
 
         self.role_list = QListWidget()
@@ -125,12 +126,12 @@ class RoleEditor(QWidget):
         btn_layout = QHBoxLayout()
         self.btn_add = QPushButton("New Role")
         self.btn_add.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_add.setStyleSheet("background-color: #1D1D22; color: white; border: 1px solid #2C2C34; border-radius: 4px; padding: 6px;")
+        self.btn_add.setStyleSheet(f"background-color: {Gate.RAISED}; color: {Gate.TEXT}; border: 1px solid {Gate.LINE}; border-radius: 4px; padding: 6px;")
         self.btn_add.clicked.connect(self.add_role)
 
         self.btn_delete = QPushButton("Delete")
         self.btn_delete.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_delete.setStyleSheet("background-color: #3A1F1E; color: #D9635F; border: 1px solid #D9635F; border-radius: 4px; padding: 6px;")
+        self.btn_delete.setStyleSheet(f"background-color: {Gate.BAD_SURFACE}; color: {Gate.BAD}; border: 1px solid {Gate.BAD}; border-radius: 4px; padding: 6px;")
         self.btn_delete.clicked.connect(self.delete_role)
 
         btn_layout.addWidget(self.btn_add)
@@ -146,12 +147,12 @@ class RoleEditor(QWidget):
 
         # Header
         self.lbl_editing = QLabel("Select a role to edit permissions")
-        self.lbl_editing.setStyleSheet("font-size: 18px; font-weight: bold; color: white; margin-bottom: 4px;")
+        self.lbl_editing.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {Gate.TEXT}; margin-bottom: 4px;")
         right_layout.addWidget(self.lbl_editing)
 
         self.lbl_status = QLabel("")
         self.lbl_status.setWordWrap(True)
-        self.lbl_status.setStyleSheet("color: #87857F; margin-bottom: 8px;")
+        self.lbl_status.setStyleSheet(f"color: {Gate.TEXT_DIM}; margin-bottom: 8px;")
         right_layout.addWidget(self.lbl_status)
 
         if not self.can_edit:
@@ -165,7 +166,7 @@ class RoleEditor(QWidget):
         scroll.setWidgetResizable(True)
         perm_container = QFrame()
         perm_container.setObjectName("PermBox")      # by name: a bare QFrame rule also hits every QLabel
-        perm_container.setStyleSheet("QFrame#PermBox { background-color: #16161A; border-radius: 8px; border: 1px solid #1D1D22; }")
+        perm_container.setStyleSheet(f"QFrame#PermBox {{ background-color: {Gate.PANEL}; border-radius: 8px; border: 1px solid {Gate.RAISED}; }}")
         perm_layout = QVBoxLayout(perm_container)
         perm_layout.setContentsMargins(20, 20, 20, 20)
         perm_layout.setSpacing(10)
@@ -179,7 +180,7 @@ class RoleEditor(QWidget):
         # Tabs, by group
         perm_layout.addWidget(self._section("TABS THIS ROLE CAN OPEN"))
         always = QLabel("Always open to everyone: " + ", ".join(catalog.ALWAYS_OPEN))
-        always.setStyleSheet("color: #87857F; font-style: italic;")
+        always.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-style: italic;")
         perm_layout.addWidget(always)
 
         self.tab_boxes = {}
@@ -227,13 +228,13 @@ class RoleEditor(QWidget):
     @staticmethod
     def _section(text):
         lbl = QLabel(text)
-        lbl.setStyleSheet("font-size: 12px; font-weight: bold; color: #3EA8BF; letter-spacing: 1px; margin-top: 10px;")
+        lbl.setStyleSheet(f"font-size: 12px; font-weight: bold; color: {Gate.ACCENT}; letter-spacing: 1px; margin-top: 10px;")
         return lbl
 
     @staticmethod
     def _subsection(text):
         lbl = QLabel(text)
-        lbl.setStyleSheet("font-size: 11px; font-weight: bold; color: #87857F; margin-top: 4px;")
+        lbl.setStyleSheet(f"font-size: 11px; font-weight: bold; color: {Gate.TEXT_DIM}; margin-top: 4px;")
         return lbl
 
     def _all_boxes(self):
@@ -268,7 +269,7 @@ class RoleEditor(QWidget):
         for cb in self._all_boxes():
             cb.setChecked(False)
             cb.setEnabled(False)
-            cb.setStyleSheet("color: #2C2C34;")  # Dim disabled
+            cb.setStyleSheet(f"color: {Gate.LINE};")  # Dim disabled
         self.block_signals_checkboxes(False)
 
         if select:
@@ -285,7 +286,7 @@ class RoleEditor(QWidget):
 
     def on_role_selected(self, item):
         self.current_role = item.data(ROLE_NAME_ROLE) or item.text()
-        self.lbl_editing.setText(f"Permissions: <span style='color:#3EA8BF;'>{self.current_role.upper()}</span>")
+        self.lbl_editing.setText(f"Permissions: <span style='color:{Gate.ACCENT};'>{self.current_role.upper()}</span>")
         self._stored = self.user_manager.role_permissions(self.current_role)
         holders = self.user_manager.users_with_role(self.current_role)
         status = f"{len(holders)} user(s) have this role." if holders else "Nobody has this role yet."
@@ -311,7 +312,7 @@ class RoleEditor(QWidget):
             cb.setChecked(granted_by_all or key in abilities)
             cb.setEnabled(editable and not granted_by_all)
         for cb in self._all_boxes():
-            cb.setStyleSheet("color: white; font-weight: bold;" if cb.isChecked() else "color: #B4B1AA;")
+            cb.setStyleSheet(f"color: {Gate.TEXT}; font-weight: bold;" if cb.isChecked() else f"color: {Gate.TEXT_2};")
         self.block_signals_checkboxes(False)
 
     # ----------------------------------------------------------------- saving

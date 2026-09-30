@@ -15,6 +15,7 @@ from slate.utils.media_capabilities import is_video, is_image
 from ....widgets.styled_buttons import PrimaryButton
 # .....core -> slate/core
 from .....core.infra.design_tokens import ColorTokens as C, TypographyTokens as T
+from slate.core.infra.gate import Gate
 
 class StockInspectorPanel(QWidget):
     """
@@ -58,7 +59,7 @@ class StockInspectorPanel(QWidget):
 
         # Title / Name (Hero)
         self.lbl_name = QLabel("-")
-        self.lbl_name.setStyleSheet(f"font-size: 16px; font-weight: {T.WEIGHT_STYLE_BOLD}; color: white;")
+        self.lbl_name.setStyleSheet(f"font-size: 16px; font-weight: {T.WEIGHT_STYLE_BOLD}; color: {Gate.TEXT};")
         self.lbl_name.setWordWrap(True)
         meta_layout.addWidget(self.lbl_name)
 
@@ -202,8 +203,8 @@ class StockInspectorPanel(QWidget):
         if compact:
             self.player.setMinimumHeight(220)
             self.player.setMaximumHeight(400)
-            self.lbl_name.setStyleSheet(f"font-size: 14px; font-weight: {T.WEIGHT_STYLE_BOLD}; color: white;")
+            self.lbl_name.setStyleSheet(f"font-size: 14px; font-weight: {T.WEIGHT_STYLE_BOLD}; color: {Gate.TEXT};")
         else:
             self.player.setMinimumHeight(280)
             self.player.setMaximumHeight(600)
-            self.lbl_name.setStyleSheet(f"font-size: 16px; font-weight: {T.WEIGHT_STYLE_BOLD}; color: white;")
+            self.lbl_name.setStyleSheet(f"font-size: 16px; font-weight: {T.WEIGHT_STYLE_BOLD}; color: {Gate.TEXT};")

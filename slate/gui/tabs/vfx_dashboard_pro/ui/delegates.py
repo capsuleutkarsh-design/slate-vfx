@@ -1,6 +1,7 @@
 from PySide6.QtWidgets import QStyledItemDelegate, QStyle
 from PySide6.QtCore import Qt, QRect, QSize
 from PySide6.QtGui import QColor, QBrush, QPainter
+from slate.core.infra.gate import Gate
 
 class ShotGridDelegate(QStyledItemDelegate):
     def __init__(self, parent=None):
@@ -28,11 +29,11 @@ class ShotGridDelegate(QStyledItemDelegate):
         rect = option.rect
         
         # Background
-        bg_color = QColor("#26262D")
+        bg_color = QColor(Gate.RAISED_HI)
         if option.state & QStyle.StateFlag.State_Selected:
-            bg_color = QColor("#3EA8BF")
+            bg_color = QColor(Gate.ACCENT)
         elif option.state & QStyle.StateFlag.State_MouseOver:
-            bg_color = QColor("#2C2C34")
+            bg_color = QColor(Gate.LINE)
             
         painter.setBrush(QBrush(bg_color))
         painter.setPen(Qt.PenStyle.NoPen)
@@ -49,14 +50,14 @@ class ShotGridDelegate(QStyledItemDelegate):
             # Draw placeholder rect
             painter.setBrush(QBrush(QColor("#000000")))
             painter.drawRect(thumb_rect)
-            painter.setPen(QColor("#E8E6E1"))
+            painter.setPen(QColor(Gate.TEXT))
             painter.drawText(thumb_rect, Qt.AlignmentFlag.AlignCenter, "NO SCAN")
             
         # Text Info
         text_rect = QRect(rect.left() + 15, rect.top() + self.thumb_height + 15, 
                           rect.width() - 30, rect.height() - self.thumb_height - 20)
         
-        painter.setPen(QColor("#E8E6E1"))
+        painter.setPen(QColor(Gate.TEXT))
         font = painter.font()
         font.setBold(True)
         font.setPointSize(10)
@@ -84,11 +85,11 @@ class ShotGridDelegate(QStyledItemDelegate):
         
     def get_status_color(self, status):
         colors = {
-            'APPROVED': '#5FBF8F',
-            'WIP': '#D9A441',
-            'Kickback': '#D9635F',
-            'YTS': '#3EA8BF',
-            'Awaiting approval': '#D9635F',
-            'FEEDBACK_WIP': '#D9A441'
+            'APPROVED': Gate.OK,
+            'WIP': Gate.WARN,
+            'Kickback': Gate.BAD,
+            'YTS': Gate.ACCENT,
+            'Awaiting approval': Gate.BAD,
+            'FEEDBACK_WIP': Gate.WARN
         }
-        return colors.get(status, '#B4B1AA')
+        return colors.get(status, Gate.TEXT_2)

@@ -11,6 +11,7 @@ from slate.core.infra.design_tokens import (
 )
 from slate.core.system.adaptation_engine import system_engine
 from slate.gui.widgets.styled_buttons import PrimaryButton, SecondaryButton
+from slate.core.infra.gate import Gate
 
 
 class BatchEditDialog(QDialog):
@@ -40,11 +41,11 @@ class BatchEditDialog(QDialog):
         header_layout.setSpacing(self.sp(4))
 
         title = QLabel(f"Batch Edit {self.selected_count} Shots")
-        title.setStyleSheet(f"font-size: {T.SIZE_LG}px; font-weight: {T.WEIGHT_STYLE_BOLD}; color: #E8E6E1;")
+        title.setStyleSheet(f"font-size: {T.SIZE_LG}px; font-weight: {T.WEIGHT_STYLE_BOLD}; color: {Gate.TEXT};")
         header_layout.addWidget(title)
 
         subtitle = QLabel("Check the properties you want to update across all selected shots.")
-        subtitle.setStyleSheet("font-size: 12px; color: #6BA4C9;")
+        subtitle.setStyleSheet(f"font-size: 12px; color: {Gate.INFO};")
         header_layout.addWidget(subtitle)
         layout.addLayout(header_layout)
 
@@ -59,7 +60,7 @@ class BatchEditDialog(QDialog):
 
         # 1. Status
         self.status_cb = QCheckBox("Status:")
-        self.status_cb.setStyleSheet("font-weight: 600; color: #E8E6E1;")
+        self.status_cb.setStyleSheet(f"font-weight: 600; color: {Gate.TEXT};")
         self.status_combo = QComboBox()
         self.status_combo.addItems(["WIP", "APPROVED", "RETAKE", "SENT FOR REVIEW", "YTS", "READY", "OMIT"])
         self.status_combo.setEnabled(False)
@@ -69,7 +70,7 @@ class BatchEditDialog(QDialog):
 
         # 2. Assigned Artist
         self.artist_cb = QCheckBox("Assigned Artist:")
-        self.artist_cb.setStyleSheet("font-weight: 600; color: #E8E6E1;")
+        self.artist_cb.setStyleSheet(f"font-weight: 600; color: {Gate.TEXT};")
         self.artist_combo = QComboBox()
         self.artist_combo.addItem("Unassigned", "")
         for user in self.all_users:
@@ -81,7 +82,7 @@ class BatchEditDialog(QDialog):
 
         # 3. Priority
         self.priority_cb = QCheckBox("Priority:")
-        self.priority_cb.setStyleSheet("font-weight: 600; color: #E8E6E1;")
+        self.priority_cb.setStyleSheet(f"font-weight: 600; color: {Gate.TEXT};")
         self.priority_combo = QComboBox()
         self.priority_combo.addItems(["0 (Urgent)", "1 (High)", "2 (Normal)", "3 (Low)"])
         self.priority_combo.setCurrentIndex(2)
@@ -92,7 +93,7 @@ class BatchEditDialog(QDialog):
 
         # 4. Shot Type
         self.type_cb = QCheckBox("Shot Type:")
-        self.type_cb.setStyleSheet("font-weight: 600; color: #E8E6E1;")
+        self.type_cb.setStyleSheet(f"font-weight: 600; color: {Gate.TEXT};")
         self.type_combo = QComboBox()
         self.type_combo.addItems(["Prep", "2D Comp", "2.5D Comp", "CG Comp", "AI Shot", "Roto", "DMP"])
         self.type_combo.setEnabled(False)
@@ -102,7 +103,7 @@ class BatchEditDialog(QDialog):
 
         # 5. Target Date
         self.target_cb = QCheckBox("Target Date:")
-        self.target_cb.setStyleSheet("font-weight: 600; color: #E8E6E1;")
+        self.target_cb.setStyleSheet(f"font-weight: 600; color: {Gate.TEXT};")
         self.target_edit = QDateEdit()
         self.target_edit.setCalendarPopup(True)
         self.target_edit.setDisplayFormat("yyyy-MM-dd")

@@ -19,6 +19,7 @@ from PySide6.QtCore import Qt
 import logging
 
 from .shot_review.lineup_editor_mode import LineupEditorMode
+from slate.core.infra.gate import Gate
 
 logger = logging.getLogger(__name__)
 
@@ -51,11 +52,11 @@ class VFXReviewDualModeTab(QWidget):
     def create_mode_toggle(self):
         """Create mode toggle buttons & Notification Bell"""
         header = QWidget()
-        header.setStyleSheet("""
-            QWidget {
-                background-color: #16161A;
-                border-bottom: 2px solid #3EA8BF;
-            }
+        header.setStyleSheet(f"""
+            QWidget {{
+                background-color: {Gate.PANEL};
+                border-bottom: 2px solid {Gate.ACCENT};
+            }}
         """)
         
         layout = QHBoxLayout(header)
@@ -63,7 +64,7 @@ class VFXReviewDualModeTab(QWidget):
         
         # Title
         title = QLabel("TIMELINE VIEWER")
-        title.setStyleSheet("QLabel { color: white; font-size: 16px; font-weight: bold; }")
+        title.setStyleSheet(f"QLabel {{ color: {Gate.TEXT}; font-size: 16px; font-weight: bold; }}")
         layout.addWidget(title)
         
         layout.addStretch()
@@ -71,9 +72,9 @@ class VFXReviewDualModeTab(QWidget):
         # --- NOTIFICATION BELL ---
         self.btn_notif = QPushButton("N")
         self.btn_notif.setFixedSize(40, 36)
-        self.btn_notif.setStyleSheet("""
-            QPushButton { background: transparent; border: none; font-size: 20px; color: #87857F; }
-            QPushButton:hover { color: white; background: #26262D; border-radius: 4px; }
+        self.btn_notif.setStyleSheet(f"""
+            QPushButton {{ background: transparent; border: none; font-size: 20px; color: {Gate.TEXT_DIM}; }}
+            QPushButton:hover {{ color: {Gate.TEXT}; background: {Gate.RAISED_HI}; border-radius: 4px; }}
         """)
         self.btn_notif.clicked.connect(self.show_notifications)
         layout.addWidget(self.btn_notif)
@@ -82,8 +83,8 @@ class VFXReviewDualModeTab(QWidget):
         self.lbl_badge = QLabel("0", self.btn_notif)
         self.lbl_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_badge.hide()
-        self.lbl_badge.setStyleSheet("""
-            background-color: red; color: white; border-radius: 8px; 
+        self.lbl_badge.setStyleSheet(f"""
+            background-color: red; color: {Gate.TEXT}; border-radius: 8px; 
             font-size: 10px; font-weight: bold; padding: 2px;
         """)
         self.lbl_badge.resize(16, 16)
@@ -95,18 +96,18 @@ class VFXReviewDualModeTab(QWidget):
         refresh_btn.setToolTip(
             "Re-read the shots the dashboard is tracking and rebuild the list."
         )
-        refresh_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #16323A;
-                color: white;
+        refresh_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Gate.ACCENT_SURFACE};
+                color: {Gate.TEXT};
                 font-weight: bold;
                 padding: 10px 20px;
                 border-radius: 4px;
-                border: 2px solid #16323A;
-            }
-            QPushButton:hover {
-                background-color: #3EA8BF;
-            }
+                border: 2px solid {Gate.ACCENT_SURFACE};
+            }}
+            QPushButton:hover {{
+                background-color: {Gate.ACCENT};
+            }}
         """)
         refresh_btn.clicked.connect(self.refresh_from_dashboard)
         layout.addWidget(refresh_btn)
@@ -178,12 +179,12 @@ class VFXReviewDualModeTab(QWidget):
             count = len(notes)
             
             if count > 0:
-                self.btn_notif.setStyleSheet("QPushButton { background: transparent; border: none; font-size: 20px; color: #D9A441; }")
+                self.btn_notif.setStyleSheet(f"QPushButton {{ background: transparent; border: none; font-size: 20px; color: {Gate.WARN}; }}")
                 self.lbl_badge.setText(str(count) if count < 9 else "9+")
                 self.lbl_badge.show()
                 self.lbl_badge.raise_()
             else:
-                self.btn_notif.setStyleSheet("QPushButton { background: transparent; border: none; font-size: 20px; color: #87857F; }")
+                self.btn_notif.setStyleSheet(f"QPushButton {{ background: transparent; border: none; font-size: 20px; color: {Gate.TEXT_DIM}; }}")
                 self.lbl_badge.hide()
         except Exception as e:
             logger.warning(f"Failed to update notification badge: {e}")
@@ -197,12 +198,12 @@ class VFXReviewDualModeTab(QWidget):
         d.setWindowTitle("Notifications")
         d.setMinimumSize(400, 300)
         d.resize(400, 300)
-        d.setStyleSheet("background: #1D1D22; color: #E8E6E1;")
+        d.setStyleSheet(f"background: {Gate.RAISED}; color: {Gate.TEXT};")
         l = QVBoxLayout(d)
         
         notes = self._get_unread_notifications()
         list_w = QListWidget()
-        list_w.setStyleSheet("QListWidget { border: none; background: #1D1D22; } QListWidget::item { padding: 8px; border-bottom: 1px solid #26262D; }")
+        list_w.setStyleSheet(f"QListWidget {{ border: none; background: {Gate.RAISED}; }} QListWidget::item {{ padding: 8px; border-bottom: 1px solid {Gate.RAISED_HI}; }}")
         
         ids_to_clear = []
         for n in notes:
@@ -216,7 +217,7 @@ class VFXReviewDualModeTab(QWidget):
         l.addWidget(list_w)
         
         btn_clear = QPushButton("Mark All Read")
-        btn_clear.setStyleSheet("background: #2C2C34; color: white; padding: 6px; border: none;") 
+        btn_clear.setStyleSheet(f"background: {Gate.LINE}; color: {Gate.TEXT}; padding: 6px; border: none;") 
         
         def close_and_clear():
             if self._is_closing or not self.notifier:

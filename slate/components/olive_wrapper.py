@@ -6,6 +6,7 @@ import logging
 import shutil
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QPushButton, QMessageBox
 from PySide6.QtCore import Qt, QTimer
+from slate.core.infra.gate import Gate
 
 # Windows API Constants
 class USER32:
@@ -146,18 +147,18 @@ class OliveWrapperWidget(QWidget):
         # Placeholder or Control Bar
         self.controls = QWidget()
         self.controls.setFixedHeight(40)
-        self.controls.setStyleSheet("background-color: #1D1D22; border-bottom: 1px solid #2C2C34;")
+        self.controls.setStyleSheet(f"background-color: {Gate.RAISED}; border-bottom: 1px solid {Gate.LINE};")
         c_layout = QVBoxLayout(self.controls) # Change to HBox in real impl
         
         self.info_label = QLabel("Olive Video Editor - Integrated Mode")
-        self.info_label.setStyleSheet("color: white; font-weight: bold; margin-left: 10px;")
+        self.info_label.setStyleSheet(f"color: {Gate.TEXT}; font-weight: bold; margin-left: 10px;")
         c_layout.addWidget(self.info_label)
         
         self.layout.addWidget(self.controls)
         
         # Area where Olive will sit
         self.container = QWidget()
-        self.container.setStyleSheet("background-color: #0D0D0F;")
+        self.container.setStyleSheet(f"background-color: {Gate.GROUND};")
         self.layout.addWidget(self.container)
         
         # Launch Button
@@ -172,13 +173,13 @@ class OliveWrapperWidget(QWidget):
             # Olive NOT available - show error state
             self.btn_launch.setText("Olive Editor Not Found")
             self.btn_launch.setEnabled(False)
-            self.btn_launch.setStyleSheet("""
-                QPushButton { 
-                    background-color: #D9635F; 
-                    color: white; 
+            self.btn_launch.setStyleSheet(f"""
+                QPushButton {{ 
+                    background-color: {Gate.BAD}; 
+                    color: {Gate.TEXT_ON_BAD}; 
                     padding: 10px; 
                     border-radius: 4px; 
-                }
+                }}
             """)
             self.btn_launch.setToolTip(
                 "Olive Editor executable not found.\n"
@@ -186,11 +187,11 @@ class OliveWrapperWidget(QWidget):
                 "Tip: Set 'OLIVE_EDITOR' environment variable to the executable path.")
         else:
             # Olive available - normal style
-            self.btn_launch.setStyleSheet("""
-                QPushButton { 
-                    background-color: #3EA8BF; color: white; padding: 10px; border-radius: 4px; 
-                }
-                QPushButton:hover { background-color: #3EA8BF; }
+            self.btn_launch.setStyleSheet(f"""
+                QPushButton {{ 
+                    background-color: {Gate.ACCENT}; color: {Gate.TEXT_ON_ACCENT}; padding: 10px; border-radius: 4px; 
+                }}
+                QPushButton:hover {{ background-color: {Gate.ACCENT}; }}
             """)
         
         # Show button

@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 )
 
 from slate.core.domain.versions import STATUS_CHOICES, VersionStore
+from slate.core.infra.gate import Gate
 
 
 class ReviewQueueDialog(QDialog):
@@ -33,7 +34,7 @@ class ReviewQueueDialog(QDialog):
         layout = QVBoxLayout(self)
 
         self.heading = QLabel("")
-        self.heading.setStyleSheet("color: #E8E6E1; font-size: 14px;"
+        self.heading.setStyleSheet(f"color: {Gate.TEXT}; font-size: 14px;"
                                    " font-weight: 600;")
         layout.addWidget(self.heading)
 

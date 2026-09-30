@@ -20,6 +20,7 @@ from slate.core.domain import leave_policy as lp
 # died with "name 'can' is not defined" before a single widget was drawn.
 from slate.core.domain.access import can
 from slate.gui.core.offline_notice import on_database_error
+from slate.core.infra.gate import Gate
 
 class AttendanceTab(QWidget):
     """
@@ -133,12 +134,12 @@ class AttendanceTab(QWidget):
 
         card = QWidget()
         card.setMinimumSize(100, 70) # Much smaller
-        card.setStyleSheet("""
-            QWidget {
-                background: rgba(255, 255, 255, 0.03);
-                border: 1px solid rgba(255, 255, 255, 0.05);
+        card.setStyleSheet(f"""
+            QWidget {{
+                background: {Gate.overlay(0.03)};
+                border: 1px solid {Gate.overlay(0.05)};
                 border-radius: 12px;
-            }
+            }}
         """)
 
         layout = QVBoxLayout(card)
@@ -148,8 +149,8 @@ class AttendanceTab(QWidget):
 
         lbl = QLabel(label)
         lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl.setStyleSheet("""
-            color: rgba(255, 255, 255, 0.5);
+        lbl.setStyleSheet(f"""
+            color: {Gate.overlay(0.5)};
             font-size: 10px;
             font-weight: 600;
             text-transform: uppercase;
@@ -180,20 +181,20 @@ class AttendanceTab(QWidget):
         layout.setSpacing(15)
 
         # MODERN CSS VARIABLES
-        self.setStyleSheet("""
-            QWidget {
+        self.setStyleSheet(f"""
+            QWidget {{
                 font-family: "Segoe UI", sans-serif;
-            }
-            QFrame#PersonalCard {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #16323A, stop:1 #16323A);
-                border: 1px solid #16323A;
+            }}
+            QFrame#PersonalCard {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {Gate.ACCENT_SURFACE}, stop:1 {Gate.ACCENT_SURFACE});
+                border: 1px solid {Gate.ACCENT_SURFACE};
                 border-radius: 16px;
-            }
-            QFrame#CompactLegend {
+            }}
+            QFrame#CompactLegend {{
                 background: rgba(0, 0, 0, 0.3);
                 border-radius: 20px;
-                border: 1px solid rgba(255,255,255,0.05);
-            }
+                border: 1px solid {Gate.overlay(0.05)};
+            }}
         """)
 
         # 1. COMPACT HERO SECTION (Horizontal)
@@ -221,21 +222,21 @@ class AttendanceTab(QWidget):
         avatar = QLabel(self.display_name[:1])
         avatar.setFixedSize(32, 32)
         avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        avatar.setStyleSheet("""
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #3EA8BF, stop:1 #3EA8BF);
-            color: white; font-weight: bold; border-radius: 16px; font-size: 14px;
-            border: 1px solid rgba(255,255,255,0.2);
+        avatar.setStyleSheet(f"""
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {Gate.ACCENT}, stop:1 {Gate.ACCENT});
+            color: {Gate.TEXT}; font-weight: bold; border-radius: 16px; font-size: 14px;
+            border: 1px solid {Gate.overlay(0.2)};
         """)
 
         self.lbl_welcome = QLabel(self.display_name)
-        self.lbl_welcome.setStyleSheet("font-size: 16px; font-weight: 700; color: #6BA4C9; background: transparent;")
+        self.lbl_welcome.setStyleSheet(f"font-size: 16px; font-weight: 700; color: {Gate.INFO}; background: transparent;")
 
         name_row.addWidget(avatar)
         name_row.addWidget(self.lbl_welcome)
         name_row.addStretch()
 
         self.lbl_status = QLabel("Checking...")
-        self.lbl_status.setStyleSheet("font-size: 12px; font-weight: 500; color: #6BA4C9; margin-left: 42px; background: transparent;")
+        self.lbl_status.setStyleSheet(f"font-size: 12px; font-weight: 500; color: {Gate.INFO}; margin-left: 42px; background: transparent;")
 
         lb_layout.addLayout(name_row)
         lb_layout.addWidget(self.lbl_status)
@@ -247,10 +248,10 @@ class AttendanceTab(QWidget):
         cb_layout.setSpacing(12)
         cb_layout.setContentsMargins(0, 10, 0, 10)
 
-        self.lbl_monthly_present = self._create_stat_card("Present", "-", "#5FBF8F")
-        self.lbl_monthly_late = self._create_stat_card("Late", "-", "#D9635F")
-        self.lbl_monthly_hours = self._create_stat_card("Hours", "-", "#3EA8BF")
-        self.lbl_monthly_wfh = self._create_stat_card("WFH", "-", "#3EA8BF")
+        self.lbl_monthly_present = self._create_stat_card("Present", "-", Gate.OK)
+        self.lbl_monthly_late = self._create_stat_card("Late", "-", Gate.BAD)
+        self.lbl_monthly_hours = self._create_stat_card("Hours", "-", Gate.ACCENT)
+        self.lbl_monthly_wfh = self._create_stat_card("WFH", "-", Gate.ACCENT)
 
         cb_layout.addWidget(self.lbl_monthly_present)
         cb_layout.addWidget(self.lbl_monthly_late)
@@ -268,34 +269,34 @@ class AttendanceTab(QWidget):
         self.chk_wfh_box = QPushButton("WFH")
         self.chk_wfh_box.setCheckable(True)
         self.chk_wfh_box.setMinimumSize(80, 40)
-        self.chk_wfh_box.setStyleSheet("""
-            QPushButton {
-                background: rgba(255, 255, 255, 0.05); color: #6BA4C9;
-                border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; font-weight: 600;
-            }
-            QPushButton:checked {
-                background: #3EA8BF; color: white; border-color: #3EA8BF;
-            }
+        self.chk_wfh_box.setStyleSheet(f"""
+            QPushButton {{
+                background: {Gate.overlay(0.05)}; color: {Gate.INFO};
+                border: 1px solid {Gate.overlay(0.1)}; border-radius: 8px; font-weight: 600;
+            }}
+            QPushButton:checked {{
+                background: {Gate.ACCENT}; color: {Gate.TEXT_ON_ACCENT}; border-color: {Gate.ACCENT};
+            }}
         """)
 
         # Punch Buttons
         btn_in = QPushButton("PUNCH IN")
         btn_in.setMinimumSize(110, 40)
-        btn_in.setStyleSheet("""
-            QPushButton {
-                background: #5FBF8F; color: white; border: none; border-radius: 8px; font-weight: 700; font-size: 12px;
-            }
-            QPushButton:hover { background: #5FBF8F; }
+        btn_in.setStyleSheet(f"""
+            QPushButton {{
+                background: {Gate.OK}; color: {Gate.TEXT_ON_BAD}; border: none; border-radius: 8px; font-weight: 700; font-size: 12px;
+            }}
+            QPushButton:hover {{ background: {Gate.OK}; }}
         """)
         btn_in.clicked.connect(lambda: self.manual_punch("in"))
 
         btn_out = QPushButton("PUNCH OUT")
         btn_out.setMinimumSize(110, 40)
-        btn_out.setStyleSheet("""
-            QPushButton {
-                background: #D9635F; color: white; border: none; border-radius: 8px; font-weight: 700; font-size: 12px;
-            }
-            QPushButton:hover { background: #D9635F; }
+        btn_out.setStyleSheet(f"""
+            QPushButton {{
+                background: {Gate.BAD}; color: {Gate.TEXT_ON_BAD}; border: none; border-radius: 8px; font-weight: 700; font-size: 12px;
+            }}
+            QPushButton:hover {{ background: {Gate.BAD}; }}
         """)
         btn_out.clicked.connect(lambda: self.manual_punch("out"))
 
@@ -318,7 +319,7 @@ class AttendanceTab(QWidget):
 
         # Streak Badge (Moved out of header to save space, or just put it here)
         self.lbl_streak = QLabel("Streak: 0")
-        self.lbl_streak.setStyleSheet("color: #D9A441; font-weight: 700; font-size: 13px;")
+        self.lbl_streak.setStyleSheet(f"color: {Gate.WARN}; font-weight: 700; font-size: 13px;")
         mid_row.addWidget(self.lbl_streak)
 
         mid_row.addStretch()
@@ -331,12 +332,12 @@ class AttendanceTab(QWidget):
         lf_layout.setContentsMargins(15, 0, 15, 0)
         lf_layout.setSpacing(20)
 
-        for color, text in [("#5FBF8F", "Punch"), ("#D9A441", "Auto"), ("#D9A441", "Working"), ("#D9635F", "Late")]:
+        for color, text in [(Gate.OK, "Punch"), (Gate.WARN, "Auto"), (Gate.WARN, "Working"), (Gate.BAD, "Late")]:
             item = QWidget()
             item.setStyleSheet("background: transparent;")
             il = QHBoxLayout(item); il.setContentsMargins(0,0,0,0); il.setSpacing(6)
             dot = QLabel("●"); dot.setStyleSheet(f"color: {color}; font-size: 10px; background: transparent;")
-            lbl = QLabel(text); lbl.setStyleSheet("color: #6BA4C9; font-size: 11px; font-weight: 600; background: transparent;")
+            lbl = QLabel(text); lbl.setStyleSheet(f"color: {Gate.INFO}; font-size: 11px; font-weight: 600; background: transparent;")
             il.addWidget(dot); il.addWidget(lbl)
             lf_layout.addWidget(item)
 
@@ -347,7 +348,7 @@ class AttendanceTab(QWidget):
         # ----------------
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.setHandleWidth(1)
-        splitter.setStyleSheet("QSplitter::handle { background: #2C2C34; }")
+        splitter.setStyleSheet(f"QSplitter::handle {{ background: {Gate.LINE}; }}")
 
         # My History Table
         self.my_table = QTableWidget()
@@ -366,10 +367,10 @@ class AttendanceTab(QWidget):
             ah_layout.setContentsMargins(5, 0, 5, 0)
 
             lbl_adm = QLabel("TEAM OVERVIEW")
-            lbl_adm.setStyleSheet("color: #6BA4C9; font-weight: 700; font-size: 13px; letter-spacing: 0.5px;")
+            lbl_adm.setStyleSheet(f"color: {Gate.INFO}; font-weight: 700; font-size: 13px; letter-spacing: 0.5px;")
 
             self.lbl_last_refresh = QLabel("Updated: --:--")
-            self.lbl_last_refresh.setStyleSheet("color: #6BA4C9; font-size: 11px;")
+            self.lbl_last_refresh.setStyleSheet(f"color: {Gate.INFO}; font-size: 11px;")
 
             ah_layout.addWidget(lbl_adm)
             ah_layout.addWidget(self.lbl_last_refresh)
@@ -421,8 +422,8 @@ class AttendanceTab(QWidget):
             self.btn_import.clicked.connect(self.import_biometric)
 
             # Common Control Style
-            ctrl_style = """
-                background: #16323A; color: #B4B1AA; border: 1px solid #2C2C34; border-radius: 6px; font-size: 11px; font-weight: 600;
+            ctrl_style = f"""
+                background: {Gate.ACCENT_SURFACE}; color: {Gate.TEXT_2}; border: 1px solid {Gate.LINE}; border-radius: 6px; font-size: 11px; font-weight: 600;
             """
             controls = [self.combo_month, self.spin_year, btn_ref, btn_exp, self.btn_import]
             if self.btn_holidays is not None:
@@ -451,7 +452,7 @@ class AttendanceTab(QWidget):
             )
             sync_notice.setWordWrap(True)
             sync_notice.setStyleSheet(
-                "color: #D9A441; background: #16323A; border: 1px solid #2C2C34; "
+                f"color: {Gate.WARN}; background: {Gate.ACCENT_SURFACE}; border: 1px solid {Gate.LINE}; "
                 "border-radius: 8px; padding: 10px; font-weight: 600;"
             )
             layout.addWidget(sync_notice)
@@ -461,26 +462,26 @@ class AttendanceTab(QWidget):
 
     def setup_table(self, table):
         # Premium Table CSS
-        table.setStyleSheet("""
-            QTableWidget {
-                background: #16161A;
-                border: 1px solid #26262D;
-                gridline-color: #1D1D22;
+        table.setStyleSheet(f"""
+            QTableWidget {{
+                background: {Gate.PANEL};
+                border: 1px solid {Gate.RAISED_HI};
+                gridline-color: {Gate.RAISED};
                 font-family: "Segoe UI";
                 font-size: 13px;
-                selection-background-color: #26262D;
+                selection-background-color: {Gate.RAISED_HI};
                 selection-color: white;
-            }
-            QHeaderView::section {
-                background: #26262D;
-                color: #B4B1AA;
+            }}
+            QHeaderView::section {{
+                background: {Gate.RAISED_HI};
+                color: {Gate.TEXT_2};
                 padding: 6px;
                 border: none;
                 font-weight: bold;
                 text-transform: uppercase;
                 font-size: 11px;
-            }
-            QTableWidget::item { padding: 4px; }
+            }}
+            QTableWidget::item {{ padding: 4px; }}
         """)
 
         table.horizontalHeader().setStretchLastSection(True)
@@ -628,11 +629,11 @@ class AttendanceTab(QWidget):
         t_in = (today_entry.get('in') or '').strip() or '--:--'
         t_out = (today_entry.get('out') or '').strip() or '--:--'
 
-        status_color = "#B4B1AA"
+        status_color = Gate.TEXT_2
         if t_in != '--:--' and t_out == '--:--':
             live_hours = self._calculate_hours(t_in, "", now)
             status_text = f"Working {live_hours:.1f}h (In: {t_in})"
-            status_color = "#5FBF8F"
+            status_color = Gate.OK
             if today_entry.get('wfh'): status_text += "  WFH"
         elif t_in != '--:--' and t_out != '--:--':
             # Check if auto-logout
@@ -640,7 +641,7 @@ class AttendanceTab(QWidget):
                 status_text = f"Punched Out ({t_out}) - auto"
             else:
                 status_text = f"Punched Out ({t_out})"
-            status_color = "#D9635F"
+            status_color = Gate.BAD
         else:
             status_text = "Not Checked In Today"
 
@@ -731,7 +732,7 @@ class AttendanceTab(QWidget):
                     cutoff_min = self.attendance.LATE_CUTOFF_MINUTE
                     if ih > cutoff_hour or (ih == cutoff_hour and im > cutoff_min):
                         status_lite = "LATE"
-                        bg_mod = QColor("#3A2F19")
+                        bg_mod = QColor(Gate.WARN_SURFACE)
                 except (ValueError, AttributeError):
                     pass  # Invalid time format, skip late status
 
@@ -745,7 +746,7 @@ class AttendanceTab(QWidget):
                 if hours > standard:
                     ot = hours - standard
                     overtime_txt = f"+{ot:.1f}h OT"
-                    bg_mod = QColor("#1B3A2C") # Green tint for hard work
+                    bg_mod = QColor(Gate.OK_SURFACE) # Green tint for hard work
             elif t_in and not t_out and i == now.day:
                 # Live duration for today's active session.
                 hours = self._calculate_hours(t_in, "", now)
@@ -753,19 +754,19 @@ class AttendanceTab(QWidget):
                 if "WORKING" not in status_lite:
                     status_lite = f"{status_lite} | WORKING ⏱".strip(" |")
                 if not bg_mod:
-                    bg_mod = QColor("#3A2F19")  # Yellow tint (currently working)
+                    bg_mod = QColor(Gate.WARN_SURFACE)  # Yellow tint (currently working)
 
             # Highlight
-            row_color = QColor("#1D1D22")
+            row_color = QColor(Gate.RAISED)
             dt = datetime(now.year, now.month, i)
             # A public holiday is said out loud, the same way a weekend is.
             # Left unsaid it read as an absence, and the row looked like
             # somebody who had not turned up.
             if dt.date() in self._holidays(now.year):
-                row_color = QColor("#1D1D22")
+                row_color = QColor(Gate.RAISED)
                 if not t_in: status_lite = "HOLIDAY"
             elif lp.is_weekly_off(dt.date()):
-                row_color = QColor("#1D1D22") # Weekend
+                row_color = QColor(Gate.RAISED) # Weekend
                 if not t_in: status_lite = "WEEKEND"
 
             if bg_mod: row_color = bg_mod
@@ -780,7 +781,7 @@ class AttendanceTab(QWidget):
                 it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 if is_today:
                     it.setFont(QFont("Segoe UI", 9, QFont.Bold))
-                    it.setForeground(QColor("#3EA8BF")) # Cyan Text for Today
+                    it.setForeground(QColor(Gate.ACCENT)) # Cyan Text for Today
                 self.my_table.setItem(i-1, c, it)
 
 
@@ -826,9 +827,9 @@ class AttendanceTab(QWidget):
         self.team_table.setVerticalHeaderLabels([users[u].get('display_name',u) for u in user_ids])
 
         # Styling
-        self.team_table.setStyleSheet("""
-            QTableWidget { background: #16161A; border: 1px solid #26262D; gridline-color: #1D1D22; font-family: "Segoe UI"; font-size: 11px; }
-            QHeaderView::section { background: #26262D; color: #B4B1AA; padding: 4px; font-weight: bold; border: 1px solid #26262D; }
+        self.team_table.setStyleSheet(f"""
+            QTableWidget {{ background: {Gate.PANEL}; border: 1px solid {Gate.RAISED_HI}; gridline-color: {Gate.RAISED}; font-family: "Segoe UI"; font-size: 11px; }}
+            QHeaderView::section {{ background: {Gate.RAISED_HI}; color: {Gate.TEXT_2}; padding: 4px; font-weight: bold; border: 1px solid {Gate.RAISED_HI}; }}
         """)
 
         for r, uid in enumerate(user_ids):
@@ -849,8 +850,8 @@ class AttendanceTab(QWidget):
 
                 item = QTableWidgetItem("")
                 # Weekend BG default
-                bg = QColor("#1D1D22")
-                if (d-1) in weekend_indices: bg = QColor("#1D1D22")
+                bg = QColor(Gate.RAISED)
+                if (d-1) in weekend_indices: bg = QColor(Gate.RAISED)
 
                 if day_key in user_log:
                     info = user_log[day_key]
@@ -872,7 +873,7 @@ class AttendanceTab(QWidget):
                             if hh > cutoff_hour or (hh == cutoff_hour and mm > cutoff_min):
                                 l_cnt += 1
                                 lbl += " (late)"
-                                bg = QColor("#3A1F1E") # Dark Red tint
+                                bg = QColor(Gate.BAD_SURFACE) # Dark Red tint
                         except (ValueError, AttributeError):
                             pass  # Invalid time format
 
@@ -883,13 +884,13 @@ class AttendanceTab(QWidget):
                             # Check if auto-logout
                             if info.get('auto_logout'):
                                 lbl += " ⏰"  # Clock emoji for auto-logout
-                                bg = QColor("#3A2F19")  # Orange tint for auto
+                                bg = QColor(Gate.WARN_SURFACE)  # Orange tint for auto
                             else:
-                                bg = QColor("#1B3A2C")  # Green tint for manual
+                                bg = QColor(Gate.OK_SURFACE)  # Green tint for manual
 
                             h_sum += self._calculate_hours(t_in, t_out, now_dt)
                         else:
-                             bg = QColor("#3A2F19") # Yellow tint (working)
+                             bg = QColor(Gate.WARN_SURFACE) # Yellow tint (working)
                              if year == now_dt.year and month == now_dt.month and d == now_dt.day:
                                  # Count live running hours for active session.
                                  h_sum += self._calculate_hours(t_in, "", now_dt)
@@ -903,12 +904,12 @@ class AttendanceTab(QWidget):
             # 2. Fill Stats Columns
             # Present
             it_p = QTableWidgetItem(str(p_cnt)); it_p.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            it_p.setForeground(QColor("#5FBF8F")); it_p.setBackground(QColor("#1B3A2C"))
+            it_p.setForeground(QColor(Gate.OK)); it_p.setBackground(QColor(Gate.OK_SURFACE))
             self.team_table.setItem(r, 0, it_p)
 
             # Late
             it_l = QTableWidgetItem(str(l_cnt)); it_l.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            if l_cnt > 0: it_l.setForeground(QColor("#D9635F")); it_l.setBackground(QColor("#3A1F1E"))
+            if l_cnt > 0: it_l.setForeground(QColor(Gate.BAD)); it_l.setBackground(QColor(Gate.BAD_SURFACE))
             self.team_table.setItem(r, 1, it_l)
 
             # Hours
@@ -917,7 +918,7 @@ class AttendanceTab(QWidget):
 
             # WFH
             it_w = QTableWidgetItem(str(w_cnt)); it_w.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            if w_cnt > 0: it_w.setForeground(QColor("#3EA8BF"))
+            if w_cnt > 0: it_w.setForeground(QColor(Gate.ACCENT))
             self.team_table.setItem(r, 3, it_w)
 
         self.team_table.resizeRowsToContents()
@@ -1014,14 +1015,14 @@ class AttendanceTab(QWidget):
         layout.addWidget(lbl)
 
         # Form
-        c_frame = QFrame(); c_frame.setStyleSheet("background: #1D1D22; border-radius: 6px; padding: 10px;")
+        c_frame = QFrame(); c_frame.setStyleSheet(f"background: {Gate.RAISED}; border-radius: 6px; padding: 10px;")
         fl = QFormLayout(c_frame)
 
         e_in = QLineEdit(t_in); e_in.setPlaceholderText("HH:MM")
-        e_in.setStyleSheet("background: #26262D; color: white; border: 1px solid #2C2C34; padding: 4px;")
+        e_in.setStyleSheet(f"background: {Gate.RAISED_HI}; color: {Gate.TEXT}; border: 1px solid {Gate.LINE}; padding: 4px;")
 
         e_out = QLineEdit(t_out); e_out.setPlaceholderText("HH:MM")
-        e_out.setStyleSheet("background: #26262D; color: white; border: 1px solid #2C2C34; padding: 4px;")
+        e_out.setStyleSheet(f"background: {Gate.RAISED_HI}; color: {Gate.TEXT}; border: 1px solid {Gate.LINE}; padding: 4px;")
 
         fl.addRow("In Time:", e_in)
         fl.addRow("Out Time:", e_out)
@@ -1029,10 +1030,10 @@ class AttendanceTab(QWidget):
 
         # Buttons
         h_btn = QHBoxLayout()
-        btn_save = QPushButton("SAVE"); btn_save.setStyleSheet("background: #3EA8BF; font-weight: bold; color: black; padding: 8px;")
+        btn_save = QPushButton("SAVE"); btn_save.setStyleSheet(f"background: {Gate.ACCENT}; font-weight: bold; color: {Gate.TEXT_ON_ACCENT}; padding: 8px;")
         btn_save.clicked.connect(d.accept)
 
-        btn_cancel = QPushButton("CANCEL"); btn_cancel.setStyleSheet("background: #2C2C34; color: #B4B1AA; padding: 8px;")
+        btn_cancel = QPushButton("CANCEL"); btn_cancel.setStyleSheet(f"background: {Gate.LINE}; color: {Gate.TEXT_2}; padding: 8px;")
         btn_cancel.clicked.connect(d.reject)
 
         h_btn.addWidget(btn_cancel)

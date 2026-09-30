@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPalette
 from slate.core.infra.design_tokens import ColorTokens as C, TypographyTokens as T, SpacingTokens as S, RadiusTokens as R
+from slate.core.infra.gate import Gate
 
 class ModernDarkPalette(QPalette):
     def __init__(self):
@@ -24,11 +25,11 @@ class ModernDarkPalette(QPalette):
         self.setColor(QPalette.HighlightedText, QColor(255, 255, 255))
 
 class Badge(QLabel):
-    def __init__(self, text, color="#3EA8BF"):
+    def __init__(self, text, color=Gate.ACCENT):
         super().__init__(text)
         self.setStyleSheet(f"""
             background-color: {color};
-            color: white;
+            color: {Gate.TEXT};
             border-radius: 4px;
             padding: 4px 8px;
             font-weight: bold;
@@ -51,7 +52,7 @@ class ChatBubble(QFrame):
         msg.setStyleSheet("font-size: 12px;")
         layout.addWidget(msg)
         
-        bg_color = "#26262D" if not is_me else "#6BA4C9"
+        bg_color = Gate.RAISED_HI if not is_me else Gate.INFO
         self.setStyleSheet(f"""
             QFrame {{
                 background-color: {bg_color};
@@ -75,25 +76,25 @@ class ConceptWindow(QMainWindow):
         # --- LEFT: Shot List ---
         shot_list = QListWidget()
         shot_list.setFixedWidth(250)
-        shot_list.setStyleSheet("""
-            QListWidget {
-                background-color: #1D1D22;
+        shot_list.setStyleSheet(f"""
+            QListWidget {{
+                background-color: {Gate.RAISED};
                 border: none;
-                border-right: 1px solid #2C2C34;
-            }
-            QListWidget::item {
+                border-right: 1px solid {Gate.LINE};
+            }}
+            QListWidget::item {{
                 padding: 10px;
-                border-bottom: 1px solid #26262D;
-            }
-            QListWidget::item:selected {
-                background-color: #26262D;
-                border-left: 3px solid #3EA8BF;
-            }
+                border-bottom: 1px solid {Gate.RAISED_HI};
+            }}
+            QListWidget::item:selected {{
+                background-color: {Gate.RAISED_HI};
+                border-left: 3px solid {Gate.ACCENT};
+            }}
         """)
         
         for i in range(1, 20):
             item = QListWidgetItem(f"SEQ01_SHOT_{i:03d}")
-            item.setForeground(QColor("#E8E6E1"))
+            item.setForeground(QColor(Gate.TEXT))
             shot_list.addItem(item)
             
         main_layout.addWidget(shot_list)
@@ -107,11 +108,11 @@ class ConceptWindow(QMainWindow):
         # Header
         header_layout = QHBoxLayout()
         shot_title = QLabel("SEQ01_SHOT_005")
-        shot_title.setStyleSheet("font-size: 24px; font-weight: bold; color: white;")
+        shot_title.setStyleSheet(f"font-size: 24px; font-weight: bold; color: {Gate.TEXT};")
         header_layout.addWidget(shot_title)
         header_layout.addStretch()
-        header_layout.addWidget(Badge("IN PROGRESS", "#D9A441"))
-        header_layout.addWidget(Badge("V03", "#3EA8BF"))
+        header_layout.addWidget(Badge("IN PROGRESS", Gate.WARN))
+        header_layout.addWidget(Badge("V03", Gate.ACCENT))
         detail_layout.addLayout(header_layout)
         
         # Main Content Splitter
@@ -140,9 +141,9 @@ class ConceptWindow(QMainWindow):
         stats_layout.addWidget(QLabel("DEPARTMENT STATUS"))
         
         depts = [
-            ("ROTO", "APPROVED", "#5FBF8F", 100),
-            ("PAINT", "WIP", "#3EA8BF", 45),
-            ("COMP", "PENDING", "#87857F", 0)
+            ("ROTO", "APPROVED", Gate.OK, 100),
+            ("PAINT", "WIP", Gate.ACCENT, 45),
+            ("COMP", "PENDING", Gate.TEXT_DIM, 0)
         ]
         
         for name, status, color, progress in depts:
@@ -170,15 +171,15 @@ class ConceptWindow(QMainWindow):
         btn_grid = QVBoxLayout()
         for folder in ["Open Scan", "Open Roto", "Open Plate", "Open Comp"]:
             btn = QPushButton(folder)
-            btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #2C2C34;
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {Gate.LINE};
                     border: none;
                     padding: 8px;
                     border-radius: 4px;
                     text-align: left;
-                }
-                QPushButton:hover { background-color: #2C2C34; }
+                }}
+                QPushButton:hover {{ background-color: {Gate.LINE}; }}
             """)
             btn_grid.addWidget(btn)
         stats_layout.addLayout(btn_grid)
@@ -219,7 +220,7 @@ class ConceptWindow(QMainWindow):
         
         send_btn = QPushButton("SEND")
         send_btn.setFixedSize(60, 40)
-        send_btn.setStyleSheet(f"background-color: {C.ACCENT_BLUE}; color: white; border: none; border-radius: {R.SM}px; font-weight: {T.WEIGHT_STYLE_BOLD};")
+        send_btn.setStyleSheet(f"background-color: {C.ACCENT_BLUE}; color: {Gate.TEXT}; border: none; border-radius: {R.SM}px; font-weight: {T.WEIGHT_STYLE_BOLD};")
         
         input_layout.addWidget(input_field)
         input_layout.addWidget(send_btn)

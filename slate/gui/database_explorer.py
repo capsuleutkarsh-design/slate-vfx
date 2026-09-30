@@ -13,6 +13,7 @@ from .components.qt_safety import safe_single_shot
 import logging
 import re
 from functools import partial
+from slate.core.infra.gate import Gate
 
 
 def _safe_identifier(name, allowed=None):
@@ -110,20 +111,20 @@ class StatCard(QFrame):
 
 class SimpleBarChart(QWidget):
     """Draws a simple bar chart given a dict of {label: value}."""
-    def __init__(self, title, data_dict, bar_color="#3EA8BF"):
+    def __init__(self, title, data_dict, bar_color=Gate.ACCENT):
         super().__init__()
         self.setFixedHeight(250)
         self.title = title
         self.data = data_dict
         self.bar_color = QColor(bar_color)
-        self.setStyleSheet("background: #16161A; border-radius: 12px; border: 1px solid #26262D;")
+        self.setStyleSheet(f"background: {Gate.PANEL}; border-radius: 12px; border: 1px solid {Gate.RAISED_HI};")
 
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         
         # Title
-        p.setPen(QColor("#E8E6E1"))
+        p.setPen(QColor(Gate.TEXT))
         font = QFont(); font.setBold(True); font.setPixelSize(14)
         p.setFont(font)
         p.drawText(20, 30, self.title)
@@ -149,7 +150,7 @@ class SimpleBarChart(QWidget):
         spacing = chart_w / len(keys) * 0.4
         
         # Draw Axis
-        p.setPen(QPen(QColor("#2C2C34"), 2))
+        p.setPen(QPen(QColor(Gate.LINE), 2))
         p.drawLine(margin_left, self.height() - margin_bottom, self.width() - margin_right, self.height() - margin_bottom) # X
         p.drawLine(margin_left, margin_top, margin_left, self.height() - margin_bottom) # Y
         
@@ -172,7 +173,7 @@ class SimpleBarChart(QWidget):
             p.drawText(int(x), int(y - 5), int(bar_width), 20, Qt.AlignmentFlag.AlignCenter, str(val))
             
             # X Label (Bottom)
-            p.setPen(QColor("#B4B1AA"))
+            p.setPen(QColor(Gate.TEXT_2))
             p.drawText(int(x - 10), self.height() - margin_bottom + 5, int(bar_width + 20), 40, Qt.AlignmentFlag.AlignCenter | Qt.TextWordWrap, str(key))
 
 class DashboardHome(QWidget):
@@ -189,11 +190,11 @@ class DashboardHome(QWidget):
         
         # Header
         lbl = QLabel("OVERVIEW")
-        lbl.setStyleSheet("color: white; font-size: 24px; font-weight: 900; letter-spacing: 2px;")
+        lbl.setStyleSheet(f"color: {Gate.TEXT}; font-size: 24px; font-weight: 900; letter-spacing: 2px;")
         self.main_layout.addWidget(lbl)
 
         self.error_label = QLabel("")
-        self.error_label.setStyleSheet("color: #D9635F; font-size: 12px;")
+        self.error_label.setStyleSheet(f"color: {Gate.BAD}; font-size: 12px;")
         self.error_label.hide()
         self.main_layout.addWidget(self.error_label)
         
@@ -309,10 +310,10 @@ class DashboardHome(QWidget):
                 val_proj_tracking = self._get_count_safe(data['count_projects_tracking'])
 
                 self._clear_layout(self.stats_layout)
-                self.stats_layout.addWidget(StatCard("Total Assets", val_assets, "#3EA8BF", "#3EA8BF", "\U0001F3A5"))
-                self.stats_layout.addWidget(StatCard("Active Users", val_users, "#D9635F", "#D9635F", "\U0001F465"))
-                self.stats_layout.addWidget(StatCard("Projects", val_proj, "#3EA8BF", "#5FBF8F", "\U0001F3AC"))
-                self.stats_layout.addWidget(StatCard("Tracking Projects", val_proj_tracking, "#3EA8BF", "#3EA8BF", "\U0001F3AC"))
+                self.stats_layout.addWidget(StatCard("Total Assets", val_assets, Gate.ACCENT, Gate.ACCENT, "\U0001F3A5"))
+                self.stats_layout.addWidget(StatCard("Active Users", val_users, Gate.BAD, Gate.BAD, "\U0001F465"))
+                self.stats_layout.addWidget(StatCard("Projects", val_proj, Gate.ACCENT, Gate.OK, "\U0001F3AC"))
+                self.stats_layout.addWidget(StatCard("Tracking Projects", val_proj_tracking, Gate.ACCENT, Gate.ACCENT, "\U0001F3AC"))
                 self.stats_layout.addStretch()
 
                 # Charts
@@ -325,7 +326,7 @@ class DashboardHome(QWidget):
                         type_data[key] = val
 
                 self._clear_layout(self.charts_layout)
-                self.charts_layout.addWidget(SimpleBarChart("Asset Distribution", type_data, "#3EA8BF"))
+                self.charts_layout.addWidget(SimpleBarChart("Asset Distribution", type_data, Gate.ACCENT))
 
                 role_data = {}
                 if data['res_roles']:
@@ -334,7 +335,7 @@ class DashboardHome(QWidget):
                         val = row["count"] if isinstance(row, dict) else row[1]
                         role_data[key] = val
 
-                self.charts_layout.addWidget(SimpleBarChart("User Roles", role_data, "#D9635F"))
+                self.charts_layout.addWidget(SimpleBarChart("User Roles", role_data, Gate.BAD))
             except Exception as e:
                 logging.exception("Failed to render Data Center dashboard stats")
                 self.error_label.setText(f"Error rendering stats: {e}")
@@ -432,31 +433,31 @@ class DatabaseExplorer(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setStyleSheet("""
-            QSplitter::handle { background-color: #26262D; }
-            QSplitter::handle:hover { background-color: #3EA8BF; }
+        splitter.setStyleSheet(f"""
+            QSplitter::handle {{ background-color: {Gate.RAISED_HI}; }}
+            QSplitter::handle:hover {{ background-color: {Gate.ACCENT}; }}
         """)
         
         # --- LEFT: SIDEBAR ---
         left_widget = QWidget()
-        left_widget.setStyleSheet("background-color: #16161A; border-right: 1px solid #26262D;")
+        left_widget.setStyleSheet(f"background-color: {Gate.PANEL}; border-right: 1px solid {Gate.RAISED_HI};")
         left_layout = QVBoxLayout(left_widget)
         left_layout.setContentsMargins(10, 20, 10, 10)
         left_layout.setSpacing(15)
         
         # Dashboard Button
         btn_dash = QPushButton("  \U0001F4CA  DASHBOARD")
-        btn_dash.setStyleSheet("""
-            QPushButton { 
-                background-color: rgba(255,255,255,0.05); 
-                color: white; 
+        btn_dash.setStyleSheet(f"""
+            QPushButton {{ 
+                background-color: {Gate.overlay(0.05)}; 
+                color: {Gate.TEXT}; 
                 font-weight: bold; 
                 text-align: left; 
                 padding: 12px; 
                 border-radius: 6px; 
-                border: 1px solid #2C2C34;
-            }
-            QPushButton:hover { background-color: #26262D; border: 1px solid #3EA8BF; }
+                border: 1px solid {Gate.LINE};
+            }}
+            QPushButton:hover {{ background-color: {Gate.RAISED_HI}; border: 1px solid {Gate.ACCENT}; }}
         """)
         btn_dash.clicked.connect(self.show_dashboard)
         left_layout.addWidget(btn_dash)
@@ -465,11 +466,11 @@ class DatabaseExplorer(QWidget):
         
         self.table_list = QListWidget()
         self.table_list.setFrameShape(QFrame.NoFrame)
-        self.table_list.setStyleSheet("""
-            QListWidget { background: transparent; border: none; outline: none; }
-            QListWidget::item { padding: 10px; color: #87857F; border-radius: 6px; font-weight: 500; }
-            QListWidget::item:hover { background-color: #1D1D22; color: #E8E6E1; }
-            QListWidget::item:selected { background-color: #3EA8BF; color: black; font-weight: bold; }
+        self.table_list.setStyleSheet(f"""
+            QListWidget {{ background: transparent; border: none; outline: none; }}
+            QListWidget::item {{ padding: 10px; color: {Gate.TEXT_DIM}; border-radius: 6px; font-weight: 500; }}
+            QListWidget::item:hover {{ background-color: {Gate.RAISED}; color: {Gate.TEXT}; }}
+            QListWidget::item:selected {{ background-color: {Gate.ACCENT}; color: {Gate.TEXT_ON_ACCENT}; font-weight: bold; }}
         """)
         self.table_list.itemClicked.connect(self.load_table_data)
         left_layout.addWidget(self.table_list)
@@ -479,16 +480,16 @@ class DatabaseExplorer(QWidget):
         left_layout.addWidget(QLabel("DATA MAINTENANCE"))
         
         btn_purge = QPushButton("\U0001F5D1 PURGE LIBRARY")
-        btn_purge.setStyleSheet("""
-            QPushButton {
-                background-color: #3A1F1E;
-                color: #D9635F;
-                border: 1px solid #D9635F;
+        btn_purge.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Gate.BAD_SURFACE};
+                color: {Gate.BAD};
+                border: 1px solid {Gate.BAD};
                 border-radius: 6px;
                 padding: 10px;
                 font-weight: bold;
-            }
-            QPushButton:hover { background-color: #D9635F; color: white; border-color: #D9635F; }
+            }}
+            QPushButton:hover {{ background-color: {Gate.BAD}; color: {Gate.TEXT_ON_BAD}; border-color: {Gate.BAD}; }}
         """)
         btn_purge.clicked.connect(self.purge_stock_library)
         left_layout.addWidget(btn_purge)
@@ -534,12 +535,12 @@ class DatabaseExplorer(QWidget):
         # Header + Search
         h = QHBoxLayout()
         self.lbl_table_name = QLabel("Users")
-        self.lbl_table_name.setStyleSheet("font-size: 28px; font-weight: 800; color: white;")
+        self.lbl_table_name.setStyleSheet(f"font-size: 28px; font-weight: 800; color: {Gate.TEXT};")
         
         self.inp_search = QLineEdit()
         self.inp_search.setPlaceholderText("\U0001F50D Search data...")
         self.inp_search.setFixedWidth(250)
-        self.inp_search.setStyleSheet("background: #16323A; border: 1px solid #26262D; border-radius: 15px; padding: 8px 15px; color: white;")
+        self.inp_search.setStyleSheet(f"background: {Gate.ACCENT_SURFACE}; border: 1px solid {Gate.RAISED_HI}; border-radius: 15px; padding: 8px 15px; color: {Gate.TEXT};")
         self.inp_search.textChanged.connect(self.apply_filter)
         
         h.addWidget(self.lbl_table_name)
@@ -549,9 +550,9 @@ class DatabaseExplorer(QWidget):
         
         # Grid
         self.data_grid = QTableWidget()
-        self.data_grid.setStyleSheet("""
-            QTableWidget { background: #0D0D0F; border: none; gridline-color: transparent; }
-            QHeaderView::section { background: #1D1D22; padding: 8px; border: none; color: #B4B1AA; font-weight: bold; }
+        self.data_grid.setStyleSheet(f"""
+            QTableWidget {{ background: {Gate.GROUND}; border: none; gridline-color: transparent; }}
+            QHeaderView::section {{ background: {Gate.RAISED}; padding: 8px; border: none; color: {Gate.TEXT_2}; font-weight: bold; }}
         """)
         self.data_grid.setAlternatingRowColors(True)
         # ENABLE EDITING
@@ -565,11 +566,11 @@ class DatabaseExplorer(QWidget):
         self.txt_sql = QPlainTextEdit()
         self.txt_sql.setFixedHeight(60)
         self.txt_sql.setPlaceholderText("SQL Query...")
-        self.txt_sql.setStyleSheet("background: #000; color: #5FBF8F; border: 1px solid #26262D; font-family: Consolas;")
+        self.txt_sql.setStyleSheet(f"background: #000; color: {Gate.OK}; border: 1px solid {Gate.RAISED_HI}; font-family: Consolas;")
         
         btn_run = QPushButton("\u25B6")
         btn_run.setFixedSize(60, 60)
-        btn_run.setStyleSheet("background: #D9635F; color: white; font-weight: bold; border: none;")
+        btn_run.setStyleSheet(f"background: {Gate.BAD}; color: {Gate.TEXT_ON_BAD}; font-weight: bold; border: none;")
         btn_run.clicked.connect(self.run_custom_sql)
         
         h_sql = QHBoxLayout()

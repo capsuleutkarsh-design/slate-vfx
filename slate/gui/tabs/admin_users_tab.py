@@ -8,6 +8,7 @@ from PySide6.QtGui import QFont, QColor
 import json
 import logging
 from slate.core.domain.user_manager import UserManager
+from slate.core.infra.gate import Gate
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ class UserDialog(QDialog):
         record = record or {}
 
         self.setWindowTitle("Edit %s" % username if self.editing else "Add New User")
-        self.setStyleSheet("background-color: #1D1D22; color: white;")
+        self.setStyleSheet(f"background-color: {Gate.RAISED}; color: {Gate.TEXT};")
         self.setMinimumWidth(420)
 
         form = QFormLayout(self)
@@ -67,7 +68,7 @@ class UserDialog(QDialog):
         self.dept_input = QComboBox()
         self.dept_input.setEditable(True)
         self.dept_input.addItems(staff_department_names())
-        self.dept_input.setStyleSheet("background: #26262D; padding: 4px;")
+        self.dept_input.setStyleSheet(f"background: {Gate.RAISED_HI}; padding: 4px;")
         current_dept = str(record.get("job_title") or "")
         if current_dept:
             self.dept_input.setCurrentText(current_dept)
@@ -84,7 +85,7 @@ class UserDialog(QDialog):
             "Developer", "Tester",
         ]
         self.roles_input = CheckComboBox(placeholder="Choose one or more roles…")
-        self.roles_input.setStyleSheet("background: #26262D; padding: 4px;")
+        self.roles_input.setStyleSheet(f"background: {Gate.RAISED_HI}; padding: 4px;")
         self.roles_input.add_items(sorted((str(r) for r in available), key=str.lower))
         self.roles_input.set_checked(record.get("roles") or [])
         form.addRow("Roles:", self.roles_input)
@@ -102,7 +103,7 @@ class UserDialog(QDialog):
         self.joined_input.setSpecialValueText("Not recorded")
         self.joined_input.setDate(self._as_qdate(record.get("joined_on")) or (
             QDate.currentDate() if not self.editing else self.NOT_SET))
-        self.joined_input.setStyleSheet("background: #26262D; padding: 4px;")
+        self.joined_input.setStyleSheet(f"background: {Gate.RAISED_HI}; padding: 4px;")
         form.addRow("Joined on:", self.joined_input)
 
         self.employment_input = QComboBox()
@@ -116,7 +117,7 @@ class UserDialog(QDialog):
                 self.employment_input.addItem(current_employment, current_employment)
                 index = self.employment_input.count() - 1
             self.employment_input.setCurrentIndex(index)
-        self.employment_input.setStyleSheet("background: #26262D; padding: 4px;")
+        self.employment_input.setStyleSheet(f"background: {Gate.RAISED_HI}; padding: 4px;")
         form.addRow("Employment:", self.employment_input)
 
         # Who approves this person's leave at the first stage. Without it a
@@ -134,14 +135,14 @@ class UserDialog(QDialog):
                 self.reports_input.addItem(current_manager, current_manager)
                 index = self.reports_input.count() - 1
             self.reports_input.setCurrentIndex(index)
-        self.reports_input.setStyleSheet("background: #26262D; padding: 4px;")
+        self.reports_input.setStyleSheet(f"background: {Gate.RAISED_HI}; padding: 4px;")
         form.addRow("Reports to:", self.reports_input)
 
         self.location_input = QComboBox()
         self.location_input.setEditable(True)
         self.location_input.addItems(LOCATIONS)
         self.location_input.setCurrentText(str(record.get("location") or ""))
-        self.location_input.setStyleSheet("background: #26262D; padding: 4px;")
+        self.location_input.setStyleSheet(f"background: {Gate.RAISED_HI}; padding: 4px;")
         form.addRow("Location:", self.location_input)
 
         note = QLabel(
@@ -150,12 +151,12 @@ class UserDialog(QDialog):
             "queue their leave request lands in first."
         )
         note.setWordWrap(True)
-        note.setStyleSheet("color: #87857F; font-size: 11px;")
+        note.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: 11px;")
         form.addRow(note)
 
         buttons = QHBoxLayout()
         save_btn = QPushButton("Update" if self.editing else "Save")
-        save_btn.setStyleSheet("background-color: #5FBF8F; font-weight: bold; padding: 4px;")
+        save_btn.setStyleSheet(f"background-color: {Gate.OK}; font-weight: bold; padding: 4px;")
         save_btn.clicked.connect(self._accept_if_valid)
         cancel_btn = QPushButton("Cancel")
         cancel_btn.clicked.connect(self.reject)
@@ -232,7 +233,7 @@ class AdminUsersTab(QWidget):
 
         header_title = QLabel("Users & Roles")
         header_title.setFont(QFont("Inter", 16, QFont.Weight.Bold))
-        header_title.setStyleSheet("color: white;")
+        header_title.setStyleSheet(f"color: {Gate.TEXT};")
         main_layout.addWidget(header_title)
 
         # Access control. Every role the person holds is considered, answered
@@ -248,7 +249,7 @@ class AdminUsersTab(QWidget):
         self.role_editor = None
         if not (may_manage_users or may_edit_roles):
             lbl = QLabel("You do not have permission to manage users or roles.")
-            lbl.setStyleSheet("color: #D9635F; font-size: 14px;")
+            lbl.setStyleSheet(f"color: {Gate.BAD}; font-size: 14px;")
             main_layout.addWidget(lbl)
             main_layout.addStretch()
             return
@@ -327,7 +328,7 @@ class UsersPanel(QWidget):
 
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search by username, name, department or role…")
-        self.search.setStyleSheet("background: #26262D; padding: 6px; border-radius: 4px;")
+        self.search.setStyleSheet(f"background: {Gate.RAISED_HI}; padding: 6px; border-radius: 4px;")
         self.search.textChanged.connect(self.apply_filter)
         main_layout.addWidget(self.search)
 
@@ -399,7 +400,7 @@ class UsersPanel(QWidget):
                 # A missing joining date is not cosmetic - accrual counts from
                 # it, so say so rather than showing a tidy dash.
                 if c == 4 and text == "-":
-                    item.setForeground(QColor("#D9A441"))
+                    item.setForeground(QColor(Gate.WARN))
                     item.setToolTip("No joining date, so leave accrues from 1 January")
                 self.grid.setItem(r, c, item)
         if hasattr(self, "search"):
@@ -480,7 +481,7 @@ class UsersPanel(QWidget):
 
         dialog = QDialog(self)
         dialog.setWindowTitle(f"Reset Password for {username}")
-        dialog.setStyleSheet("background-color: #1D1D22; color: white;")
+        dialog.setStyleSheet(f"background-color: {Gate.RAISED}; color: {Gate.TEXT};")
         layout = QFormLayout(dialog)
 
         pass_input = QLineEdit()
@@ -489,7 +490,7 @@ class UsersPanel(QWidget):
 
         btn_box = QHBoxLayout()
         save_btn = QPushButton("Reset")
-        save_btn.setStyleSheet("background-color: #D9635F; font-weight: bold; padding: 4px;")
+        save_btn.setStyleSheet(f"background-color: {Gate.BAD}; font-weight: bold; padding: 4px;")
         save_btn.clicked.connect(dialog.accept)
         cancel_btn = QPushButton("Cancel")
         cancel_btn.clicked.connect(dialog.reject)
@@ -555,26 +556,26 @@ class UsersPanel(QWidget):
         table.setAlternatingRowColors(True)
         table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         table.verticalHeader().setDefaultSectionSize(34)
-        table.setStyleSheet("""
-            QTableWidget {
-                background-color: #0D0D0F;
-                color: #E8E6E1;
-                gridline-color: #1D1D22;
-                border: 1px solid #1D1D22;
+        table.setStyleSheet(f"""
+            QTableWidget {{
+                background-color: {Gate.GROUND};
+                color: {Gate.TEXT};
+                gridline-color: {Gate.RAISED};
+                border: 1px solid {Gate.RAISED};
                 border-radius: 6px;
                 font-size: 12px;
-            }
-            QTableWidget::item:alternate { background-color: #16161A; }
-            QTableWidget::item:selected { background-color: rgba(62, 168, 191, 0.18); color: white; }
-            QHeaderView::section {
-                background-color: #16161A;
-                color: #87857F;
+            }}
+            QTableWidget::item:alternate {{ background-color: {Gate.PANEL}; }}
+            QTableWidget::item:selected {{ background-color: {Gate.tint(Gate.ACCENT, 0.18)}; color: {Gate.TEXT}; }}
+            QHeaderView::section {{
+                background-color: {Gate.PANEL};
+                color: {Gate.TEXT_DIM};
                 border: none;
-                border-bottom: 2px solid #1D1D22;
-                border-right: 1px solid rgba(255, 255, 255, 0.04);
+                border-bottom: 2px solid {Gate.RAISED};
+                border-right: 1px solid {Gate.overlay(0.04)};
                 padding: 8px 10px;
                 font-weight: 700;
                 font-size: 11px;
                 text-transform: uppercase;
-            }
+            }}
         """)

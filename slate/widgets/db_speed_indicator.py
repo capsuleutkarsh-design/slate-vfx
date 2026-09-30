@@ -8,6 +8,7 @@ from PySide6.QtCore import QTimer
 import time
 from slate.core.infra.database_manager import database_manager
 import logging
+from slate.core.infra.gate import Gate
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ class DBSpeedIndicator(QWidget):
         
         # DB icon/label
         self.db_label = QLabel("DB:")
-        self.db_label.setStyleSheet("color: #87857F; font-size: 11px;")
+        self.db_label.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: 11px;")
         
         # Speed label
         self.speed_label = QLabel("--ms")
@@ -102,19 +103,19 @@ class DBSpeedIndicator(QWidget):
         # Determine status and color
         if ms < self.EXCELLENT:
             status = "⚡"  # Lightning bolt
-            color = "#5FBF8F"  # Bright green
+            color = Gate.OK  # Bright green
         elif ms < self.GOOD:
             status = "✓"
-            color = "#3EA8BF"  # Cyan
+            color = Gate.ACCENT  # Cyan
         elif ms < self.FAIR:
             status = "○"
-            color = "#D9A441"  # Yellow
+            color = Gate.WARN  # Yellow
         elif ms < self.SLOW:
             status = "⚠"
-            color = "#D9A441"  # Orange
+            color = Gate.WARN  # Orange
         else:
             status = "✗"
-            color = "#D9635F"  # Red
+            color = Gate.BAD  # Red
         
         # Show comparison to baseline if available
         if self.baseline_ms and self.baseline_ms > 0:
@@ -130,7 +131,7 @@ class DBSpeedIndicator(QWidget):
     def show_error(self):
         """Show error state"""
         self.speed_label.setText("ERR")
-        self.speed_label.setStyleSheet("color: #D9635F; font-weight: bold; font-size: 11px;")
+        self.speed_label.setStyleSheet(f"color: {Gate.BAD}; font-weight: bold; font-size: 11px;")
         self.status_label.setText("✗")
     
     def get_tooltip_text(self):

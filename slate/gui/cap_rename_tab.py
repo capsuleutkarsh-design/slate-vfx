@@ -18,6 +18,7 @@ from ..core.infra.config_manager import ConfigManager
 from ..utils.security import SecurityValidator
 from ..core.infra.design_tokens import ColorTokens as C, TypographyTokens as T, RadiusTokens as R, SpacingTokens as S
 from .core.icons import icon as draw_icon
+from slate.core.infra.gate import Gate
 
 class RenameWorker(QThread):
     """
@@ -305,7 +306,7 @@ class CapRenameTab(QWidget):
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setShowGrid(False)  # Cleaner look
-        self.table.setStyleSheet(f"QTableWidget {{ background-color: {C.BG_SURFACE}; gridline-color: transparent; border: 1px solid {C.BORDER_SUBTLE}; border-radius: {R.MD}px; }} QTableWidget::item {{ padding: 5px; border-bottom: 1px solid {C.BORDER_SUBTLE}; }} QTableWidget::item:selected {{ background-color: rgba(62, 168, 191, 0.15); }} QHeaderView::section {{ background-color: {C.BG_ELEVATED}; padding: 8px; border: none; border-bottom: 1px solid {C.BORDER_SUBTLE}; font-weight: bold; color: {C.TEXT_SECONDARY}; }}")
+        self.table.setStyleSheet(f"QTableWidget {{ background-color: {C.BG_SURFACE}; gridline-color: transparent; border: 1px solid {C.BORDER_SUBTLE}; border-radius: {R.MD}px; }} QTableWidget::item {{ padding: 5px; border-bottom: 1px solid {C.BORDER_SUBTLE}; }} QTableWidget::item:selected {{ background-color: {Gate.tint(Gate.ACCENT, 0.15)}; }} QHeaderView::section {{ background-color: {C.BG_ELEVATED}; padding: 8px; border: none; border-bottom: 1px solid {C.BORDER_SUBTLE}; font-weight: bold; color: {C.TEXT_SECONDARY}; }}")
         layout.addWidget(self.table)
         
         # --- 3. ACTIONS ---
@@ -323,7 +324,7 @@ class CapRenameTab(QWidget):
         self.rename_btn.setMinimumHeight(40)
         self.rename_btn.setMinimumWidth(150)
         self.rename_btn.setStyleSheet(f"""
-            QPushButton {{ background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {C.ACCENT_HOVER}, stop:1 {C.ACCENT_DARK}); color: white; border: none; border-radius: {R.SM}px; font-weight: bold; font-size: 14px; }}
+            QPushButton {{ background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {C.ACCENT_HOVER}, stop:1 {C.ACCENT_DARK}); color: {Gate.TEXT}; border: none; border-radius: {R.SM}px; font-weight: bold; font-size: 14px; }}
             QPushButton:hover {{ background-color: {C.ACCENT_PRIMARY}; }}
             QPushButton:disabled {{ background-color: {C.BG_INPUT}; color: {C.TEXT_DISABLED}; }}
         """)

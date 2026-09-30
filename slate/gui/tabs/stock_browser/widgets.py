@@ -19,6 +19,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QPainter, QColor, QDrag
 from pathlib import Path
 import logging
+from slate.core.infra.gate import Gate
 
 
 class PyToggle(QCheckBox):
@@ -28,9 +29,9 @@ class PyToggle(QCheckBox):
         super().__init__(parent)
         self.setMinimumSize(50, 28)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._bg_color = "#26262D"
-        self._circle_color = "#E8E6E1"
-        self._active_color = "#3EA8BF"
+        self._bg_color = Gate.RAISED_HI
+        self._circle_color = Gate.TEXT
+        self._active_color = Gate.ACCENT
         self._circle_position = 3
         self.animation = QPropertyAnimation(self, b"circle_position", self)
         self.animation.setEasingCurve(QEasingCurve.OutBounce)

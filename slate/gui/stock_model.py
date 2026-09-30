@@ -6,6 +6,7 @@ from PySide6.QtGui import QPixmap, QColor, QPainter, QPen, QImage, QImageReader,
 from PySide6.QtWidgets import QStyledItemDelegate, QStyle
 
 from slate.core.infra.task_registry import task_registry
+from slate.core.infra.gate import Gate
 
 class ThumbnailLoader(QThread):
     """Background thread to load thumbnails to avoid UI freeze. Uses LIFO Stack."""
@@ -456,14 +457,14 @@ class StockDelegate(QStyledItemDelegate):
         card_rect = rect.adjusted(2, 2, -2, -2)  # Inset for spacing between cards
         
         if is_selected:
-            painter.setBrush(QColor("#16323A"))  # Dark blue tint
-            painter.setPen(QPen(QColor("#3EA8BF"), 2))  # Accent border
+            painter.setBrush(QColor(Gate.ACCENT_SURFACE))  # Dark blue tint
+            painter.setPen(QPen(QColor(Gate.ACCENT), 2))  # Accent border
         elif is_hovered:
-            painter.setBrush(QColor("#26262D"))  # Subtle hover lift
-            painter.setPen(QPen(QColor("#2C2C34"), 1))
+            painter.setBrush(QColor(Gate.RAISED_HI))  # Subtle hover lift
+            painter.setPen(QPen(QColor(Gate.LINE), 1))
         else:
-            painter.setBrush(QColor("#1D1D22"))  # Base card color
-            painter.setPen(QPen(QColor("#26262D"), 1))
+            painter.setBrush(QColor(Gate.RAISED))  # Base card color
+            painter.setPen(QPen(QColor(Gate.RAISED_HI), 1))
         
         painter.drawRoundedRect(card_rect, 6, 6)
         
@@ -497,26 +498,26 @@ class StockDelegate(QStyledItemDelegate):
             painter.restore()
         else:
             # Placeholder Logic
-            painter.setBrush(QColor("#1D1D22"))
-            painter.setPen(QColor("#2C2C34"))
+            painter.setBrush(QColor(Gate.RAISED))
+            painter.setPen(QColor(Gate.LINE))
             painter.drawRoundedRect(thumb_rect, 4, 4)
             
             # Check Status
             asset = index.data(Qt.ItemDataRole.UserRole)
             status_text = "No Preview"
-            status_color = QColor("#87857F")
+            status_color = QColor(Gate.TEXT_DIM)
             
             if asset:
                 status = asset.get('status', 'ready')
                 if status == 'ingesting':
                     status_text = "Processing..."
-                    status_color = QColor("#3EA8BF")
+                    status_color = QColor(Gate.ACCENT)
                 elif status == 'corrupt':
                     status_text = "Error"
-                    status_color = QColor("#D9635F")
+                    status_color = QColor(Gate.BAD)
                 elif status == 'pending':
                     status_text = "Pending"
-                    status_color = QColor("#D9A441")
+                    status_color = QColor(Gate.WARN)
             
             painter.setPen(status_color)
             painter.drawText(thumb_rect, Qt.AlignmentFlag.AlignCenter, status_text)
@@ -526,7 +527,7 @@ class StockDelegate(QStyledItemDelegate):
                          card_rect.y() + self.padding + self.thumb_height + 2, 
                          card_rect.width() - self.padding * 2, self.text_height)
         
-        text_color = QColor("#E8E6E1") if is_selected else (QColor("#E8E6E1") if is_hovered else QColor("#E8E6E1"))
+        text_color = QColor(Gate.TEXT) if is_selected else (QColor(Gate.TEXT) if is_hovered else QColor(Gate.TEXT))
         painter.setPen(text_color)
         
         # Elide Text
@@ -558,13 +559,13 @@ class StockListDelegate(QStyledItemDelegate):
 
         # Background
         if is_selected:
-            painter.fillRect(rect, QColor("#3EA8BF"))
+            painter.fillRect(rect, QColor(Gate.ACCENT))
         elif option.state & QStyle.StateFlag.State_MouseOver:
-            painter.fillRect(rect, QColor("#1D1D22"))
+            painter.fillRect(rect, QColor(Gate.RAISED))
 
         # Text Color
-        text_color = QColor("white") if is_selected else QColor("#E8E6E1")
-        sub_text_color = QColor("#E8E6E1") if is_selected else QColor("#B4B1AA")
+        text_color = QColor("white") if is_selected else QColor(Gate.TEXT)
+        sub_text_color = QColor(Gate.TEXT) if is_selected else QColor(Gate.TEXT_2)
 
         # Icon Area
         icon_rect = QRect(rect.left() + self.padding, rect.top() + 3, self.icon_size, self.icon_size)
@@ -579,24 +580,24 @@ class StockListDelegate(QStyledItemDelegate):
             asset = index.data(Qt.ItemDataRole.UserRole)
             status = asset.get('status', 'ready') if asset else 'ready'
             
-            bg_color = QColor("#26262D")
+            bg_color = QColor(Gate.RAISED_HI)
             txt = "-"
             
             if status == 'ingesting':
-                 bg_color = QColor("#16323A") # Dark Blue
+                 bg_color = QColor(Gate.ACCENT_SURFACE) # Dark Blue
                  txt = "..."
             elif status == 'corrupt':
-                 bg_color = QColor("#3A1F1E") # Dark Red
+                 bg_color = QColor(Gate.BAD_SURFACE) # Dark Red
                  txt = "!"
             elif status == 'pending':
-                 bg_color = QColor("#3A2F19") # Dark Orange
+                 bg_color = QColor(Gate.WARN_SURFACE) # Dark Orange
                  txt = "?"
                  
             painter.setBrush(bg_color)
             painter.setPen(Qt.NoPen)
             painter.drawRoundedRect(icon_rect, 4, 4)
             
-            painter.setPen(QColor("#E8E6E1"))
+            painter.setPen(QColor(Gate.TEXT))
             painter.drawText(icon_rect, Qt.AlignmentFlag.AlignCenter, txt)
 
         # Text Area (Name)

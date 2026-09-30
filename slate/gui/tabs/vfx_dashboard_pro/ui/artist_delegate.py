@@ -1,6 +1,7 @@
 from PySide6.QtWidgets import QStyledItemDelegate, QStyle, QComboBox
 from PySide6.QtCore import Qt, QRect
 from PySide6.QtGui import QPainter, QColor, QFontMetrics
+from slate.core.infra.gate import Gate
 
 class ArtistDelegate(QStyledItemDelegate):
     """
@@ -27,20 +28,20 @@ class ArtistDelegate(QStyledItemDelegate):
         for user in self._get_users():
             combo.addItem(user, user)
 
-        combo.setStyleSheet("""
-            QComboBox {
-                background-color: #16323A;
-                color: #E8E6E1;
-                border: 1px solid #3EA8BF;
+        combo.setStyleSheet(f"""
+            QComboBox {{
+                background-color: {Gate.ACCENT_SURFACE};
+                color: {Gate.TEXT};
+                border: 1px solid {Gate.ACCENT};
                 border-radius: 4px;
                 padding: 2px 6px;
                 font-size: 11px;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #16323A;
-                color: #E8E6E1;
-                selection-background-color: #3EA8BF;
-            }
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {Gate.ACCENT_SURFACE};
+                color: {Gate.TEXT};
+                selection-background-color: {Gate.ACCENT};
+            }}
         """)
         return combo
 

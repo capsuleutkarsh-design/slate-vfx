@@ -19,6 +19,7 @@ from slate.core.domain.departments import load_departments
 from slate.core.domain.versions import (
     SENT_TO_CHOICES, STATUS_CHOICES, VersionStore, next_version_name,
 )
+from slate.core.infra.gate import Gate
 
 
 class AddVersionDialog(QDialog):
@@ -158,7 +159,7 @@ class VersionsPanel(QGroupBox):
 
         self.detail_label = QLabel("")
         self.detail_label.setWordWrap(True)
-        self.detail_label.setStyleSheet("color: #B4B1AA; font-size: 11px;")
+        self.detail_label.setStyleSheet(f"color: {Gate.TEXT_2}; font-size: 11px;")
         layout.addWidget(self.detail_label)
 
         buttons = QHBoxLayout()

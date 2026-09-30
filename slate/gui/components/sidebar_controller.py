@@ -1,5 +1,6 @@
 import logging
 from PySide6.QtCore import QPropertyAnimation, QParallelAnimationGroup, QEasingCurve, QTimer
+from slate.core.infra.gate import Gate
 
 class SidebarControllerMixin:
     """
@@ -92,70 +93,70 @@ class SidebarControllerMixin:
         
         if self.sidebar_collapsed:
             self.sidebar_toggle_btn.setText("⮞")
-            self.sidebar_toggle_btn.setStyleSheet("""
-                QPushButton {
+            self.sidebar_toggle_btn.setStyleSheet(f"""
+                QPushButton {{
                     background-color: transparent;
-                    color: #2C2C34;
+                    color: {Gate.LINE};
                     border: none;
-                    border-top: 1px solid #1D1D22;
+                    border-top: 1px solid {Gate.RAISED};
                     font-size: 16px;
                     text-align: center;
                     padding: 0;
-                }
-                QPushButton:hover { color: #3EA8BF; background-color: rgba(62, 168, 191, 0.05); }
+                }}
+                QPushButton:hover {{ color: {Gate.ACCENT}; background-color: {Gate.tint(Gate.ACCENT, 0.05)}; }}
             """)
-            self.sidebar_nav.setStyleSheet("""
-                QListWidget { background: transparent; border: none; outline: none; padding: 2px; }
-                QListWidget::item { 
-                    color: #E8E6E1;
+            self.sidebar_nav.setStyleSheet(f"""
+                QListWidget {{ background: transparent; border: none; outline: none; padding: 2px; }}
+                QListWidget::item {{ 
+                    color: {Gate.TEXT};
                     padding: 12px 0px; 
                     border-radius: 6px;
                     margin: 2px 4px;
                     font-size: 32px;
-                }
-                QListWidget::item:hover {
-                    background-color: rgba(255, 255, 255, 0.05);
-                }
-                QListWidget::item:selected {
-                    background-color: rgba(62, 168, 191, 0.15);
-                    color: #3EA8BF;
-                    border-left: 3px solid #3EA8BF;
+                }}
+                QListWidget::item:hover {{
+                    background-color: {Gate.overlay(0.05)};
+                }}
+                QListWidget::item:selected {{
+                    background-color: {Gate.tint(Gate.ACCENT, 0.15)};
+                    color: {Gate.ACCENT};
+                    border-left: 3px solid {Gate.ACCENT};
                     border-radius: 4px;
-                }
+                }}
             """)
         else:
             self.sidebar_toggle_btn.setText("⮜")
-            self.sidebar_toggle_btn.setStyleSheet("""
-                QPushButton {
+            self.sidebar_toggle_btn.setStyleSheet(f"""
+                QPushButton {{
                     background-color: transparent;
-                    color: #2C2C34;
+                    color: {Gate.LINE};
                     border: none;
-                    border-top: 1px solid #1D1D22;
+                    border-top: 1px solid {Gate.RAISED};
                     font-size: 16px;
                     text-align: right;
                     padding-right: 20px;
-                }
-                QPushButton:hover { color: #3EA8BF; background-color: rgba(62, 168, 191, 0.05); }
+                }}
+                QPushButton:hover {{ color: {Gate.ACCENT}; background-color: {Gate.tint(Gate.ACCENT, 0.05)}; }}
             """)
-            self.sidebar_nav.setStyleSheet("""
-                QListWidget { background: transparent; border: none; outline: none; }
-                QListWidget::item {
-                    color: #E8E6E1;
+            self.sidebar_nav.setStyleSheet(f"""
+                QListWidget {{ background: transparent; border: none; outline: none; }}
+                QListWidget::item {{
+                    color: {Gate.TEXT};
                     padding: 8px 12px;
                     border-radius: 6px;
                     margin: 2px 8px;
                     font-size: 14px;
-                }
-                QListWidget::item:hover {
-                    background-color: rgba(255, 255, 255, 0.05);
-                }
-                QListWidget::item:selected {
-                    background-color: rgba(62, 168, 191, 0.15);
-                    color: #3EA8BF;
-                    border-left: 3px solid #3EA8BF;
+                }}
+                QListWidget::item:hover {{
+                    background-color: {Gate.overlay(0.05)};
+                }}
+                QListWidget::item:selected {{
+                    background-color: {Gate.tint(Gate.ACCENT, 0.15)};
+                    color: {Gate.ACCENT};
+                    border-left: 3px solid {Gate.ACCENT};
                     border-radius: 4px;
                     font-weight: bold;
-                }
+                }}
             """)
             
         if self.sidebar_collapsed:

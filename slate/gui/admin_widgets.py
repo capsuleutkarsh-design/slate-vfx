@@ -43,6 +43,7 @@ from ..core.infra.app_context import AppContext
 from ..core.infra.style_builder import StyleBuilder
 from .core.controls import make_button
 from .core.icons import icon as draw_icon
+from slate.core.infra.gate import Gate
 
 
 def _load_json_with_fallback(path: Path):
@@ -70,7 +71,7 @@ class PCDetailsDialog(QDialog):
         self.pc_name = pc_name or self.data.get("pc_name") or "Unknown"
         self.setWindowTitle(f"System Specs: {self.pc_name}")
         self.resize(600, 700)
-        self.setStyleSheet(f"background-color: {C.BG_PRIMARY}; color: white;")
+        self.setStyleSheet(f"background-color: {C.BG_PRIMARY}; color: {Gate.TEXT};")
 
         self.main_layout = QVBoxLayout(self)
 
@@ -91,14 +92,14 @@ class PCDetailsDialog(QDialog):
         btn_refresh = QPushButton("Reload Data")
         btn_refresh.setToolTip("Reload the latest report from disk.")
         btn_refresh.setStyleSheet(
-            f"background-color: {C.BORDER_LIGHT}; color: white; border: 1px solid #87857F; "
+            f"background-color: {C.BORDER_LIGHT}; color: {Gate.TEXT}; border: 1px solid {Gate.TEXT_DIM}; "
             f"padding: {S.SM}px {S.LG}px; border-radius: {R.SM}px;"
         )
         btn_refresh.clicked.connect(self.reload_data)
 
         btn_export = QPushButton("Export PDF")
         btn_export.setStyleSheet(
-            f"background-color: {C.WARNING}; color: black; font-weight: {T.WEIGHT_STYLE_BOLD}; "
+            f"background-color: {C.WARNING}; color: {Gate.TEXT_ON_ACCENT}; font-weight: {T.WEIGHT_STYLE_BOLD}; "
             f"padding: {S.SM}px {S.LG}px; border-radius: {R.SM}px;"
         )
         btn_export.clicked.connect(self.export_to_pdf)
@@ -124,7 +125,7 @@ class PCDetailsDialog(QDialog):
             l = QLabel(label)
             l.setStyleSheet(f"color: {C.TEXT_SECONDARY}; font-weight: {T.WEIGHT_STYLE_BOLD};")
             v = QLabel(str(value))
-            v.setStyleSheet(f"color: white; font-family: {T.FONT_MONO};")
+            v.setStyleSheet(f"color: {Gate.TEXT}; font-family: {T.FONT_MONO};")
             v.setWordWrap(True)
             v.setTextInteractionFlags(Qt.TextSelectableByMouse)
             form.addRow(l, v)
@@ -176,7 +177,7 @@ class PCDetailsDialog(QDialog):
                 bar.setStyleSheet(
                     f"""
                     QProgressBar {{ border: 1px solid {C.BORDER_LIGHT}; border-radius: {R.SM}px;
-                                   text-align: center; color: white; background: {C.BG_SIDEBAR}; height: 16px; }}
+                                   text-align: center; color: {Gate.TEXT}; background: {C.BG_SIDEBAR}; height: 16px; }}
                     QProgressBar::chunk {{ background-color: {C.ACCENT_PRIMARY}; }}
                     """
                 )
@@ -247,14 +248,14 @@ class PCDetailsDialog(QDialog):
         <html>
         <head>
             <style>
-                body {{ font-family: 'Segoe UI', Arial, sans-serif; color: #26262D; }}
-                h1 {{ color: #3EA8BF; border-bottom: 2px solid #3EA8BF; padding-bottom: 10px; }}
-                h2 {{ color: #26262D; margin-top: 20px; border-bottom: 1px solid #E8E6E1; }}
+                body {{ font-family: 'Segoe UI', Arial, sans-serif; color: {Gate.RAISED_HI}; }}
+                h1 {{ color: {Gate.ACCENT}; border-bottom: 2px solid {Gate.ACCENT}; padding-bottom: 10px; }}
+                h2 {{ color: {Gate.RAISED_HI}; margin-top: 20px; border-bottom: 1px solid {Gate.TEXT}; }}
                 table {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
-                th {{ text-align: left; background-color: #E8E6E1; padding: 8px; border: 1px solid #E8E6E1; }}
-                td {{ padding: 8px; border: 1px solid #E8E6E1; }}
-                .highlight {{ font-weight: bold; color: #3EA8BF; }}
-                .footer {{ margin-top: 30px; font-size: 10px; color: #87857F; text-align: center; border-top: 1px solid #E8E6E1; padding-top: 10px; }}
+                th {{ text-align: left; background-color: {Gate.TEXT}; padding: 8px; border: 1px solid {Gate.TEXT}; }}
+                td {{ padding: 8px; border: 1px solid {Gate.TEXT}; }}
+                .highlight {{ font-weight: bold; color: {Gate.ACCENT}; }}
+                .footer {{ margin-top: 30px; font-size: 10px; color: {Gate.TEXT_DIM}; text-align: center; border-top: 1px solid {Gate.TEXT}; padding-top: 10px; }}
             </style>
         </head>
         <body>
@@ -341,7 +342,7 @@ class PCCard(QFrame):
         self.hl = QHBoxLayout()
         self.lbl_name = QLabel(pc_name)
         self.lbl_name.setStyleSheet(
-            f"font-weight: {T.WEIGHT_STYLE_BOLD}; color: white; font-size: 13px; border:none;"
+            f"font-weight: {T.WEIGHT_STYLE_BOLD}; color: {Gate.TEXT}; font-size: 13px; border:none;"
         )
         self.hl.addWidget(self.lbl_name)
         self.hl.addStretch()
@@ -364,11 +365,11 @@ class PCCard(QFrame):
         self.current_data = data
         self.lbl_user.setText(data.get("user", "Unknown"))
         disk = data.get("disk_percent", 0)
-        d_col = "#B4B1AA" if disk < 80 else "#D9635F"
+        d_col = Gate.TEXT_2 if disk < 80 else Gate.BAD
         self.lbl_disk.setText(f"C: Drive {disk}%")
         self.lbl_disk.setStyleSheet(f"color: {d_col}; font-size: 11px; border:none;")
 
-        status_col = "#5FBF8F" if delta < 60 else "#D9A441"
+        status_col = Gate.OK if delta < 60 else Gate.WARN
         status_txt = "Online" if delta < 60 else "Idle"
         self.lbl_status.setText(f"● {status_txt}")
         self.lbl_status.setStyleSheet(
@@ -377,14 +378,14 @@ class PCCard(QFrame):
 
         self.setStyleSheet(
             f"QFrame {{background-color: {C.BG_ELEVATED}; border-left: 4px solid {status_col}; "
-            f"border-radius: {R.MD}px; }} QFrame:hover {{ background-color: #1D1D22; }}"
+            f"border-radius: {R.MD}px; }} QFrame:hover {{ background-color: {Gate.RAISED}; }}"
         )
 
     def show_context(self, pos):
         menu = QMenu()
         menu.setStyleSheet(
-            f"QMenu {{ background: {C.BORDER_DEFAULT}; color: white; border: 1px solid #2C2C34; }} "
-            f"QMenu::item:selected {{ background: {C.ACCENT_PRIMARY}; color: black; }}"
+            f"QMenu {{ background: {C.BORDER_DEFAULT}; color: {Gate.TEXT}; border: 1px solid {Gate.LINE}; }} "
+            f"QMenu::item:selected {{ background: {C.ACCENT_PRIMARY}; color: {Gate.TEXT_ON_ACCENT}; }}"
         )
 
         act_details = menu.addAction("ℹ️ View System Specs")

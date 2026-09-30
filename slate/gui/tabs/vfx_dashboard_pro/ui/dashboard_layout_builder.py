@@ -36,6 +36,7 @@ from .status_delegate import StatusDelegate
 from .artist_delegate import ArtistDelegate
 from .group_header_delegate import GroupHeaderDelegate
 from .query_builder_dialog import QueryBuilderDialog
+from slate.core.infra.gate import Gate
 
 
 def build_dashboard_ui(widget):
@@ -78,6 +79,10 @@ def build_dashboard_ui(widget):
             f"background: transparent; border: 1px solid {C.BORDER_LIGHT}; border-radius: {R.LG}px; font-size: 14px;"
         )
     widget.theme_btn.clicked.connect(widget.cycle_theme)
+    # Inside Slate the theme is chosen once, in Settings: a toolbar button
+    # that swapped the application sheet under half-built screens left the
+    # dashboard part light and part dark.
+    widget.theme_btn.setVisible(not widget.inherit_app_theme)
     row1.addWidget(widget.theme_btn)
 
     app_layout.addLayout(row1)
@@ -258,7 +263,7 @@ def build_dashboard_ui(widget):
     right_layout.addWidget(widget.unsaved_label)
 
     widget.backup_label = QLabel("Excel backup: --")
-    widget.backup_label.setStyleSheet("color: #87857F; font-size: 11px;")
+    widget.backup_label.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: 11px;")
     widget.backup_label.setToolTip("State of the project's Excel backup.")
     right_layout.addWidget(widget.backup_label)
 
@@ -279,8 +284,8 @@ def build_dashboard_ui(widget):
     widget.offline_banner = QFrame()
     widget.offline_banner.setObjectName("offlineBanner")
     widget.offline_banner.setStyleSheet(
-        "#offlineBanner { background-color: #D9635F; border: none; }"
-        "#offlineBanner QLabel { color: #D9635F; font-weight: 600; }"
+        f"#offlineBanner {{ background-color: {Gate.BAD}; border: none; }}"
+        f"#offlineBanner QLabel {{ color: {Gate.BAD}; font-weight: 600; }}"
     )
     banner_layout = QHBoxLayout(widget.offline_banner)
     banner_layout.setContentsMargins(sp(14), sp(8), sp(14), sp(8))
@@ -305,17 +310,17 @@ def build_dashboard_ui(widget):
     
     # Hide the ugly checkerboard handle style
     if not widget.inherit_app_theme:
-        widget.splitter.setStyleSheet("""
-            QSplitter::handle {
+        widget.splitter.setStyleSheet(f"""
+            QSplitter::handle {{
                 background: transparent;
                 width: 6px;
-            }
-            QSplitter::handle:hover {
-                background: rgba(255, 255, 255, 0.05);
-            }
-            QSplitter::handle:pressed {
-                background: rgba(255, 255, 255, 0.1);
-            }
+            }}
+            QSplitter::handle:hover {{
+                background: {Gate.overlay(0.05)};
+            }}
+            QSplitter::handle:pressed {{
+                background: {Gate.overlay(0.1)};
+            }}
         """)
     widget.splitter.setHandleWidth(1)
 
@@ -408,13 +413,13 @@ def build_dashboard_ui(widget):
 
     widget.empty_state_title = QLabel("No project selected")
     widget.empty_state_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    widget.empty_state_title.setStyleSheet("font-size: 18px; font-weight: 700; color: #E8E6E1;")
+    widget.empty_state_title.setStyleSheet(f"font-size: 18px; font-weight: 700; color: {Gate.TEXT};")
     empty_layout.addWidget(widget.empty_state_title)
 
     widget.empty_state_body = QLabel("Select a project from the dropdown to load shots and start planning.")
     widget.empty_state_body.setAlignment(Qt.AlignmentFlag.AlignCenter)
     widget.empty_state_body.setWordWrap(True)
-    widget.empty_state_body.setStyleSheet("font-size: 13px; color: #6BA4C9;")
+    widget.empty_state_body.setStyleSheet(f"font-size: 13px; color: {Gate.INFO};")
     empty_layout.addWidget(widget.empty_state_body)
 
     widget.view_stack.addWidget(widget.empty_state_frame)
@@ -443,6 +448,6 @@ def build_dashboard_ui(widget):
 
     widget.status_bar = QStatusBar()
     if not widget.inherit_app_theme:
-        widget.status_bar.setStyleSheet(f"background-color: {C.ACCENT_BLUE}; color: white;")
+        widget.status_bar.setStyleSheet(f"background-color: {C.ACCENT_BLUE}; color: {Gate.TEXT};")
     widget.status_bar.setSizeGripEnabled(False)
     main_layout.addWidget(widget.status_bar, 0)

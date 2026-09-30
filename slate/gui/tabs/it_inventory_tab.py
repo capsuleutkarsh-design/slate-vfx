@@ -12,6 +12,7 @@ import logging
 from ..core.empty_state import EmptyState
 from ..core.controls import page_title, gate_selection_buttons
 from slate.gui.core.offline_notice import on_database_error
+from slate.core.infra.gate import Gate
 
 # Let an outage reach the @on_database_error decorator rather than becoming an
 # empty grid here. Everything else keeps the fallback it already had.
@@ -33,27 +34,27 @@ class AddPCDialog(QDialog):
             self.setWindowTitle("Add New PC")
             
         self.setMinimumWidth(420)
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #0D0D0F;
-                color: #D9A441;
-            }
-            QLabel {
-                color: #87857F;
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {Gate.GROUND};
+                color: {Gate.WARN};
+            }}
+            QLabel {{
+                color: {Gate.TEXT_DIM};
                 font-weight: 600;
                 background: transparent;
                 border: none;
-            }
-            QLineEdit {
-                background-color: #16161A;
-                border: 1px solid #26262D;
+            }}
+            QLineEdit {{
+                background-color: {Gate.PANEL};
+                border: 1px solid {Gate.RAISED_HI};
                 border-radius: 4px;
-                color: #D9A441;
+                color: {Gate.WARN};
                 padding: 6px;
-            }
-            QLineEdit:focus {
-                border-color: #3EA8BF;
-            }
+            }}
+            QLineEdit:focus {{
+                border-color: {Gate.ACCENT};
+            }}
         """)
         
         layout = QVBoxLayout(self)
@@ -110,7 +111,7 @@ class AddPCDialog(QDialog):
             "machine. That writes the loan record offboarding reads."
         )
         owner_note.setWordWrap(True)
-        owner_note.setStyleSheet("color: #87857F; font-size: 11px; background: transparent; border: none;")
+        owner_note.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: 11px; background: transparent; border: none;")
         layout.addWidget(owner_note)
         
         if not self.edit_data:
@@ -189,28 +190,28 @@ class ItInventoryTab(QWidget):
         controls.setSpacing(10)
         
         lbl = QLabel("Filter by Status:")
-        lbl.setStyleSheet("color: #87857F; font-weight: 600; background: transparent; border: none;")
+        lbl.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-weight: 600; background: transparent; border: none;")
         controls.addWidget(lbl)
         
         self.filter_cb = QComboBox()
         self.filter_cb.addItems(["All", "Active", "Repair", "Available"])
-        self.filter_cb.setStyleSheet("""
-            QComboBox {
-                background: #16161A;
-                color: #D9A441;
-                border: 1px solid #26262D;
+        self.filter_cb.setStyleSheet(f"""
+            QComboBox {{
+                background: {Gate.PANEL};
+                color: {Gate.WARN};
+                border: 1px solid {Gate.RAISED_HI};
                 border-radius: 4px;
                 padding: 4px 10px;
                 min-height: 24px;
-            }
-            QComboBox:focus { border-color: #3EA8BF; }
-            QComboBox QAbstractItemView {
-                background-color: #16161A;
-                color: #E8E6E1;
-                border: 1px solid #26262D;
-                selection-background-color: #1D1D22;
-                selection-color: #3EA8BF;
-            }
+            }}
+            QComboBox:focus {{ border-color: {Gate.ACCENT}; }}
+            QComboBox QAbstractItemView {{
+                background-color: {Gate.PANEL};
+                color: {Gate.TEXT};
+                border: 1px solid {Gate.RAISED_HI};
+                selection-background-color: {Gate.RAISED};
+                selection-color: {Gate.ACCENT};
+            }}
         """)
         self.filter_cb.currentTextChanged.connect(self.load_data)
         controls.addWidget(self.filter_cb)
@@ -322,13 +323,13 @@ class ItInventoryTab(QWidget):
             status_item = QTableWidgetItem(str(row.get('status', '')))
             st_text = status_item.text().strip().lower()
             if st_text == "active":
-                status_item.setForeground(QColor("#5FBF8F"))
+                status_item.setForeground(QColor(Gate.OK))
             elif st_text == "repair":
-                status_item.setForeground(QColor("#D9635F"))
+                status_item.setForeground(QColor(Gate.BAD))
             elif st_text == "available":
-                status_item.setForeground(QColor("#3EA8BF"))
+                status_item.setForeground(QColor(Gate.ACCENT))
             else:
-                status_item.setForeground(QColor("#87857F"))
+                status_item.setForeground(QColor(Gate.TEXT_DIM))
             self.grid.setItem(r, 7, status_item)
 
     def _selected_row(self):
@@ -596,29 +597,29 @@ class ItInventoryTab(QWidget):
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.verticalHeader().setVisible(False)
         table.verticalHeader().setDefaultSectionSize(34)
-        table.setStyleSheet("""
-            QTableWidget { 
-                background-color: #16161A; 
-                color: #D9A441; 
-                gridline-color: #1D1D22; 
-                border: 1px solid #1D1D22; 
+        table.setStyleSheet(f"""
+            QTableWidget {{ 
+                background-color: {Gate.PANEL}; 
+                color: {Gate.WARN}; 
+                gridline-color: {Gate.RAISED}; 
+                border: 1px solid {Gate.RAISED}; 
                 border-radius: 6px;
                 font-size: 12px;
-            }
-            QTableWidget::item {
+            }}
+            QTableWidget::item {{
                 padding: 4px 8px;
-                border-bottom: 1px solid #1D1D22;
-            }
-            QTableWidget::item:alternate { background-color: #16161A; }
-            QTableWidget::item:selected { background-color: #16323A; color: #3EA8BF; }
-            QHeaderView::section { 
-                background-color: #16161A; 
-                color: #87857F; 
-                border: 1px solid #1D1D22; 
+                border-bottom: 1px solid {Gate.RAISED};
+            }}
+            QTableWidget::item:alternate {{ background-color: {Gate.PANEL}; }}
+            QTableWidget::item:selected {{ background-color: {Gate.ACCENT_SURFACE}; color: {Gate.ACCENT}; }}
+            QHeaderView::section {{ 
+                background-color: {Gate.PANEL}; 
+                color: {Gate.TEXT_DIM}; 
+                border: 1px solid {Gate.RAISED}; 
                 padding: 6px 10px; 
                 font-weight: 700;
                 font-size: 11px;
                 text-transform: uppercase;
                 letter-spacing: 0.5px;
-            }
+            }}
         """)

@@ -19,6 +19,7 @@ from ...utils.text_utils import get_resolved_project_root
 from ...core.infra.design_tokens import ColorTokens as C, TypographyTokens as T
 from ...gui.dialogs.custom_template_dialog import CustomTemplateDialog
 from ...gui.dialogs.stitch_confirm_dialog import StitchConfirmDialog
+from slate.core.infra.gate import Gate
 
 
 
@@ -328,7 +329,7 @@ class FolderCreatorTab(QWidget):
                 self.create_btn.setText("Update & Ingest New Files")
                 
                 # Make it look distinct (Green for safe update)
-                self.create_btn.setStyleSheet(f"background-color: {C.ACCENT_TEAL}; color: white; font-weight: {T.WEIGHT_STYLE_BOLD}; border: 1px solid #16323A;")
+                self.create_btn.setStyleSheet(f"background-color: {C.ACCENT_TEAL}; color: {Gate.TEXT}; font-weight: {T.WEIGHT_STYLE_BOLD}; border: 1px solid {Gate.ACCENT_SURFACE};")
                 self.stats_label.setText("Info: Project exists. Running in SAFE UPDATE mode (No overwrites).")
                 self.stats_label.setStyleSheet(f"color: {C.ACCENT_TEAL}; font-weight: {T.WEIGHT_STYLE_BOLD};")
                 
@@ -337,7 +338,7 @@ class FolderCreatorTab(QWidget):
                 self.create_btn.setText("Build & Move Files")
                 
                 # Revert to default primary button style (preserve gradient effect)
-                self.create_btn.setStyleSheet("background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3EA8BF, stop:1 #3EA8BF); border: 1px solid #3EA8BF; color: white; font-weight: bold;")
+                self.create_btn.setStyleSheet(f"background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {Gate.ACCENT}, stop:1 {Gate.ACCENT}); border: 1px solid {Gate.ACCENT}; color: {Gate.TEXT}; font-weight: bold;")
                 self.stats_label.setText("Ready to create new project.")
                 self.stats_label.setStyleSheet(f"color: {C.TEXT_GRAY_LIGHTER};")
                 

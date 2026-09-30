@@ -17,6 +17,7 @@ from .media_engines.stream_engine import StreamEngine
 from .media_engines.sequence_engine import SequenceEngine
 from ..components.qt_safety import safe_single_shot
 from ...utils.media_capabilities import is_video, is_image
+from slate.core.infra.gate import Gate
 
 class VideoWidget(QWidget):
     """
@@ -86,7 +87,7 @@ class VideoWidget(QWidget):
                 
         # Text Message (if no image)
         if self._text_msg:
-            painter.setPen(QColor("#87857F"))
+            painter.setPen(QColor(Gate.TEXT_DIM))
             font = painter.font()
             font.setPointSize(10)
             painter.setFont(font)
@@ -173,13 +174,13 @@ class AdvancedPlayer(QWidget):
         # Controls Container
         self.controls_widget = QWidget()
         self.controls_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        self.controls_widget.setStyleSheet("""
-            QWidget { 
+        self.controls_widget.setStyleSheet(f"""
+            QWidget {{ 
                 background: rgba(15, 20, 25, 0.85); 
-                border: 1px solid rgba(255, 255, 255, 0.1);
+                border: 1px solid {Gate.overlay(0.1)};
                 border-radius: 12px;
                 margin: 0px 4px 4px 4px;
-            }
+            }}
         """)
         
         controls_layout = QVBoxLayout(self.controls_widget)
@@ -195,11 +196,11 @@ class AdvancedPlayer(QWidget):
         self.slider.setRange(0, 100)
         self.slider.setFixedHeight(14)
         self.slider.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.slider.setStyleSheet("""
-            QSlider::groove:horizontal { border: none; height: 4px; background: #26262D; margin: 5px 0; border-radius: 2px; }
-            QSlider::sub-page:horizontal { background: #3EA8BF; border-radius: 2px; }
-            QSlider::handle:horizontal { background: #E8E6E1; width: 12px; height: 12px; margin: -4px 0; border-radius: 6px; }
-            QSlider::handle:horizontal:hover { background: #3EA8BF; transform: scale(1.1); }
+        self.slider.setStyleSheet(f"""
+            QSlider::groove:horizontal {{ border: none; height: 4px; background: {Gate.RAISED_HI}; margin: 5px 0; border-radius: 2px; }}
+            QSlider::sub-page:horizontal {{ background: {Gate.ACCENT}; border-radius: 2px; }}
+            QSlider::handle:horizontal {{ background: {Gate.TEXT}; width: 12px; height: 12px; margin: -4px 0; border-radius: 6px; }}
+            QSlider::handle:horizontal:hover {{ background: {Gate.ACCENT}; transform: scale(1.1); }}
         """)
         self.slider.sliderPressed.connect(self.on_slider_pressed)
         self.slider.sliderReleased.connect(self.on_slider_released)
@@ -209,7 +210,7 @@ class AdvancedPlayer(QWidget):
         self.lbl_time.setFlat(True)
         self.lbl_time.setCursor(Qt.CursorShape.PointingHandCursor)
         self.lbl_time.setFixedWidth(45) # Slightly smaller
-        self.lbl_time.setStyleSheet("color: #87857F; font-weight: bold; font-family: monospace; font-size: 10px; text-align: right; border: none;")
+        self.lbl_time.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-weight: bold; font-family: monospace; font-size: 10px; text-align: right; border: none;")
         self.lbl_time.clicked.connect(self.toggle_time_display)
         
         row_scrub.addWidget(self.slider)
@@ -222,17 +223,17 @@ class AdvancedPlayer(QWidget):
         row_transport.setSpacing(6) # Reduced spacing to prevent overlap
         row_transport.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self.btn_style = """
-            QPushButton {
-                background: rgba(255, 255, 255, 0.05); color: #E8E6E1;
+        self.btn_style = f"""
+            QPushButton {{
+                background: {Gate.overlay(0.05)}; color: {Gate.TEXT};
                 border-radius: 6px; padding: 2px;
                 border: 1px solid transparent;
                 font-family: "Segoe UI", "DejaVu Sans", sans-serif;
                 font-size: 12px;
-            }
-            QPushButton:hover { background: rgba(255, 255, 255, 0.15); color: #E8E6E1; }
-            QPushButton:pressed { background: rgba(255, 255, 255, 0.1); }
-            QPushButton:checked { background: rgba(62, 168, 191, 0.2); color: #3EA8BF; border: 1px solid rgba(62, 168, 191, 0.5); }
+            }}
+            QPushButton:hover {{ background: {Gate.overlay(0.15)}; color: {Gate.TEXT}; }}
+            QPushButton:pressed {{ background: {Gate.overlay(0.1)}; }}
+            QPushButton:checked {{ background: {Gate.tint(Gate.ACCENT, 0.2)}; color: {Gate.ACCENT}; border: 1px solid {Gate.tint(Gate.ACCENT, 0.5)}; }}
         """
         
         self.btn_prev = QPushButton("|<")
@@ -248,15 +249,15 @@ class AdvancedPlayer(QWidget):
         self.btn_play = QPushButton("►")
         self.btn_play.setFixedSize(40, 28) # Wide enough, but compact
         self.btn_play.setToolTip("Play / Pause")
-        self.btn_play.setStyleSheet(self.btn_style + """
-            QPushButton { 
-                background: rgba(62, 168, 191, 0.1); 
-                color: #3EA8BF; 
+        self.btn_play.setStyleSheet(self.btn_style + f"""
+            QPushButton {{ 
+                background: {Gate.tint(Gate.ACCENT, 0.1)}; 
+                color: {Gate.ACCENT}; 
                 font-size: 16px; 
-                border: 1px solid rgba(62, 168, 191, 0.3);
+                border: 1px solid {Gate.tint(Gate.ACCENT, 0.3)};
                 border-radius: 6px;
-            }
-            QPushButton:hover { background: rgba(62, 168, 191, 0.3); border: 1px solid rgba(62, 168, 191, 0.8); color: #E8E6E1; }
+            }}
+            QPushButton:hover {{ background: {Gate.tint(Gate.ACCENT, 0.3)}; border: 1px solid {Gate.tint(Gate.ACCENT, 0.8)}; color: {Gate.TEXT}; }}
         """)
         self.btn_play.clicked.connect(self.toggle_play)
         
@@ -280,32 +281,32 @@ class AdvancedPlayer(QWidget):
 
         # --- Row 3: Tools (Floating Media Island) ---
         island_frame = QFrame()
-        island_frame.setStyleSheet("""
-            QFrame {
-                background: rgba(255, 255, 255, 0.05);
+        island_frame.setStyleSheet(f"""
+            QFrame {{
+                background: {Gate.overlay(0.05)};
                 border-radius: 14px;
-            }
-            QPushButton {
+            }}
+            QPushButton {{
                 background: transparent;
-                color: #B4B1AA;
+                color: {Gate.TEXT_2};
                 border: none;
                 font-weight: bold;
                 font-size: 11px;
                 padding: 4px 8px;
                 border-radius: 6px;
-            }
-            QPushButton:hover { color: #3EA8BF; background: rgba(62, 168, 191, 0.1); }
-            QPushButton:checked { color: #3EA8BF; }
-            QComboBox { 
+            }}
+            QPushButton:hover {{ color: {Gate.ACCENT}; background: {Gate.tint(Gate.ACCENT, 0.1)}; }}
+            QPushButton:checked {{ color: {Gate.ACCENT}; }}
+            QComboBox {{ 
                 background: transparent; 
-                color: #B4B1AA; 
+                color: {Gate.TEXT_2}; 
                 border: none; 
                 font-size: 11px;
                 padding: 4px 8px;
-            }
-            QComboBox:hover { color: #3EA8BF; }
-            QComboBox::drop-down { border: none; width: 14px; }
-            QComboBox::down-arrow { width: 0px; height: 0px; border: none; }
+            }}
+            QComboBox:hover {{ color: {Gate.ACCENT}; }}
+            QComboBox::drop-down {{ border: none; width: 14px; }}
+            QComboBox::down-arrow {{ width: 0px; height: 0px; border: none; }}
         """)
         row_tools = QHBoxLayout(island_frame)
         row_tools.setContentsMargins(12, 4, 12, 4)

@@ -10,6 +10,7 @@ from .....core.infra.design_tokens import ColorTokens as C, TypographyTokens as 
 from ....widgets.styled_buttons import (
     PrimaryButton, SecondaryButton, DangerButton, GhostButton
 )
+from slate.core.infra.gate import Gate
 
 class StockSidebar(QWidget):
     """
@@ -64,7 +65,7 @@ class StockSidebar(QWidget):
         self.category_list.setStyleSheet(f"""
             QListWidget {{ background-color: {C.BG_HOVER}; border: 1px solid {C.BORDER_DEFAULT}; border-radius: {R.SM}px; }}
             QListWidget::item {{ padding: 6px 8px; border-radius: 4px; color: {C.TEXT_PRIMARY}; }}
-            QListWidget::item:selected {{ background-color: {C.ACCENT_PRIMARY}; color: white; font-weight: bold; }}
+            QListWidget::item:selected {{ background-color: {C.ACCENT_PRIMARY}; color: {Gate.TEXT}; font-weight: bold; }}
             QListWidget::item:hover {{ background-color: {C.BORDER_DEFAULT}; }}
         """)
         self.category_list.itemClicked.connect(self._on_category_clicked)
@@ -267,8 +268,8 @@ class StockSidebar(QWidget):
         self.category_list.setStyleSheet(f"""
             QListWidget {{ background-color: transparent; border: none; outline: none; }}
             QListWidget::item {{ padding: 8px 12px; border-radius: 12px; color: {C.TEXT_PRIMARY}; margin-bottom: 4px; }}
-            QListWidget::item:selected {{ background-color: {C.ACCENT_PRIMARY}; color: white; font-weight: bold; }}
-            QListWidget::item:hover:!selected {{ background-color: rgba(255, 255, 255, 0.05); }}
+            QListWidget::item:selected {{ background-color: {C.ACCENT_PRIMARY}; color: {Gate.TEXT}; font-weight: bold; }}
+            QListWidget::item:hover:!selected {{ background-color: {Gate.overlay(0.05)}; }}
         """)
         self.category_list.itemClicked.connect(self._on_category_clicked)
         

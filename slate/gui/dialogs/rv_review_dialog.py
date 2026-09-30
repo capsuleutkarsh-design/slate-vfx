@@ -17,6 +17,7 @@ from PySide6.QtCore import Qt
 
 from ...core.domain.rv_review import build_request, launch
 from ...core.infra.design_tokens import ColorTokens as C, TypographyTokens as T
+from slate.core.infra.gate import Gate
 
 
 class RVReviewDialog(QDialog):
@@ -60,7 +61,7 @@ class RVReviewDialog(QDialog):
         self.open_btn = QPushButton("Open in RV")
         self.open_btn.setDefault(True)
         self.open_btn.setStyleSheet(
-            f"background-color: {C.ACCENT_TEAL}; color: white; "
+            f"background-color: {C.ACCENT_TEAL}; color: {Gate.TEXT}; "
             f"font-weight: {T.WEIGHT_STYLE_BOLD}; padding: 5px 18px;"
         )
         self.open_btn.clicked.connect(self.open_in_rv)

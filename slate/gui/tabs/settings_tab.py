@@ -32,6 +32,7 @@ from ...core.infra.design_tokens import ColorTokens as C, TypographyTokens as T,
 # Import shared PyToggle widget (no more duplication!)
 from ...gui.widgets.py_toggle import PyToggle
 from ..core.controls import make_button
+from slate.core.infra.gate import Gate
 
 try:
     import shiboken6
@@ -87,7 +88,7 @@ class SettingsCard(QFrame):
     """Wrapper for a section of settings"""
     def __init__(self, title):
         super().__init__()
-        self.setStyleSheet(f".SettingsCard {{ background-color: {C.BG_DARK}; border-radius: {S.MD}px; border: 1px solid #1D1D22; }}")
+        self.setStyleSheet(f".SettingsCard {{ background-color: {C.BG_DARK}; border-radius: {S.MD}px; border: 1px solid {Gate.RAISED}; }}")
         self.main_layout = QVBoxLayout(self)
         
         lbl = QLabel(title)
@@ -193,7 +194,7 @@ class SettingsTab(QWidget):
         def add_setting_row(layout, label_text, desc_text, toggle_widget):
             row = QHBoxLayout()
             v = QVBoxLayout()
-            l = QLabel(label_text); l.setStyleSheet(f"font-size: {T.SIZE_MD}px; font-weight: {T.WEIGHT_SEMIBOLD}; color: #E8E6E1; border:none;")
+            l = QLabel(label_text); l.setStyleSheet(f"font-size: {T.SIZE_MD}px; font-weight: {T.WEIGHT_SEMIBOLD}; color: {Gate.TEXT}; border:none;")
             d = QLabel(desc_text); d.setStyleSheet(f"font-size: 11px; color: {C.TEXT_TERTIARY}; border:none;")
             v.addWidget(l); v.addWidget(d)
             row.addLayout(v); row.addStretch(); row.addWidget(toggle_widget)
@@ -215,12 +216,17 @@ class SettingsTab(QWidget):
         self.dry_run_default_cb.setChecked(self.global_settings.get("dry_run_enabled", False))
         add_setting_row(card_config.layout(), "Dry Run Mode", "Simulate file operations without writing changes", self.dry_run_default_cb)
         
-        # Dark Mode Toggle
-        self.dark_mode_cb = PyToggle()
-        self.dark_mode_cb.setChecked(ThemeManager.is_dark_mode()) 
-        self.dark_mode_cb.toggled.connect(self.toggle_theme_mode)
-        
-        add_setting_row(card_config.layout(), "Dark Mode", "Toggle between Light and Dark appearance", self.dark_mode_cb)
+        # Theme. This was a "Dark Mode" switch that stepped through three
+        # themes, two of which looked the same, so turning it off did nothing.
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItems(ThemeManager.get_available_themes())
+        self.theme_combo.setCurrentText(ThemeManager.get_current_theme())
+        self.theme_combo.setMinimumWidth(120)
+        self.theme_combo.currentTextChanged.connect(self.choose_theme)
+
+        add_setting_row(card_config.layout(), "Theme",
+                        "Dark or Light. Takes full effect the next time Slate starts.",
+                        self.theme_combo)
 
         # UI Scale Override
         self.ui_scale_sb = QDoubleSpinBox()
@@ -230,7 +236,7 @@ class SettingsTab(QWidget):
         self.ui_scale_sb.setSpecialValueText("Auto")
         self.ui_scale_sb.setFixedWidth(110)
         self.ui_scale_sb.setValue(float(self.global_settings.get("ui_scale_override", 0.0) or 0.0))
-        self.ui_scale_sb.setStyleSheet(f"background: #1D1D22; color: white; border: 1px solid {C.BORDER_LIGHT}; padding: {S.XS}px;")
+        self.ui_scale_sb.setStyleSheet(f"background: {Gate.RAISED}; color: {Gate.TEXT}; border: 1px solid {C.BORDER_LIGHT}; padding: {S.XS}px;")
         add_setting_row(
             card_config.layout(),
             "UI Scale",
@@ -247,7 +253,7 @@ class SettingsTab(QWidget):
         self.nuke_mode_combo.setCurrentIndex(
             max(0, self.nuke_mode_combo.findData(get_nuke_mode(self.config_manager))))
         self.nuke_mode_combo.setFixedWidth(130)
-        self.nuke_mode_combo.setStyleSheet(f"background: #1D1D22; color: white; border: 1px solid {C.BORDER_LIGHT}; padding: {S.XS}px;")
+        self.nuke_mode_combo.setStyleSheet(f"background: {Gate.RAISED}; color: {Gate.TEXT}; border: 1px solid {C.BORDER_LIGHT}; padding: {S.XS}px;")
         add_setting_row(
             card_config.layout(),
             "Open Nuke as",
@@ -295,7 +301,7 @@ class SettingsTab(QWidget):
         _hour, _minute = _lp.late_cutoff()
         self.late_cutoff_input.setTime(QTime(_hour, _minute))
         self.late_cutoff_input.setStyleSheet(
-            f"background: #1D1D22; color: white; border: 1px solid {C.BORDER_LIGHT}; padding: {S.XS}px;")
+            f"background: {Gate.RAISED}; color: {Gate.TEXT}; border: 1px solid {C.BORDER_LIGHT}; padding: {S.XS}px;")
         cutoff_row.addWidget(self.late_cutoff_input)
         cutoff_row.addStretch(1)
         card_policy.layout().addLayout(cutoff_row)
@@ -308,7 +314,7 @@ class SettingsTab(QWidget):
         self.standard_day_input.setSuffix(" hours")
         self.standard_day_input.setValue(_lp.standard_day_hours())
         self.standard_day_input.setStyleSheet(
-            f"background: #1D1D22; color: white; border: 1px solid {C.BORDER_LIGHT}; padding: {S.XS}px;")
+            f"background: {Gate.RAISED}; color: {Gate.TEXT}; border: 1px solid {C.BORDER_LIGHT}; padding: {S.XS}px;")
         day_row.addWidget(self.standard_day_input)
         day_row.addStretch(1)
         card_policy.layout().addLayout(day_row)
@@ -328,7 +334,7 @@ class SettingsTab(QWidget):
         project_row = QHBoxLayout()
         self.project_root_input = QLineEdit(str(self.config_manager.settings.get("last_project_dir", "")))
         self.project_root_input.setPlaceholderText("Project Root Directory")
-        self.project_root_input.setStyleSheet(f"background: #1D1D22; color: white; border: 1px solid {C.BORDER_LIGHT}; padding: {S.XS}px;")
+        self.project_root_input.setStyleSheet(f"background: {Gate.RAISED}; color: {Gate.TEXT}; border: 1px solid {C.BORDER_LIGHT}; padding: {S.XS}px;")
         self.project_root_input.setMinimumHeight(34)
         btn_project_root = QPushButton("Browse")
         btn_project_root.setMinimumHeight(34)
@@ -342,7 +348,7 @@ class SettingsTab(QWidget):
         excel_row = QHBoxLayout()
         self.excel_tracking_input = QLineEdit(str(self.config_manager.settings.get("last_excel_file", "")))
         self.excel_tracking_input.setPlaceholderText("Excel Tracking File (.xlsx)")
-        self.excel_tracking_input.setStyleSheet(f"background: #1D1D22; color: white; border: 1px solid {C.BORDER_LIGHT}; padding: {S.XS}px;")
+        self.excel_tracking_input.setStyleSheet(f"background: {Gate.RAISED}; color: {Gate.TEXT}; border: 1px solid {C.BORDER_LIGHT}; padding: {S.XS}px;")
         self.excel_tracking_input.setMinimumHeight(34)
         btn_excel = QPushButton("Browse")
         btn_excel.setMinimumHeight(34)
@@ -356,7 +362,7 @@ class SettingsTab(QWidget):
         server_row = QHBoxLayout()
         self.server_root_input = QLineEdit(str(GlobalConfig.get("SERVER_ROOT", "")))
         self.server_root_input.setPlaceholderText("Slate_Central Server Root")
-        self.server_root_input.setStyleSheet(f"background: #1D1D22; color: white; border: 1px solid {C.BORDER_LIGHT}; padding: {S.XS}px;")
+        self.server_root_input.setStyleSheet(f"background: {Gate.RAISED}; color: {Gate.TEXT}; border: 1px solid {C.BORDER_LIGHT}; padding: {S.XS}px;")
         self.server_root_input.setMinimumHeight(34)
         btn_server_root = QPushButton("Browse")
         btn_server_root.setMinimumHeight(34)
@@ -370,7 +376,7 @@ class SettingsTab(QWidget):
         branding_row = QHBoxLayout()
         self.brand_logo_input = QLineEdit(str(self.global_settings.get("branding_logo_path", "")))
         self.brand_logo_input.setPlaceholderText("Optional: Studio/Company Logo Image (.png/.jpg/.svg)")
-        self.brand_logo_input.setStyleSheet(f"background: #1D1D22; color: white; border: 1px solid {C.BORDER_LIGHT}; padding: {S.XS}px;")
+        self.brand_logo_input.setStyleSheet(f"background: {Gate.RAISED}; color: {Gate.TEXT}; border: 1px solid {C.BORDER_LIGHT}; padding: {S.XS}px;")
         self.brand_logo_input.setMinimumHeight(34)
         btn_brand_logo = QPushButton("Browse")
         btn_brand_logo.setMinimumHeight(34)
@@ -401,20 +407,20 @@ class SettingsTab(QWidget):
 
         self.db_host_input = QLineEdit(str(GlobalConfig.get("db_host", "")))
         self.db_host_input.setPlaceholderText("DB Host")
-        self.db_host_input.setStyleSheet(f"background: #1D1D22; color: white; border: 1px solid {C.BORDER_LIGHT}; padding: {S.XS}px;")
+        self.db_host_input.setStyleSheet(f"background: {Gate.RAISED}; color: {Gate.TEXT}; border: 1px solid {C.BORDER_LIGHT}; padding: {S.XS}px;")
         self.db_host_input.setMinimumHeight(34)
         self.db_port_input = QSpinBox()
         self.db_port_input.setRange(1, 65535)
         self.db_port_input.setValue(int(GlobalConfig.get("db_port", 5440) or 5440))
-        self.db_port_input.setStyleSheet(f"background: #1D1D22; color: white; border: 1px solid {C.BORDER_LIGHT}; padding: {S.XS}px;")
+        self.db_port_input.setStyleSheet(f"background: {Gate.RAISED}; color: {Gate.TEXT}; border: 1px solid {C.BORDER_LIGHT}; padding: {S.XS}px;")
         self.db_port_input.setMinimumHeight(34)
         self.db_name_input = QLineEdit(str(GlobalConfig.get("db_name", "")))
         self.db_name_input.setPlaceholderText("DB Name")
-        self.db_name_input.setStyleSheet(f"background: #1D1D22; color: white; border: 1px solid {C.BORDER_LIGHT}; padding: {S.XS}px;")
+        self.db_name_input.setStyleSheet(f"background: {Gate.RAISED}; color: {Gate.TEXT}; border: 1px solid {C.BORDER_LIGHT}; padding: {S.XS}px;")
         self.db_name_input.setMinimumHeight(34)
         self.db_user_input = QLineEdit(str(GlobalConfig.get("db_user", "")))
         self.db_user_input.setPlaceholderText("DB User")
-        self.db_user_input.setStyleSheet(f"background: #1D1D22; color: white; border: 1px solid {C.BORDER_LIGHT}; padding: {S.XS}px;")
+        self.db_user_input.setStyleSheet(f"background: {Gate.RAISED}; color: {Gate.TEXT}; border: 1px solid {C.BORDER_LIGHT}; padding: {S.XS}px;")
         self.db_user_input.setMinimumHeight(34)
 
         db_grid.addWidget(QLabel("DB Host"), 0, 0)
@@ -432,7 +438,7 @@ class SettingsTab(QWidget):
 
         card_paths.layout().addSpacing(8)
         btn_save_paths = QPushButton("Save Paths & Connections")
-        btn_save_paths.setStyleSheet(f"background-color: #3EA8BF; color: white; font-weight: {T.WEIGHT_STYLE_BOLD}; padding: {S.SM}px; border-radius: {R.SM}px;")
+        btn_save_paths.setStyleSheet(f"background-color: {Gate.ACCENT}; color: {Gate.TEXT_ON_ACCENT}; font-weight: {T.WEIGHT_STYLE_BOLD}; padding: {S.SM}px; border-radius: {R.SM}px;")
         btn_save_paths.setMinimumHeight(34)
         btn_save_paths.clicked.connect(self.save_paths_and_connections)
         card_paths.layout().addWidget(btn_save_paths)
@@ -459,7 +465,7 @@ class SettingsTab(QWidget):
         btn_runtime_refresh = QPushButton("Refresh Runtime Status")
         btn_runtime_refresh.setMinimumHeight(32)
         btn_runtime_refresh.setStyleSheet(
-            f"background-color: #3EA8BF; color: white; font-weight: {T.WEIGHT_STYLE_BOLD}; "
+            f"background-color: {Gate.ACCENT}; color: {Gate.TEXT_ON_ACCENT}; font-weight: {T.WEIGHT_STYLE_BOLD}; "
             f"padding: {S.SM}px; border-radius: {R.SM}px;"
         )
         btn_runtime_refresh.clicked.connect(self.refresh_runtime_status)
@@ -500,7 +506,7 @@ class SettingsTab(QWidget):
         
         self.max_concurrent_sb = QSpinBox(); self.max_concurrent_sb.setRange(1, 16); self.max_concurrent_sb.setFixedWidth(60)
         self.max_concurrent_sb.setValue(self.global_settings.get("max_concurrent_operations", 4))
-        self.max_concurrent_sb.setStyleSheet(f"background: #1D1D22; color: white; padding: {S.XS}px; border: 1px solid {C.BORDER_LIGHT};")
+        self.max_concurrent_sb.setStyleSheet(f"background: {Gate.RAISED}; color: {Gate.TEXT}; padding: {S.XS}px; border: 1px solid {C.BORDER_LIGHT};")
         
         adv_row = QHBoxLayout() # Changed form to HBox for better alignment
         adv_row.addWidget(QLabel("Max Concurrent Threads:"))
@@ -554,7 +560,20 @@ class SettingsTab(QWidget):
     def toggle_advanced_settings(self, checked):
         self.adv_container.setVisible(checked)
 
-    def toggle_theme_mode(self, checked):
+    def choose_theme(self, name):
+        """Save the theme and say honestly what happens next."""
+        if not name:
+            return
+        needs_restart = ThemeManager.set_theme(name)
+        if needs_restart:
+            QMessageBox.information(
+                self, "Theme",
+                f"Slate will use the {name} theme.\n\n"
+                "Menus, dialogs and new windows switch now; the screens already "
+                "open switch the next time Slate starts.")
+
+    def toggle_theme_mode(self, checked=None):
+        # Kept for anything still connected to the old switch.
         ThemeManager.toggle_mode()
 
     def save_global_settings(self):
@@ -718,8 +737,8 @@ class SettingsTab(QWidget):
         if success:
             self.btn_update.update_content("check", "Restart to Apply", "Update staged. Click to restart.")
             self.btn_update.setStyleSheet(f"""
-                ActionCard {{ background-color: #1B3A2C; border: 1px solid #5FBF8F; border-radius: 8px; text-align: left; padding: 15px; }}
-                ActionCard:hover {{ background-color: #5FBF8F; border: 1px solid #5FBF8F; }}
+                ActionCard {{ background-color: {Gate.OK_SURFACE}; border: 1px solid {Gate.OK}; border-radius: 8px; text-align: left; padding: 15px; }}
+                ActionCard:hover {{ background-color: {Gate.OK}; border: 1px solid {Gate.OK}; }}
             """)
             QMessageBox.information(self, "Update Ready", "Update downloaded and verified. Click 'Restart to Apply' when you are ready to update.")
         else:

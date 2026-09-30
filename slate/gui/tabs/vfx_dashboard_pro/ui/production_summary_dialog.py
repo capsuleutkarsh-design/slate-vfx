@@ -14,15 +14,16 @@ from PySide6.QtWidgets import (
 )
 
 from slate.core.domain.production_summary import build_summary
+from slate.core.infra.gate import Gate
 
 
-def _headline(value, caption, colour="#E8E6E1"):
+def _headline(value, caption, colour=Gate.TEXT):
     """One big number with a caption under it."""
     box = QFrame()
     box.setFrameShape(QFrame.Shape.StyledPanel)
     box.setStyleSheet(
-        "QFrame { background: rgba(255,255,255,0.04);"
-        " border: 1px solid rgba(255,255,255,0.10); border-radius: 6px; }"
+        f"QFrame {{ background: {Gate.overlay(0.04)};"
+        f" border: 1px solid {Gate.overlay(0.10)}; border-radius: 6px; }}"
     )
     layout = QVBoxLayout(box)
     layout.setContentsMargins(14, 10, 14, 10)
@@ -32,7 +33,7 @@ def _headline(value, caption, colour="#E8E6E1"):
     number.setStyleSheet(f"color: {colour}; font-size: 22px; font-weight: 600;"
                          " background: transparent; border: none;")
     label = QLabel(caption)
-    label.setStyleSheet("color: #B4B1AA; font-size: 11px;"
+    label.setStyleSheet(f"color: {Gate.TEXT_2}; font-size: 11px;"
                         " background: transparent; border: none;")
 
     layout.addWidget(number)
@@ -42,7 +43,7 @@ def _headline(value, caption, colour="#E8E6E1"):
 
 def _section(title):
     label = QLabel(title)
-    label.setStyleSheet("color: #E8E6E1; font-size: 13px; font-weight: 600;"
+    label.setStyleSheet(f"color: {Gate.TEXT}; font-size: 13px; font-weight: 600;"
                         " margin-top: 10px;")
     return label
 
@@ -87,7 +88,7 @@ class ProductionSummaryDialog(QDialog):
         outer = QVBoxLayout(self)
 
         title = QLabel(project_name or "Production Summary")
-        title.setStyleSheet("color: #E8E6E1; font-size: 16px; font-weight: 600;")
+        title.setStyleSheet(f"color: {Gate.TEXT}; font-size: 16px; font-weight: 600;")
         outer.addWidget(title)
 
         scroll = QScrollArea()
@@ -102,13 +103,13 @@ class ProductionSummaryDialog(QDialog):
         tiles.setSpacing(10)
         tiles.addWidget(_headline(summary.total_shots, "shots"))
         tiles.addWidget(_headline(f"{summary.percent_complete}%", "approved",
-                                  "#3EA8BF"))
+                                  Gate.ACCENT))
         tiles.addWidget(_headline(summary.outstanding_bid_days,
-                                  "bid days remaining", "#3EA8BF"))
+                                  "bid days remaining", Gate.ACCENT))
         tiles.addWidget(_headline(len(summary.late), "overdue",
-                                  "#D9635F" if summary.late else "#B4B1AA"))
+                                  Gate.BAD if summary.late else Gate.TEXT_2))
         tiles.addWidget(_headline(len(summary.unassigned), "unassigned",
-                                  "#D9A441" if summary.unassigned else "#B4B1AA"))
+                                  Gate.WARN if summary.unassigned else Gate.TEXT_2))
         tiles.addStretch()
         layout.addLayout(tiles)
 
@@ -162,7 +163,7 @@ class ProductionSummaryDialog(QDialog):
             layout.addWidget(_section("Nobody assigned"))
             names = QLabel(", ".join(summary.unassigned))
             names.setWordWrap(True)
-            names.setStyleSheet("color: #D9A441;")
+            names.setStyleSheet(f"color: {Gate.WARN};")
             layout.addWidget(names)
 
         layout.addStretch()

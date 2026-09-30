@@ -17,6 +17,7 @@ from slate.core.infra.design_tokens import ColorTokens as C, SpacingTokens as S,
 from slate.core.infra.global_config import GlobalConfig
 from slate.core.system.adaptation_engine import system_engine
 from slate.utils.resource_manager import ResourcePathManager
+from slate.core.infra.gate import Gate
 
 class ShotDetailWidget(QWidget):
     close_requested = Signal()
@@ -183,49 +184,49 @@ class ShotDetailWidget(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setObjectName("detailScroll")
         if not self.inherit_app_theme:
-            scroll.setStyleSheet("""
-                QScrollArea { border: none; background: transparent; }
-                QWidget#detailContent { background: transparent; }
+            scroll.setStyleSheet(f"""
+                QScrollArea {{ border: none; background: transparent; }}
+                QWidget#detailContent {{ background: transparent; }}
                 /* Compact GroupBox */
-                QGroupBox {
-                    background-color: #26262D;
-                    border: 1px solid #2C2C34;
+                QGroupBox {{
+                    background-color: {Gate.RAISED_HI};
+                    border: 1px solid {Gate.LINE};
                     border-radius: 4px;
                     margin-top: 0.6em;
                     padding-top: 4px;
                     padding-bottom: 4px;
-                }
-                QGroupBox::title {
+                }}
+                QGroupBox::title {{
                     subcontrol-origin: margin;
                     subcontrol-position: top left;
                     left: 10px;
                     padding: 0 5px;
-                    color: #3EA8BF;
+                    color: {Gate.ACCENT};
                     font-weight: bold;
                     font-size: 9pt;
                     background-color: transparent;
-                }
-                QLabel { color: #E8E6E1; font-size: 9pt; }
-                QLineEdit, QTextEdit, QComboBox, QDateEdit {
-                    background-color: #1D1D22;
-                    border: 1px solid #26262D;
+                }}
+                QLabel {{ color: {Gate.TEXT}; font-size: 9pt; }}
+                QLineEdit, QTextEdit, QComboBox, QDateEdit {{
+                    background-color: {Gate.RAISED};
+                    border: 1px solid {Gate.RAISED_HI};
                     border-radius: 3px;
                     padding: 1px 4px;
-                    color: #E8E6E1;
+                    color: {Gate.TEXT};
                     font-size: 8pt;
                     min-height: 18px;
-                }
-                QComboBox::drop-down { border: none; width: 16px; }
-                QCalendarWidget QWidget { background-color: #1D1D22; color: white; }
-                QCalendarWidget QToolButton { color: white; icon-size: 18px; }
-                QCalendarWidget QMenu { background-color: #26262D; color: white; }
-                QCalendarWidget QSpinBox { background-color: #26262D; color: white; }
-                QCalendarWidget QAbstractItemView:enabled {
-                    color: #E8E6E1;
-                    background-color: #1D1D22;
-                    selection-background-color: #3EA8BF;
+                }}
+                QComboBox::drop-down {{ border: none; width: 16px; }}
+                QCalendarWidget QWidget {{ background-color: {Gate.RAISED}; color: {Gate.TEXT}; }}
+                QCalendarWidget QToolButton {{ color: {Gate.TEXT}; icon-size: 18px; }}
+                QCalendarWidget QMenu {{ background-color: {Gate.RAISED_HI}; color: {Gate.TEXT}; }}
+                QCalendarWidget QSpinBox {{ background-color: {Gate.RAISED_HI}; color: {Gate.TEXT}; }}
+                QCalendarWidget QAbstractItemView:enabled {{
+                    color: {Gate.TEXT};
+                    background-color: {Gate.RAISED};
+                    selection-background-color: {Gate.ACCENT};
                     selection-color: white;
-                }
+                }}
             """)
         else:
             # Keep detail panel compact even when inheriting the main app theme.
@@ -302,19 +303,19 @@ class ShotDetailWidget(QWidget):
         self.save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.save_btn.setMinimumHeight(self._sp(40, minimum=34)) # Taller for easier clicking
         if not self.inherit_app_theme:
-            self.save_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #3EA8BF;
-                    color: white;
+            self.save_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {Gate.ACCENT};
+                    color: {Gate.TEXT_ON_ACCENT};
                     border: none;
                     border-radius: 4px;
                     padding: 0 24px;
                     font-weight: bold;
                     font-size: 11pt;
-                }
-                QPushButton:hover { background-color: #3EA8BF; }
-                QPushButton:pressed { background-color: #3EA8BF; }
-                QPushButton:disabled { background-color: #2C2C34; color: #87857F; }
+                }}
+                QPushButton:hover {{ background-color: {Gate.ACCENT}; }}
+                QPushButton:pressed {{ background-color: {Gate.ACCENT}; }}
+                QPushButton:disabled {{ background-color: {Gate.LINE}; color: {Gate.TEXT_DIM}; }}
             """)
         self.save_btn.clicked.connect(self.save_data)
         footer_layout.addWidget(self.save_btn)
@@ -322,8 +323,8 @@ class ShotDetailWidget(QWidget):
         main_layout.addWidget(footer)
 
     def _update_status_badge_style(self, status):
-        status_color = {"APPROVED": "#5FBF8F", "WIP": "#3EA8BF", "RETAKE": "#D9A441", "READY": "#1B3A2C"}.get(status.upper(), "#2C2C34")
-        self.status_badge.setStyleSheet(f"background-color: {status_color}; color: white; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 9pt;")
+        status_color = {"APPROVED": Gate.OK, "WIP": Gate.ACCENT, "RETAKE": Gate.WARN, "READY": Gate.OK_SURFACE}.get(status.upper(), Gate.LINE)
+        self.status_badge.setStyleSheet(f"background-color: {status_color}; color: {Gate.TEXT}; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 9pt;")
 
     def _init_version_section(self):
         group = QGroupBox("Version Info")
@@ -621,10 +622,10 @@ class ShotDetailWidget(QWidget):
             # Check for placeholder names in path
             path_str = str(self.shot.thumbnail_path).lower()
             if "placeholder_yellow" in path_str:
-                self.thumb_label.setPixmap(self._create_solid_pixmap("#D9A441"))
+                self.thumb_label.setPixmap(self._create_solid_pixmap(Gate.WARN))
                 return
             elif "placeholder_red" in path_str:
-                self.thumb_label.setPixmap(self._create_solid_pixmap("#D9635F"))
+                self.thumb_label.setPixmap(self._create_solid_pixmap(Gate.BAD))
                 return
 
             resolved_thumb = self._resolve_thumbnail_path(self.shot.thumbnail_path)
@@ -759,7 +760,7 @@ class ShotDetailWidget(QWidget):
         original_text = self.save_btn.text()
         original_style = self.save_btn.styleSheet()
         self.save_btn.setText("Saved!")
-        self.save_btn.setStyleSheet("background-color: #5FBF8F; color: white; border: none; border-radius: 4px; padding: 0 24px; font-weight: bold; font-size: 11pt;")
+        self.save_btn.setStyleSheet(f"background-color: {Gate.OK}; color: {Gate.TEXT_ON_BAD}; border: none; border-radius: 4px; padding: 0 24px; font-weight: bold; font-size: 11pt;")
         QTimer.singleShot(1500, lambda: self.save_btn.setText(original_text))
         QTimer.singleShot(1500, lambda: self.save_btn.setStyleSheet(original_style))
         

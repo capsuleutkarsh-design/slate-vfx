@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
     QLineEdit, QPlainTextEdit, QSpinBox, QVBoxLayout,
 )
+from slate.core.infra.gate import Gate
 
 
 STATUS_CHOICES = ["YTS", "WIP", "SENT FOR REVIEW", "RETAKE", "APPROVED"]
@@ -63,7 +64,7 @@ class AddShotsDialog(QDialog):
         hint = QLabel("One shot name per line. Names already in the project "
                       "are ignored.")
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: #B4B1AA; font-style: italic;")
+        hint.setStyleSheet(f"color: {Gate.TEXT_2}; font-style: italic;")
         layout.addWidget(hint)
 
         self.preview_label = QLabel("")
@@ -131,6 +132,6 @@ class AddShotsDialog(QDialog):
 
         self.preview_label.setText("  ".join(parts))
         self.preview_label.setStyleSheet(
-            "color: #3EA8BF;" if new_names else "color: #B4B1AA;"
+            f"color: {Gate.ACCENT};" if new_names else f"color: {Gate.TEXT_2};"
         )
         self.ok_button.setEnabled(bool(new_names))

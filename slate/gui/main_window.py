@@ -75,6 +75,7 @@ from .components.session_manager import SessionManagerMixin
 from .components.sidebar_controller import SidebarControllerMixin
 from .components.quick_search_controller import QuickSearchControllerMixin
 from .components.main_window_builder import MainWindowBuilderMixin
+from slate.core.infra.gate import Gate
 
 # The mixins come before QMainWindow deliberately.
 #
@@ -348,11 +349,12 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
             logging.error(f"Error handling RV feedback: {e}")
 
     def fix_selection_colors(self):
-        """Fix the blue strips showing white issue across all platforms."""
-        palette = QPalette()
-        palette.setColor(QPalette.ColorRole.Highlight, Qt.GlobalColor.darkBlue)
-        palette.setColor(QPalette.ColorRole.HighlightedText, Qt.GlobalColor.white)
-        self.setPalette(palette)
+        """
+        Nothing to do any more: the selection colour comes from the theme's
+        palette (ThemeManager.build_palette). This used to set dark blue on the
+        window over the application's own highlight, so a selection was a
+        different colour depending on which widget drew it.
+        """
     
     def show_status(self, message: str, level: str = "info", duration: int = 3000):
         """
@@ -368,10 +370,10 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
             logging.info(f"[{level.upper()}] {message}")
             return
         colors = {
-            "info":    "#E8E6E1",   # near-white
-            "success": "#5FBF8F",   # green
-            "warning": "#D9A441",   # amber
-            "error":   "#D9635F",   # red
+            "info":    Gate.TEXT,   # near-white
+            "success": Gate.OK,   # green
+            "warning": Gate.WARN,   # amber
+            "error":   Gate.BAD,   # red
         }
         color = colors.get(level, colors["info"])
         status_bar.setStyleSheet(
@@ -561,32 +563,19 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
             )
 
     def apply_stylesheet(self):
+        """
+        Bring the theme up to date with the screen's UI scale.
+
+        The look is the application's (main.qss through ThemeManager); the
+        window no longer lays resources/styles.qss over it. That second sheet
+        was an older dark design - charcoal, blue gradients - so the Light
+        theme could never reach the window, and its "QWidget { font-size }"
+        rule overruled every font a screen set for itself.
+        """
         try:
-            # Use centralized ResourcePathManager to get style
-            style_content = ResourcePathManager.get_stylesheet()
-            if style_content:
-                # [NEW] Inject Dynamic variables
-                dams = system_engine.generate_stylesheet_dams()
-                
-                # Create a "Header" for QSS with variables
-                # QSS doesn't support variables natively, so we replace placeholders or append global rules
-                # For now, we will perform string replacement if {{var}} exists, 
-                # OR we append a * {} block to set global font size (if Qt supported it, but it doesn't really).
-                # BETTER APPROACH: We prepend a universal font-size rule for the application.
-                
-                # 1. Scale Font globally
-                font_rule = f"QWidget {{ font-size: {dams['font_size_main']}; }}"
-                
-                # 2. Append global font rule after base style so wildcard/default sizes
-                # in the stylesheet do not override adaptive sizing.
-                final_style = f"{style_content}\n\n{font_rule}"
-                
-                self.setStyleSheet(final_style)
-                logging.info(f"Loaded stylesheet with Adaptive Scaling (Base: {dams['font_size_main']})")
-            else:
-                logging.warning("Stylesheet not found or empty.")
+            ThemeManager.refresh_scale()
         except Exception as e:
-            logging.warning(f"Could not apply stylesheet: {e}")
+            logging.warning(f"Could not apply the theme: {e}")
 
     def _log_attendance_async(self):
         """Attempts to log attendance in background to avoid freezing UI."""
@@ -799,15 +788,15 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         layout.setSpacing(12)
 
         title_label = QLabel(title)
-        title_label.setStyleSheet("font-size: 18px; font-weight: 700; color: #6BA4C9;")
+        title_label.setStyleSheet(f"font-size: 18px; font-weight: 700; color: {Gate.INFO};")
         body_label = QLabel(message)
         body_label.setWordWrap(True)
         body_label.setStyleSheet(
-            "font-size: 13px; color: #D9A441; background: #16323A; "
-            "border: 1px solid #2C2C34; border-radius: 8px; padding: 12px;"
+            f"font-size: 13px; color: {Gate.WARN}; background: {Gate.ACCENT_SURFACE}; "
+            f"border: 1px solid {Gate.LINE}; border-radius: 8px; padding: 12px;"
         )
         hint_label = QLabel("Check DB mode in the header or press Ctrl+Shift+D for diagnostics.")
-        hint_label.setStyleSheet("font-size: 12px; color: #6BA4C9;")
+        hint_label.setStyleSheet(f"font-size: 12px; color: {Gate.INFO};")
 
         layout.addWidget(title_label)
         layout.addWidget(body_label)

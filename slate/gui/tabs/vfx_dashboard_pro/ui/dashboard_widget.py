@@ -40,6 +40,7 @@ import shutil
 import glob
 from pathlib import Path
 from PySide6.QtCore import QThread, Signal
+from slate.core.infra.gate import Gate
 
 class AutoPublishWorker(QThread):
     finished_signal = Signal(bool, str)
@@ -231,7 +232,7 @@ class DashboardWidget(
             else "No unread notifications"
         )
         button.setStyleSheet(
-            "color: #D9A441; font-weight: 600;" if count else ""
+            f"color: {Gate.WARN}; font-weight: 600;" if count else ""
         )
         return count
 
@@ -287,7 +288,7 @@ class DashboardWidget(
         pending = len(self.unsaved_shots())
         if pending:
             label.setText(f"{pending} unsaved change(s)")
-            label.setStyleSheet("color: #D9A441; font-size: 11px; font-weight: 600;")
+            label.setStyleSheet(f"color: {Gate.WARN}; font-size: 11px; font-weight: 600;")
             label.setToolTip("These edits are not in the database yet.")
         else:
             label.setText("")
@@ -348,15 +349,15 @@ class DashboardWidget(
             if last is not None:
                 from datetime import datetime, timedelta
                 stale = (datetime.now() - last) > timedelta(hours=24)
-            colour = "#D9635F" if (stale or last is None) else "#D9A441"
+            colour = Gate.BAD if (stale or last is None) else Gate.WARN
             label.setText("Excel backup: FAILING")
             label.setToolTip(error)
         elif last is not None:
-            colour = "#5FBF8F"
+            colour = Gate.OK
             label.setText(f"Excel backup: {last.strftime('%H:%M')}")
             label.setToolTip("Last successful backup of the project sheet.")
         else:
-            colour = "#87857F"
+            colour = Gate.TEXT_DIM
             label.setText("Excel backup: --")
             label.setToolTip("No backup written yet in this session.")
 
@@ -669,7 +670,7 @@ class DashboardWidget(
         
         # Highlight button if active
         if rules:
-            self.advanced_query_btn.setStyleSheet("background-color: #3EA8BF; color: black; font-weight: bold;")
+            self.advanced_query_btn.setStyleSheet(f"background-color: {Gate.ACCENT}; color: {Gate.TEXT_ON_ACCENT}; font-weight: bold;")
         else:
             self.advanced_query_btn.setStyleSheet("")
             

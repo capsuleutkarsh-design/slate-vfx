@@ -1,6 +1,7 @@
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QLabel, QTextBrowser, 
                                QPushButton, QHBoxLayout, QFrame)
 from PySide6.QtCore import Qt
+from slate.core.infra.gate import Gate
 
 class UpdateAvailableDialog(QDialog):
     """
@@ -13,21 +14,21 @@ class UpdateAvailableDialog(QDialog):
         self.setMinimumSize(500, 600)
         self.resize(500, 600)
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint) # Modern styling
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #16323A;
-                border: 1px solid #2C2C34;
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {Gate.ACCENT_SURFACE};
+                border: 1px solid {Gate.LINE};
                 border-radius: 12px;
-            }
-            QLabel { color: #E8E6E1; }
-            QTextBrowser {
-                background-color: #16323A;
-                color: #B4B1AA;
-                border: 1px solid #2C2C34;
+            }}
+            QLabel {{ color: {Gate.TEXT}; }}
+            QTextBrowser {{
+                background-color: {Gate.ACCENT_SURFACE};
+                color: {Gate.TEXT_2};
+                border: 1px solid {Gate.LINE};
                 border-radius: 6px;
                 padding: 10px;
                 font-family: 'Consolas', 'Courier New', monospace;
-            }
+            }}
         """)
         
         layout = QVBoxLayout(self)
@@ -35,15 +36,15 @@ class UpdateAvailableDialog(QDialog):
         
         # --- HEADER ---
         header = QFrame()
-        header.setStyleSheet("background-color: #16323A; border-top-left-radius: 12px; border-top-right-radius: 12px; border-bottom: 1px solid #2C2C34;")
+        header.setStyleSheet(f"background-color: {Gate.ACCENT_SURFACE}; border-top-left-radius: 12px; border-top-right-radius: 12px; border-bottom: 1px solid {Gate.LINE};")
         header_layout = QVBoxLayout(header)
         header_layout.setContentsMargins(20, 20, 20, 20)
         
         title = QLabel("New Update Available")
-        title.setStyleSheet("font-size: 18px; font-weight: bold; color: #3EA8BF; border: none;")
+        title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {Gate.ACCENT}; border: none;")
         
         version_lbl = QLabel(f"Version {manifest.get('version', 'Unknown')}")
-        version_lbl.setStyleSheet("font-size: 14px; color: #6BA4C9; font-weight: 500; border: none;")
+        version_lbl.setStyleSheet(f"font-size: 14px; color: {Gate.INFO}; font-weight: 500; border: none;")
         
         header_layout.addWidget(title)
         header_layout.addWidget(version_lbl)
@@ -71,35 +72,35 @@ class UpdateAvailableDialog(QDialog):
         self.btn_later = QPushButton("Remind Me Later")
         self.btn_later.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_later.setFixedHeight(36)
-        self.btn_later.setStyleSheet("""
-            QPushButton {
+        self.btn_later.setStyleSheet(f"""
+            QPushButton {{
                 background-color: transparent;
-                color: #6BA4C9;
-                border: 1px solid #2C2C34;
+                color: {Gate.INFO};
+                border: 1px solid {Gate.LINE};
                 border-radius: 6px;
                 font-weight: 600;
-            }
-            QPushButton:hover {
-                background-color: #16323A;
-                color: #E8E6E1;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {Gate.ACCENT_SURFACE};
+                color: {Gate.TEXT};
+            }}
         """)
         self.btn_later.clicked.connect(self.reject)
         
         self.btn_update = QPushButton("Download & Install")
         self.btn_update.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_update.setFixedHeight(36)
-        self.btn_update.setStyleSheet("""
-            QPushButton {
-                background-color: #3EA8BF;
-                color: white;
+        self.btn_update.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Gate.ACCENT};
+                color: {Gate.TEXT_ON_ACCENT};
                 border: none;
                 border-radius: 6px;
                 font-weight: 600;
-            }
-            QPushButton:hover {
-                background-color: #3EA8BF;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {Gate.ACCENT};
+            }}
         """)
         self.btn_update.clicked.connect(self.accept)
         

@@ -13,6 +13,7 @@ from ....stock_model import StockDelegate, StockListDelegate
 from ....components.qt_safety import safe_single_shot
 from .....core.infra.design_tokens import ColorTokens as C, TypographyTokens as T
 from ....widgets.styled_buttons import SecondaryButton, GhostButton, StyledComboBox
+from slate.core.infra.gate import Gate
 
 class EmptyStateWidget(QWidget):
     """Displayed when the library is empty."""
@@ -93,7 +94,7 @@ class SkeletonStateWidget(QWidget):
         for idx in range(8):
             tile = QFrame()
             tile.setFixedSize(160, 100)
-            tile.setStyleSheet("border-radius: 8px; background-color: #26262D;")
+            tile.setStyleSheet(f"border-radius: 8px; background-color: {Gate.RAISED_HI};")
             self._tiles.append(tile)
             grid.addWidget(tile, idx // 4, idx % 4)
         layout.addWidget(grid_host, 0, Qt.AlignmentFlag.AlignCenter)
@@ -111,7 +112,7 @@ class SkeletonStateWidget(QWidget):
         self._apply_pulse(self._pulse_state)
 
     def _apply_pulse(self, bright: bool):
-        color = "#2C2C34" if bright else "#26262D"
+        color = Gate.LINE if bright else Gate.RAISED_HI
         for tile in self._tiles:
             tile.setStyleSheet(f"border-radius: 8px; background-color: {color};")
 
@@ -178,9 +179,9 @@ class StockGallery(QWidget):
         self.search_bar.setMaximumWidth(320)
         self.search_bar.setStyleSheet(f"""
             QLineEdit {{
-                background-color: rgba(255, 255, 255, 0.05);
+                background-color: {Gate.overlay(0.05)};
                 color: {C.TEXT_PRIMARY};
-                border: 1px solid rgba(255, 255, 255, 0.1);
+                border: 1px solid {Gate.overlay(0.1)};
                 border-radius: 16px;
                 padding: 4px 14px;
                 font-size: 13px;
@@ -244,7 +245,7 @@ class StockGallery(QWidget):
         top_bar_host.setStyleSheet(
             f"""
             QWidget#StockTopBar {{
-                border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+                border-bottom: 1px solid {Gate.overlay(0.05)};
                 background-color: transparent;
             }}
             """

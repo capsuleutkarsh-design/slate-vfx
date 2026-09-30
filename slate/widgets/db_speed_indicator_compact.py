@@ -9,6 +9,7 @@ from PySide6.QtGui import QColor
 import time
 from slate.core.infra.database_manager import database_manager
 import logging
+from slate.core.infra.gate import Gate
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ class DBSpeedIndicatorCompact(QWidget):
         super().__init__(parent)
         self.baseline_ms = None
         self.current_ms = 0
-        self.current_color = QColor("#87857F")
+        self.current_color = QColor(Gate.TEXT_DIM)
         
         self.setup_ui()
         self.start_monitoring()
@@ -41,11 +42,11 @@ class DBSpeedIndicatorCompact(QWidget):
         
         # Colored dot indicator
         self.dot_label = QLabel("●")
-        self.dot_label.setStyleSheet("font-size: 14px; color: #87857F;")
+        self.dot_label.setStyleSheet(f"font-size: 14px; color: {Gate.TEXT_DIM};")
         
         # Speed number
         self.speed_label = QLabel("--")
-        self.speed_label.setStyleSheet("font-size: 11px; color: #B4B1AA;")
+        self.speed_label.setStyleSheet(f"font-size: 11px; color: {Gate.TEXT_2};")
         
         layout.addWidget(self.dot_label)
         layout.addWidget(self.speed_label)
@@ -85,15 +86,15 @@ class DBSpeedIndicatorCompact(QWidget):
         """Update dot color and number"""
         # Determine color
         if ms < self.EXCELLENT:
-            color = "#5FBF8F"  # Green
+            color = Gate.OK  # Green
         elif ms < self.GOOD:
-            color = "#3EA8BF"  # Cyan
+            color = Gate.ACCENT  # Cyan
         elif ms < self.FAIR:
-            color = "#D9A441"  # Yellow
+            color = Gate.WARN  # Yellow
         elif ms < self.SLOW:
-            color = "#D9A441"  # Orange
+            color = Gate.WARN  # Orange
         else:
-            color = "#D9635F"  # Red
+            color = Gate.BAD  # Red
         
         self.current_color = QColor(color)
         
@@ -104,9 +105,9 @@ class DBSpeedIndicatorCompact(QWidget):
     
     def show_error(self):
         """Error state"""
-        self.dot_label.setStyleSheet("font-size: 14px; color: #D9635F;")
+        self.dot_label.setStyleSheet(f"font-size: 14px; color: {Gate.BAD};")
         self.speed_label.setText("ERR")
-        self.speed_label.setStyleSheet("font-size: 11px; color: #D9635F;")
+        self.speed_label.setStyleSheet(f"font-size: 11px; color: {Gate.BAD};")
     
     def update_tooltip(self):
         """Tooltip with details"""

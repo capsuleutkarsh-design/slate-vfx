@@ -3,6 +3,7 @@ from typing import List, Optional, Dict, Any
 from ..models.shot_model import Shot
 from .group_header_delegate import GROUP_HEADER_ROLE
 from slate.core.domain.departments import load_departments
+from slate.core.infra.gate import Gate
 
 
 class ShotTableModel(QAbstractTableModel):
@@ -66,11 +67,11 @@ class ShotTableModel(QAbstractTableModel):
     READ_ONLY_COLUMNS = ("reel", "shot_name", "plate_range")
 
     STATUS_COLORS = {
-        "APPROVED": "#5FBF8F",
-        "WIP": "#3EA8BF",
-        "RETAKE": "#D9A441",
-        "SENT FOR REVIEW": "#3EA8BF",
-        "YTS": "#87857F",
+        "APPROVED": Gate.OK,
+        "WIP": Gate.ACCENT,
+        "RETAKE": Gate.WARN,
+        "SENT FOR REVIEW": Gate.ACCENT,
+        "YTS": Gate.TEXT_DIM,
     }
 
     def __init__(self, shots: List[Shot] = None, user_role: str = "artist",

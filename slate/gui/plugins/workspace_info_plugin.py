@@ -9,6 +9,7 @@ from pathlib import Path
 from PySide6.QtWidgets import QFrame, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from .plugin_interface import SlatePlugin
+from slate.core.infra.gate import Gate
 
 
 class WorkspaceInfoPlugin(SlatePlugin):
@@ -45,8 +46,8 @@ class WorkspaceInfoPlugin(SlatePlugin):
         card = QFrame(self)
         card.setStyleSheet(
             "QFrame {"
-            "background-color: #1D1D22;"
-            "border: 1px solid #2C2C34;"
+            f"background-color: {Gate.RAISED};"
+            f"border: 1px solid {Gate.LINE};"
             "border-radius: 8px;"
             "}"
         )
@@ -60,7 +61,7 @@ class WorkspaceInfoPlugin(SlatePlugin):
 
         self._status_label = QLabel("")
         self._status_label.setWordWrap(True)
-        self._status_label.setStyleSheet("color: #B4B1AA;")
+        self._status_label.setStyleSheet(f"color: {Gate.TEXT_2};")
         card_layout.addWidget(self._status_label)
 
         layout.addWidget(card)

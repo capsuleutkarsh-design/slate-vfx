@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QDate
 from PySide6.QtGui import QFont, QColor
 from slate.gui.core.offline_notice import on_database_error
+from slate.core.infra.gate import Gate
 
 # Let an outage reach the @on_database_error decorator rather than becoming an
 # empty grid here. Everything else keeps the fallback it already had.
@@ -18,11 +19,11 @@ class AddMilestoneDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("New Milestone")
-        self.setStyleSheet("background-color: #1D1D22; color: white;")
+        self.setStyleSheet(f"background-color: {Gate.RAISED}; color: {Gate.TEXT};")
         layout = QFormLayout(self)
         
         self.proj_cb = QComboBox()
-        self.proj_cb.setStyleSheet("background: #26262D; color: white; padding: 4px;")
+        self.proj_cb.setStyleSheet(f"background: {Gate.RAISED_HI}; color: {Gate.TEXT}; padding: 4px;")
         
         # Populate project code dropdown.
         #
@@ -55,7 +56,7 @@ class AddMilestoneDialog(QDialog):
                 self.proj_cb.addItem("N/A")
             
         self.dep_cb = QComboBox()
-        self.dep_cb.setStyleSheet("background: #26262D; color: white; padding: 4px;")
+        self.dep_cb.setStyleSheet(f"background: {Gate.RAISED_HI}; color: {Gate.TEXT}; padding: 4px;")
         
         self.proj_cb.currentTextChanged.connect(self.update_deps)
 
@@ -80,10 +81,10 @@ class AddMilestoneDialog(QDialog):
         
         btn_layout = QHBoxLayout()
         save_btn = QPushButton("Save")
-        save_btn.setStyleSheet("background-color: #3EA8BF; font-weight: bold; padding: 5px;")
+        save_btn.setStyleSheet(f"background-color: {Gate.ACCENT}; font-weight: bold; padding: 5px;")
         save_btn.clicked.connect(self.accept)
         cancel_btn = QPushButton("Cancel")
-        cancel_btn.setStyleSheet("background-color: #87857F; font-weight: bold; padding: 5px;")
+        cancel_btn.setStyleSheet(f"background-color: {Gate.TEXT_DIM}; font-weight: bold; padding: 5px;")
         cancel_btn.clicked.connect(self.reject)
         
         btn_layout.addWidget(save_btn)
@@ -137,7 +138,7 @@ class ShiftDatesDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Shift Dates")
-        self.setStyleSheet("background-color: #1D1D22; color: white;")
+        self.setStyleSheet(f"background-color: {Gate.RAISED}; color: {Gate.TEXT};")
         layout = QVBoxLayout(self)
         
         layout.addWidget(QLabel("Shift by (days):"))
@@ -150,7 +151,7 @@ class ShiftDatesDialog(QDialog):
         
         btn_box = QHBoxLayout()
         ok_btn = QPushButton("Shift Downstream")
-        ok_btn.setStyleSheet("background-color: #D9A441; color: white; font-weight: bold;")
+        ok_btn.setStyleSheet(f"background-color: {Gate.WARN}; color: {Gate.TEXT_ON_BAD}; font-weight: bold;")
         ok_btn.clicked.connect(self.accept)
         cancel_btn = QPushButton("Cancel")
         cancel_btn.clicked.connect(self.reject)
@@ -170,8 +171,8 @@ class ProdSchedulingTab(QWidget):
         card = QFrame()
         card.setStyleSheet(f"""
             QFrame {{
-                background-color: #16161A;
-                border: 1px solid #1D1D22;
+                background-color: {Gate.PANEL};
+                border: 1px solid {Gate.RAISED};
                 border-left: 4px solid {color};
                 border-radius: 6px;
             }}
@@ -182,11 +183,11 @@ class ProdSchedulingTab(QWidget):
         
         t_label = QLabel(title)
         t_label.setFont(QFont("Inter", 10))
-        t_label.setStyleSheet("color: #87857F; font-size: 11px; font-weight: 600; text-transform: uppercase; background: transparent; border: none;")
+        t_label.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: 11px; font-weight: 600; text-transform: uppercase; background: transparent; border: none;")
         
         v_label = QLabel(str(value))
         v_label.setFont(QFont("Inter", 20, QFont.Weight.Bold))
-        v_label.setStyleSheet("color: #E8E6E1; background: transparent; border: none;")
+        v_label.setStyleSheet(f"color: {Gate.TEXT}; background: transparent; border: none;")
         
         lay.addWidget(t_label)
         lay.addWidget(v_label)
@@ -195,15 +196,15 @@ class ProdSchedulingTab(QWidget):
     def build_ui(self, main_layout):
         header_title = QLabel("Production Scheduling")
         header_title.setFont(QFont("Inter", 16, QFont.Weight.Bold))
-        header_title.setStyleSheet("color: #E8E6E1; margin-bottom: 2px;")
+        header_title.setStyleSheet(f"color: {Gate.TEXT}; margin-bottom: 2px;")
         main_layout.addWidget(header_title)
         
         # Summary Cards
         cards_lay = QHBoxLayout()
         cards_lay.setSpacing(12)
-        card1, self.lbl_active = self.create_stat_card("Active Projects", "0", "#3EA8BF")
-        card2, self.lbl_upcoming = self.create_stat_card("In Progress", "0", "#D9A441")
-        card3, self.lbl_completed = self.create_stat_card("Completed Milestones", "0", "#5FBF8F")
+        card1, self.lbl_active = self.create_stat_card("Active Projects", "0", Gate.ACCENT)
+        card2, self.lbl_upcoming = self.create_stat_card("In Progress", "0", Gate.WARN)
+        card3, self.lbl_completed = self.create_stat_card("Completed Milestones", "0", Gate.OK)
         cards_lay.addWidget(card1)
         cards_lay.addWidget(card2)
         cards_lay.addWidget(card3)
@@ -343,17 +344,17 @@ class ProdSchedulingTab(QWidget):
             
         dialog = QDialog(self)
         dialog.setWindowTitle("Update Status")
-        dialog.setStyleSheet("background-color: #1D1D22; color: white;")
+        dialog.setStyleSheet(f"background-color: {Gate.RAISED}; color: {Gate.TEXT};")
         lay = QVBoxLayout(dialog)
         lay.addWidget(QLabel("Select new status:"))
         cb = QComboBox()
         cb.addItems(["Scheduled", "In Progress", "Completed"])
-        cb.setStyleSheet("background: #26262D; padding: 4px;")
+        cb.setStyleSheet(f"background: {Gate.RAISED_HI}; padding: 4px;")
         lay.addWidget(cb)
         
         btn_box = QHBoxLayout()
         ok_btn = QPushButton("Update")
-        ok_btn.setStyleSheet("background-color: #5FBF8F; font-weight:bold;")
+        ok_btn.setStyleSheet(f"background-color: {Gate.OK}; font-weight:bold;")
         ok_btn.clicked.connect(dialog.accept)
         btn_box.addWidget(ok_btn)
         lay.addLayout(btn_box)
@@ -427,26 +428,26 @@ class ProdSchedulingTab(QWidget):
         table.setAlternatingRowColors(True)
         table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         table.verticalHeader().setDefaultSectionSize(34)
-        table.setStyleSheet("""
-            QTableWidget { 
-                background-color: #0D0D0F; 
-                color: #E8E6E1; 
-                gridline-color: #1D1D22; 
-                border: 1px solid #1D1D22; 
+        table.setStyleSheet(f"""
+            QTableWidget {{ 
+                background-color: {Gate.GROUND}; 
+                color: {Gate.TEXT}; 
+                gridline-color: {Gate.RAISED}; 
+                border: 1px solid {Gate.RAISED}; 
                 border-radius: 6px;
                 font-size: 12px; 
-            }
-            QTableWidget::item:alternate { background-color: #16161A; }
-            QTableWidget::item:selected { background-color: rgba(62, 168, 191, 0.18); color: white; }
-            QHeaderView::section { 
-                background-color: #16161A; 
-                color: #87857F; 
+            }}
+            QTableWidget::item:alternate {{ background-color: {Gate.PANEL}; }}
+            QTableWidget::item:selected {{ background-color: {Gate.tint(Gate.ACCENT, 0.18)}; color: {Gate.TEXT}; }}
+            QHeaderView::section {{ 
+                background-color: {Gate.PANEL}; 
+                color: {Gate.TEXT_DIM}; 
                 border: none;
-                border-bottom: 2px solid #1D1D22; 
-                border-right: 1px solid rgba(255, 255, 255, 0.04);
+                border-bottom: 2px solid {Gate.RAISED}; 
+                border-right: 1px solid {Gate.overlay(0.04)};
                 padding: 8px 10px; 
                 font-weight: 700;
                 font-size: 11px;
                 text-transform: uppercase;
-            }
+            }}
         """)
