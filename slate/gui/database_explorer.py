@@ -14,6 +14,13 @@ import logging
 import re
 from functools import partial
 
+# The value a cell held when it was loaded (or last saved), so a refused edit
+# can be put back.
+SAVED_VALUE_ROLE = Qt.ItemDataRole.UserRole + 1
+
+# How many rows a typed SELECT shows at most; the title says when there were more.
+SQL_RESULT_LIMIT = 5000
+
 
 def _safe_identifier(name, allowed=None):
     """
@@ -690,6 +697,9 @@ class DatabaseExplorer(QWidget):
                             item = QTableWidgetItem(str(val))
                             # Store ID for edits
                             if row_id is not None: item.setData(Qt.ItemDataRole.UserRole, row_id)
+                            # And the value as loaded, so a refused edit can
+                            # be put back instead of left showing as if saved.
+                            item.setData(SAVED_VALUE_ROLE, str(val))
                             
                             # Set Read-Only if not editable
                             if self.primary_key_col and col == self.primary_key_col:
@@ -730,18 +740,67 @@ class DatabaseExplorer(QWidget):
         val = item.text()
         if val == "NULL": val = None
         sql = f"UPDATE {self.current_table} SET {col_name} = %s WHERE {self.primary_key_col} = %s"
-        
+        row, column = item.row(), item.column()
+        previous = item.data(SAVED_VALUE_ROLE)
 
         def _do_update():
             return self.db.execute_update(sql, (val, row_id))
+
+        def _revert(reason):
+            # Put the stored value back, so the grid never shows what the
+            # database refused. It used to keep the rejected text in the cell
+            # as though it had been saved.
+            cell = self.data_grid.item(row, column)
+            if cell is not None and previous is not None:
+                self.is_loading = True
+                try:
+                    cell.setText(previous)
+                finally:
+                    self.is_loading = False
+            QMessageBox.warning(self, "Not saved",
+                                f"{col_name} was not changed:\n\n{reason}")
+
+        def _on_done(result):
+            if self._is_closing:
+                return
+            if not result:
+                _revert(getattr(result, "error", "") or "The database refused the value.")
+                return
+            if getattr(result, "rows", 1) == 0:
+                _revert("That row no longer exists - it may have been deleted by someone else.")
+                return
+            cell = self.data_grid.item(row, column)
+            if cell is not None:
+                cell.setData(SAVED_VALUE_ROLE, cell.text())
+                self._flash_saved(cell)
 
         def _on_error(msg):
             if self._is_closing:
                 return
             logging.error(f"Update failed: {msg}")
-            QMessageBox.warning(self, "Save Failed", msg)
+            _revert(msg)
 
-        self._run_async(_do_update, on_error=_on_error)
+        self._run_async(_do_update, _on_done, _on_error)
+
+    def _flash_saved(self, cell):
+        """A brief green tint on a cell that saved - the only sign it did."""
+        from PySide6.QtCore import QTimer
+        from PySide6.QtGui import QBrush, QColor
+        self.is_loading = True
+        try:
+            cell.setBackground(QBrush(QColor(95, 191, 143, 70)))
+        finally:
+            self.is_loading = False
+
+        def _clear():
+            try:
+                self.is_loading = True
+                cell.setBackground(QBrush())
+            except RuntimeError:
+                pass
+            finally:
+                self.is_loading = False
+        QTimer.singleShot(900, _clear)
 
     def apply_filter(self, text):
         text = text.lower()
@@ -789,6 +848,13 @@ class DatabaseExplorer(QWidget):
             def _on_done(result):
                 if self._is_closing:
                     return
+                if not result:
+                    QMessageBox.warning(self, "Not deleted",
+                                        getattr(result, "error", "") or "The database refused it.")
+                    return
+                if getattr(result, "rows", 1) == 0:
+                    QMessageBox.information(self, "Already gone",
+                                            "That row was not there any more.")
                 self.data_grid.removeRow(r)
 
             def _on_error(msg):
@@ -814,6 +880,11 @@ class DatabaseExplorer(QWidget):
             def _on_done(result):
                 if self._is_closing:
                     return
+                if not result:
+                    QMessageBox.critical(self, "Not cleared",
+                                         f"The stock library was not cleared:\n\n"
+                                         f"{getattr(result, 'error', '') or 'the database refused it'}")
+                    return
                 QMessageBox.information(self, "Success", "Stock Library has been cleared.")
                 if self.dashboard_view.isVisible():
                     self.dashboard_view.load_stats()
@@ -832,22 +903,45 @@ class DatabaseExplorer(QWidget):
 
         if q.upper().startswith("SELECT"):
             def _do_query():
-                return self.db.execute_query(q, fetch="all")
+                # execute_sql reports the columns, the rows and the database's
+                # own error. execute_query returned None for a bad statement,
+                # which showed as nothing at all over the previous table.
+                return self.db.execute_sql(q, max_rows=SQL_RESULT_LIMIT)
 
-            def _on_done(rows):
+            def _on_done(result):
                 if self._is_closing:
                     return
-                self.lbl_table_name.setText("SQL Result")
-                if rows:
-                    if isinstance(rows[0], dict): cols = list(rows[0].keys())
-                    else: cols = [f"Col {i}" for i in range(len(rows[0]))]
+                # Clear first: a result must never be shown over, or mixed
+                # with, the rows of the table that was open before.
+                self.is_loading = True
+                try:
+                    self.current_table = None
+                    self.primary_key_col = None
+                    self.data_grid.clear()
+                    self.data_grid.setRowCount(0)
+                    self.data_grid.setColumnCount(0)
+                    if not result.ok:
+                        self.lbl_table_name.setText("SQL Result - error")
+                        QMessageBox.critical(self, "The query failed", result.error)
+                        return
+                    count = len(result.rows)
+                    self.lbl_table_name.setText(
+                        "SQL Result - %d row%s%s" % (count, "" if count == 1 else "s",
+                                                     " (first %d shown)" % SQL_RESULT_LIMIT
+                                                     if result.truncated else ""))
+                    cols = result.columns
                     self.data_grid.setColumnCount(len(cols))
                     self.data_grid.setHorizontalHeaderLabels(cols)
-                    self.data_grid.setRowCount(len(rows))
-                    for r, row in enumerate(rows):
+                    self.data_grid.setRowCount(count)
+                    for r, row in enumerate(result.rows):
                         for c, col in enumerate(cols):
-                            val = row[col] if isinstance(row, dict) else row[c]
-                            self.data_grid.setItem(r, c, QTableWidgetItem(str(val)))
+                            val = row.get(col)
+                            item = QTableWidgetItem("NULL" if val is None else str(val))
+                            # A query result is not a table: not editable.
+                            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                            self.data_grid.setItem(r, c, item)
+                finally:
+                    self.is_loading = False
 
             def _on_error(msg):
                 if self._is_closing:
@@ -866,13 +960,19 @@ class DatabaseExplorer(QWidget):
                 return
 
             def _do_update():
-                return self.db.execute_update(q)
+                return self.db.execute_sql(q)
 
             def _on_done(result):
                 if self._is_closing:
                     return
+                if not result.ok:
+                    # It used to say "Executed." whatever the database said.
+                    QMessageBox.critical(self, "Not executed", result.error)
+                    return
                 logging.info(f"Custom SQL executed: {q[:200]}")
-                QMessageBox.information(self, "OK", "Executed.")
+                QMessageBox.information(
+                    self, "Done",
+                    "%d row%s affected." % (result.rowcount, "" if result.rowcount == 1 else "s"))
 
             def _on_error(msg):
                 if self._is_closing:
