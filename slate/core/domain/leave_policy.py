@@ -63,6 +63,11 @@ DEFAULT_POLICY = {
 
     # The length of a standard working day. Anything past it is overtime.
     "standard_day_hours": 9.0,
+
+    # A day somebody forgot to punch out of is closed at this time when they
+    # next punch in. It was a per-machine setting, so two machines could
+    # close the same forgotten day at different times.
+    "auto_logout_time": "19:30",
 }
 
 

@@ -31,6 +31,60 @@ def _reel_of(data_json) -> str:
 
 
 
+def status_and_priority(data, fallback_status="", fallback_priority=0):
+    """
+    The status and priority columns for a shot, lifted from its data.
+
+    tracking_shots keeps both twice - inside data_json and as columns that
+    other screens count by (Home, reports). Every writer must set the columns
+    from the data, or they drift: a shot edited on the board was 'Final' in
+    its data and still 'OMIT' in its column.
+    """
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except ValueError:
+            data = {}
+    if not isinstance(data, dict):
+        data = {}
+    status = data.get("status")
+    if status is None:
+        status = fallback_status or ""
+    try:
+        priority = int(data.get("priority", fallback_priority) or 0)
+    except (TypeError, ValueError):
+        try:
+            priority = int(fallback_priority or 0)
+        except (TypeError, ValueError):
+            priority = 0
+    return str(status), priority
+
+
+def shot_row_to_dict(row) -> Optional[Dict]:
+    """
+    One tracking_shots row as the dashboard reads it: the stored shot data,
+    plus the row's id, version and reel.
+
+    The reel was left out, so every caller that keyed shots by (reel, name)
+    keyed them all by ('', name) - and two shots called SH010 in different
+    reels collapsed into one. Save Changes then reported a conflict between
+    them on every save, for ever.
+    """
+    val = row.get('data_json')
+    if not val:
+        return None
+    d = json.loads(val) if isinstance(val, str) else dict(val)
+    d['version'] = row.get('version')
+    d['id'] = row.get('id')
+    reel = row.get('reel') or ""
+    d['reel'] = reel
+    if not d.get('reel_episode') and reel:
+        d['reel_episode'] = reel
+    if not d.get('shot_name') and row.get('shot_name'):
+        d['shot_name'] = row['shot_name']
+    return d
+
+
 class TrackingRepository:
     """Tracking project, shots, and tasks persistence methods extracted from PostgresManager."""
 
@@ -125,29 +179,32 @@ class TrackingRepository:
             return False
 
     def get_tracking_shots(self, project_code: str) -> List[Dict]:
-        q = "SELECT id, data_json, version FROM tracking_shots WHERE project_code=%s"
+        q = ("SELECT id, reel, shot_name, data_json, version FROM tracking_shots "
+             "WHERE project_code=%s")
         rows = self.db.execute_query(q, (project_code,)) or []
         results = []
         for r in rows:
-            val = r.get('data_json')
-            if val:
-                d = json.loads(val) if isinstance(val, str) else val
-                d['version'] = r['version']
-                d['id'] = r['id']
+            d = shot_row_to_dict(r)
+            if d is not None:
                 results.append(d)
         return results
 
     def update_tracking_shot_safe(self, project_code: str, shot_name: str, data_json: str, current_version: int, reel: str = None) -> bool:
+        """
+        Save one shot if nobody else has since. The status and priority
+        columns are updated with the data - they used to be left behind.
+        """
         timestamp = datetime.now().isoformat()
+        status, priority = status_and_priority(data_json)
         q = """
             UPDATE tracking_shots
-            SET data_json=%s, version=version+1, last_updated=%s
+            SET data_json=%s, status=%s, priority=%s, version=version+1, last_updated=%s
             WHERE project_code=%s AND reel=%s AND shot_name=%s AND version=%s
         """
         if reel is None:
             reel = _reel_of(data_json)
         return (self.db.execute_query(
-            q, (data_json, timestamp, project_code, reel, shot_name, current_version),
+            q, (data_json, status, priority, timestamp, project_code, reel, shot_name, current_version),
             fetch="rowcount") or 0) > 0
 
     def _get_tracking_tasks_columns(self) -> set:

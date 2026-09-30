@@ -102,7 +102,12 @@ class CentralAttendance:
                 VALUES (%s, %s, %s, %s, %s)
                 """
                 meta_json = json.dumps(metadata) if metadata else "{}"
-                self.db.execute_update(insert_sql, (user_id, today_date, time_str, self.pc_name, meta_json))
+                written = self.db.execute_update(insert_sql, (user_id, today_date, time_str, self.pc_name, meta_json))
+                if not written:
+                    # The database refused it; the person must not be told
+                    # they are punched in.
+                    raise RuntimeError("The punch-in was not saved: %s"
+                                       % (getattr(written, "error", "") or "the database refused it"))
                 logger.info(f"Punch IN success: {user_id} at {time_str}")
 
             # 2. PUNCH OUT
@@ -122,16 +127,22 @@ class CentralAttendance:
                     WHERE user_id = %s AND day_date = %s
                     """
                 
-                success = self.db.execute_update(update_sql, (time_str, meta_json, user_id, today_date))
-                
-                if not success:
-                    logger.warning(f"Punch OUT without IN for {user_id}. creating partial record.")
-                    insert_sql = """
-                    INSERT INTO attendance_log (user_id, day_date, punch_out, pc_name, metadata)
-                    VALUES (%s, %s, %s, %s, %s)
-                    """
-                    self.db.execute_update(insert_sql, (user_id, today_date, time_str, self.pc_name, meta_json))
-                
+                result = self.db.execute_update(update_sql, (time_str, meta_json, user_id, today_date))
+
+                if not result:
+                    raise RuntimeError("The punch-out was not saved: %s"
+                                       % (getattr(result, "error", "") or "the database refused it"))
+                # An UPDATE that matched no row is accepted by the database and
+                # changed nothing. That used to count as success - the status
+                # bar said "Successfully Logged OUT" for a day with no record
+                # at all. With no punch-in there is nothing to close, so say
+                # so; HR can still add the day with Edit Punch.
+                if getattr(result, "rows", 1) == 0:
+                    logger.warning(f"Punch OUT refused for {user_id}: no punch-in on {today_date}.")
+                    raise ValueError(
+                        "You have not punched in today, so there is nothing to punch out of. "
+                        "If you forgot to punch in, ask HR to add today's times.")
+
                 logger.info(f"Punch OUT success: {user_id} at {time_str}")
 
         except Exception as e:
@@ -144,10 +155,15 @@ class CentralAttendance:
         Auto-logout at configured shift time (default: 19:30:00) if missing.
         """
         try:
-            from ..infra.global_config import GlobalConfig
-            auto_logout_time = GlobalConfig.get("default_auto_logout_time", "19:30:00")
-            if not auto_logout_time or len(str(auto_logout_time).split(":")) < 2:
-                auto_logout_time = "19:30:00"
+            # The studio's time, from the studio policy - it was a
+            # per-machine setting, so machines closed forgotten days at
+            # different times.
+            from slate.core.domain import leave_policy as _lp
+            auto_logout_time = str(_lp.policy().get("auto_logout_time") or "19:30").strip()
+            if len(auto_logout_time.split(":")) < 2:
+                auto_logout_time = "19:30"
+            if len(auto_logout_time.split(":")) == 2:
+                auto_logout_time += ":00"
 
             sql = """
             SELECT day_date FROM attendance_log 

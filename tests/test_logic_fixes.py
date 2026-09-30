@@ -111,8 +111,10 @@ class TestLogicFixes(unittest.TestCase):
             (test_user, test_prev_date, "10:00:00", "TEST_PC", "{}")
         )
 
-        # Set custom logout time
-        GlobalConfig.set("default_auto_logout_time", "21:00:00")
+        # Set custom logout time. It is part of the studio policy now (one
+        # value for every machine), not a per-machine GlobalConfig key.
+        from slate.core.domain import leave_policy as lp
+        lp.set_overrides({"auto_logout_time": "21:00"})
 
         # Run auto-logout fix
         ca._check_and_fix_previous_day(test_user, test_today)
@@ -122,7 +124,7 @@ class TestLogicFixes(unittest.TestCase):
         self.assertEqual(row.get("punch_out"), "21:00:00")
 
         # Reset config and clean up
-        GlobalConfig.set("default_auto_logout_time", "19:30:00")
+        lp.set_overrides({})
         self.db.execute_update("DELETE FROM attendance_log WHERE user_id = %s", (test_user,))
 
     def test_it_licenses_schema_and_scan(self):

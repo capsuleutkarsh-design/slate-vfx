@@ -35,6 +35,8 @@ except ImportError:                                  # pragma: no cover
         class DatabaseUnavailableError(ConnectionError):
             """Fallback when the manager cannot be imported."""
 
+from ..infra.transaction import atomic
+
 logger = logging.getLogger(__name__)
 
 
@@ -176,12 +178,14 @@ class OnboardingService:
             if freelance and name in FREELANCE_SKIP:
                 continue
             try:
-                self.db.execute_update(
-                    "INSERT INTO onboarding_workflows "
-                    "(user_id, task_name, department, is_completed, direction, owner_team) "
-                    "VALUES (%s, %s, %s, FALSE, %s, %s)",
-                    (username, name, department, direction, team))
-                made += 1
+                # Counted only when the database took it: a refused insert
+                # used to be counted as a task laid out.
+                if self.db.execute_update(
+                        "INSERT INTO onboarding_workflows "
+                        "(user_id, task_name, department, is_completed, direction, owner_team) "
+                        "VALUES (%s, %s, %s, FALSE, %s, %s)",
+                        (username, name, department, direction, team)):
+                    made += 1
             except DatabaseUnavailableError:
                 raise
             except Exception:
@@ -246,10 +250,12 @@ class OnboardingService:
 
     def complete(self, task_id, done: bool = True) -> bool:
         try:
-            self.db.execute_update(
+            # True only when a checklist line was actually changed - a refused
+            # write, or an id that no longer exists, is not "done".
+            result = self.db.execute_update(
                 "UPDATE onboarding_workflows SET is_completed = %s WHERE id = %s",
                 (bool(done), task_id))
-            return True
+            return bool(getattr(result, "changed", result))
         except DatabaseUnavailableError:
             raise
         except Exception:
@@ -272,17 +278,25 @@ class OnboardingService:
         The assignment row is what offboarding reads to know what to collect.
         The inventory's own assigned_to is kept in step so the fleet view agrees
         with the ledger.
+
+        All of it happens in one transaction. It used to be three separate
+        statements whose results were never looked at: when the ledger insert
+        was refused (a machine name longer than the column) the inventory
+        still said "issued", the tab said "Issued", and offboarding - which
+        reads the ledger - would never ask for the machine back.
         """
         try:
-            self.db.execute_update(
-                "INSERT INTO asset_assignments "
-                "(machine_name, user_id, issued_on, issued_by, note) "
-                "VALUES (%s, %s, %s, %s, %s)",
-                (machine_name, username, date.today(), by_whom, note))
-            self.db.execute_update(
-                "UPDATE hardware_inventory SET assigned_to = %s, status = 'Active' "
-                "WHERE machine_name = %s", (username, machine_name))
-            self._mark_asset_task(username, JOINING, "Workstation issued", machine_name)
+            with atomic(self.db) as tx:
+                tx.write(
+                    "INSERT INTO asset_assignments "
+                    "(machine_name, user_id, issued_on, issued_by, note) "
+                    "VALUES (%s, %s, %s, %s, %s)",
+                    (machine_name, username, date.today(), by_whom, note))
+                tx.write(
+                    "UPDATE hardware_inventory SET assigned_to = %s, status = 'Active' "
+                    "WHERE machine_name = %s", (username, machine_name),
+                    expect_rows=True)
+                self._mark_asset_task(username, JOINING, "Workstation issued", machine_name, tx)
             return True
         except DatabaseUnavailableError:
             raise
@@ -291,22 +305,28 @@ class OnboardingService:
             return False
 
     def return_machine(self, machine_name: str, username: str) -> bool:
-        """Take it back, and free it in the inventory."""
+        """
+        Take it back, and free it in the inventory - together, or not at all.
+
+        Returns False when there was no open loan for this person and machine:
+        "returned" must not be reported for a loan that was never recorded.
+        """
         try:
-            self.db.execute_update(
-                "UPDATE asset_assignments SET returned_on = %s "
-                "WHERE machine_name = %s AND LOWER(user_id) = LOWER(%s) "
-                "AND returned_on IS NULL",
-                (date.today(), machine_name, username))
-            self.db.execute_update(
-                "UPDATE hardware_inventory SET assigned_to = NULL, status = 'Available' "
-                "WHERE machine_name = %s AND status <> 'Repair'", (machine_name,))
-            # A machine that came back broken stays flagged for repair - it is
-            # free of its owner but not free to hand to somebody else.
-            self.db.execute_update(
-                "UPDATE hardware_inventory SET assigned_to = NULL "
-                "WHERE machine_name = %s", (machine_name,))
-            self._mark_asset_task(username, LEAVING, "Workstation returned", machine_name)
+            with atomic(self.db) as tx:
+                tx.write(
+                    "UPDATE asset_assignments SET returned_on = %s "
+                    "WHERE machine_name = %s AND LOWER(user_id) = LOWER(%s) "
+                    "AND returned_on IS NULL",
+                    (date.today(), machine_name, username), expect_rows=True)
+                tx.write(
+                    "UPDATE hardware_inventory SET assigned_to = NULL, status = 'Available' "
+                    "WHERE machine_name = %s AND status <> 'Repair'", (machine_name,))
+                # A machine that came back broken stays flagged for repair - it is
+                # free of its owner but not free to hand to somebody else.
+                tx.write(
+                    "UPDATE hardware_inventory SET assigned_to = NULL "
+                    "WHERE machine_name = %s", (machine_name,))
+                self._mark_asset_task(username, LEAVING, "Workstation returned", machine_name, tx)
             return True
         except DatabaseUnavailableError:
             raise
@@ -314,19 +334,25 @@ class OnboardingService:
             logger.exception("return_machine failed")
             return False
 
-    def _mark_asset_task(self, username, direction, task_name, machine_name):
-        """Tick the matching checklist line, and record which machine it was."""
+    def _mark_asset_task(self, username, direction, task_name, machine_name, tx=None):
+        """
+        Tick the matching checklist line, and record which machine it was.
+
+        Inside issue/return this runs in their transaction (tx). A person with
+        no checklist simply matches no row, which is fine.
+        """
+        sql = ("UPDATE onboarding_workflows SET is_completed = TRUE, asset_name = %s "
+               "WHERE LOWER(user_id) = LOWER(%s) AND direction = %s AND task_name = %s")
+        params = (machine_name, username, direction, task_name)
+        if tx is not None:
+            tx.write(sql, params)
+            return
         try:
-            self.db.execute_update(
-                "UPDATE onboarding_workflows SET is_completed = TRUE, asset_name = %s "
-                "WHERE LOWER(user_id) = LOWER(%s) AND direction = %s AND task_name = %s",
-                (machine_name, username, direction, task_name))
+            self.db.execute_update(sql, params)
         except DatabaseUnavailableError:
             raise
         except Exception:
             logger.exception("_mark_asset_task failed")
-            pass
-
     def held_by_machine(self, machine_name: str) -> list:
         """
         Who currently has this machine, if anybody.

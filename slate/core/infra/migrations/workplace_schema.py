@@ -90,7 +90,7 @@ TABLES_PG = {
     "asset_assignments": """
         CREATE TABLE IF NOT EXISTS asset_assignments (
             id SERIAL PRIMARY KEY,
-            machine_name VARCHAR(120) NOT NULL,
+            machine_name TEXT NOT NULL,
             user_id VARCHAR(80) NOT NULL,
             issued_on DATE,
             returned_on DATE,
@@ -309,7 +309,7 @@ COLUMNS = [
 
     ("onboarding_workflows", "direction", "VARCHAR(16)", "TEXT"),
     ("onboarding_workflows", "owner_team", "VARCHAR(16)", "TEXT"),
-    ("onboarding_workflows", "asset_name", "VARCHAR(120)", "TEXT"),
+    ("onboarding_workflows", "asset_name", "TEXT", "TEXT"),
 ]
 
 INDEXES = [
@@ -359,6 +359,13 @@ def _column_exists(db, table: str, column: str) -> bool:
 # enforce column types and takes 1, 0, true and false alike.
 TYPE_FIXES = (
     ("leave_requests", "half_day", "boolean", "(half_day::int <> 0)", "FALSE"),
+    # The loan ledger must hold any name the inventory holds. The inventory's
+    # machine_name is TEXT and the ledger's was VARCHAR(120), so issuing a
+    # machine with a longer name was refused - and, before writes reported
+    # their result, reported as issued. None: no default to put back.
+    ("asset_assignments", "machine_name", "text", "machine_name::text", None),
+    # The checklist line that records which machine went out - same reason.
+    ("onboarding_workflows", "asset_name", "text", "asset_name::text", None),
 )
 
 
@@ -423,17 +430,22 @@ def apply_migration(db) -> bool:
             if not current or current == wanted:
                 continue
             try:
-                db.execute_update(
-                    "ALTER TABLE %s ALTER COLUMN %s DROP DEFAULT, "
-                    "ALTER COLUMN %s TYPE %s USING %s, "
-                    "ALTER COLUMN %s SET DEFAULT %s"
-                    % (table, column, column, wanted, using, column, default))
+                if default is None:
+                    db.execute_update(
+                        "ALTER TABLE %s ALTER COLUMN %s TYPE %s USING %s"
+                        % (table, column, wanted, using))
+                else:
+                    db.execute_update(
+                        "ALTER TABLE %s ALTER COLUMN %s DROP DEFAULT, "
+                        "ALTER COLUMN %s TYPE %s USING %s, "
+                        "ALTER COLUMN %s SET DEFAULT %s"
+                        % (table, column, column, wanted, using, column, default))
                 if _column_type(db, table, column) == wanted:
                     converted += 1
                     logger.info("Converted %s.%s from %s to %s.", table, column, current, wanted)
                 else:
-                    logger.error("Could not convert %s.%s from %s to %s; leave "
-                                 "requests will not save until it is.", table, column, current, wanted)
+                    logger.error("Could not convert %s.%s from %s to %s; writes to "
+                                 "that table may be refused until it is.", table, column, current, wanted)
             except Exception as exc:
                 logger.error("Converting %s.%s to %s failed: %s", table, column, wanted, exc)
 

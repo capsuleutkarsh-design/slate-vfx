@@ -504,15 +504,15 @@ class UserManager:
 
         if success:
             self.audit.log_user_change("System", uid, f"Updated roles: {roles}")
-        return success
+        return bool(success)
 
     MIN_PASSWORD_LENGTH = 6
 
     def set_must_change_password(self, username: str, required: bool) -> bool:
         db = self._get_db()
-        return db.execute_update(
+        return bool(db.execute_update(
             "UPDATE ut_users SET must_change_password=%s WHERE LOWER(username)=LOWER(%s)",
-            (1 if required else 0, username.strip()))
+            (1 if required else 0, username.strip())))
 
     def change_own_password(self, username: str, current: str, new: str):
         """
@@ -558,7 +558,7 @@ class UserManager:
         success = db.execute_update("DELETE FROM ut_users WHERE LOWER(username)=LOWER(%s)", (u.strip(),))
         if success:
             self.audit.log_user_change("System", u, "Deleted")
-        return success
+        return bool(success)
 
     def get_available_roles(self) -> List[str]:
         db = self._get_db()
@@ -614,7 +614,7 @@ class UserManager:
         else:
             ok = db.execute_update("INSERT INTO ut_roles (role_name, permissions) VALUES (%s, %s)", (role, tabs_str))
         self._forget_cached_abilities()
-        return ok
+        return bool(ok)
 
     def create_role(self, role: str, tabs: List[str]) -> bool:
         return self.update_role_permissions(role, tabs)
@@ -658,7 +658,7 @@ class UserManager:
         db = self._get_db()
         ok = db.execute_update("DELETE FROM ut_roles WHERE role_name=%s", (role,))
         self._forget_cached_abilities()
-        return ok
+        return bool(ok)
 
     @staticmethod
     def _forget_cached_abilities():

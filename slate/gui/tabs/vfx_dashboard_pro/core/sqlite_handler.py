@@ -11,6 +11,11 @@ from slate.core.domain.departments import department_keys
 from slate.core.infra.database_manager import DatabaseManager
 
 
+def _shot_key(reel, shot_name) -> Tuple[str, str]:
+    """A shot's identity within a project: its reel and its name."""
+    return (str(reel or "").strip().lower(), str(shot_name or "").strip().lower())
+
+
 class StaleDataError(Exception):
     """Raised when trying to save a shot that has been modified by another user."""
 
@@ -25,12 +30,18 @@ class SQLiteHandler:
         self,
         project_code: str,
         db_manager: DatabaseManager = None,
-        user_id: int = 1,
+        user_id: int = None,
         user_role: str = "artist",
         department_family: str = "",
+        username: str = "",
     ):
         self.project_code = project_code
-        self.user_id = int(user_id or 1)
+        # The numeric id is kept for callers that still pass it, but history
+        # is written under the username - the identity the rest of the app
+        # uses. It used to be "get_user_id(display name) or 1", so any
+        # mismatch recorded the admin as the author of the change.
+        self.user_id = int(user_id) if str(user_id or "").strip().isdigit() else None
+        self.username = str(username or "").strip()
         # The department a scoped role (a lead) is confined to. Empty means
         # the person's job title named no department, so a scoped role can
         # edit nothing until an admin sets one.
@@ -278,29 +289,49 @@ class SQLiteHandler:
         except Exception as e:
             logging.debug(f"Notification failed for status update: {e}")
 
-    def _log_change(self, entity_type: str, entity_id: str, action: str, field: str, old_val, new_val):
+    def _log_change(self, entity_type: str, entity_id: str, action: str, field: str, old_val, new_val,
+                    shot: Optional[Shot] = None, department: str = ""):
+        """
+        One line of history, under the signed-in person's username and with
+        the shot's id, reel and department in columns of their own (so a
+        shot's history is found by id, not by LIKE on a name).
+        """
+        if not self.username:
+            logging.error("History not written for %s %s: this dashboard does not know "
+                          "who is signed in.", entity_id, field)
+            return
+        details = {}
+        if shot is not None:
+            shot_id = getattr(shot, "id", None)
+            details = {
+                "shot_id": int(shot_id) if shot_id and int(shot_id) > 0 else None,
+                "shot_name": shot.shot_name,
+                "reel": str(getattr(shot, "reel_episode", "") or ""),
+                "department": department or "",
+            }
         try:
             self.db_manager.log_change_event(
                 self.project_code,
                 entity_type,
                 entity_id,
-                self.user_id,
+                self.username,
                 action,
                 field,
                 old_val,
                 new_val,
+                **details,
             )
         except Exception as e:
-            logging.debug(f"History log write failed: {e}")
+            logging.warning(f"History log write failed: {e}")
 
     def _log_shot_and_task_changes(self, shot: Shot, old_data: Dict[str, Any]):
         old_status = old_data.get("status")
         if old_status != shot.status:
-            self._log_change("shot", shot.shot_name, "UPDATE", "status", old_status, shot.status)
+            self._log_change("shot", shot.shot_name, "UPDATE", "status", old_status, shot.status, shot)
 
         old_assigned = old_data.get("assigned_artist")
         if old_assigned != shot.assigned_artist:
-            self._log_change("shot", shot.shot_name, "ASSIGN", "assigned_artist", old_assigned, shot.assigned_artist)
+            self._log_change("shot", shot.shot_name, "ASSIGN", "assigned_artist", old_assigned, shot.assigned_artist, shot)
             self._notify_assignment(shot.shot_name, old_assigned or "", shot.assigned_artist or "", "comp")
 
         old_departments = old_data.get("departments")
@@ -327,6 +358,8 @@ class SQLiteHandler:
                     f"{dept_key}_status",
                     old_dept_status,
                     new_dept.status,
+                    shot,
+                    dept_key,
                 )
                 self._notify_status(shot.shot_name, new_dept.artist or "", old_dept_status, new_dept.status or "")
 
@@ -338,6 +371,8 @@ class SQLiteHandler:
                     f"{dept_key}_artist",
                     old_dept_artist,
                     new_dept.artist,
+                    shot,
+                    dept_key,
                 )
                 self._notify_assignment(shot.shot_name, old_dept_artist or "", new_dept.artist or "", dept_key)
 
@@ -401,16 +436,19 @@ class SQLiteHandler:
         # Concurrency safety: detect stale shots before bulk updating
         if not force:
             existing_rows = self.db_manager.get_tracking_shots(self.project_code) or []
+            # Keyed by (reel, name): the reel is part of a shot's identity.
+            # There is no ('', name) fallback - that is what made SH010 in
+            # R01 and SH010 in R02 one key, and every save a "conflict".
             db_version_map = {
-                (str(r.get("reel", "") or "").strip().lower(), str(r.get("shot_name", "")).strip().lower()): int(r.get("version") or 0)
+                _shot_key(r.get("reel"), r.get("shot_name")): int(r.get("version") or 0)
                 for r in existing_rows if r.get("shot_name")
             }
-            
+
             stale_shots = []
             for shot in shots:
                 current_v = int(getattr(shot, "version", 0) or 0)
-                shot_key = (str(getattr(shot, "reel_episode", "") or "").strip().lower(), str(shot.shot_name or "").strip().lower())
-                db_v = db_version_map.get(shot_key, db_version_map.get(("", shot_key[1]), 0))
+                shot_key = _shot_key(getattr(shot, "reel_episode", ""), shot.shot_name)
+                db_v = db_version_map.get(shot_key, 0)
                 if current_v != 0 and db_v != 0 and current_v != db_v:
                     stale_shots.append(f"'{shot.shot_name}' (local v{current_v} vs db v{db_v})")
             
@@ -438,14 +476,13 @@ class SQLiteHandler:
         # Keep relational task table in sync for board/assignment features.
         rows = self.db_manager.get_tracking_shots(self.project_code) or []
         row_by_key = {
-            (str(r.get("reel", "") or "").strip().lower(), str(r.get("shot_name", "")).strip().lower()): r
+            _shot_key(r.get("reel"), r.get("shot_name")): r
             for r in rows if r.get("shot_name")
         }
 
         tasks_payload = []
         for shot in shots:
-            shot_key = (str(getattr(shot, "reel_episode", "") or "").strip().lower(), str(shot.shot_name or "").strip().lower())
-            row = row_by_key.get(shot_key) or row_by_key.get(("", shot_key[1]))
+            row = row_by_key.get(_shot_key(getattr(shot, "reel_episode", ""), shot.shot_name))
             if not row:
                 continue
             shot.id = int(row.get("id") or -1)

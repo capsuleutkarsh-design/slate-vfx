@@ -29,15 +29,14 @@ from .user_repository import UserRepository
 MAX_POOL_PER_CLIENT = 2
 
 
-class DatabaseUnavailableError(ConnectionError):
-    """
-    The database could not be reached, so this operation did not happen.
-
-    Raised instead of quietly returning "no rows". A read that silently returns
-    nothing looks like an empty project; a write that silently does nothing
-    looks like a successful save. Both are worse than an error message, and
-    both are exactly what a connection shortage produces.
-    """
+# One definition for both backends, so "except DatabaseUnavailableError" catches
+# an outage whichever database is behind the manager. Re-exported from here
+# because this is where every existing caller imports it from.
+from .db_results import (  # noqa: E402
+    DatabaseUnavailableError, DatabaseWriteError, NoRowsError, SqlResult, WriteResult,
+    classify_error, error_text, is_legacy_write_fetch, is_write_statement,
+)
+from .transaction import AtomicUnit  # noqa: E402
 
 
 def _client_identity() -> str:
@@ -860,7 +859,11 @@ class PostgresManager:
             field_changed TEXT DEFAULT '',
             old_value TEXT DEFAULT '',
             new_value TEXT DEFAULT '',
-            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            shot_id INTEGER,
+            shot_name TEXT,
+            reel TEXT,
+            department TEXT
         );
         
         CREATE TABLE IF NOT EXISTS ut_attendance (
@@ -888,7 +891,9 @@ class PostgresManager:
             punch_in TEXT,
             punch_out TEXT,
             pc_name TEXT DEFAULT '',
-            metadata TEXT DEFAULT '{}',
+            -- JSONB: the attendance code merges into it with "||". On TEXT
+            -- that concatenated strings and produced invalid JSON.
+            metadata JSONB DEFAULT '{}'::jsonb,
             UNIQUE(user_id, day_date)
         );
 
@@ -1055,65 +1060,39 @@ class PostgresManager:
                 except Exception as e:
                     logging.exception(f"Error returning connection to pool: {e}")
             
-    def execute_query(self, query: str, params: tuple = None, fetch: str = "all") -> Any:
+    # ------------------------------------------------------------------
+    # Running statements
+    #
+    # See db_results.py for the contract. In short: reads return rows (or
+    # None when the database refused the statement), writes return a
+    # WriteResult, an outage raises DatabaseUnavailableError. The SQLite
+    # manager keeps exactly the same contract.
+    # ------------------------------------------------------------------
+
+    _last_error_local = threading.local()
+
+    def last_error(self) -> str:
         """
-        Execute database query with circuit breaker protection and smart transaction management.
-        
-        Automatically commits on write operations (INSERT, UPDATE, DELETE).
-        READ operations (SELECT) don't trigger unnecessary commits.
-        Auto-rollback on errors. Includes retry logic and circuit breaker protection.
-        
-        Args:
-            query: SQL query string
-            params: Query parameters (tuple)
-            fetch: Result fetch mode ("all", "one", "rowcount", "lastrowid", or None)
-            
-        Returns:
-            Query results based on fetch mode
-            
-        Raises:
-            CircuitBreakerError: If database circuit is open
+        Why the most recent statement on this thread was refused, or ''.
+
+        For read callers that only get None back and want to say why. Writes
+        carry their own reason on the WriteResult.
         """
-        def _execute_with_retry():
-            """Inner function that performs the actual query execution"""
-            with self.get_connection() as conn:
-                with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                    cur.execute(query, params)
-                    
-                    # SMART AUTO-COMMIT: Only commit on write operations
-                    is_write_operation = False
-                    if query:
-                        is_write_operation = bool(re.search(
-                            r'^\s*(?:--.*?\n\s*|\/\*.*?\*\/\s*)*(?:WITH\s+.*?\s+)?\b(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE)\b', 
-                            query, 
-                            re.IGNORECASE | re.DOTALL
-                        ))
-                    
-                    if is_write_operation:
-                        conn.commit()
-                        logging.debug("Transaction committed for write operation")
-                    # READ operations (SELECT) don't need commit - more efficient!
-                    
-                    # Fetch results
-                    if fetch == "all": 
-                        return cur.fetchall()
-                    elif fetch == "one":
-                        return cur.fetchone()
-                    elif fetch == "rowcount":
-                        return cur.rowcount
-                    elif fetch == "lastrowid": 
-                        # Postgres requires RETURNING id
-                        # Assuming the query already had RETURNING id
-                        res = cur.fetchone()
-                        if not res: return None
-                        return list(res.values())[0] if hasattr(res, 'values') else res[0]
-                    elif fetch == "none":
-                        return None
-        
+        return getattr(self._last_error_local, "text", "") or ""
+
+    def _remember_error(self, text: str = "") -> None:
+        self._last_error_local.text = text or ""
+
+    def _guarded(self, work):
+        """
+        Run work() with the retry strategy and circuit breaker, turning every
+        way the database can be unreachable into DatabaseUnavailableError.
+        A refused statement (a bad column, a constraint) passes through as the
+        driver's own exception - it is a bug or bad input, not an outage.
+        """
         try:
-            # Apply circuit breaker and retry strategy
             return self._circuit_breaker.call(
-                lambda: self._retry_strategy.execute(_execute_with_retry)
+                lambda: self._retry_strategy.execute(work)
             )
         except CircuitBreakerError as e:
             # The database is unreachable, not empty. Saying so is the whole
@@ -1126,37 +1105,233 @@ class PostgresManager:
             ) from e
         except (ConnectionError, psycopg2.OperationalError,
                 psycopg2.InterfaceError) as e:
-            logging.error(f"Database unreachable: {query[:100]}... Error: {e}")
+            if isinstance(e, DatabaseUnavailableError):
+                raise
             raise DatabaseUnavailableError(
                 "The database could not be reached, so nothing was read or "
                 "saved. Your work has not been lost - try again in a moment."
             ) from e
-        except Exception as e:
-            # A genuine SQL problem (bad column, constraint) - unchanged
-            # behaviour, because that is a bug to fix, not an outage to survive.
-            logging.exception(f"Query failed after retries: {query[:100]}... Error: {e}")
-            return None
-    
-    def execute_update(self, query: str, params: tuple = None) -> bool:
+
+    def execute_query(self, query: str, params: tuple = None, fetch: str = "all") -> Any:
         """
-        Execute an update query (INSERT, UPDATE, DELETE).
-        
-        This method is a wrapper around execute_query for write operations,
-        explicitly returning a boolean indicating success.
+        Run one statement.
+
+        fetch:
+            "all"       list of rows (dicts); [] for a statement with no result
+            "one"       one row or None
+            "rowcount"  rows changed
+            "lastrowid" the first column of the first returned row - the
+                        statement needs "RETURNING id"
+            False / None / "none"
+                        a write: returns a WriteResult (see write())
+
+        Writes commit on their own. A statement the database refuses is
+        logged and returns None (or a failed WriteResult); why is available
+        from last_error(). An unreachable database raises
+        DatabaseUnavailableError.
         """
+        if is_legacy_write_fetch(fetch):
+            return self.write(query, params)
+
+        def _execute_with_retry():
+            """Inner function that performs the actual query execution"""
+            with self.get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute(query, params)
+
+                    # SMART AUTO-COMMIT: Only commit on write operations
+                    if is_write_statement(query):
+                        conn.commit()
+                        logging.debug("Transaction committed for write operation")
+                    # READ operations (SELECT) don't need commit - more efficient!
+
+                    has_rows = cur.description is not None
+                    if fetch == "all":
+                        # An UPDATE run through the default mode has nothing
+                        # to fetch. It used to raise "no results to fetch"
+                        # after the commit, so a write that worked was logged
+                        # as a failure and returned None.
+                        return cur.fetchall() if has_rows else []
+                    elif fetch == "one":
+                        return cur.fetchone() if has_rows else None
+                    elif fetch == "rowcount":
+                        return cur.rowcount
+                    elif fetch == "lastrowid":
+                        # Postgres requires RETURNING id
+                        if not has_rows:
+                            return None
+                        res = cur.fetchone()
+                        if not res: return None
+                        return list(res.values())[0] if hasattr(res, 'values') else res[0]
+                    raise ValueError(f"Unknown fetch mode {fetch!r}")
+
         try:
-            # execute_query already handles commit for write operations
-            result = self.execute_query(query, params, fetch="rowcount")
-            return result is not None and result >= 0 # rowcount can be 0 for no-op updates
-        except DatabaseUnavailableError:
-            # An outage is not a failed update, it is an update that never
-            # happened. Callers treat False as "rejected"; this must not be
-            # mistaken for that.
+            result = self._guarded(_execute_with_retry)
+            self._remember_error("")
+            return result
+        except DatabaseUnavailableError as e:
+            logging.error(f"Database unreachable: {query[:100]}... Error: {e.__cause__ or e}")
             raise
         except Exception as e:
-            logging.exception(f"Update failed: {query[:100]}... Error: {e}")
-            return False
-    
+            # A genuine SQL problem (bad column, constraint) - None, as it has
+            # always been for reads, because that is a bug to fix, not an
+            # outage to survive. The reason is kept for last_error().
+            self._remember_error(error_text(e))
+            logging.exception(f"Query failed after retries: {query[:100]}... Error: {e}")
+            return None
+
+    def write(self, query: str, params: tuple = None, *, strict: bool = False) -> WriteResult:
+        """
+        Run one INSERT / UPDATE / DELETE / DDL statement and say what happened.
+
+        Returns a WriteResult: truthy when the database accepted it, with
+        .rows changed, .last_id when the statement has "RETURNING id", and
+        .error / .kind when it was refused. strict=True raises
+        DatabaseWriteError instead of returning a refusal. An unreachable
+        database raises DatabaseUnavailableError either way.
+        """
+        def _execute():
+            with self.get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute(query, params)
+                    rows = cur.rowcount
+                    last_id = None
+                    if cur.description is not None:
+                        first = cur.fetchone()
+                        if first:
+                            last_id = (list(first.values())[0]
+                                       if hasattr(first, "values") else first[0])
+                    conn.commit()
+                    return WriteResult(True, rows=rows, last_id=last_id)
+
+        try:
+            result = self._guarded(_execute)
+        except DatabaseUnavailableError as e:
+            logging.error(f"Database unreachable: {query[:100]}... Error: {e.__cause__ or e}")
+            raise
+        except Exception as e:
+            result = WriteResult.failed(e)
+            logging.error("Write refused: %s | %s", result.error, " ".join(query.split())[:160])
+
+        self._remember_error(result.error)
+        if strict:
+            result.raise_for_error()
+        return result
+
+    def execute_update(self, query: str, params: tuple = None) -> WriteResult:
+        """
+        Execute an update query (INSERT, UPDATE, DELETE).
+
+        Returns a WriteResult - truthy when the database accepted the
+        statement, as the boolean this used to return was. Whether it changed
+        anything is .rows: an UPDATE matching nothing is accepted with rows 0,
+        and callers for whom that means "nothing happened" must check it.
+        An outage raises DatabaseUnavailableError: it is not a failed update,
+        it is an update that never happened.
+        """
+        return self.write(query, params)
+
+    def execute_sql(self, query: str, params: tuple = None, max_rows: Optional[int] = None) -> SqlResult:
+        """
+        Run a statement somebody typed and report everything about it.
+
+        Returns an SqlResult with the columns and rows of a query (at most
+        max_rows), the rows changed by a write, or the database's reason for
+        refusing. Nothing is swallowed and nothing is guessed. An unreachable
+        database raises DatabaseUnavailableError.
+        """
+        def _execute():
+            with self.get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute(query, params)
+                    if cur.description is not None:
+                        columns = [d[0] for d in cur.description]
+                        if max_rows is not None and max_rows >= 0:
+                            rows = cur.fetchmany(max_rows + 1)
+                            truncated = len(rows) > max_rows
+                            rows = rows[:max_rows]
+                        else:
+                            rows, truncated = cur.fetchall(), False
+                        # A data-changing statement with RETURNING still needs
+                        # its commit; a plain SELECT does not mind one.
+                        conn.commit()
+                        return SqlResult(columns, [dict(r) for r in rows],
+                                         rowcount=len(rows), truncated=truncated, is_query=True)
+                    rowcount = cur.rowcount
+                    conn.commit()
+                    return SqlResult(rowcount=max(rowcount, 0), is_query=False)
+
+        try:
+            # Not retried: a typed statement may not be safe to run twice.
+            return self._circuit_breaker.call(_execute)
+        except CircuitBreakerError as e:
+            raise DatabaseUnavailableError(
+                "The database is not responding, so the statement did not run.") from e
+        except (ConnectionError, psycopg2.OperationalError, psycopg2.InterfaceError) as e:
+            if isinstance(e, DatabaseUnavailableError):
+                raise
+            raise DatabaseUnavailableError(
+                "The database could not be reached, so the statement did not run.") from e
+        except Exception as e:
+            return SqlResult(error=error_text(e), kind=classify_error(e))
+
+    @contextmanager
+    def atomic(self):
+        """
+        Several statements that happen together or not at all.
+
+            with db.atomic() as tx:
+                tx.write("INSERT INTO asset_assignments ... VALUES (%s, %s)", (m, u))
+                tx.write("UPDATE hardware_inventory SET assigned_to=%s WHERE machine_name=%s",
+                         (u, m), expect_rows=True)
+
+        tx.write() returns a WriteResult and raises DatabaseWriteError when the
+        database refuses a statement (or NoRowsError when expect_rows=True and
+        nothing matched), which rolls the whole block back. tx.query() reads
+        within the same transaction. Parameters are %s on both backends.
+        Leaving the block normally commits; any exception rolls back and is
+        re-raised. An unreachable database raises DatabaseUnavailableError.
+
+        Use tx, not db.execute_*, inside the block: those run on their own
+        connection and commit on their own.
+        """
+        self._ensure_not_shutting_down()
+        try:
+            self._init_pool()
+            with self._pool_lock:
+                current_pool = self._connection_pool
+            if current_pool is None:
+                raise ConnectionError("Database pool is not initialized.")
+            conn = current_pool.getconn()
+        except (ConnectionError, PoolError, psycopg2.OperationalError, psycopg2.InterfaceError) as e:
+            raise DatabaseUnavailableError(
+                "The database could not be reached, so nothing was saved.") from e
+
+        unit = AtomicUnit(
+            conn, cursor_factory=RealDictCursor,
+            is_unavailable=lambda exc: isinstance(
+                exc, (psycopg2.OperationalError, psycopg2.InterfaceError)))
+        try:
+            yield unit
+            conn.commit()
+        except BaseException as e:
+            try:
+                conn.rollback()
+            except Exception as exc:
+                logging.debug("Rollback after a failed atomic block skipped: %s", exc)
+            if isinstance(e, (psycopg2.OperationalError, psycopg2.InterfaceError)):
+                raise DatabaseUnavailableError(
+                    "The database connection was lost, so nothing was saved.") from e
+            raise
+        finally:
+            try:
+                if self.__class__._is_shutting_down:
+                    conn.close()
+                else:
+                    current_pool.putconn(conn)
+            except Exception as e:
+                logging.exception(f"Error returning an atomic connection to the pool: {e}")
+
     @contextmanager
     def transaction(self):
         """
@@ -1442,52 +1617,24 @@ class PostgresManager:
     def get_compliance_data(self): return {'audit_trail': []}
     def export_data(self, table, path): return True
 
-    def log_change_event(self, project_code, entity_type, entity_id, user_id, action_type, field, old_val, new_val):
+    def log_change_event(self, project_code, entity_type, entity_id, user_id, action_type,
+                         field, old_val, new_val, **shot):
+        """
+        One line of change history. user_id is the author's username (see
+        change_history.py); shot may carry shot_id, shot_name, reel and
+        department. Returns the WriteResult.
+        """
+        from .change_history import log_change
+        return log_change(self, project_code, entity_type, entity_id, user_id, action_type,
+                          field, old_val, new_val, **shot)
 
-        q = """
-            INSERT INTO change_history 
-            (project_code, entity_type, entity_id, user_id, action_type, field_changed, old_value, new_value)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        """
-        self.execute_query(q, (project_code, entity_type, entity_id, user_id, action_type, field, str(old_val), str(new_val)), fetch="none")
-
-    def get_history(self, project_code: str = None, shot_name: str = None, limit: int = 200) -> List[Dict[str, Any]]:
-        """
-        Fetch audit history globally, for a project, or a specific shot.
-        """
+    def get_history(self, project_code=None, shot_name=None, limit=200, **shot):
+        """History, newest first - see change_history.read_history()."""
+        from .change_history import read_history
         try:
-            where_clauses = ["1=1"]  # always true fallback
-            params = []
-
-            if project_code:
-                where_clauses.append("ch.project_code=%s")
-                params.append(project_code)
-
-            if shot_name:
-                where_clauses.append("(ch.entity_id=%s OR ch.entity_id LIKE %s)")
-                params.append(shot_name)
-                params.append(f"{shot_name}_%")
-
-            params.append(int(limit))
-
-            query = f"""
-                SELECT
-                    ch.timestamp,
-                    COALESCE(u.display_name, u.username, 'Unknown') AS user_name,
-                    ch.field_changed,
-                    ch.old_value,
-                    ch.new_value,
-                    ch.entity_type,
-                    ch.entity_id,
-                    ch.action_type
-                FROM change_history ch
-                LEFT JOIN ut_users u ON u.username = ch.user_id::text
-                WHERE {' AND '.join(where_clauses)}
-                ORDER BY ch.timestamp DESC
-                LIMIT %s
-            """
-            rows = self.execute_query(query, tuple(params)) or []
-            return [dict(r) for r in rows]
+            return read_history(self, project_code, shot_name, limit, **shot)
+        except DatabaseUnavailableError:
+            raise
         except Exception as e:
             logging.exception(f"Failed to fetch history for project={project_code}, shot={shot_name}: {e}")
             return []
