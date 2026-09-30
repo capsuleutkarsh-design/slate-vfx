@@ -1259,7 +1259,9 @@ class DashboardWidget(
         if not self.current_project:
             return
             
-        dialog = HistoryDialog(self.current_project.code, shot.shot_name, self)
+        dialog = HistoryDialog(self.current_project.code, shot.shot_name, self,
+                               shot_id=getattr(shot, "id", None),
+                               reel=getattr(shot, "reel_episode", None))
         dialog.exec()
         
     def on_shot_save(self, shot):

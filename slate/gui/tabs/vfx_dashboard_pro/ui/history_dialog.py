@@ -3,14 +3,19 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QTableWidget,
 from ..utils.history import HistoryManager
 from slate.core.infra.database_manager import database_manager
 from slate.core.infra.design_tokens import ColorTokens as C, TypographyTokens as T
+from slate.gui.core.data_display import datetime_item
 
 class HistoryDialog(QDialog):
-    def __init__(self, project_code, shot_name=None, parent=None):
+    def __init__(self, project_code, shot_name=None, parent=None, shot_id=None, reel=None):
         super().__init__(parent)
-        self.setWindowTitle("Project History")
+        self.setWindowTitle("Shot History" if shot_name else "Project History")
         self.setMinimumSize(600, 400)
         self.project_code = project_code
         self.shot_name = shot_name
+        # The shot's database id: history is found by it, so SH010 in one reel
+        # never shows SH010 in another, or SH010A.
+        self.shot_id = shot_id if shot_id and int(shot_id) > 0 else None
+        self.reel = reel
         self.history_manager = HistoryManager(database_manager=database_manager)
         
         layout = QVBoxLayout(self)
@@ -38,7 +43,8 @@ class HistoryDialog(QDialog):
     def load_data(self):
         history = []
         if hasattr(database_manager, "get_history"):
-            history = database_manager.get_history(self.project_code, self.shot_name) or []
+            history = database_manager.get_history(
+                self.project_code, self.shot_name, shot_id=self.shot_id, reel=self.reel) or []
         if not history:
             history = self.history_manager.get_history(self.project_code, self.shot_name) or []
 
@@ -51,8 +57,10 @@ class HistoryDialog(QDialog):
         for row_idx, row in enumerate(history):
             if isinstance(row, dict):
                 timestamp = row.get("timestamp")
-                user = row.get("user")
-                field = row.get("field")
+                # The database returns user_name / field_changed; the local
+                # history file uses user / field. Read either.
+                user = row.get("user") or row.get("user_name")
+                field = row.get("field") or row.get("field_changed")
                 old_val = row.get("old_value")
                 new_val = row.get("new_value")
             else:
@@ -61,10 +69,10 @@ class HistoryDialog(QDialog):
                 except Exception:
                     timestamp, user, field, old_val, new_val = ("", "", "", "", "")
 
-            self.table.setItem(row_idx, 0, QTableWidgetItem(str(timestamp)))
+            self.table.setItem(row_idx, 0, datetime_item(timestamp))
             self.table.setItem(row_idx, 1, QTableWidgetItem(str(user or "Unknown")))
-            self.table.setItem(row_idx, 2, QTableWidgetItem(str(field)))
-            self.table.setItem(row_idx, 3, QTableWidgetItem(str(old_val)))
-            self.table.setItem(row_idx, 4, QTableWidgetItem(str(new_val)))
+            self.table.setItem(row_idx, 2, QTableWidgetItem("" if field is None else str(field)))
+            self.table.setItem(row_idx, 3, QTableWidgetItem("" if old_val is None else str(old_val)))
+            self.table.setItem(row_idx, 4, QTableWidgetItem("" if new_val is None else str(new_val)))
             
         self.table.resizeColumnsToContents()
