@@ -68,29 +68,10 @@ class VFXReviewDualModeTab(QWidget):
         
         layout.addStretch()
         
-        # --- NOTIFICATION BELL ---
-        self.btn_notif = QPushButton("N")
-        self.btn_notif.setFixedSize(40, 36)
-        self.btn_notif.setStyleSheet("""
-            QPushButton { background: transparent; border: none; font-size: 20px; color: #87857F; }
-            QPushButton:hover { color: white; background: #26262D; border-radius: 4px; }
-        """)
-        self.btn_notif.clicked.connect(self.show_notifications)
-        layout.addWidget(self.btn_notif)
-        
-        # Badge Label (Hidden by default)
-        self.lbl_badge = QLabel("0", self.btn_notif)
-        self.lbl_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_badge.hide()
-        self.lbl_badge.setStyleSheet("""
-            background-color: red; color: white; border-radius: 8px; 
-            font-size: 10px; font-weight: bold; padding: 2px;
-        """)
-        self.lbl_badge.resize(16, 16)
-        self.lbl_badge.move(22, 2)
-        
-        # -------------------------
-        
+        # Notifications are in the header now, beside Help, for everybody
+        # (slate/gui/components/notification_center.py). The "N" bell that
+        # lived here was only seen by people with this tab open.
+
         refresh_btn = QPushButton("Refresh from Dashboard")
         refresh_btn.setToolTip(
             "Re-read the shots the dashboard is tracking and rebuild the list."
@@ -111,126 +92,13 @@ class VFXReviewDualModeTab(QWidget):
         refresh_btn.clicked.connect(self.refresh_from_dashboard)
         layout.addWidget(refresh_btn)
 
-        # Initialize Notification Polling
-        try:
-            self.init_notifications()
-        except Exception as e:
-            logger.warning(f"Notification init failed (non-critical): {e}")
-        
         return header
 
-    def init_notifications(self):
-        self.notifier = None
-        self.current_user_ids = self._resolve_notification_user_ids()
-        
-        try:
-            from ...core.domain.notification_manager import NotificationManager
-            self.notifier = NotificationManager()
-            
-            # Start timer only if successful
-            from PySide6.QtCore import QTimer
-            self.notif_timer = QTimer(self)
-            self.notif_timer.timeout.connect(self.check_notifications)
-            self.notif_timer.start(10000) # Check every 10s
-            self.check_notifications() # Initial check
-        except Exception as e:
-            logging.exception(f"Notification System Init Failed: {e}")
-
-    def _resolve_notification_user_ids(self):
-        ids = []
-        for key in ("user_id", "username", "display_name"):
-            value = self.user_data.get(key) if isinstance(self.user_data, dict) else None
-            if isinstance(value, str) and value.strip():
-                ids.append(value.strip())
-
-        # Backward-compatible fallback.
-        if not ids:
-            ids = ["Artist"]
-
-        deduped = []
-        seen = set()
-        for item in ids:
-            norm = item.lower()
-            if norm in seen:
-                continue
-            seen.add(norm)
-            deduped.append(item)
-        return deduped
-
-    def _get_unread_notifications(self):
-        if not self.notifier:
-            return []
-
-        merged = {}
-        for user_id in self.current_user_ids:
-            for note in self.notifier.get_unread(user_id):
-                note_id = note.get("id")
-                if note_id:
-                    merged[note_id] = note
-
-        return sorted(merged.values(), key=lambda x: x.get("timestamp", 0), reverse=True)
-
-    def check_notifications(self):
-        if self._is_closing or not self.notifier:
-            return
-        try:
-            notes = self._get_unread_notifications()
-            count = len(notes)
-            
-            if count > 0:
-                self.btn_notif.setStyleSheet("QPushButton { background: transparent; border: none; font-size: 20px; color: #D9A441; }")
-                self.lbl_badge.setText(str(count) if count < 9 else "9+")
-                self.lbl_badge.show()
-                self.lbl_badge.raise_()
-            else:
-                self.btn_notif.setStyleSheet("QPushButton { background: transparent; border: none; font-size: 20px; color: #87857F; }")
-                self.lbl_badge.hide()
-        except Exception as e:
-            logger.warning(f"Failed to update notification badge: {e}")
-
     def show_notifications(self):
-        if self._is_closing or not self.notifier:
-            return
-        from PySide6.QtWidgets import QDialog, QListWidget, QListWidgetItem, QVBoxLayout, QPushButton
-        
-        d = QDialog(self)
-        d.setWindowTitle("Notifications")
-        d.setMinimumSize(400, 300)
-        d.resize(400, 300)
-        d.setStyleSheet("background: #1D1D22; color: #E8E6E1;")
-        l = QVBoxLayout(d)
-        
-        notes = self._get_unread_notifications()
-        list_w = QListWidget()
-        list_w.setStyleSheet("QListWidget { border: none; background: #1D1D22; } QListWidget::item { padding: 8px; border-bottom: 1px solid #26262D; }")
-        
-        ids_to_clear = []
-        for n in notes:
-            item = QListWidgetItem(f"[{n['type'].upper()}] {n['message']}")
-            list_w.addItem(item)
-            ids_to_clear.append(n['id'])
-            
-        if not notes:
-            list_w.addItem("No new notifications.")
-            
-        l.addWidget(list_w)
-        
-        btn_clear = QPushButton("Mark All Read")
-        btn_clear.setStyleSheet("background: #2C2C34; color: white; padding: 6px; border: none;") 
-        
-        def close_and_clear():
-            if self._is_closing or not self.notifier:
-                d.accept()
-                return
-            self.notifier.mark_read(ids_to_clear)
-            self.check_notifications() # Refresh UI
-            d.accept()
-            
-        btn_clear.clicked.connect(close_and_clear)
-        l.addWidget(btn_clear)
-        
-        d.exec()
-    
+        """Open the header's notification list (kept for anything that calls it)."""
+        from ..components.notification_center import open_notifications
+        open_notifications(self)
+
     def set_shots(self, shots, project_root=None, folder_resolver=None,
                   project_name="", project_path=None):
         """

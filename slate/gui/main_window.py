@@ -1134,6 +1134,9 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
             self.cleanup_timer.stop()
         if hasattr(self, 'idle_timer') and self.idle_timer and self.idle_timer.isActive():
             self.idle_timer.stop()
+        centre = getattr(self, "notification_center", None)
+        if centre is not None:
+            centre.stop()
 
         # 2. Cleanup all registered tabs and their workers/threads
         if hasattr(self, 'tab_coordinator') and self.tab_coordinator:

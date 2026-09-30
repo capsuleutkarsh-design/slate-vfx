@@ -641,6 +641,23 @@ class MainWindowBuilderMixin:
                 self.header_builder.help_button.clicked.connect(self.show_help_dialog)
             if hasattr(self.header_builder, 'logout_button') and self.header_builder.logout_button:
                 self.header_builder.logout_button.clicked.connect(self.logout_user)
+            # Sync pushes offline changes; it was created and connected to nothing.
+            if getattr(self.header_builder, "sync_button", None) is not None:
+                self.header_builder.sync_button.clicked.connect(self.trigger_sync_database)
+
+            # The one notification centre, beside Help, for everybody. It used
+            # to exist only inside the Timeline Viewer and the dashboard.
+            self.notification_center = None
+            if self.user_data:
+                try:
+                    from .notification_center import NotificationCenter
+                    data = self.user_data or {}
+                    self.notification_center = NotificationCenter(
+                        self, self._current_username(),
+                        aliases=(data.get("display_name"),))
+                    self.header_builder.insert_before_help(self.notification_center.bell)
+                except Exception as exc:
+                    logging.warning("Notification centre not available: %s", exc)
             if hasattr(self.header_builder, "health_label") and self.header_builder.health_label:
                 try:
                     self.header_builder.health_label.clicked.connect(self.show_runtime_diagnostics)

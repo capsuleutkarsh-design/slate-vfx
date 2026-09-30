@@ -247,11 +247,11 @@ def build_dashboard_ui(widget):
         widget.add_shots_btn.clicked.connect(widget.add_shots_click)
         right_layout.addWidget(widget.add_shots_btn)
 
-    widget.notifications_btn = SecondaryButton("Alerts")
-    widget.notifications_btn.setObjectName("headerBtn")
-    widget.notifications_btn.setToolTip("Unread notifications")
-    widget.notifications_btn.clicked.connect(widget.show_notifications)
-    right_layout.addWidget(widget.notifications_btn)
+    # Notifications are the bell in the main header now, for every screen
+    # (slate/gui/components/notification_center.py). The amber "Alerts (3)"
+    # button here looked people up by a name nobody's notifications were
+    # stored under, so it said "Nothing unread" over unread assignments.
+    widget.notifications_btn = None
 
     widget.unsaved_label = QLabel("")
     widget.unsaved_label.setToolTip("Edits not yet written to the database.")

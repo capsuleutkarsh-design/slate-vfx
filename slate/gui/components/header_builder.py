@@ -433,15 +433,43 @@ class HeaderBuilder:
 
     def _create_sync_button(self):
         """
-        The one thing the header is actually for: pushing local work to the
-        central database. This is the primary action up here.
+        Push the changes made while working offline up to the studio database.
+
+        Shown only while Slate is in local mode (set_sync_available): with the
+        studio database connected every change is shared when it is saved, and
+        a Sync button then does nothing - which is exactly what it used to do,
+        for everybody, connected to nothing.
         """
-        sync_btn = make_button("Sync", "primary",
-                               tooltip="Synchronise local offline changes to the central database")
+        sync_btn = make_button(
+            "Sync", "primary",
+            tooltip=("Slate is working offline on this machine's copy.\n"
+                     "Sync sends the changes made here to the studio database "
+                     "and brings the studio's changes back."))
         sync_btn.setMinimumHeight(28)
         sync_btn.setMinimumWidth(70)
         sync_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        sync_btn.setVisible(False)
         return sync_btn
+
+    def insert_before_help(self, widget):
+        """Place a header control (the notification bell) just left of Help."""
+        if not self.header_layout:
+            return
+        idx = self.header_layout.indexOf(getattr(self, "help_button", None))
+        if idx < 0:
+            self.header_layout.addWidget(widget)
+        else:
+            self.header_layout.insertWidget(idx, widget, 0, Qt.AlignmentFlag.AlignVCenter)
+
+    def set_sync_available(self, available: bool):
+        """Show Sync only while offline (local/fallback) mode is active."""
+        button = getattr(self, "sync_button", None)
+        if button is None:
+            return
+        try:
+            button.setVisible(bool(available))
+        except RuntimeError:
+            pass
 
     def _create_user_profile(self):
         """Create the user profile section with avatar and name."""

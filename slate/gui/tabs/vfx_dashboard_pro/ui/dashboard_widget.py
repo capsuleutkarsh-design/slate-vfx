@@ -236,6 +236,10 @@ class DashboardWidget(
         return count
 
     def show_notifications(self):
+        """The header's notification list; this tab's own copy only when run on its own."""
+        from slate.gui.components.notification_center import open_notifications
+        if open_notifications(self):
+            return
         from .notifications_panel import NotificationsDialog
 
         dialog = NotificationsDialog(
