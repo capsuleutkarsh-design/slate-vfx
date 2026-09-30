@@ -154,7 +154,8 @@ def pytest_unconfigure(config):
 # themselves when no server is reachable, so the suite still runs anywhere.
 # ---------------------------------------------------------------------------
 
-POSTGRES_TEST_DB = "slate_pytest"
+# Several checkouts may run the suite at once against one server: each can name its own database.
+POSTGRES_TEST_DB = os.environ.get("Slate_TEST_PGDB", "slate_pytest")
 
 _MISSING = object()
 
