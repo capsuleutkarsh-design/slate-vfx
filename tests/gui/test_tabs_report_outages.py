@@ -108,36 +108,61 @@ def test_a_tab_that_queries_can_report_the_database_being_down(rel):
 
 
 class TestTheNoticeItself:
-    """The notice has to work on tabs that have no EmptyState widget."""
+    """
+    The notice stands in for the table - never squeezed into one of its cells
+    - offers Try again, and goes away on the next successful refresh.
+    """
 
-    def test_it_uses_the_table_when_there_is_no_empty_state(self, qtbot):
-        from PySide6.QtWidgets import QTableWidget
+    def _screen(self, qtbot):
+        from PySide6.QtWidgets import QTableWidget, QVBoxLayout, QWidget
         from slate.gui.core import offline_notice
+        from slate.core.infra.postgres_manager import DatabaseUnavailableError
 
-        table = QTableWidget(5, 3)
-        qtbot.addWidget(table)
+        class Screen(QWidget):
+            def __init__(self):
+                super().__init__()
+                self.table = QTableWidget(5, 3)
+                QVBoxLayout(self).addWidget(self.table)
+                self.down = True
+                self.loads = 0
 
-        assert offline_notice._say_it_in_the_table(table) is True
-        assert table.rowCount() == 1
-        assert "not responding" in table.item(0, 0).text()
+            @offline_notice.on_database_error
+            def refresh(self):
+                self.loads += 1
+                if self.down:
+                    raise DatabaseUnavailableError("down")
+                self.table.setRowCount(2)
 
-    def test_a_later_successful_refresh_overwrites_it(self, qtbot):
-        """The message needs no clearing - real rows replace it."""
-        from PySide6.QtWidgets import QTableWidget, QTableWidgetItem
-        from slate.gui.core import offline_notice
+        screen = Screen()
+        qtbot.addWidget(screen)
+        screen.show()
+        return screen
 
-        table = QTableWidget(0, 2)
-        qtbot.addWidget(table)
-        offline_notice._say_it_in_the_table(table)
+    def test_it_stands_in_for_the_table(self, qtbot):
+        from slate.gui.components.state_notice import StateNotice
+        screen = self._screen(qtbot)
+        screen.refresh()
+        notice = screen.findChild(StateNotice)
+        assert notice is not None and notice.isVisible()
+        assert not screen.table.isVisible()
+        assert screen.table.rowCount() == 5            # the table is not written into
+        assert "reach the studio database" in notice.title.text()
 
-        table.setRowCount(2)
-        table.setItem(0, 0, QTableWidgetItem("PC-01"))
-        assert table.item(0, 0).text() == "PC-01"
+    def test_try_again_and_a_later_success_clear_it(self, qtbot):
+        from slate.gui.components.state_notice import StateNotice
+        screen = self._screen(qtbot)
+        screen.refresh()
+        notice = screen.findChild(StateNotice)
+        screen.down = False
+        notice._button_widgets[0].click()               # Try again
+        assert screen.loads == 2
+        assert not notice.isVisible()
+        assert screen.table.isVisible() and screen.table.rowCount() == 2
 
     def test_a_widget_with_no_table_at_all_is_not_an_error(self, qtbot):
         from PySide6.QtWidgets import QLabel
-        from slate.gui.core import offline_notice
+        from slate.gui.components.state_notice import show_state
 
         label = QLabel("nothing here")
         qtbot.addWidget(label)
-        assert offline_notice._say_it_in_the_table(label) is False
+        assert show_state(label, "title") is False
