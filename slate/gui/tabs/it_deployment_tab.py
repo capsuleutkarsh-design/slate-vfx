@@ -8,6 +8,8 @@ from PySide6.QtGui import QFont, QColor
 from ..core.empty_state import EmptyState
 from ..core.controls import page_title, gate_selection_buttons
 from slate.gui.core.offline_notice import on_database_error
+from slate.gui.core.data_display import datetime_item, export_table_dialog, select_row_by_id
+from slate.core.domain import people
 
 # Let an outage reach the @on_database_error decorator rather than becoming an
 # empty grid here. Everything else keeps the fallback it already had.
@@ -181,6 +183,11 @@ class ItDeploymentTab(QWidget):
         controls.addWidget(fail_btn)
         
         controls.addStretch()
+        export_btn = QPushButton("Export…")
+        export_btn.setObjectName("secondaryButton")
+        export_btn.setToolTip("Save the rows shown as CSV or Excel")
+        export_btn.clicked.connect(self.export_table)
+        controls.addWidget(export_btn)
         main_layout.addLayout(controls)
 
         self.grid = QTableWidget(0, 6)
@@ -249,7 +256,8 @@ class ItDeploymentTab(QWidget):
             self.grid.setItem(r, 0, QTableWidgetItem(str(row.get('id', ''))))
             self.grid.setItem(r, 1, QTableWidgetItem(str(row.get('package_name', ''))))
             self.grid.setItem(r, 2, QTableWidgetItem(str(row.get('target_machine', ''))))
-            self.grid.setItem(r, 3, QTableWidgetItem(str(row.get('deployed_by', ''))))
+            # The person's name, not their login (IT-021 / IT-103 family).
+            self.grid.setItem(r, 3, QTableWidgetItem(people.display_name(row.get('deployed_by', ''))))
             
             status_item = QTableWidgetItem(str(row.get('status', '')))
             st_text = status_item.text().strip().lower()
@@ -263,7 +271,9 @@ class ItDeploymentTab(QWidget):
                 status_item.setForeground(QColor("#87857F"))
             self.grid.setItem(r, 4, status_item)
             
-            self.grid.setItem(r, 5, QTableWidgetItem(str(row.get('deployed_at', ''))))
+            # '17 Sep 2026, 23:02' - it printed the raw timestamp with
+            # microseconds. Sorted by the moment, not the text.
+            self.grid.setItem(r, 5, datetime_item(row.get('deployed_at')))
 
     def add_deployment(self):
         dialog = AddDeploymentDialog(self)
@@ -277,10 +287,22 @@ class ItDeploymentTab(QWidget):
                 
             from slate.core.infra.database_manager import database_manager
             current_user = self.user_data.get('username', 'admin')
-            query = "INSERT INTO it_deployments (package_name, target_machine, deployed_by, status) VALUES (%s, %s, %s, 'Pending')"
-            if database_manager.execute_query(query, (pkg, tgt, current_user), fetch=False):
-                QMessageBox.information(self, "Success", "Deployment task created.")
-                self.load_data()
+            query = ("INSERT INTO it_deployments (package_name, target_machine, deployed_by, status) "
+                     "VALUES (%s, %s, %s, 'Pending') RETURNING id")
+            # execute_query(..., fetch=False) returned None even when the row
+            # was written, so the message and the reload never happened and
+            # the new deployment only appeared after leaving the tab.
+            result = database_manager.execute_update(query, (pkg, tgt, current_user))
+            self.load_data()
+            if not result:
+                QMessageBox.warning(self, "Not recorded",
+                                    "The deployment was not saved:\n\n%s"
+                                    % (result.error or "the database refused it"))
+                return
+            if result.last_id is not None:
+                select_row_by_id(self.grid, result.last_id)
+            QMessageBox.information(self, "Recorded",
+                                    f"{pkg} on {tgt} is recorded as pending.")
 
     def update_status(self, new_status):
         selected_rows = set(item.row() for item in self.grid.selectedItems())
@@ -289,11 +311,23 @@ class ItDeploymentTab(QWidget):
             return
             
         from slate.core.infra.database_manager import database_manager
+        failed = []
         for r in selected_rows:
             did = self.grid.item(r, 0).text()
             query = "UPDATE it_deployments SET status = %s WHERE id = %s"
-            database_manager.execute_query(query, (new_status, int(did)), fetch=False)
+            result = database_manager.execute_update(query, (new_status, int(did)))
+            if not result.changed:
+                failed.append(result.error or "that deployment no longer exists")
         self.load_data()
+        if failed:
+            QMessageBox.warning(
+                self, "Not all updated",
+                "%d of %d deployment(s) were not marked %s:\n\n%s"
+                % (len(failed), len(selected_rows), new_status, failed[0]))
+
+    def export_table(self):
+        """What the table shows, to CSV or Excel (IT-159)."""
+        export_table_dialog(self, self.grid, "deployments")
             
     def style_table(self, table: QTableWidget):
         table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)

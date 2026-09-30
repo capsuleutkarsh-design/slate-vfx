@@ -27,6 +27,8 @@ from slate.core.domain import licence_compliance as lc
 from ..core.controls import make_button, page_title
 from ..core.offline_notice import on_database_error
 from ..core.empty_state import EmptyState
+from ..core.data_display import export_table_dialog, setup_date_edit
+from slate.core.domain.dates import format_date
 from .my_leave_view import Figure
 
 
@@ -52,6 +54,9 @@ class LicenceDialog(QDialog):
 
         self.name = QLineEdit(str(self.row.get("software_name") or ""))
         self.name.setPlaceholderText("Nuke, Houdini, Maya...")
+        # The database keeps at most this many characters. A longer name was
+        # refused and the licence silently not saved.
+        self.name.setMaxLength(LicenceRepository.NAME_MAX)
         form.addRow("Software", self.name)
 
         self.seats = QSpinBox()
@@ -59,8 +64,7 @@ class LicenceDialog(QDialog):
         self.seats.setValue(int(self.row.get("total_seats") or 0))
         form.addRow("Seats bought", self.seats)
 
-        self.expiry = QDateEdit()
-        self.expiry.setCalendarPopup(True)
+        self.expiry = setup_date_edit(QDateEdit())
         existing = lc.as_date(self.row.get("expiration_date"))
         self.expiry.setDate(QDate(existing.year, existing.month, existing.day)
                             if existing else QDate.currentDate().addYears(1))
@@ -190,6 +194,9 @@ class LicenceView(QWidget):
         controls.addWidget(self.btn_edit)
         self.btn_remove = make_button("Remove", "danger", on_click=self.remove_licence)
         controls.addWidget(self.btn_remove)
+        controls.addWidget(make_button(
+            "Export…", "ghost",
+            on_click=lambda: export_table_dialog(self, self.table, "licences")))
         root.addLayout(controls)
 
         self.table = QTableWidget(0, 7)
@@ -266,12 +273,14 @@ class LicenceView(QWidget):
             left = row.get("days_left")
             expiry = lc.as_date(row.get("expiration_date"))
 
+            # The studio's date format, as in the dialog ('18 Apr 2027');
+            # the table printed ISO while the dialog showed 18-04-2027.
             if left is None:
                 renews = "not recorded"
             elif left < 0:
-                renews = "%s (gone)" % expiry.isoformat()
+                renews = "%s (gone)" % format_date(expiry)
             else:
-                renews = "%s (%d d)" % (expiry.isoformat(), left)
+                renews = "%s (%d d)" % (format_date(expiry), left)
 
             cells = [
                 row.get("software_name") or "",

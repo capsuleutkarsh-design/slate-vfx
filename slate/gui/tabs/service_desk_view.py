@@ -29,6 +29,8 @@ from ..core.controls import make_button, page_title
 from ..core.empty_state import EmptyState
 from .my_tickets_view import TicketThreadDialog
 from slate.gui.core.offline_notice import on_database_error
+from slate.gui.core.data_display import export_table_dialog
+from slate.core.domain import people
 
 # Let an outage reach the @on_database_error decorator rather than becoming an
 # empty grid here. Everything else keeps the fallback it already had.
@@ -129,6 +131,9 @@ class ServiceDeskView(QWidget):
         self.btn_status = make_button("Set status", "secondary", on_click=self.change_status)
         for b in (self.btn_take, self.btn_respond, self.btn_status):
             controls.addWidget(b)
+        controls.addWidget(make_button(
+            "Export…", "ghost",
+            on_click=lambda: export_table_dialog(self, self.table, "it_tickets")))
         root.addLayout(controls)
 
         # -------------------------------------------------------------- queue
@@ -197,9 +202,13 @@ class ServiceDeskView(QWidget):
 
         needle = self.search.text().strip().lower()
         if needle:
+            # People's names as well as their logins: the table shows names,
+            # so that is what somebody types.
             rows = [r for r in rows if needle in " ".join(
-                str(r.get(k) or "") for k in
-                ("description", "submitted_by", "category", "assigned_to")).lower()]
+                [str(r.get(k) or "") for k in
+                 ("description", "submitted_by", "category", "assigned_to")]
+                + [people.display_name(r.get("submitted_by")),
+                   people.display_name(r.get("assigned_to"))]).lower()]
 
         # Worst first: breached, then at risk, then by priority, then by age.
         order = {"breached": 0, "at risk": 1, "met": 2, "closed": 3}
@@ -283,11 +292,12 @@ class ServiceDeskView(QWidget):
             cells = [
                 str(row.get("id") or ""),
                 summary,
-                row.get("submitted_by") or "",
+                # Names, not logins ('Rahul Sharma', not 'rahul.s').
+                people.display_name(row.get("submitted_by")),
                 row.get("category") or "",
                 PRIORITY_LABEL.get(priority, priority),
                 status,
-                row.get("assigned_to") or "-",
+                people.display_name(row.get("assigned_to"), empty="-"),
                 sla_text,
             ]
             for c, text in enumerate(cells):
@@ -313,14 +323,34 @@ class ServiceDeskView(QWidget):
             b.setEnabled(picked)
 
     def _write(self, sql, params) -> bool:
+        """
+        One change to a ticket. True only when the database took it and it
+        touched the ticket.
+
+        This used to wait for an exception, but a refused write comes back as
+        a failed result, not an exception - so a rejected update reported
+        nothing and the queue looked saved.
+        """
         try:
-            self.db.execute_update(sql, params)
-            return True
+            result = self.db.execute_update(sql, params)
         except DatabaseUnavailableError:
             raise
         except Exception as exc:
             QMessageBox.warning(self, "Not saved", str(exc))
             return False
+        if not result:
+            QMessageBox.warning(
+                self, "Not saved",
+                "The change was not saved:\n\n%s"
+                % (getattr(result, "error", "") or "the database refused it"))
+            return False
+        if getattr(result, "rows", 1) == 0:
+            QMessageBox.warning(
+                self, "Not saved",
+                "That ticket was not found - it may have been closed or removed "
+                "by someone else. The list has been refreshed.")
+            return False
+        return True
 
     def take(self):
         # Picking a ticket up IS responding to it. The response clock used to

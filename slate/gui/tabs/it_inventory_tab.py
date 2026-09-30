@@ -12,6 +12,8 @@ import logging
 from ..core.empty_state import EmptyState
 from ..core.controls import page_title, gate_selection_buttons
 from slate.gui.core.offline_notice import on_database_error
+from slate.gui.core.data_display import export_table_dialog
+from slate.core.domain import people
 
 # Let an outage reach the @on_database_error decorator rather than becoming an
 # empty grid here. Everything else keeps the fallback it already had.
@@ -63,6 +65,9 @@ class AddPCDialog(QDialog):
         form.setSpacing(10)
         
         self.inp_name = QLineEdit()
+        # A computer name is at most 63 characters (a DNS label; Windows
+        # itself stops at 15). Anything longer is a typo or a pasted note.
+        self.inp_name.setMaxLength(63)
         self.inp_cpu = QLineEdit()
         self.inp_gpu = QLineEdit()
         self.inp_ram = QLineEdit()
@@ -248,7 +253,13 @@ class ItInventoryTab(QWidget):
         sync_btn.setToolTip("Automatically import any unknown online PCs from Live Ops")
         sync_btn.clicked.connect(self.sync_from_live_ops)
         controls.addWidget(sync_btn)
-        
+
+        export_btn = QPushButton("Export…")
+        export_btn.setObjectName("secondaryButton")
+        export_btn.setToolTip("Save the machines shown as CSV or Excel")
+        export_btn.clicked.connect(lambda: export_table_dialog(self, self.grid, "hardware"))
+        controls.addWidget(export_btn)
+
         main_layout.addLayout(controls)
 
         # Table
@@ -374,14 +385,16 @@ class ItInventoryTab(QWidget):
         # A machine nobody has is Available, not Active. Everything arrived as
         # Active, so the fleet view never showed a single free machine and the
         # issue list had to work it out from assigned_to instead.
-        database_manager.execute_query(
+        result = database_manager.execute_update(
             query,
             (mname, dialog.inp_status.currentText() or "Available",
              dialog.inp_cpu.text().strip(), dialog.inp_gpu.text().strip(),
              dialog.inp_ram.text().strip(), dialog.inp_storage.text().strip(),
-             dialog.inp_location.text().strip()),
-            fetch=False)
+             dialog.inp_location.text().strip()))
         self.load_data()
+        if not result:
+            QMessageBox.warning(self, "Not added", "%s was not added:\n\n%s"
+                                % (mname, result.error or "the database refused it"))
 
     def edit_workstation(self):
         edit_data = self._selected_row()
@@ -400,14 +413,16 @@ class ItInventoryTab(QWidget):
             SET cpu = %s, gpu = %s, ram = %s, storage = %s, location = %s, status = %s
             WHERE machine_name = %s
         """
-        database_manager.execute_query(
+        result = database_manager.execute_update(
             query,
             (dialog.inp_cpu.text().strip(), dialog.inp_gpu.text().strip(),
              dialog.inp_ram.text().strip(), dialog.inp_storage.text().strip(),
              dialog.inp_location.text().strip(),
-             dialog.inp_status.currentText(), mname),
-            fetch=False)
+             dialog.inp_status.currentText(), mname))
         self.load_data()
+        if not result.changed:
+            QMessageBox.warning(self, "Not saved", "%s was not changed:\n\n%s"
+                                % (mname, result.error or "it is no longer in the inventory"))
 
     def issue_selected(self):
         """
@@ -437,19 +452,29 @@ class ItInventoryTab(QWidget):
             QMessageBox.warning(
                 self, "Already issued",
                 "%s is already out with %s. Collect it back first."
-                % (machine, held[0].get("user_id")))
+                % (machine, people.display_name(held[0].get("user_id"))))
             return
 
-        people = [str(p.get("username")) for p in service.people() if p.get("username")]
-        if not people:
+        # People by name, alphabetically, with nobody who has left and no
+        # service accounts. It was a list of raw logins in joining order with
+        # admin and tester first and last week's leaver still in it. The box
+        # is editable, so typing part of a name jumps to it.
+        choices = people.people_for_picker()
+        if not choices:
             QMessageBox.warning(self, "Nobody to issue to",
-                                "There are no users in the database.")
+                                "There is nobody in the studio's user list to issue it to.")
             return
-
-        who, ok = QInputDialog.getItem(
-            self, "Issue %s" % machine, "Issue this machine to:", people, 0, False)
-        if not ok or not who:
+        labels = [p.label for p in choices]
+        picked, ok = QInputDialog.getItem(
+            self, "Issue %s" % machine, "Issue this machine to:", labels, 0, True)
+        if not ok or not picked:
             return
+        match = [p for p in choices if p.label == picked or p.username.lower() == picked.strip().lower()]
+        if not match:
+            QMessageBox.warning(self, "Not issued",
+                                "Nobody called \"%s\" is in the list. Pick a name from it." % picked)
+            return
+        who = match[0].username
 
         by_whom = str((self.user_data or {}).get("user_id")
                       or (self.user_data or {}).get("username") or "IT")
@@ -457,7 +482,7 @@ class ItInventoryTab(QWidget):
             QMessageBox.information(
                 self, "Issued",
                 "%s is now with %s. When they leave, the leaving checklist will "
-                "ask for it back." % (machine, who))
+                "ask for it back." % (machine, match[0].name))
         else:
             QMessageBox.warning(self, "Not issued",
                                 "The loan could not be recorded, so nothing was changed.")
@@ -482,7 +507,7 @@ class ItInventoryTab(QWidget):
         holder = held[0].get("user_id")
         if QMessageBox.question(
             self, "Collect %s" % machine,
-            "Take %s back from %s?" % (machine, holder),
+            "Take %s back from %s?" % (machine, people.display_name(holder)),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         ) != QMessageBox.StandardButton.Yes:
             return
@@ -513,15 +538,19 @@ class ItInventoryTab(QWidget):
                 self, "Still issued",
                 "%s is out with %s. Collect it back before deleting it, or the "
                 "loan record is left behind with nothing to return."
-                % (mname, held[0].get("user_id")))
+                % (mname, people.display_name(held[0].get("user_id"))))
             return
 
         reply = QMessageBox.question(self, "Confirm Delete", f"Are you sure you want to delete PC '{mname}'?",
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
             from slate.core.infra.database_manager import database_manager
-            database_manager.execute_query("DELETE FROM hardware_inventory WHERE machine_name = %s", (mname,), fetch=False)
+            result = database_manager.execute_update(
+                "DELETE FROM hardware_inventory WHERE machine_name = %s", (mname,))
             self.load_data()
+            if not result:
+                QMessageBox.warning(self, "Not deleted", "%s was not deleted:\n\n%s"
+                                    % (mname, result.error or "the database refused it"))
 
     def sync_from_live_ops(self):
         """
@@ -539,7 +568,7 @@ class ItInventoryTab(QWidget):
             QMessageBox.warning(self, "Error", "Live Ops directory not found.")
             return
 
-        added = updated = 0
+        added = updated = failed = 0
         for f in status_dir.glob("*.json"):
             try:
                 with open(f, "r", encoding="utf-8") as fh:
@@ -563,21 +592,27 @@ class ItInventoryTab(QWidget):
                     "WHERE LOWER(machine_name) = LOWER(%s)", (mname,), fetch="one")
 
                 if existing:
-                    database_manager.execute_query(
-                        "UPDATE hardware_inventory SET cpu = %s, gpu = %s, ram = %s, "
-                        "storage = %s WHERE LOWER(machine_name) = LOWER(%s)",
-                        (cpu, gpu, ram, storage, mname), fetch=False)
-                    updated += 1
+                    # Counted only when the database took it: a refused write
+                    # used to be counted as a refreshed machine.
+                    if database_manager.execute_update(
+                            "UPDATE hardware_inventory SET cpu = %s, gpu = %s, ram = %s, "
+                            "storage = %s WHERE LOWER(machine_name) = LOWER(%s)",
+                            (cpu, gpu, ram, storage, mname)):
+                        updated += 1
+                    else:
+                        failed += 1
                 else:
                     # No owner. Live Ops knows who was sitting at it, which is
                     # not the same as who it was issued to - and guessing puts a
                     # machine beyond the reach of the issue list.
-                    database_manager.execute_query(
-                        "INSERT INTO hardware_inventory "
-                        "(machine_name, type, status, cpu, gpu, ram, storage) "
-                        "VALUES (%s, 'Workstation', 'Available', %s, %s, %s, %s)",
-                        (mname, cpu, gpu, ram, storage), fetch=False)
-                    added += 1
+                    if database_manager.execute_update(
+                            "INSERT INTO hardware_inventory "
+                            "(machine_name, type, status, cpu, gpu, ram, storage) "
+                            "VALUES (%s, 'Workstation', 'Available', %s, %s, %s, %s)",
+                            (mname, cpu, gpu, ram, storage)):
+                        added += 1
+                    else:
+                        failed += 1
             except DatabaseUnavailableError:
                 raise
             except Exception as exc:
@@ -585,9 +620,10 @@ class ItInventoryTab(QWidget):
 
         QMessageBox.information(
             self, "Sync Complete",
-            "%d new machine(s) added, %d existing one(s) refreshed.\n\n"
+            "%d new machine(s) added, %d existing one(s) refreshed.%s\n\n"
             "New machines are left unassigned - use Issue to say who has them."
-            % (added, updated))
+            % (added, updated,
+               "" if not failed else "\n%d could not be saved - see the log." % failed))
         self.load_data()
 
     def style_table(self, table: QTableWidget):
