@@ -122,22 +122,39 @@ class VFXReviewDualModeTab(QWidget):
         VFX Dashboard and pick a project first", which is a reasonable sentence
         and a poor answer: the project is already chosen and stored, and this
         tab can read it.
-        """
-        dashboard = self._find_dashboard()
-        if dashboard is not None:
-            project = getattr(dashboard, "current_project", None)
-            self.set_shots(
-                getattr(dashboard, "all_shots", None) or [],
-                project_root=getattr(project, "folder_base", "") or None,
-                folder_resolver=getattr(dashboard, "_shot_folder_resolver", None),
-                project_name=getattr(project, "code", "") or "",
-            )
-            return
 
-        self._refresh_from_database()
+        Returns a Result (slate/gui/components/feedback.py) saying what really
+        happened. It returned nothing, so the command palette announced
+        "Timeline rebuilt from the dashboard." even when it had failed.
+        """
+        from PySide6.QtWidgets import QApplication
+        from ..components.feedback import Result
+
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            dashboard = self._find_dashboard()
+            if dashboard is not None:
+                project = getattr(dashboard, "current_project", None)
+                shots = getattr(dashboard, "all_shots", None) or []
+                self.set_shots(
+                    shots,
+                    project_root=getattr(project, "folder_base", "") or None,
+                    folder_resolver=getattr(dashboard, "_shot_folder_resolver", None),
+                    project_name=getattr(project, "code", "") or "",
+                )
+                if not shots:
+                    return Result.failure(
+                        "The dashboard has no shots loaded, so there is no lineup to build.")
+                return Result.success(
+                    "Timeline rebuilt from the dashboard: %d shot(s)." % len(shots))
+
+            return self._refresh_from_database()
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def _refresh_from_database(self):
         """Load the stored project's shots without the dashboard tab."""
+        from ..components.feedback import Result
         try:
             from .vfx_dashboard_pro.core.project_manager import ProjectManager
             from .vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler
@@ -145,21 +162,20 @@ class VFXReviewDualModeTab(QWidget):
             manager = ProjectManager()
             projects = manager.get_all_projects()
             if not projects:
-                self.lineup_editor.status_label.setText(
-                    "No projects yet. Build one in Build & Ingest, or add it on "
-                    "the VFX Dashboard."
-                )
-                return
+                message = ("No projects yet. Build one in Build & Ingest, or add it on "
+                           "the VFX Dashboard.")
+                self.lineup_editor.status_label.setText(message)
+                return Result.failure(message)
 
             code = getattr(manager, "default_project", None) or projects[0].code
             project = manager.get_project(code) or projects[0]
 
             shots = SQLiteHandler(project.code).read_shots()
             if not shots:
-                self.lineup_editor.status_label.setText(
-                    "%s has no shots yet, so there is no lineup to build."
-                    % project.code)
-                return
+                message = ("%s has no shots yet, so there is no lineup to build."
+                           % project.code)
+                self.lineup_editor.status_label.setText(message)
+                return Result.failure(message)
 
             self.set_shots(
                 shots,
@@ -167,12 +183,14 @@ class VFXReviewDualModeTab(QWidget):
                 folder_resolver=None,
                 project_name=project.code or "",
             )
+            return Result.success("Timeline rebuilt for %s: %d shot(s)."
+                                  % (project.code, len(shots)))
         except Exception as exc:
             logger.warning("Could not load the lineup from the database: %s", exc)
-            self.lineup_editor.status_label.setText(
-                "Could not read the project from the database. Open the VFX "
-                "Dashboard to load it, or check the connection."
-            )
+            message = ("Could not read the project from the database. Open the VFX "
+                       "Dashboard to load it, or check the connection.")
+            self.lineup_editor.status_label.setText(message)
+            return Result.failure(message, detail=str(exc))
 
     def _find_dashboard(self):
         """The dashboard widget, wherever this tab has been put."""

@@ -401,15 +401,27 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
                 lambda: getattr(self, "status_bar", None) and self.status_bar.setStyleSheet(""),
             )
 
-    def show_feedback(self, message: str, level: str = "info", duration: int = 4000, details: str = ""):
+    def show_feedback(self, message: str, level: str = "info", duration: int = None,
+                      details: str = "", action=None):
         """
         Unified feedback entry point for tabs/widgets.
-        - info/success/warning route to status toast
-        - error shows toast + optional details dialog
+
+        The status bar keeps a copy of every line. Anything that matters -
+        success, warning, error, or a message with an action - is also shown
+        as a toast in the corner, which stays long enough to read and carries
+        its action button ("Undo", "Open folder") and a "Details" button for
+        the reason behind an error. Errors no longer throw a modal box at the
+        person: the details wait behind that button.
+
+        Tabs call it through slate.gui.components.feedback.toast().
         """
-        self.show_status(message, level=level, duration=duration)
-        if level == "error" and details:
-            QMessageBox.critical(self, "Error Details", details)
+        from .components.feedback import raw_toast
+        status_ms = duration if duration is not None else (4000 if level == "info" else 6000)
+        self.show_status(message, level=level, duration=status_ms)
+        if level != "info" or action or details:
+            return raw_toast(self, message, level, action=action, duration=duration,
+                             details=details)
+        return None
 
     def _on_tab_switched(self, tab_text):
         """Callback when tab is switched (triggered by TabCoordinator)."""
@@ -436,9 +448,25 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
+        # Ask the open screens first (unsaved edits, an ingest still copying).
+        # closeEvent would ask again; the flag says it has been asked.
+        if not self.confirm_open_work("sign out"):
+            return
+        self._work_confirmed = True
         self._logout_requested = True
         self.show_status("Logging out...", "info", 1200)
         self.close()
+
+    def confirm_open_work(self, action: str) -> bool:
+        """
+        Ask every open tab about unsaved edits and running work before
+        `action` ("close Slate", "sign out", "sync"). True when it is safe.
+        See components/work_guard.py for what a tab implements.
+        """
+        from .components.work_guard import confirm_leave
+        tc = getattr(self, "tab_coordinator", None)
+        tabs = dict(getattr(tc, "tab_instances", {}) or {}) if tc else {}
+        return confirm_leave(self, tabs, action)
 
     def _reopen_login_after_logout(self):
         """
@@ -746,6 +774,10 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
                 self.header_builder.set_db_runtime_status(active_mode, fallback_used)
             except Exception as exc:
                 logging.debug("DB header mode update skipped: %s", exc)
+
+        # Sync only means something while working offline on the local copy.
+        if hasattr(self, "header_builder") and hasattr(self.header_builder, "set_sync_available"):
+            self.header_builder.set_sync_available(active_mode == "sqlite" and fallback_used)
 
         self._refresh_system_health_strip(status)
 
@@ -1089,9 +1121,17 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
                                level="error", duration=3000)
             return
 
-        tab.refresh_from_dashboard()
-        self.show_feedback("Timeline rebuilt from the dashboard.",
-                           level="success", duration=2500)
+        # Say what really happened: this used to report success whatever the
+        # rebuild did.
+        from .components.feedback import Result
+        result = Result.from_value(
+            tab.refresh_from_dashboard(),
+            failure_message="The timeline could not be rebuilt.")
+        if result.ok:
+            self.show_feedback(result.message or "Timeline rebuilt from the dashboard.",
+                               level="success")
+        else:
+            self.show_feedback(result.message, level="warning", details=result.detail)
 
     def _open_named_tab(self, label: str):
         """Open a named tab through coordinator and show status feedback."""
@@ -1116,22 +1156,62 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         self.show_feedback("Stock Viewer refresh action is unavailable.", level="warning", duration=3000)
 
     def trigger_sync_database(self):
-        """Trigger the background database sync engine for Local Offline mode."""
+        """
+        The header's Sync: push the changes made here while Slate was working
+        offline (on its local copy) up to the studio database, then pull the
+        studio's changes back down.
+
+        Only offered while Slate is in local mode - with the studio database
+        connected every change is already shared the moment it is saved, and
+        there is nothing to sync. The button used to be shown to everybody and
+        was connected to nothing.
+        """
         from ..core.domain.sync_worker import SyncWorker
-        if hasattr(self, "_sync_worker") and self._sync_worker.sync_manager.is_syncing:
-            self.show_feedback("Sync is already in progress.", level="warning", duration=2500)
+        worker = getattr(self, "_sync_worker", None)
+        if worker is not None and worker.sync_manager.is_syncing:
+            self.show_feedback("Sync is already running.", level="info", duration=2500)
             return
-            
+
+        # Edits still sitting unsaved on a screen are not part of the push.
+        if not self.confirm_open_work("sync"):
+            return
+
         self._sync_worker = SyncWorker(database_manager)
-        self._sync_worker.finished.connect(
-            lambda success: self.show_feedback(
-                "Database Sync Completed successfully!" if success else "Database Sync Failed. Check logs.",
-                level="success" if success else "error",
-                duration=3500
-            )
-        )
+        # A bound method, so the result is delivered on the UI thread: the
+        # worker finishes on its own thread.
+        self._sync_worker.finished.connect(self._on_sync_finished)
+        self._set_sync_busy(True)
         self._sync_worker.start_sync()
-        self.show_feedback("Database Sync started in background...", level="info", duration=2500)
+        self.show_feedback("Syncing your offline changes with the studio database…",
+                           level="info", duration=3000)
+
+    def _on_sync_finished(self, success: bool):
+        self._set_sync_busy(False)
+        worker = getattr(self, "_sync_worker", None)
+        task = getattr(worker, "task_info", None)
+        reason = str(getattr(task, "error_message", "") or "")
+        if success:
+            self.show_feedback("Offline changes synced with the studio database.",
+                               level="success")
+        elif "unreachable" in reason.lower() or getattr(task, "status", "") == "Offline":
+            self.show_feedback(
+                "Could not reach the studio database, so nothing was synced. "
+                "Your offline changes are kept - try again when the connection is back.",
+                level="warning")
+        else:
+            self.show_feedback(
+                "Sync did not finish. Your offline changes are kept on this machine.",
+                level="error", details=reason or "The sync reported a failure without a reason.")
+
+    def _set_sync_busy(self, busy: bool):
+        button = getattr(getattr(self, "header_builder", None), "sync_button", None)
+        if button is None:
+            return
+        try:
+            button.setEnabled(not busy)
+            button.setText("Syncing…" if busy else "Sync")
+        except RuntimeError:
+            pass
 
     def refresh_current_tab(self):
         """Refresh/reload the current tab if it supports it"""
@@ -1158,6 +1238,15 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
     
     def closeEvent(self, event):
         """Handle application shutdown cleanly."""
+        # Before anything is stopped: does an open screen have unsaved edits,
+        # or work that stopping would cut short? Signing out has already asked.
+        if getattr(self, "_init_complete", False) and not getattr(self, "_is_closing", False):
+            already_asked = getattr(self, "_work_confirmed", False)
+            self._work_confirmed = False
+            if not already_asked and not self.confirm_open_work("close Slate"):
+                self._logout_requested = False
+                event.ignore()
+                return
         self._is_closing = True
         logging.info("VFXFolderCreatorApp: Starting application shutdown sequence...")
 

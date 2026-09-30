@@ -273,6 +273,41 @@ class FolderCreatorTab(QWidget):
         left_scroll.setWidget(left_widget)
         return left_scroll
 
+    # --- CLOSING SLATE WHILE WORKING (slate/gui/components/work_guard.py) ---
+    def busy_reason(self):
+        """What would be cut short if Slate closed now, or None when idle."""
+        thread = getattr(self, "folder_creation_thread", None)
+        try:
+            running = bool(self.is_processing and thread is not None and thread.isRunning())
+        except RuntimeError:
+            running = False
+        if not running:
+            return None
+        project = self.project_name_input.text().strip() or "the project"
+        return f"Build & Ingest is still bringing files into {project}."
+
+    def shutdown(self, timeout_ms: int = 15000) -> bool:
+        """
+        Stop the ingest at its next safe point and wait for it, so closing
+        Slate never deletes a worker in the middle of a file. True once stopped.
+        """
+        thread = getattr(self, "folder_creation_thread", None)
+        if thread is None:
+            return True
+        try:
+            if not thread.isRunning():
+                return True
+            self.stop_creation_process()
+            from PySide6.QtCore import QDeadlineTimer
+            from PySide6.QtWidgets import QApplication
+            deadline = QDeadlineTimer(int(timeout_ms))
+            while thread.isRunning() and not deadline.hasExpired():
+                thread.wait(100)
+                QApplication.processEvents()
+            return not thread.isRunning()
+        except RuntimeError:
+            return True
+
     # --- SMART BUTTON UPDATE ---
     def closeEvent(self, event):
         """Ensure background workers are stopped when tab closes."""

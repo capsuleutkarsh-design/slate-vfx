@@ -159,6 +159,36 @@ class CapRenameTab(QWidget):
         if config_manager:
             self.apply_global_settings(config_manager.settings.get("global_settings", {}))
 
+    # --- CLOSING SLATE WHILE WORKING (slate/gui/components/work_guard.py) ---
+    def busy_reason(self):
+        """A rename in progress, or None."""
+        worker = self.worker
+        try:
+            if worker is not None and worker.isRunning():
+                return "CAP Rename is still renaming files."
+        except RuntimeError:
+            pass
+        return None
+
+    def shutdown(self, timeout_ms: int = 15000) -> bool:
+        """
+        Let a running rename finish rather than cut it off: stopping between
+        the two passes would leave files under their temporary names.
+        """
+        worker = self.worker
+        try:
+            if worker is None or not worker.isRunning():
+                return True
+            from PySide6.QtCore import QDeadlineTimer
+            from PySide6.QtWidgets import QApplication
+            deadline = QDeadlineTimer(int(timeout_ms))
+            while worker.isRunning() and not deadline.hasExpired():
+                worker.wait(100)
+                QApplication.processEvents()
+            return not worker.isRunning()
+        except RuntimeError:
+            return True
+
     def _cleanup_worker(self, timeout_ms: int = 2000):
         worker = self.worker
         if worker is None:

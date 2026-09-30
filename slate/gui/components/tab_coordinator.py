@@ -756,23 +756,45 @@ class TabCoordinator(QObject):
                             'label': label,
                             'permission': factory_info['permission']
                         })
-                
+
                 logging.info(f"[OK] Tab created: {label}")
                 return widget
             else:
                 logging.error(f"[LAZY] Factory returned None for: {label}")
                 return None
-                
+
         except Exception as e:
             logging.exception(f"[LAZY] Failed to create tab '{label}': {e}", exc_info=True)
-            from PySide6.QtWidgets import QMessageBox
-            QMessageBox.critical(
-                self.parent,
-                "Tab Load Error",
-                f"Failed to load tab '{label}'.\n\nError: {str(e)}\n\nPlease check logs."
-            )
+            self._report_load_failure(label, index, e)
             return None
-    
+
+    def _report_load_failure(self, label, index, exc):
+        """
+        A tab could not be built. Say so plainly and offer to try again.
+
+        This was a box reading "Failed to load tab X. Error: <exception>
+        Please check logs." - with no way to retry, and artists do not have
+        the logs. The exception now goes behind "Copy details for IT".
+        """
+        from .feedback import show_error
+
+        def retry():
+            row = self.tab_labels.index(label) if label in self.tab_labels else index
+            if self.sidebar_nav.currentRow() == row:
+                self._on_nav_changed(row)
+            else:
+                self.sidebar_nav.setCurrentRow(row)
+
+        show_error(
+            self.parent,
+            f"Could not open {label}.",
+            exc=exc,
+            retry=retry,
+            title=f"Open {label}",
+            hint=("Something went wrong while this screen was starting. Try again - "
+                  "if it keeps happening, copy the details and send them to IT."),
+        )
+
     def _on_nav_changed(self, row):
         """Handle sidebar navigation change with lazy loading and fade-in."""
         if row < 0 or row in self.header_items:
