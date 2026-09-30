@@ -34,62 +34,28 @@ def detect_sequence(folder: Path, pattern: str = "*") -> Optional[dict]:
     """
     if not folder.exists():
         return None
-    
-    # Get all matching files
-    files = sorted(folder.glob(pattern))
+
+    files = sorted(p for p in folder.glob(pattern) if p.is_file())
     if not files:
         return None
-    
-    # Extract frame numbers
-    frame_data = []
-    # Match frame number at end of stem, allowing common separators:
-    # shot.1001.exr, shot_1001.exr, shot-1001.exr, shot1001.exr
-    frame_pattern = re.compile(r'(?:[._-]?)(\d+)\.[^.]+$')
-    
-    # Do not treat single video files as sequences, even if they have digits
-    video_extensions = {'.mov', '.mp4', '.mkv', '.avi', '.mxf', '.webm'}
-    
-    for f in files:
-        if f.suffix.lower() in video_extensions:
-            continue
-            
-        # Try to find frame number in filename
-        match = frame_pattern.search(f.name)
-        if match:
-            frame_num = int(match.group(1))
-            frame_data.append((frame_num, f))
-    
-    if not frame_data:
-        # No frame numbers found, might be single file
+
+    # The shared rules (slate.utils.sequence_utils.group_frames). This used to
+    # take every numbered file the glob matched as one sequence - two
+    # sequences whose names shared a prefix were mixed together, and a
+    # single numbered still counted as a one-frame sequence.
+    from slate.utils.sequence_utils import group_frames
+    sequences, _stills = group_frames(files)
+    if not sequences:
         return None
-    
-    # Sort by frame number
-    frame_data.sort(key=lambda x: x[0])
-    
-    frames = [f[0] for f in frame_data]
-    files_sorted = [f[1] for f in frame_data]
-    
-    # Get matches for padding calculation
-    # We find the specific string length of the first frame number in the filename
-    first_file = files_sorted[0]
-    match = frame_pattern.search(first_file.name)
-    if not match:
-        return None  # Should not happen since we already matched
-        
-    first_frame_str = match.group(1)
-    padding = len(first_frame_str)
-    
-    # Generate frame pattern
-    pattern_str = get_frame_pattern(first_file, padding, match)
-    
+    seq = sequences[0]
     return {
-        'pattern': pattern_str,
-        'first_frame': min(frames),
-        'last_frame': max(frames),
-        'frame_count': len(frames),
-        'padding': padding,
-        'files': files_sorted,
-        'missing_frames': find_missing_frames(frames)
+        'pattern': seq.filename_pattern,
+        'first_frame': seq.start,
+        'last_frame': seq.end,
+        'frame_count': seq.frame_count,
+        'padding': seq.padding or seq.width,
+        'files': list(seq.files),
+        'missing_frames': seq.missing_frames,
     }
 
 

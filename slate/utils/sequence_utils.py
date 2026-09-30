@@ -101,29 +101,37 @@ class SequenceDetector:
             logging.warning(f"Path does not exist: {path}")
             return None
             
+        # A file with no frame number is a still, whatever else is in the
+        # folder. This used to return the first sequence with the same
+        # extension, so every reference photo next to a render was handed to
+        # the sequence player and failed to play (MED-002).
+        frame_num = SequenceDetector.extract_frame_number(path.name)
+        if frame_num is None or path.suffix.lower() in MOVIE_EXTENSIONS:
+            return None
+
         try:
             # Find all sequences in the directory
             sequences = fileseq.findSequencesOnDisk(str(path.parent))
-            frame_num = SequenceDetector.extract_frame_number(path.name)
             probe_base = SequenceDetector.extract_base_name(path.name)
             suffix_lower = path.suffix.lower()
 
-            # Fast matching: compare extension + basename hint + frame range.
+            # The same rules as group_frames(): the name before the number
+            # must match exactly (it matched as a substring, so 'plate' took
+            # 'plate_ref'), and one frame on its own is not a sequence.
             for seq in sequences:
                 try:
                     if str(seq.extension()).lower() != suffix_lower:
                         continue
 
                     seq_base = str(seq.basename() or "").lower().rstrip('._-')
-                    if probe_base and seq_base:
-                        if not (seq_base == probe_base or seq_base in probe_base or probe_base in seq_base):
-                            continue
+                    if seq_base != probe_base:
+                        continue
 
-                    if frame_num is None:
-                        return seq
+                    if len(seq) < MIN_SEQUENCE_FRAMES:
+                        continue
 
-                    start, end = seq.start(), seq.end()
-                    if not (start <= frame_num <= end):
+                    frame_set = seq.frameSet()
+                    if frame_set is None or frame_num not in set(frame_set):
                         continue
                     return seq
                 except Exception as e:
@@ -329,43 +337,10 @@ class SequenceFallback:
         """
         if not path.exists():
             return None
-        
-        stem = path.stem
-        # Look for trailing digits (e.g., "shot.1001" -> "1001")
-        match = re.search(r'(\d+)$', stem)
-        
-        if not match:
-            return None  # No frame number
-        
-        frame_str = match.group(1)
-        padding = len(frame_str)
-        
-        # Extract base name (before frame number)
-        base = stem[:-len(frame_str)].rstrip('._-')
-        ext = path.suffix
-        
-        # Try to find other frames
-        parent = path.parent
-        pattern = f"{base}.%0{padding}d{ext}"
-        
-        frames = []
-        for file in parent.iterdir():
-            if file.stem.startswith(base):
-                match = re.search(r'(\d+)$', file.stem)
-                if match and len(match.group(1)) == padding:
-                    frames.append(int(match.group(1)))
-        
-        if len(frames) > 1:  # Must have at least 2 frames to be a sequence
-            frames.sort()
-            return {
-                'pattern': str(parent / pattern),
-                'start_frame': frames[0],
-                'end_frame': frames[-1],
-                'frame_count': len(frames),
-                'padding': padding
-            }
-        
-        return None
+        # The shared rules (see group_frames): exact name match, the file's
+        # own separator kept in the pattern, at least two frames.
+        seq = sequence_for(path)
+        return seq.info() if seq else None
 
 
 # Convenience function
@@ -445,3 +420,194 @@ def format_pattern_with_frame(pattern: str, frame: int) -> str:
         padding = int(match.group(1))
         return pattern.replace(f'%0{padding}d', str(frame).zfill(padding))
     return pattern.replace('%d', str(frame))
+
+
+# ---------------------------------------------------------------------------
+# The one way to tell a sequence from a still
+#
+# Four parsers used to answer this question differently (this module, the
+# proxy manager's utils/sequence_detector.py, the ingest worker's grouping
+# and shot_media). The loosest of them said any file with the right extension
+# in a folder with a sequence in it was part of that sequence - so a stock
+# library's reference photos, textures and HDRIs were sent to the sequence
+# player and failed with "Playback Error ... produced no picture". The rules,
+# once, for everybody:
+#
+#   * a frame number is the last run of digits before the extension
+#     (shot.1001.exr, shot_1001.exr, shot1001.exr)
+#   * frames belong together when everything before the number and the
+#     extension match exactly (case-insensitively), and the numbers are
+#     padded the same way
+#   * it takes at least two frames to make a sequence - one numbered file on
+#     its own is a still (IMG_2045.jpg is a photo, not frame 2045)
+#   * movie files are never frames
+# ---------------------------------------------------------------------------
+
+_FRAME_RE = re.compile(r'^(?P<head>.*?)(?P<frame>\d+)(?P<tail>\.[^.\\/]+)$')
+MOVIE_EXTENSIONS = frozenset({'.mov', '.mp4', '.mkv', '.avi', '.mxf', '.webm', '.m4v', '.wmv', '.mpg', '.mpeg'})
+MIN_SEQUENCE_FRAMES = 2
+
+
+def parse_frame(name: str) -> Optional[Tuple[str, str, str]]:
+    """('shot.', '1001', '.exr') for 'shot.1001.exr'; None when there is no frame number."""
+    match = _FRAME_RE.match(Path(str(name)).name)
+    if not match:
+        return None
+    if match.group('tail').lower() in MOVIE_EXTENSIONS:
+        return None
+    return match.group('head'), match.group('frame'), match.group('tail')
+
+
+def _padding_of(digits: str) -> int:
+    """How wide the numbers are written: '0100' -> 4, '1001' -> 0 (cannot tell)."""
+    return len(digits) if digits.startswith('0') and len(digits) > 1 else 0
+
+
+def _fits(digits: str, padding: int) -> bool:
+    """Whether a frame's digits are written the way a sequence padded to `padding` writes them."""
+    if not padding:
+        return not (digits.startswith('0') and len(digits) > 1)
+    return len(digits) == padding or (len(digits) > padding and not digits.startswith('0'))
+
+
+class FrameSequence:
+    """Frames that belong together - see group_frames()."""
+
+    def __init__(self, directory: Path, head: str, tail: str, padding: int,
+                 frames: List[int], files: List[Path]):
+        order = sorted(range(len(frames)), key=lambda i: frames[i])
+        self.directory = Path(directory)
+        self.head = head
+        self.tail = tail
+        self.padding = padding
+        self.frames = [frames[i] for i in order]
+        self.files = [files[i] for i in order]
+
+    @property
+    def start(self) -> int:
+        return self.frames[0]
+
+    @property
+    def end(self) -> int:
+        return self.frames[-1]
+
+    @property
+    def frame_count(self) -> int:
+        return len(self.frames)
+
+    @property
+    def width(self) -> int:
+        """Digits to print a frame with: the padding, or the widest number."""
+        return self.padding or len(str(self.end))
+
+    @property
+    def filename_pattern(self) -> str:
+        """'shot.%04d.exr' (or 'shot.%d.exr' for unpadded numbers)."""
+        return f"{self.head}%0{self.padding}d{self.tail}" if self.padding else f"{self.head}%d{self.tail}"
+
+    @property
+    def pattern(self) -> str:
+        """The printf pattern with its folder."""
+        return str(self.directory / self.filename_pattern)
+
+    @property
+    def missing_frames(self) -> List[int]:
+        present = set(self.frames)
+        return [f for f in range(self.start, self.end + 1) if f not in present]
+
+    def frame_path(self, frame: int) -> Path:
+        digits = str(frame).zfill(self.padding) if self.padding else str(frame)
+        return self.directory / f"{self.head}{digits}{self.tail}"
+
+    def info(self) -> Dict[str, Any]:
+        """The same keys get_sequence_info() has always returned."""
+        missing = self.missing_frames
+        return {
+            'pattern': self.pattern,
+            'filename_pattern': self.filename_pattern,
+            'start_frame': self.start,
+            'end_frame': self.end,
+            'frame_count': self.frame_count,
+            'frame_range': f"{self.start}-{self.end}",
+            'missing_frames': missing,
+            'has_missing': bool(missing),
+            'directory': str(self.directory),
+            'basename': self.head,
+            'extension': self.tail,
+            'padding': self.padding or self.width,
+            'first_frame': self.start,
+            'last_frame': self.end,
+            'files': list(self.files),
+        }
+
+    def __repr__(self):
+        return f"<FrameSequence {self.filename_pattern} {self.start}-{self.end} ({self.frame_count})>"
+
+
+def group_frames(paths, min_frames: int = MIN_SEQUENCE_FRAMES):
+    """
+    Split files into sequences and stills.
+
+    Returns (sequences, stills): FrameSequence objects, largest first, and the
+    Paths that are not part of any sequence - files with no frame number,
+    movies, and numbered files that turned out to be alone.
+    """
+    groups: Dict[Tuple[str, str, str], List[Tuple[str, Path]]] = {}
+    stills: List[Path] = []
+    for raw in paths:
+        path = Path(raw)
+        parsed = parse_frame(path.name)
+        if not parsed:
+            stills.append(path)
+            continue
+        head, digits, tail = parsed
+        key = (str(path.parent).lower(), head.lower(), tail.lower())
+        groups.setdefault(key, []).append((digits, path))
+
+    need = max(int(min_frames), 1)
+    sequences: List[FrameSequence] = []
+    for members in groups.values():
+        # The padding is what the zero-padded names say ('0999' -> 4); a
+        # frame past it ('1000') fits too. Names written another way
+        # ('shot.5.exr' beside 'shot.0004.exr') are not part of it.
+        pads = [_padding_of(d) for d, _ in members if _padding_of(d)]
+        padding = max(pads) if pads else 0
+        inside = [(d, p) for d, p in members if _fits(d, padding)]
+        outside = [p for d, p in members if not _fits(d, padding)]
+        frames = [int(d) for d, _ in inside]
+        if len(set(frames)) >= need:
+            first = inside[0][1]
+            head, _digits, tail = parse_frame(first.name)
+            sequences.append(FrameSequence(first.parent, head, tail, padding,
+                                           frames, [p for _, p in inside]))
+            stills.extend(outside)
+        else:
+            stills.extend(p for _, p in members)
+    sequences.sort(key=lambda s: (-s.frame_count, s.filename_pattern.lower()))
+    return sequences, stills
+
+
+def sequence_for(path: Path, min_frames: int = MIN_SEQUENCE_FRAMES) -> Optional[FrameSequence]:
+    """
+    The sequence this file is a frame of, or None when it is a still.
+
+    Only files that match it exactly are considered: same folder, same text
+    before the number, same extension, same padding.
+    """
+    path = Path(path)
+    parsed = parse_frame(path.name)
+    if not parsed or not path.parent.exists():
+        return None
+    head, digits, tail = parsed
+    try:
+        siblings = [p for p in path.parent.iterdir()
+                    if p.is_file() and p.name.lower().startswith(head.lower())
+                    and p.suffix.lower() == tail.lower()]
+    except OSError:
+        return None
+    sequences, _ = group_frames(siblings, min_frames=min_frames)
+    wanted = path.name.lower()
+    for seq in sequences:
+        if any(p.name.lower() == wanted for p in seq.files):
+            return seq
+    return None
