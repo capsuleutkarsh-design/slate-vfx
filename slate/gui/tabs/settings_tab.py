@@ -271,55 +271,26 @@ class SettingsTab(QWidget):
 
         # 1a. STUDIO POLICY
         #
-        # These two used to be literals in two different files: attendance had
-        # its own start time and its own nine-hour day, and the leave rules had
-        # their own. A studio that worked different hours had to be told to
-        # ignore half of what both screens said.
+        # Every attendance and leave rule, saved for the whole studio in the
+        # database. "Late after" and "Standard day" used to be saved into this
+        # workstation's own config file, so machines could disagree, and the
+        # rest of the policy (weekly offs, accrual, carry-forward, sandwich
+        # rule, comp-off) had no screen at all. HR and admins edit it; everyone
+        # else sees it read-only. See studio_settings_cards.py.
+        from .studio_settings_cards import StudioMoneyEditor, StudioPolicyEditor
+
         card_policy = SettingsCard("Studio Policy")
         card_policy.layout().setSpacing(10)
-
-        policy_note = QLabel(
-            "What counts as late, and how long a normal day is. Attendance and "
-            "Leave both read these, so they cannot disagree."
-        )
-        policy_note.setWordWrap(True)
-        policy_note.setStyleSheet(f"color: {C.TEXT_GRAY_LIGHTER}; font-size: 11px;")
-        card_policy.layout().addWidget(policy_note)
-
-        from slate.core.domain import leave_policy as _lp
-
-        cutoff_row = QHBoxLayout()
-        cutoff_row.addWidget(QLabel("Late after:"))
-        self.late_cutoff_input = QTimeEdit()
-        self.late_cutoff_input.setDisplayFormat("HH:mm")
-        _hour, _minute = _lp.late_cutoff()
-        self.late_cutoff_input.setTime(QTime(_hour, _minute))
-        self.late_cutoff_input.setStyleSheet(
-            f"background: #1D1D22; color: white; border: 1px solid {C.BORDER_LIGHT}; padding: {S.XS}px;")
-        cutoff_row.addWidget(self.late_cutoff_input)
-        cutoff_row.addStretch(1)
-        card_policy.layout().addLayout(cutoff_row)
-
-        day_row = QHBoxLayout()
-        day_row.addWidget(QLabel("Standard day:"))
-        self.standard_day_input = QDoubleSpinBox()
-        self.standard_day_input.setRange(1.0, 24.0)
-        self.standard_day_input.setSingleStep(0.5)
-        self.standard_day_input.setSuffix(" hours")
-        self.standard_day_input.setValue(_lp.standard_day_hours())
-        self.standard_day_input.setStyleSheet(
-            f"background: #1D1D22; color: white; border: 1px solid {C.BORDER_LIGHT}; padding: {S.XS}px;")
-        day_row.addWidget(self.standard_day_input)
-        day_row.addStretch(1)
-        card_policy.layout().addLayout(day_row)
-
-        policy_save = QHBoxLayout()
-        policy_save.addStretch(1)
-        policy_save.addWidget(make_button("Save policy", "primary",
-                                          on_click=self.save_studio_policy))
-        card_policy.layout().addLayout(policy_save)
-
+        self.studio_policy_editor = StudioPolicyEditor()
+        card_policy.layout().addWidget(self.studio_policy_editor)
         main_layout.addWidget(card_policy)
+
+        # 1a'. STUDIO MONEY & HOURS - currency, day rates, GST, working hours.
+        card_money = SettingsCard("Studio Currency, Rates & Hours")
+        card_money.layout().setSpacing(10)
+        self.studio_money_editor = StudioMoneyEditor()
+        card_money.layout().addWidget(self.studio_money_editor)
+        main_layout.addWidget(card_money)
 
         # 1b. PATHS & CONNECTIONS
         card_paths = SettingsCard("Paths & Connections")
@@ -589,30 +560,10 @@ class SettingsTab(QWidget):
 
     def save_studio_policy(self):
         """
-        Save what counts as late and how long a day is, and apply it now.
-
-        Applied immediately rather than on restart, because somebody changing
-        the start time is usually looking at an attendance grid they believe is
-        wrong, and being told to restart before they can check is how a setting
-        gets changed twice.
+        Save the studio policy for everybody and apply it now - see
+        StudioPolicyEditor.save(). Kept so existing callers still work.
         """
-        try:
-            cutoff = self.late_cutoff_input.time().toString("HH:mm")
-            standard = float(self.standard_day_input.value())
-
-            GlobalConfig.set("late_cutoff", cutoff)
-            GlobalConfig.set("standard_day_hours", standard)
-
-            from slate.core.infra.studio_policy import load_into_domain
-            load_into_domain()
-
-            QMessageBox.information(
-                self, "Saved",
-                "Late after %s, standard day %g hours.\n\n"
-                "Attendance and Leave both use this from now on. Re-open the "
-                "Attendance tab to see the grid recount." % (cutoff, standard))
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Could not save the studio policy:\n{e}")
+        return self.studio_policy_editor.save()
 
     def save_paths_and_connections(self):
         """Persist path and DB connection settings used during daily operations."""

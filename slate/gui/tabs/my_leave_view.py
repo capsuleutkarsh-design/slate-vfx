@@ -27,6 +27,8 @@ from slate.core.domain import leave_policy as lp
 from ..core.controls import make_button, page_title
 from ..core.offline_notice import on_database_error
 from ..core.empty_state import EmptyState
+from ..core.data_display import setup_date_edit
+from slate.core.domain.dates import format_date
 
 
 def _tone(token: str) -> str:
@@ -110,10 +112,10 @@ class RequestLeaveDialog(QDialog):
         self.kind.addItems(lp.LEAVE_TYPES)
 
         today = QDate.currentDate()
-        self.start = QDateEdit(today)
-        self.start.setCalendarPopup(True)
-        self.end = QDateEdit(today)
-        self.end.setCalendarPopup(True)
+        # With the weekday ('Sat 3 Oct 2026'): whether a day is a Saturday is
+        # exactly what matters when asking for leave. Weeks start on Monday.
+        self.start = setup_date_edit(QDateEdit(today), weekday=True)
+        self.end = setup_date_edit(QDateEdit(today), weekday=True)
 
         self.half_day = QComboBox()
         self.half_day.addItems(["Full day", "Half day"])
@@ -239,7 +241,7 @@ class RequestLeaveDialog(QDialog):
             self.note.setText(
                 "You already have a request covering those days: %s to %s (%s, %s). "
                 "Cancel that one first, or pick different dates."
-                % (first.get("start_date"), first.get("end_date"),
+                % (format_date(first.get("start_date")), format_date(first.get("end_date")),
                    (first.get("type") or "Leave"), lp.normalise_status(first.get("status"))))
             self.note.show()
             return
@@ -371,8 +373,8 @@ class MyLeaveView(QWidget):
             status = lp.normalise_status(row.get("status")) or lp.STATUS_PENDING_SUPERVISOR
             charge = row.get("days_charged")
             cells = [
-                str(row.get("start_date") or ""),
-                str(row.get("end_date") or ""),
+                format_date(row.get("start_date")),
+                format_date(row.get("end_date")),
                 (row.get("type") or "").title(),
                 ("%g" % float(charge)) if charge is not None else "-",
                 status,
@@ -435,7 +437,7 @@ class MyLeaveView(QWidget):
             self, "Withdraw this request",
             "Withdraw your leave from %s to %s?\n\nThe days it is holding go "
             "back into your balance straight away."
-            % (row.get("start_date"), row.get("end_date")),
+            % (format_date(row.get("start_date")), format_date(row.get("end_date"))),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
         ) != QMessageBox.StandardButton.Yes:
             return
