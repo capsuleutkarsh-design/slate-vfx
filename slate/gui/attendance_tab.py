@@ -787,7 +787,19 @@ class AttendanceTab(QWidget):
 
     @on_database_error
     def refresh_team_view(self):
-        """Admin Grid - Now with Stats Columns (P, L, OT, WFH)."""
+        """
+        Admin Grid - Now with Stats Columns (P, L, OT, WFH).
+
+        Keeps the selected people and the scroll position across the refresh
+        (it runs every 30 s): the grid is rebuilt, and HR used to lose their
+        place twice a minute.
+        """
+        from slate.gui.components.table_tools import KeepSelection
+        with KeepSelection(self.team_table):
+            self._fill_team_view()
+
+    def _fill_team_view(self):
+        from slate.gui.components.table_tools import KEY_ROLE
         year = self.spin_year.value()
         month = self.combo_month.currentIndex() + 1
         days = calendar.monthrange(year, month)[1]
@@ -797,6 +809,17 @@ class AttendanceTab(QWidget):
         self.lbl_last_refresh.setText(f"Last updated: {datetime.now().strftime('%H:%M:%S')}")
 
         users = self.user_manager.get_all_users()
+        # People who have left drop out of the grid - but not from the months
+        # they were still here for.
+        month_start = f"{year:04d}-{month:02d}-01"
+
+        def still_here(record):
+            if record.get('active', True):
+                return True
+            ended = str(record.get('last_day') or record.get('deactivated_on') or '')[:10]
+            return bool(ended) and ended >= month_start
+
+        users = {u: rec for u, rec in users.items() if still_here(rec or {})}
         user_ids = list(users.keys())
         self._team_row_user_ids = list(user_ids)
         data = self.attendance.get_full_month_data(year, month)
@@ -904,6 +927,7 @@ class AttendanceTab(QWidget):
             # Present
             it_p = QTableWidgetItem(str(p_cnt)); it_p.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             it_p.setForeground(QColor("#5FBF8F")); it_p.setBackground(QColor("#1B3A2C"))
+            it_p.setData(KEY_ROLE, uid)          # the row is this person, whatever order
             self.team_table.setItem(r, 0, it_p)
 
             # Late
@@ -933,6 +957,11 @@ class AttendanceTab(QWidget):
         Auto-refresh Team Overview from Database.
         """
         if not self.is_admin():
+            return
+        # Not while a dialog (Edit Punch, an export) is open over the grid:
+        # rows must not move under somebody working on one.
+        from PySide6.QtWidgets import QApplication
+        if QApplication.activeModalWidget() is not None:
             return
 
         # Simply refresh from DB (Postgres handle concurrency well)

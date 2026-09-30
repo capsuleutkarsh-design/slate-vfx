@@ -124,6 +124,12 @@ class ServiceDeskView(QWidget):
         controls.addWidget(self.filter_mine)
         controls.addWidget(self.search, 1)
 
+        # Headers sort (by value); this puts the queue back in SLA order.
+        self.btn_worst_first = make_button(
+            "Worst first", "ghost", on_click=self.worst_first,
+            tooltip="Undo a header sort: breached, then at risk, then by priority")
+        controls.addWidget(self.btn_worst_first)
+
         self.btn_take = make_button("Assign to me", "primary", on_click=self.take)
         self.btn_respond = make_button("Mark responded", "secondary", on_click=self.mark_responded)
         self.btn_status = make_button("Set status", "secondary", on_click=self.change_status)
@@ -145,6 +151,8 @@ class ServiceDeskView(QWidget):
             head.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
         self.table.doubleClicked.connect(self.open_selected)
         self.table.itemSelectionChanged.connect(self._sync_buttons)
+        from slate.gui.components.table_tools import setup_table
+        setup_table(self.table)
         root.addWidget(self.table, 1)
 
         self.empty = EmptyState(
@@ -212,28 +220,21 @@ class ServiceDeskView(QWidget):
         ))
         # Keep what IT had selected and where they had scrolled to: this also
         # runs on a timer, and must not pull the ticket out from under them.
-        keep = {r.get("id") for r in self._selected()}
-        scroll = self.table.verticalScrollBar().value()
-        self.table.clearSelection()      # by ticket, not by row: the order can change
+        # The shared helper remembers tickets by id, not row numbers.
+        from slate.gui.components.table_tools import KeepSelection
         self._rows = rows
 
         self._paint_stats(everything)
-        self._paint_rows(rows)
-        self._reselect(keep)
-        self.table.verticalScrollBar().setValue(scroll)
+        with KeepSelection(self.table):
+            self._paint_rows(rows)
         self.empty.refresh()
         self._sync_buttons()
 
-    def _reselect(self, ids):
-        if not ids:
-            return
-        from PySide6.QtCore import QItemSelectionModel
-        model = self.table.selectionModel()
-        for index, row in enumerate(self._rows):
-            if row.get("id") in ids:
-                model.select(self.table.model().index(index, 0),
-                             QItemSelectionModel.SelectionFlag.Select
-                             | QItemSelectionModel.SelectionFlag.Rows)
+    def worst_first(self):
+        """Back to the SLA order the queue is built in."""
+        from slate.gui.components.table_tools import clear_sort
+        clear_sort(self.table)
+        self.refresh()
 
     def _paint_stats(self, everything):
         while self.stats_row.count():
@@ -290,8 +291,12 @@ class ServiceDeskView(QWidget):
                 row.get("assigned_to") or "-",
                 sla_text,
             ]
+            from slate.gui.components.table_tools import make_item
+            sort_values = [row.get("id"), None, None, None, priority_rank(priority), None,
+                           None, state["hours_left"]]
             for c, text in enumerate(cells):
-                item = QTableWidgetItem(text)
+                item = make_item(text, sort_value=sort_values[c],
+                                 key=row.get("id") if c == 0 else None)
                 if c == 4:
                     item.setForeground(QColor(_tone(priority_tone(priority))))
                 elif c == 5:
@@ -304,8 +309,11 @@ class ServiceDeskView(QWidget):
 
     # --------------------------------------------------------------- actions
     def _selected(self):
-        rows = sorted({i.row() for i in self.table.selectedIndexes()})
-        return [self._rows[r] for r in rows if r < len(self._rows)]
+        """The selected tickets, by id - the queue can be sorted by any header."""
+        from slate.gui.components.table_tools import selected_keys
+        wanted = selected_keys(self.table)
+        by_id = {r.get("id"): r for r in getattr(self, "_rows", [])}
+        return [by_id[k] for k in wanted if k in by_id]
 
     def _sync_buttons(self, *_):
         picked = bool(self._selected())

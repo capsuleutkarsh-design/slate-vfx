@@ -78,6 +78,10 @@ OFFBOARD_TASKS = [
 FREELANCE_SKIP = {"Added to payroll", "Final settlement processed"}
 
 
+class UnknownPerson(ValueError):
+    """A checklist for a username that has no account."""
+
+
 class OnboardingService:
     def __init__(self, db=None):
         if db is None:
@@ -99,6 +103,20 @@ class OnboardingService:
         except Exception:
             logger.exception("people failed")
             return []
+
+    def joining_finished(self) -> set:
+        """Usernames (lower-case) whose joining checklist is complete."""
+        try:
+            rows = self.db.execute_query(
+                "SELECT user_id, MIN(CASE WHEN is_completed THEN 1 ELSE 0 END) AS all_done "
+                "FROM onboarding_workflows WHERE direction = %s GROUP BY user_id",
+                (JOINING,), fetch="all") or []
+        except DatabaseUnavailableError:
+            raise
+        except Exception:
+            logger.exception("joining_finished failed")
+            return set()
+        return {str(dict(r)["user_id"]).lower() for r in rows if dict(r).get("all_done")}
 
     # ------------------------------------------------------------------- tasks
     def tasks_for(self, username: str, direction: str = None) -> list:
@@ -164,6 +182,23 @@ class OnboardingService:
         joining date to count from and offboarding had no last day to measure
         against.
         """
+        # Only for somebody who has an account. A typed name that matched
+        # nobody used to start the checklist for whoever was still selected.
+        try:
+            found = self.db.execute_query(
+                "SELECT username FROM ut_users WHERE LOWER(username) = LOWER(%s)",
+                (str(username or "").strip(),), fetch="one")
+        except DatabaseUnavailableError:
+            raise
+        except Exception:
+            logger.exception("start: account check failed")
+            found = None
+        if not found:
+            raise UnknownPerson(
+                "There is no account called %r. Create it on Users & Roles first, "
+                "then start the checklist." % str(username or ""))
+        username = str(found["username"] if isinstance(found, dict) else found[0])
+
         already = {t["task_name"] for t in self.tasks_for(username, direction)}
         self._record_employment(username, direction, employment, effective_date)
         template = ONBOARD_TASKS if direction == JOINING else OFFBOARD_TASKS

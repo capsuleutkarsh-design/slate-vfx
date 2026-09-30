@@ -335,6 +335,10 @@ class CapRenameTab(QWidget):
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setShowGrid(False)  # Cleaner look
+        # A preview, not an editor: typed names were shown and then ignored -
+        # the rename always used the computed name. Rows stay in file order.
+        from slate.gui.components.table_tools import setup_table
+        setup_table(self.table, sortable=False)
         self.table.setStyleSheet(f"QTableWidget {{ background-color: {C.BG_SURFACE}; gridline-color: transparent; border: 1px solid {C.BORDER_SUBTLE}; border-radius: {R.MD}px; }} QTableWidget::item {{ padding: 5px; border-bottom: 1px solid {C.BORDER_SUBTLE}; }} QTableWidget::item:selected {{ background-color: rgba(62, 168, 191, 0.15); }} QHeaderView::section {{ background-color: {C.BG_ELEVATED}; padding: 8px; border: none; border-bottom: 1px solid {C.BORDER_SUBTLE}; font-weight: bold; color: {C.TEXT_SECONDARY}; }}")
         layout.addWidget(self.table)
         

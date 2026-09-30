@@ -48,14 +48,19 @@ class StartPersonDialog(QDialog):
         form = QFormLayout()
         form.setSpacing(Gate.SPACE_2)
 
-        self.person = QComboBox()
-        self.person.setEditable(True)
-        for row in service.people():
-            name = row.get("display_name") or row.get("username") or ""
-            self.person.addItem(
-                "%s (%s)" % (name, row.get("username")) if name else str(row.get("username")),
-                row.get("username"))
+        # A searchable picker that only ever yields a real username. The
+        # editable combo it replaces took the still-selected item whatever was
+        # typed, so a typo started a checklist for somebody else.
+        from slate.gui.components.person_picker import PersonPicker
+        self.person = PersonPicker(
+            placeholder="Type a name…", allow_empty=False,
+            order=self._joining_order(service) if joining else None)
+        self.person.person_changed.connect(self._sync_start)
         form.addRow("Person", self.person)
+        self.person_hint = QLabel("")
+        self.person_hint.setWordWrap(True)
+        self.person_hint.setStyleSheet(f"color: {Gate.WARN}; font-size: 12px;")
+        form.addRow("", self.person_hint)
 
         self.employment = QComboBox()
         self.employment.addItem("Staff", "staff")
@@ -90,12 +95,45 @@ class StartPersonDialog(QDialog):
         buttons = QHBoxLayout()
         buttons.addStretch(1)
         buttons.addWidget(make_button("Cancel", "ghost", on_click=self.reject))
-        buttons.addWidget(make_button(
-            "Start joining" if joining else "Start leaving", "primary", on_click=self.accept))
+        self.start_button = make_button(
+            "Start joining" if joining else "Start leaving", "primary", on_click=self.accept)
+        buttons.addWidget(self.start_button)
         root.addLayout(buttons)
+        self._sync_start(self.person.username())
+
+    @staticmethod
+    def _joining_order(service):
+        """
+        For joining: people without a finished joining list first (newest
+        accounts first among them), long-standing staff last, each group
+        alphabetical. It was every account by joining date, blanks first.
+        """
+        try:
+            done = service.joining_finished()
+        except Exception:
+            done = set()           # only the order suffers
+
+        def key(entry):
+            username, display, record = entry
+            joined = str(record.get("joined_on") or "")
+            started = username.lower() in done
+            return (1 if started or joined else 0, display.casefold())
+        return key
+
+    def _sync_start(self, username):
+        text = self.person.currentText().strip()
+        if username:
+            self.person_hint.setText("")
+        elif text:
+            self.person_hint.setText(
+                "No such person - create the account on Users & Roles first.")
+        else:
+            self.person_hint.setText("")
+        self.start_button.setEnabled(bool(username))
 
     def payload(self):
-        username = self.person.currentData() or self.person.currentText().strip()
+        # Only a real username; never the text as typed.
+        username = self.person.username()
         day = self.effective.date()
         return (str(username), self.employment.currentData(),
                 self.department.text().strip(),
@@ -415,8 +453,14 @@ class JoiningLeavingView(QWidget):
         username, employment, department, effective = dialog.payload()
         if not username:
             return
-        made = self.service.start(username, direction, employment, department,
-                                  effective_date=effective)
+        from slate.core.domain.onboarding_service import UnknownPerson
+        try:
+            made = self.service.start(username, direction, employment, department,
+                                      effective_date=effective)
+        except UnknownPerson as missing:
+            QMessageBox.warning(self, "Start joining" if direction == JOINING else "Start leaving",
+                                str(missing))
+            return
         if not made:
             QMessageBox.information(
                 self, "Already on the list",

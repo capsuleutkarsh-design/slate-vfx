@@ -8,6 +8,10 @@ from PySide6.QtGui import QFont, QColor
 from ..core.empty_state import EmptyState
 from ..core.controls import page_title, gate_selection_buttons
 from slate.gui.core.offline_notice import on_database_error
+from slate.gui.components.table_tools import (
+    KeepSelection, TableToolbar, make_item, selected_keys, setup_table,
+)
+from slate.gui.components.state_notice import show_load_error
 
 # Let an outage reach the @on_database_error decorator rather than becoming an
 # empty grid here. Everything else keeps the fallback it already had.
@@ -186,7 +190,17 @@ class ItDeploymentTab(QWidget):
         self.grid = QTableWidget(0, 6)
         self.grid.setHorizontalHeaderLabels(["ID", "Package Name", "Target Machine", "Deployed By", "Status", "Deployed At"])
         self.style_table(self.grid)
+        # Read-only (typed cells were never saved), rows, sortable headers.
+        setup_table(self.grid)
+        self.toolbar = TableToolbar(self.grid, placeholder="Search package, machine or person…",
+                                    columns=(1, 2, 3), on_refresh=self.load_data)
+        main_layout.addWidget(self.toolbar)
         self.load_data()
+        # Other people's records appear without a restart: the change feed,
+        # or a timer where it is missing.
+        from slate.gui.components.auto_refresh import AutoRefresh
+        self._auto_refresh = AutoRefresh(self, self.load_data, seconds=30,
+                                         topics=("it_deployments",))
         
         self.grid.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.grid.hideColumn(0) # Hide ID
@@ -196,8 +210,8 @@ class ItDeploymentTab(QWidget):
         # render as several hundred pixels of black, with no way to tell
         # an empty table from a broken one.
         self.empty_state = EmptyState(
-            'Nothing deployed yet',
-            'Software pushed to workstations will be listed here.',
+            'Nothing recorded yet',
+            'Add an install with Record deployment.',
             glyph='package',
         )
         main_layout.addWidget(self.empty_state)
@@ -223,12 +237,13 @@ class ItDeploymentTab(QWidget):
             all_deps = database_manager.execute_query("SELECT status FROM it_deployments") or []
         except DatabaseUnavailableError:
             raise
-        except:
-            deps = []
-            all_deps = []
-            
-        self.grid.setRowCount(len(deps))
-        
+        except Exception as e:
+            # Not "Nothing deployed yet": the read failed, so say that.
+            import logging
+            logging.exception("Deployments could not be read")
+            show_load_error(self, e, retry=self.load_data, what="the deployment log")
+            return
+
         total = len(all_deps)
         successes = sum(1 for d in all_deps if d.get('status') == 'Success')
         failures = sum(1 for d in all_deps if d.get('status') == 'Failed')
@@ -245,13 +260,20 @@ class ItDeploymentTab(QWidget):
         else:
             self.lbl_success.setText("-")
 
+        # The selection follows the deployment (by id), not the row number.
+        with KeepSelection(self.grid):
+            self._fill(deps)
+
+    def _fill(self, deps):
+        self.grid.setRowCount(len(deps))
         for r, row in enumerate(deps):
-            self.grid.setItem(r, 0, QTableWidgetItem(str(row.get('id', ''))))
-            self.grid.setItem(r, 1, QTableWidgetItem(str(row.get('package_name', ''))))
-            self.grid.setItem(r, 2, QTableWidgetItem(str(row.get('target_machine', ''))))
-            self.grid.setItem(r, 3, QTableWidgetItem(str(row.get('deployed_by', ''))))
-            
-            status_item = QTableWidgetItem(str(row.get('status', '')))
+            dep_id = row.get('id')
+            self.grid.setItem(r, 0, make_item(str(dep_id or ''), sort_value=dep_id, key=dep_id))
+            self.grid.setItem(r, 1, make_item(str(row.get('package_name', ''))))
+            self.grid.setItem(r, 2, make_item(str(row.get('target_machine', ''))))
+            self.grid.setItem(r, 3, make_item(str(row.get('deployed_by', ''))))
+
+            status_item = make_item(str(row.get('status', '')))
             st_text = status_item.text().strip().lower()
             if st_text == "success":
                 status_item.setForeground(QColor("#5FBF8F"))
@@ -263,7 +285,8 @@ class ItDeploymentTab(QWidget):
                 status_item.setForeground(QColor("#87857F"))
             self.grid.setItem(r, 4, status_item)
             
-            self.grid.setItem(r, 5, QTableWidgetItem(str(row.get('deployed_at', ''))))
+            deployed_at = row.get('deployed_at')
+            self.grid.setItem(r, 5, make_item(str(deployed_at or ''), sort_value=deployed_at))
 
     def add_deployment(self):
         dialog = AddDeploymentDialog(self)
@@ -272,25 +295,27 @@ class ItDeploymentTab(QWidget):
             tgt = dialog.target_input.text().strip()
             
             if not pkg or not tgt:
-                QMessageBox.warning(self, "Error", "Package Name and Target Machine are required.")
+                QMessageBox.warning(self, "Record deployment", "Give both the package name and the machine.")
                 return
                 
             from slate.core.infra.database_manager import database_manager
             current_user = self.user_data.get('username', 'admin')
             query = "INSERT INTO it_deployments (package_name, target_machine, deployed_by, status) VALUES (%s, %s, %s, 'Pending')"
             if database_manager.execute_query(query, (pkg, tgt, current_user), fetch=False):
-                QMessageBox.information(self, "Success", "Deployment task created.")
+                QMessageBox.information(self, "Record deployment", "Recorded. Mark it Success or Failed when you know.")
                 self.load_data()
 
     def update_status(self, new_status):
-        selected_rows = set(item.row() for item in self.grid.selectedItems())
-        if not selected_rows:
-            QMessageBox.warning(self, "Selection Empty", "Please select a deployment to update.")
+        # By id, never by row number: after a reload the same rows hold other
+        # deployments, and the next Mark Failed used to hit one of those.
+        ids = [k for k in selected_keys(self.grid) if k is not None]
+        if not ids:
+            QMessageBox.warning(self, "Mark %s" % new_status.lower(),
+                                "Select the deployment to update.")
             return
-            
+
         from slate.core.infra.database_manager import database_manager
-        for r in selected_rows:
-            did = self.grid.item(r, 0).text()
+        for did in ids:
             query = "UPDATE it_deployments SET status = %s WHERE id = %s"
             database_manager.execute_query(query, (new_status, int(did)), fetch=False)
         self.load_data()

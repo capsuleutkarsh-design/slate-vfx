@@ -6,6 +6,9 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QColor
 from slate.core.infra.database_manager import database_manager
 from slate.gui.core.offline_notice import on_database_error
+from slate.gui.components.table_tools import (
+    KeepSelection, TableToolbar, make_item, selected_keys, setup_table,
+)
 
 # Let an outage reach the @on_database_error decorator rather than becoming an
 # empty grid here. Everything else keeps the fallback it already had.
@@ -213,7 +216,23 @@ class ProdBiddingTab(QWidget):
         self.grid = QTableWidget(0, 9)
         self.grid.setHorizontalHeaderLabels(["ID", "Project Code", "Shots", "Complexity", "Est. Days", "Margin", "Est. Cost", "Final Budget", "Status"])
         self.style_table(self.grid)
+        # Read-only (typing into Final Budget saved nothing); double-click
+        # edits the bid; headers sort money and days by value.
+        setup_table(self.grid)
+        self.grid.doubleClicked.connect(lambda _index: self.edit_bid())
+
+        self.toolbar = TableToolbar(self.grid, placeholder="Search project, complexity or status…",
+                                    columns=(1, 3, 8), on_refresh=self.load_data)
+        self.project_filter = self.toolbar.add_filter("Project", [("All projects", "")], column=1)
+        self.status_filter = self.toolbar.add_filter(
+            "Status", [("All statuses", ""), ("Draft", "Draft"), ("Approved", "Approved"),
+                       ("Rejected", "Rejected")], column=8)
+        main_layout.addWidget(self.toolbar)
         self.load_data()
+        # Other people's bids appear without a restart.
+        from slate.gui.components.auto_refresh import AutoRefresh
+        self._auto_refresh = AutoRefresh(self, self.load_data, seconds=30,
+                                         topics=("prod_bidding", "prod_bid_lines"))
         
         self.grid.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.grid.hideColumn(0) # Hide ID
@@ -226,11 +245,25 @@ class ProdBiddingTab(QWidget):
             bids = database_manager.execute_query(query) or []
         except DatabaseUnavailableError:
             raise
-        except:
-            bids = []
-            
-        self.grid.setRowCount(len(bids))
-        
+        except Exception as e:
+            # A failed read is not an empty pipeline.
+            import logging
+            from slate.gui.components.state_notice import show_load_error
+            logging.exception("Bids could not be read")
+            show_load_error(self, e, retry=self.load_data, what="the bids")
+            return
+
+        combo = self.project_filter
+        keep = combo.currentData()
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("All projects", "")
+        for code in sorted({str(b.get('project_code') or '') for b in bids if b.get('project_code')}):
+            combo.addItem(code, code)
+        index = combo.findData(keep)
+        combo.setCurrentIndex(index if index >= 0 else 0)
+        combo.blockSignals(False)
+
         total = len(bids)
         # Pipeline value is work that might still happen. Rejected bids were
         # counted in it, so the figure grew every time the studio lost a job.
@@ -242,17 +275,30 @@ class ProdBiddingTab(QWidget):
         self.lbl_value.setText(f"${total_val:,.0f}")
         self.lbl_approved.setText(str(approved))
 
+        # The selection follows the bid (by id), not the row number: after a
+        # delete the highlighted rows used to be other bids.
+        with KeepSelection(self.grid):
+            self._fill(bids)
+
+    def _fill(self, bids):
+        self.grid.setRowCount(len(bids))
         for r, row in enumerate(bids):
-            self.grid.setItem(r, 0, QTableWidgetItem(str(row.get('id', ''))))
-            self.grid.setItem(r, 1, QTableWidgetItem(str(row.get('project_code', ''))))
-            self.grid.setItem(r, 2, QTableWidgetItem(str(row.get('shot_count', 0))))
-            self.grid.setItem(r, 3, QTableWidgetItem(str(row.get('complexity', ''))))
-            self.grid.setItem(r, 4, QTableWidgetItem(f"{row.get('estimated_days', 0):.1f} d"))
-            self.grid.setItem(r, 5, QTableWidgetItem(f"{row.get('target_margin', 0):.0f}%"))
-            self.grid.setItem(r, 6, QTableWidgetItem(f"${row.get('estimated_cost', 0):,.2f}"))
-            self.grid.setItem(r, 7, QTableWidgetItem(f"${row.get('estimated_budget', 0):,.2f}"))
-            
-            status_item = QTableWidgetItem(str(row.get('status', '')))
+            bid_id = row.get('id')
+            days = row.get('estimated_days', 0) or 0
+            margin = row.get('target_margin', 0) or 0
+            cost = row.get('estimated_cost', 0) or 0
+            budget = row.get('estimated_budget', 0) or 0
+            self.grid.setItem(r, 0, make_item(str(bid_id or ''), sort_value=bid_id, key=bid_id))
+            self.grid.setItem(r, 1, make_item(str(row.get('project_code', ''))))
+            self.grid.setItem(r, 2, make_item(str(row.get('shot_count', 0)),
+                                              sort_value=row.get('shot_count', 0) or 0))
+            self.grid.setItem(r, 3, make_item(str(row.get('complexity', ''))))
+            self.grid.setItem(r, 4, make_item(f"{days:.1f} d", sort_value=days))
+            self.grid.setItem(r, 5, make_item(f"{margin:.0f}%", sort_value=margin))
+            self.grid.setItem(r, 6, make_item(f"${cost:,.2f}", sort_value=cost))
+            self.grid.setItem(r, 7, make_item(f"${budget:,.2f}", sort_value=budget))
+
+            status_item = make_item(str(row.get('status', '')))
             if status_item.text() == "Approved":
                 status_item.setForeground(QColor("green"))
             elif status_item.text() == "Rejected":
@@ -289,13 +335,8 @@ class ProdBiddingTab(QWidget):
                 self.load_data()
 
     def _selected_bid_id(self):
-        rows = sorted({item.row() for item in self.grid.selectedItems()})
-        if not rows:
-            return None
-        item = self.grid.item(rows[0], 0)
-        if not item or not item.text():
-            return None
-        return int(item.text())
+        keys = [k for k in selected_keys(self.grid) if k is not None]
+        return int(keys[0]) if keys else None
 
     def edit_bid(self):
         """
@@ -350,15 +391,14 @@ class ProdBiddingTab(QWidget):
         self.load_data()
 
     def update_status(self, new_status):
-        selected_rows = set(item.row() for item in self.grid.selectedItems())
-        if not selected_rows:
-            QMessageBox.warning(self, "Selection Empty", "Please select a bid to update.")
+        # By bid id, never by row number.
+        bid_ids = [k for k in selected_keys(self.grid) if k is not None]
+        if not bid_ids:
+            QMessageBox.warning(self, "%s bid" % ("Approve" if new_status == "Approved" else "Reject"),
+                                "Select the bid first.")
             return
-            
-        for r in selected_rows:
-            item = self.grid.item(r, 0)
-            if not item: continue
-            bid = item.text()
+
+        for bid in bid_ids:
             query = "UPDATE prod_bidding SET status = %s WHERE id = %s"
             database_manager.execute_query(query, (new_status, int(bid)), fetch=False)
         self.load_data()
