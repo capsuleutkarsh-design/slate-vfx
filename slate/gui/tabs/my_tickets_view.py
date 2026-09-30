@@ -22,7 +22,8 @@ from slate.core.domain.service_desk import (
     CATEGORIES, IMPACT, URGENCY, PRIORITY_LABEL, describe_promise,
     normalise_status, priority_for, priority_tone, status_tone,
 )
-from ..core.controls import make_button, page_title
+from ..core.controls import make_button, page_title, tidy_form
+from ..core.table_style import style_table
 from ..core.empty_state import EmptyState
 from slate.gui.core.offline_notice import on_database_error
 
@@ -44,14 +45,15 @@ class RaiseTicketDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Report a problem")
         self.setMinimumWidth(460)
-        self.setStyleSheet(f"background-color: {Gate.GROUND}; color: {Gate.TEXT};")
+        self.setStyleSheet(f"QDialog {{ background-color: {Gate.GROUND}; }}")  # the dialog only: without a selector every field in it took this background
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(22, 20, 22, 18)
         outer.setSpacing(Gate.SPACE_3)
 
-        form = QFormLayout()
-        form.setSpacing(Gate.SPACE_3)
+        # Labels centred on their fields, not level with the top of them.
+        form = tidy_form(QFormLayout())
+        form.setVerticalSpacing(Gate.SPACE_3)
 
         self.category = QComboBox()
         self.category.addItems(CATEGORIES)
@@ -142,7 +144,7 @@ class TicketThreadDialog(QDialog):
         self.username = username
         self.setWindowTitle("Ticket #%s" % ticket.get("id"))
         self.setMinimumSize(560, 520)
-        self.setStyleSheet(f"background-color: {Gate.GROUND}; color: {Gate.TEXT};")
+        self.setStyleSheet(f"QDialog {{ background-color: {Gate.GROUND}; }}")  # the dialog only: without a selector every field in it took this background
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(22, 20, 22, 18)
@@ -311,21 +313,25 @@ class MyTicketsView(QWidget):
         header.addWidget(page_title(
             "IT support", "Report a problem, and follow what happens to it"))
         header.addStretch(1)
-        header.addWidget(make_button("Report a problem", "primary", on_click=self.raise_ticket),
-                         0, Qt.AlignmentFlag.AlignTop)
+        # Centred on the title block (the title keeps SPACE_3 below its text).
+        report = QVBoxLayout()
+        report.setContentsMargins(0, 0, 0, Gate.SPACE_3)
+        report.addStretch(1)
+        report.addWidget(make_button("Report a problem", "primary", on_click=self.raise_ticket))
+        report.addStretch(1)
+        header.addLayout(report)
         root.addLayout(header)
 
         self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(
             ["#", "Summary", "Category", "Priority", "Status", "With", "Raised"])
-        self.table.verticalHeader().setVisible(False)
-        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table.setAlternatingRowColors(True)
-        head = self.table.horizontalHeader()
-        head.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        for i in (0, 2, 3, 4, 5, 6):
-            head.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
+        # The shared table style: the selected row keeps its font and padding
+        # (text used to wrap onto two lines) and uses the one selection colour.
+        style_table(self.table, {
+            "#": "numeric", "Summary": "stretch", "Category": "contents",
+            "Priority": "contents", "Status": "contents", "With": "contents",
+            "Raised": "contents",
+        })
         self.table.doubleClicked.connect(self.open_selected)
         root.addWidget(self.table, 1)
 

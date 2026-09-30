@@ -6,7 +6,9 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QColor
 from ..core.empty_state import EmptyState
-from ..core.controls import page_title, gate_selection_buttons
+from ..core.controls import page_title, gate_selection_buttons, make_button, tidy_form
+from ..core.stat_card import StatStrip
+from ..core.table_style import style_table, set_cell_status, dim_cell
 from slate.gui.core.offline_notice import on_database_error
 from slate.core.infra.gate import Gate
 
@@ -23,31 +25,8 @@ class AddDeploymentDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Record a deployment")
         self.setMinimumWidth(440)
-        self.setStyleSheet(f"""
-            QDialog {{
-                background-color: {Gate.GROUND};
-                color: {Gate.WARN};
-            }}
-            QLabel {{
-                color: {Gate.TEXT_DIM};
-                font-weight: 600;
-                background: transparent;
-                border: none;
-            }}
-            QLineEdit {{
-                background-color: {Gate.PANEL};
-                border: 1px solid {Gate.RAISED_HI};
-                border-radius: 4px;
-                color: {Gate.WARN};
-                padding: 6px;
-            }}
-            QLineEdit:focus {{
-                border-color: {Gate.ACCENT};
-            }}
-        """)
-        layout = QFormLayout(self)
+        layout = tidy_form(QFormLayout(self))
         layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(12)
         
         self.pkg_input = QLineEdit()
         self.target_input = QLineEdit()
@@ -55,18 +34,13 @@ class AddDeploymentDialog(QDialog):
         layout.addRow("Package Name:", self.pkg_input)
         layout.addRow("Target Machine:", self.target_input)
         
+        # Enter records the deployment; Cancel is never the default.
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.setObjectName("secondaryButton")
-        cancel_btn.clicked.connect(self.reject)
-        
-        save_btn = QPushButton("Record")
-        save_btn.setObjectName("primaryButton")
-        save_btn.clicked.connect(self.accept)
-        
-        btn_layout.addWidget(cancel_btn)
-        btn_layout.addWidget(save_btn)
+        self.cancel_btn = make_button("Cancel", on_click=self.reject)
+        self.save_btn = make_button("Record", "primary", on_click=self.accept)
+        btn_layout.addWidget(self.cancel_btn)
+        btn_layout.addWidget(self.save_btn)
         layout.addRow(btn_layout)
 
 
@@ -94,92 +68,36 @@ class ItDeploymentTab(QWidget):
         
         self.build_ui(main_layout)
 
-    def create_stat_card(self, title, value, accent_color):
-        card = QFrame()
-        card.setStyleSheet(f"""
-            QFrame {{
-                background: {Gate.PANEL};
-                border: 1px solid {Gate.RAISED};
-                border-radius: 8px;
-            }}
-        """)
-        lay = QVBoxLayout(card)
-        lay.setContentsMargins(16, 12, 16, 12)
-        lay.setSpacing(4)
-        
-        t_label = QLabel(title.upper())
-        t_label.setFont(QFont("Inter", 9, QFont.Weight.Bold))
-        t_label.setStyleSheet(f"color: {Gate.TEXT_DIM}; letter-spacing: 0.5px; background: transparent; border: none;")
-        
-        v_label = QLabel(str(value))
-        v_label.setFont(QFont("Inter", 22, QFont.Weight.Bold))
-        v_label.setStyleSheet(f"color: {accent_color}; background: transparent; border: none;")
-        
-        lay.addWidget(t_label)
-        lay.addWidget(v_label)
-        return card, v_label
-
     def build_ui(self, main_layout):
         header_title = page_title(
             'Deployment log',
             'A record of what was installed where. Slate does not push it.')
         main_layout.addWidget(header_title)
         
-        # Summary Cards
-        cards_lay = QHBoxLayout()
-        cards_lay.setSpacing(12)
-        card1, self.lbl_total = self.create_stat_card("Total Deployments", "0", Gate.ACCENT)
-        card2, self.lbl_success = self.create_stat_card("Success Rate", "0%", Gate.OK)
-        card3, self.lbl_pending = self.create_stat_card("Pending Deployments", "0", Gate.WARN)
-        cards_lay.addWidget(card1)
-        cards_lay.addWidget(card2)
-        cards_lay.addWidget(card3)
-        main_layout.addLayout(cards_lay)
+        # Summary. The figures were set with QFont, which the old global
+        # stylesheet overruled, so "45" came out the size of its label.
+        strip = StatStrip()
+        self.lbl_total = strip.add("Total deployments", "0", tone="accent")
+        self.lbl_success = strip.add("Success rate", "-", tone="ok")
+        self.lbl_pending = strip.add("Pending", "0", tone="warn")
+        main_layout.addWidget(strip)
         
         controls = QHBoxLayout()
         controls.setSpacing(10)
         
         lbl = QLabel("Status:")
-        lbl.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-weight: 600; background: transparent; border: none;")
+        lbl.setStyleSheet(f"color: {Gate.TEXT_DIM}; background: transparent; border: none;")
         controls.addWidget(lbl)
         
         self.filter_cb = QComboBox()
         self.filter_cb.addItems(["All", "Pending", "Success", "Failed"])
-        self.filter_cb.setStyleSheet(f"""
-            QComboBox {{
-                background: {Gate.PANEL};
-                color: {Gate.WARN};
-                border: 1px solid {Gate.RAISED_HI};
-                border-radius: 4px;
-                padding: 4px 10px;
-                min-height: 24px;
-            }}
-            QComboBox:focus {{ border-color: {Gate.ACCENT}; }}
-            QComboBox QAbstractItemView {{
-                background-color: {Gate.PANEL};
-                color: {Gate.TEXT};
-                border: 1px solid {Gate.RAISED_HI};
-                selection-background-color: {Gate.RAISED};
-                selection-color: {Gate.ACCENT};
-            }}
-        """)
         self.filter_cb.currentTextChanged.connect(self.load_data)
         controls.addWidget(self.filter_cb)
         
-        add_btn = QPushButton("+ Record deployment")
-        add_btn.setObjectName("primaryButton")
-        add_btn.clicked.connect(self.add_deployment)
-        controls.addWidget(add_btn)
-        
-        success_btn = QPushButton("Mark Success")
-        success_btn.setObjectName("secondaryButton")
-        success_btn.clicked.connect(lambda: self.update_status("Success"))
-        controls.addWidget(success_btn)
-        
-        fail_btn = QPushButton("Mark Failed")
-        fail_btn.setObjectName("dangerButton")
-        fail_btn.clicked.connect(lambda: self.update_status("Failed"))
-        controls.addWidget(fail_btn)
+        controls.addWidget(make_button("Record deployment", "primary", icon="plus",
+                                       on_click=self.add_deployment))
+        controls.addWidget(make_button("Mark Success", on_click=lambda: self.update_status("Success")))
+        controls.addWidget(make_button("Mark Failed", "danger", on_click=lambda: self.update_status("Failed")))
         
         controls.addStretch()
         main_layout.addLayout(controls)
@@ -189,7 +107,6 @@ class ItDeploymentTab(QWidget):
         self.style_table(self.grid)
         self.load_data()
         
-        self.grid.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.grid.hideColumn(0) # Hide ID
         main_layout.addWidget(self.grid)
 
@@ -235,16 +152,16 @@ class ItDeploymentTab(QWidget):
         failures = sum(1 for d in all_deps if d.get('status') == 'Failed')
         pending = sum(1 for d in all_deps if d.get('status') == 'Pending')
 
-        self.lbl_total.setText(str(total))
-        self.lbl_pending.setText(str(pending))
+        self.lbl_total.set_value(total)
+        self.lbl_pending.set_value(pending)
         # Out of the ones that finished. Dividing by every row counted anything
         # still pending as a failure, so the rate fell every time somebody
         # recorded a job they had not done yet.
         finished = successes + failures
         if finished > 0:
-            self.lbl_success.setText(f"{int((successes / finished) * 100)}%")
+            self.lbl_success.set_value(f"{int((successes / finished) * 100)}%")
         else:
-            self.lbl_success.setText("-")
+            self.lbl_success.set_value("-")
 
         for r, row in enumerate(deps):
             self.grid.setItem(r, 0, QTableWidgetItem(str(row.get('id', ''))))
@@ -255,13 +172,13 @@ class ItDeploymentTab(QWidget):
             status_item = QTableWidgetItem(str(row.get('status', '')))
             st_text = status_item.text().strip().lower()
             if st_text == "success":
-                status_item.setForeground(QColor(Gate.OK))
+                set_cell_status(status_item, "ok", background=False)
             elif st_text == "failed":
-                status_item.setForeground(QColor(Gate.BAD))
+                set_cell_status(status_item, "bad", background=False)
             elif st_text == "pending":
-                status_item.setForeground(QColor(Gate.WARN))
+                set_cell_status(status_item, "warn", background=False)
             else:
-                status_item.setForeground(QColor(Gate.TEXT_DIM))
+                dim_cell(status_item)
             self.grid.setItem(r, 4, status_item)
             
             self.grid.setItem(r, 5, QTableWidgetItem(str(row.get('deployed_at', ''))))
@@ -297,34 +214,11 @@ class ItDeploymentTab(QWidget):
         self.load_data()
             
     def style_table(self, table: QTableWidget):
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        table.setAlternatingRowColors(True)
-        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        table.verticalHeader().setVisible(False)
-        table.verticalHeader().setDefaultSectionSize(34)
-        table.setStyleSheet(f"""
-            QTableWidget {{ 
-                background-color: {Gate.PANEL}; 
-                color: {Gate.WARN}; 
-                gridline-color: {Gate.RAISED}; 
-                border: 1px solid {Gate.RAISED}; 
-                border-radius: 6px;
-                font-size: 12px;
-            }}
-            QTableWidget::item {{
-                padding: 4px 8px;
-                border-bottom: 1px solid {Gate.RAISED};
-            }}
-            QTableWidget::item:alternate {{ background-color: {Gate.PANEL}; }}
-            QTableWidget::item:selected {{ background-color: {Gate.ACCENT_SURFACE}; color: {Gate.ACCENT}; }}
-            QHeaderView::section {{ 
-                background-color: {Gate.PANEL}; 
-                color: {Gate.TEXT_DIM}; 
-                border: 1px solid {Gate.RAISED}; 
-                padding: 6px 10px; 
-                font-weight: 700;
-                font-size: 11px;
-                text-transform: uppercase;
-                letter-spacing: 0.5px;
-            }}
-        """)
+        """The shared table style (it was amber text, ALL-CAPS headers)."""
+        style_table(table, {
+            "Package Name": "stretch",
+            "Target Machine": "contents",
+            "Deployed By": "contents",
+            "Status": "contents",
+            "Deployed At": "contents",
+        })
