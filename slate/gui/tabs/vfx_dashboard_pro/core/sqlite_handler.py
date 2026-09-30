@@ -538,7 +538,7 @@ class SQLiteHandler:
             chunk = ids[start:start + 500]
             marks = ",".join(["%s"] * len(chunk))
             rows = self.db_manager.execute_query(
-                f"SELECT id, data_json, version FROM tracking_shots "
+                f"SELECT id, reel, shot_name, data_json, version FROM tracking_shots "
                 f"WHERE project_code=%s AND id IN ({marks})",
                 (self.project_code, *chunk), fetch="all")
             if rows is None:
@@ -560,11 +560,13 @@ class SQLiteHandler:
                 tasks_by_shot.setdefault(int(task["shot_id"]), {})[task["department"]] = task
 
             for row in rows:
-                raw = row.get("data_json")
-                if not raw:
-                    continue
+                # The same reading as read_shots(): the stored data plus the
+                # row's id, version and reel.
+                from slate.core.infra.tracking_repository import shot_row_to_dict
                 try:
-                    item = json.loads(raw) if isinstance(raw, str) else dict(raw)
+                    item = shot_row_to_dict(dict(row))
+                    if item is None:
+                        continue
                     shot = Shot.from_dict(item)
                     shot.id = int(row["id"])
                     v_raw = row.get("version")

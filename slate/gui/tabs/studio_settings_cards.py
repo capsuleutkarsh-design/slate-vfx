@@ -29,6 +29,7 @@ from slate.core.domain import leave_policy as lp
 from slate.core.domain import money
 from slate.core.domain.dates import WEEKDAYS, format_datetime
 from slate.core.infra.db_results import DatabaseUnavailableError
+from slate.core.infra.design_tokens import ColorTokens as C
 from ..core.controls import make_button
 
 logger = logging.getLogger(__name__)
@@ -77,7 +78,7 @@ class _StudioEditor(QWidget):
         self.root.setSpacing(10)
         self.lbl_who = QLabel("")
         self.lbl_who.setWordWrap(True)
-        self.lbl_who.setStyleSheet("font-size: 11px; color: #87857F;")
+        self.lbl_who.setStyleSheet(f"font-size: 11px; color: {C.TEXT_GRAY_LIGHTER};")
 
     def may_edit(self, roles) -> bool:
         raise NotImplementedError
@@ -123,7 +124,7 @@ class StudioPolicyEditor(_StudioEditor):
             "how leave and comp-off are earned. Saved for the whole studio: Attendance "
             "and Leave on every workstation use these.")
         note.setWordWrap(True)
-        note.setStyleSheet("font-size: 11px; color: #87857F;")
+        note.setStyleSheet(f"font-size: 11px; color: {C.TEXT_GRAY_LIGHTER};")
         self.root.addWidget(note)
 
         form = QFormLayout()
@@ -333,7 +334,7 @@ class StudioMoneyEditor(_StudioEditor):
             "day rate per currency, GST on rupee bids, and the studio's working hours "
             "(IT's response clocks count these). Saved for the whole studio.")
         note.setWordWrap(True)
-        note.setStyleSheet("font-size: 11px; color: #87857F;")
+        note.setStyleSheet(f"font-size: 11px; color: {C.TEXT_GRAY_LIGHTER};")
         self.root.addWidget(note)
 
         form = QFormLayout()
