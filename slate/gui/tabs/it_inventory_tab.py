@@ -185,7 +185,7 @@ class ItInventoryTab(QWidget):
         self.build_ui(main_layout)
 
     def build_ui(self, main_layout):
-        header_title = page_title('Hardware', 'Workstations registered to the studio')
+        header_title = page_title('Hardware', 'Machines the studio owns, who has them, and their state')
         main_layout.addWidget(header_title)
         
         # Controls

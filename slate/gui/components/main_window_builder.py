@@ -78,6 +78,23 @@ class MainWindowBuilderMixin:
             return ServiceDeskView(self._current_username())
         return MyTicketsView(self._current_username())
 
+    def _attendance_tooltip(self) -> str:
+        """
+        What Attendance is for this person. Everybody punches in and out and
+        sees their month; only people who look after others see a team. It
+        used to promise every artist "team attendance and timesheets".
+        """
+        from ...core.domain.access import can
+        roles = list(getattr(self, "user_roles", None) or [])
+        text = "Punch in and out, and see your month"
+        if can(roles, "view_team_attendance"):
+            text += ", the studio's attendance and timesheets"
+        elif can(roles, "approve_leave"):
+            text += ", and your team's attendance"
+        if self._is_sqlite_fallback_mode():
+            text += " (LOCAL MODE: team views and exports are limited)"
+        return text
+
     def _current_username(self) -> str:
         data = self.user_data or {}
         return str(data.get("user_id") or data.get("username") or "unknown")
@@ -264,7 +281,7 @@ class MainWindowBuilderMixin:
                     permission_key="Folder Creator",
                     user_role=self.user_role,
                     allowed_tabs=self.allowed_tabs,
-                    tooltip="Scan the client drive, build the project structure, and move the scans into it"
+                    tooltip="Scan the client drive, build the project structure, and bring the scans into it"
                 )
 
                 # CAP Rename
@@ -377,11 +394,7 @@ class MainWindowBuilderMixin:
                     icon="⏱️",
                     user_role=self.user_role,
                     allowed_tabs=self.allowed_tabs,
-                    tooltip=(
-                        "Track team attendance, hours and export timesheets"
-                        if not self._is_sqlite_fallback_mode()
-                        else "LOCAL MODE. Team sync/export actions are limited."
-                    )
+                    tooltip=self._attendance_tooltip()
                 )
 
                 # Leave. One entry, two entirely different screens behind it:
@@ -434,7 +447,7 @@ class MainWindowBuilderMixin:
                     permission_key=it_key,
                     user_role=self.user_role,
                     allowed_tabs=self.allowed_tabs,
-                    tooltip="Studio Hardware Inventory"
+                    tooltip="Machines the studio owns, who has them, and their state"
                 )
 
                 # Licences. Not an inventory - a compliance and renewal read,
@@ -477,7 +490,7 @@ class MainWindowBuilderMixin:
                     permission_key=it_key,
                     user_role=self.user_role,
                     allowed_tabs=self.allowed_tabs,
-                    tooltip="Manage automated script and software deployments"
+                    tooltip="Keep a record of what was installed where"
                 )
 
                 self.tab_coordinator.add_category_header("ADMINISTRATION")
@@ -524,7 +537,7 @@ class MainWindowBuilderMixin:
                     user_role=self.user_role,
                     allowed_tabs=self.allowed_tabs,
                     tooltip=(
-                        "User management, live workstation monitoring and fleet reports"
+                        "Workstations, logs and the database"
                         if not self._is_sqlite_fallback_mode()
                         else "Unavailable in LOCAL MODE (requires central PostgreSQL)."
                     )
@@ -561,7 +574,7 @@ class MainWindowBuilderMixin:
                 permission_key="Settings",
                 user_role=self.user_role,
                 allowed_tabs=self.allowed_tabs,
-                tooltip="Configure application paths, templates and global preferences"
+                tooltip="Your preferences, and the studio's settings if you may change them"
             )
 
             # Store nav_items reference for backward compatibility
