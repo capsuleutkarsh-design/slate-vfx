@@ -154,9 +154,9 @@ class KanbanCard(QWidget):
         # Style status as a nice pill
         status_accent = Gate.LINE
         if status in ["DONE", "APPROVED", "FINAL"]: status_accent = Gate.tint(Gate.OK, 0.2)
-        elif status in ["WIP", "IN PROGRESS", "IP"]: status_accent = "rgba(255, 214, 0, 0.2)"
-        elif status in ["REVIEW", "SENT FOR REVIEW"]: status_accent = "rgba(0, 229, 255, 0.2)"
-        elif status in ["RETAKE", "SI"]: status_accent = "rgba(255, 23, 68, 0.2)"
+        elif status in ["WIP", "IN PROGRESS", "IP"]: status_accent = Gate.tint(Gate.WARN, 0.2)
+        elif status in ["REVIEW", "SENT FOR REVIEW"]: status_accent = Gate.tint(Gate.INFO, 0.2)
+        elif status in ["RETAKE", "SI"]: status_accent = Gate.tint(Gate.BAD, 0.2)
         
         text_accent = status_accent.replace("0.2", "1.0") if "0.2" in status_accent else Gate.TEXT
             

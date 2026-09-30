@@ -78,7 +78,7 @@ class StitchConfirmDialog(QDialog):
         confirm = QPushButton("Continue")
         confirm.setDefault(True)
         confirm.setStyleSheet(
-            f"background-color: {C.ACCENT_TEAL}; color: {Gate.TEXT}; "
+            f"background-color: {C.ACCENT_TEAL}; color: {Gate.TEXT_ON_ACCENT}; "
             f"font-weight: {T.WEIGHT_STYLE_BOLD}; padding: 5px 18px;"
         )
         confirm.clicked.connect(self.accept)

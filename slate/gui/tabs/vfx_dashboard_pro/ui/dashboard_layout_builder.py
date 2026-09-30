@@ -448,6 +448,6 @@ def build_dashboard_ui(widget):
 
     widget.status_bar = QStatusBar()
     if not widget.inherit_app_theme:
-        widget.status_bar.setStyleSheet(f"background-color: {C.ACCENT_BLUE}; color: {Gate.TEXT};")
+        widget.status_bar.setStyleSheet(f"background-color: {C.ACCENT_BLUE}; color: {Gate.TEXT_ON_ACCENT};")
     widget.status_bar.setSizeGripEnabled(False)
     main_layout.addWidget(widget.status_bar, 0)

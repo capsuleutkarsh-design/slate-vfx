@@ -220,7 +220,7 @@ class ConceptWindow(QMainWindow):
         
         send_btn = QPushButton("SEND")
         send_btn.setFixedSize(60, 40)
-        send_btn.setStyleSheet(f"background-color: {C.ACCENT_BLUE}; color: {Gate.TEXT}; border: none; border-radius: {R.SM}px; font-weight: {T.WEIGHT_STYLE_BOLD};")
+        send_btn.setStyleSheet(f"background-color: {C.ACCENT_BLUE}; color: {Gate.TEXT_ON_ACCENT}; border: none; border-radius: {R.SM}px; font-weight: {T.WEIGHT_STYLE_BOLD};")
         
         input_layout.addWidget(input_field)
         input_layout.addWidget(send_btn)

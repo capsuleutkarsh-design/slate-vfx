@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QPlainTextEdit, QSpinBox, QVBoxLayout,
 )
 from slate.core.infra.gate import Gate
+from slate.gui.core.controls import style_button
 
 
 STATUS_CHOICES = ["YTS", "WIP", "SENT FOR REVIEW", "RETAKE", "APPROVED"]
@@ -77,6 +78,11 @@ class AddShotsDialog(QDialog):
         )
         self.ok_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
         self.ok_button.setText("Add Shots")
+        # The primary action, and what Enter presses - still recognisably the
+        # primary action while it is waiting for names (it used to look
+        # exactly like Cancel when disabled).
+        style_button(self.ok_button, "primary")
+        style_button(buttons.button(QDialogButtonBox.StandardButton.Cancel), "secondary")
         self.ok_button.setEnabled(False)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)

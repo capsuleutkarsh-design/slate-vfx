@@ -61,7 +61,7 @@ class RVReviewDialog(QDialog):
         self.open_btn = QPushButton("Open in RV")
         self.open_btn.setDefault(True)
         self.open_btn.setStyleSheet(
-            f"background-color: {C.ACCENT_TEAL}; color: {Gate.TEXT}; "
+            f"background-color: {C.ACCENT_TEAL}; color: {Gate.TEXT_ON_ACCENT}; "
             f"font-weight: {T.WEIGHT_STYLE_BOLD}; padding: 5px 18px;"
         )
         self.open_btn.clicked.connect(self.open_in_rv)
