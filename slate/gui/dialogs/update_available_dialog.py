@@ -2,6 +2,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QLabel, QTextBrowser,
                                QPushButton, QHBoxLayout, QFrame)
 from PySide6.QtCore import Qt
 from slate.core.infra.gate import Gate
+from slate.gui.core.controls import plain
 
 class UpdateAvailableDialog(QDialog):
     """
@@ -87,7 +88,7 @@ class UpdateAvailableDialog(QDialog):
         """)
         self.btn_later.clicked.connect(self.reject)
         
-        self.btn_update = QPushButton("Download & Install")
+        self.btn_update = QPushButton(plain("Download & Install"))
         self.btn_update.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_update.setFixedHeight(36)
         self.btn_update.setStyleSheet(f"""

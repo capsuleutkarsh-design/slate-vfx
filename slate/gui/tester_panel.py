@@ -25,6 +25,7 @@ from PySide6.QtCore import Qt, Signal, QThread, QObject, QDate, QTime, QDateTime
 from ..core.domain.asset_ingestor import IngestWorker
 from slate.gui.core.offline_notice import on_database_error
 from slate.core.infra.gate import Gate
+from slate.gui.core.controls import plain
 
 # Let an outage reach the @on_database_error decorator rather than becoming an
 # empty grid here. Everything else keeps the fallback it already had.
@@ -741,7 +742,7 @@ class TesterPanel(QWidget):
         l.addWidget(log_group, 2) # Stretch factor 2
         
         # 2. ACTIONS
-        action_group = QGroupBox("Stress & Crash"); al = QHBoxLayout(action_group)
+        action_group = QGroupBox(plain("Stress & Crash")); al = QHBoxLayout(action_group)
         
         btn_crash = QPushButton("Simulator Crash"); btn_crash.setStyleSheet(f"background: {Gate.BAD}")
         btn_crash.clicked.connect(self.simulate_crash)

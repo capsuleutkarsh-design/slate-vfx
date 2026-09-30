@@ -31,7 +31,7 @@ from ...core.infra.design_tokens import ColorTokens as C, TypographyTokens as T,
 
 # Import shared PyToggle widget (no more duplication!)
 from ...gui.widgets.py_toggle import PyToggle
-from ..core.controls import make_button
+from ..core.controls import make_button, plain
 from slate.core.infra.gate import Gate
 
 try:
@@ -437,7 +437,7 @@ class SettingsTab(QWidget):
 
 
         card_paths.layout().addSpacing(8)
-        btn_save_paths = QPushButton("Save Paths & Connections")
+        btn_save_paths = QPushButton(plain("Save Paths & Connections"))
         btn_save_paths.setStyleSheet(f"background-color: {Gate.ACCENT}; color: {Gate.TEXT_ON_ACCENT}; font-weight: {T.WEIGHT_STYLE_BOLD}; padding: {S.SM}px; border-radius: {R.SM}px;")
         btn_save_paths.setMinimumHeight(34)
         btn_save_paths.clicked.connect(self.save_paths_and_connections)

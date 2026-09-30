@@ -4,6 +4,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QColor, QBrush, QIcon
 from slate.core.infra.gate import Gate
+from slate.gui.core.controls import plain
 
 class VisualDiffDialog(QDialog):
     """
@@ -38,7 +39,7 @@ class VisualDiffDialog(QDialog):
         btn_cancel = QPushButton("Cancel")
         btn_cancel.clicked.connect(self.reject)
         
-        btn_confirm = QPushButton("Confirm & Execute")
+        btn_confirm = QPushButton(plain("Confirm & Execute"))
         btn_confirm.setStyleSheet(f"background-color: {Gate.OK}; color: {Gate.TEXT_ON_BAD}; font-weight: bold; padding: 5px 15px;")
         btn_confirm.clicked.connect(self.accept)
         
