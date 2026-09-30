@@ -241,6 +241,10 @@ def backfill_change_history(db):
     department key). The shot id is filled only when the name is unique in
     its project - two reels holding SH010 cannot be told apart from an old
     row, and a guess would put one shot's history on the other.
+
+    Done with a handful of set-based statements rather than a row at a time:
+    a studio's history runs to hundreds of thousands of rows, and this runs
+    during somebody's start-up.
     """
     if not _table_exists(db, "change_history") or not _column_exists(db, "change_history", "shot_id"):
         return 0
@@ -248,38 +252,33 @@ def backfill_change_history(db):
         from slate.core.domain.departments import department_keys
         departments = sorted(department_keys(), key=len, reverse=True)
     except Exception:
-        departments = ["comp", "roto", "paint", "prep", "matchmove", "fx", "lighting", "dmp"]
+        departments = ["matchmove", "lighting", "paint", "comp", "roto", "prep", "dmp", "fx"]
 
-    rows = db.execute_query(
-        "SELECT id, project_code, entity_type, entity_id FROM change_history "
-        "WHERE shot_name IS NULL AND entity_type IN ('shot', 'task')", fetch="all") or []
-    if not rows:
-        return 0
-
-    shots = db.execute_query(
-        "SELECT id, project_code, shot_name, reel FROM tracking_shots", fetch="all") or []
-    by_name = {}
-    for s in shots:
-        s = dict(s)
-        by_name.setdefault((s["project_code"], str(s["shot_name"]).lower()), []).append(s)
-
+    from slate.core.infra.transaction import atomic
     filled = 0
-    for row in rows:
-        row = dict(row)
-        entity = str(row.get("entity_id") or "")
-        shot_name, department = entity, ""
-        if row.get("entity_type") == "task":
-            for key in departments:
-                if entity.lower().endswith("_" + key.lower()):
-                    shot_name, department = entity[: -(len(key) + 1)], key
-                    break
-        matches = by_name.get((row.get("project_code"), shot_name.lower()), [])
-        shot_id = matches[0]["id"] if len(matches) == 1 else None
-        reel = matches[0].get("reel") if len(matches) == 1 else None
-        if db.execute_update(
-                "UPDATE change_history SET shot_name = %s, department = %s, shot_id = %s, reel = %s "
-                "WHERE id = %s", (shot_name, department, shot_id, reel, row["id"])):
-            filled += 1
+    with atomic(db) as tx:
+        filled += tx.write(
+            "UPDATE change_history SET shot_name = entity_id, department = '' "
+            "WHERE shot_name IS NULL AND entity_type = 'shot'").rows
+        # Longest keys first, so 'matchmove' is not mistaken for a key that
+        # happens to be its tail.
+        for key in departments:
+            suffix_len = len(key) + 1
+            filled += tx.write(
+                "UPDATE change_history "
+                "SET shot_name = SUBSTR(entity_id, 1, LENGTH(entity_id) - %s), department = %s "
+                "WHERE shot_name IS NULL AND entity_type = 'task' "
+                "AND LENGTH(entity_id) > %s AND LOWER(SUBSTR(entity_id, LENGTH(entity_id) - %s + 1)) = %s",
+                (suffix_len, key, suffix_len, suffix_len, "_" + key.lower())).rows
+        if _table_exists(db, "tracking_shots"):
+            match = ("FROM tracking_shots s WHERE s.project_code = change_history.project_code "
+                     "AND LOWER(s.shot_name) = LOWER(change_history.shot_name)")
+            tx.write(
+                "UPDATE change_history SET "
+                "shot_id = (SELECT MIN(s.id) " + match + "), "
+                "reel = (SELECT MIN(s.reel) " + match + ") "
+                "WHERE shot_id IS NULL AND shot_name IS NOT NULL "
+                "AND (SELECT COUNT(*) " + match + ") = 1")
     logger.info("Filled shot details on %d history row(s).", filled)
     return filled
 

@@ -120,10 +120,21 @@ def test_backfill_fills_shot_columns_on_old_rows(db):
         "INSERT INTO change_history (project_code, entity_type, entity_id, user_id, action_type, "
         "field_changed, old_value, new_value) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
         ("KLC", "task", "SH030_comp", "a", "UPDATE", "comp_status", "", "x"))
-    assert backfill_change_history(db) == 1
-    row = dict(db.execute_query("SELECT shot_id, shot_name, department FROM change_history",
-                                fetch="one"))
-    assert (row["shot_id"], row["shot_name"], row["department"]) == (sid, "SH030", "comp")
+    _shot(db, "KLC", "R01", "SH040")
+    _shot(db, "KLC", "R02", "SH040")
+    for entity_type, entity in (("shot", "SH040"), ("task", "SH030_matchmove")):
+        db.execute_update(
+            "INSERT INTO change_history (project_code, entity_type, entity_id, user_id, action_type, "
+            "field_changed, old_value, new_value) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            ("KLC", entity_type, entity, "a", "UPDATE", "status", "", "x"))
+    assert backfill_change_history(db) == 3
+    rows = {r["entity_id"]: dict(r) for r in db.execute_query(
+        "SELECT entity_id, shot_id, shot_name, department, reel FROM change_history", fetch="all")}
+    comp = rows["SH030_comp"]
+    assert (comp["shot_id"], comp["shot_name"], comp["department"], comp["reel"]) == (sid, "SH030", "comp", "R01")
+    assert rows["SH030_matchmove"]["department"] == "matchmove"
+    # SH040 is in two reels: an old row cannot say which, so no id is guessed.
+    assert rows["SH040"]["shot_name"] == "SH040" and rows["SH040"]["shot_id"] is None
 
 
 # ================================================================ shot identity
