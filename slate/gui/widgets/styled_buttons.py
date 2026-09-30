@@ -1,232 +1,109 @@
 """
-Styled Buttons - Reusable button components with consistent styling
+Styled Buttons - the button kinds as classes.
 
-This module provides pre-styled button widgets that use the design tokens
-to ensure visual consistency across the application.
+These used to be a second button kit: each class painted itself (a solid dark
+block for Ghost, a 16 px bold label, an animated fill), so Stock Viewer and the
+dashboard toolbar had buttons that matched nothing made with
+slate.gui.core.controls.make_button - three looks and two heights in one row.
 
-Usage:
+They are now thin names for the four kinds in controls.py, so both ways of
+making a button give the same button:
+
     from slate.gui.widgets.styled_buttons import PrimaryButton, DangerButton
-    save_btn = PrimaryButton("Save")
-    delete_btn = DangerButton("Delete")
+    save_btn = PrimaryButton("Save")        # == make_button("Save", "primary")
+    delete_btn = DangerButton("Delete")     # == make_button("Delete", "danger")
+
+Prefer make_button in new code. Button text is shown as written - an "&" is
+not a keyboard shortcut here either.
 """
 
-from PySide6.QtWidgets import QPushButton, QComboBox
-from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, Property
-from PySide6.QtGui import QPen, QPainter, QColor
-from ...core.infra.design_tokens import ColorTokens as C, RadiusTokens as R, SpacingTokens as S, TypographyTokens as T
+from PySide6.QtCore import QRect, Qt
+from PySide6.QtWidgets import QComboBox, QPushButton
+
+from ...core.infra.gate import Gate
+from ..core.controls import plain, style_button
 
 
 class AnimatedHoverButton(QPushButton):
     """
-    Base class for buttons with smooth hover animations using QPropertyAnimation.
+    Base class for the named kinds. (The hover animation it was named after
+    painted over the stylesheet, which is why these buttons never matched the
+    others; the name is kept for anything that subclasses it.)
     """
+
+    KIND = "secondary"
+
     def __init__(self, text="", parent=None):
-        super().__init__(text, parent)
-        self._hover_alpha = 0
-        self._anim = QPropertyAnimation(self, b"hover_alpha", self)
-        self._anim.setDuration(200)
-        self._anim.setEasingCurve(QEasingCurve.InOutQuad)
-        
-        # Base colors (to be overridden by subclasses)
-        self.bg_color = QColor(C.ACCENT_PRIMARY)
-        self.hover_color = QColor(C.ACCENT_HOVER)
-        self.text_color = QColor(C.TEXT_INVERSE)
-        
-        # Initial style to set font and padding (without hover/pressed logic in CSS)
-        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
+        super().__init__(plain(text), parent)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-
-    @Property(int)
-    def hover_alpha(self):
-        return self._hover_alpha
-
-    @hover_alpha.setter
-    def hover_alpha(self, value):
-        self._hover_alpha = value
-        self.update()
-
-    def enterEvent(self, event):
-        self._anim.stop()
-        self._anim.setEndValue(255)
-        self._anim.start()
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        self._anim.stop()
-        self._anim.setEndValue(0)
-        self._anim.start()
-        super().leaveEvent(event)
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        try:
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-            # Determine current background
-            base = self.bg_color
-            overlay = self.hover_color
-
-            # Blend colors based on hover_alpha
-            r = base.red() + (overlay.red() - base.red()) * self._hover_alpha / 255
-            g = base.green() + (overlay.green() - base.green()) * self._hover_alpha / 255
-            b = base.blue() + (overlay.blue() - base.blue()) * self._hover_alpha / 255
-
-            final_bg = QColor(int(r), int(g), int(b))
-
-            if not self.isEnabled():
-                final_bg = QColor(C.BG_ELEVATED)
-                painter.setPen(QColor(C.TEXT_DISABLED))
-            else:
-                painter.setPen(Qt.NoPen)
-
-            if self.isDown():
-                final_bg = final_bg.darker(110)
-
-            radius = getattr(self, 'border_radius', R.RADIUS_BUTTON)
-
-            if getattr(self, "outlined", False) and self.isEnabled():
-                # Outlined rather than filled. A solid block of colour is the
-                # loudest thing in a row and pulls the eye straight to it, which
-                # is the opposite of what a destructive control should do.
-                tint = QColor(final_bg)
-                tint.setAlpha(int(28 + 54 * self._hover_alpha / 255))
-                painter.setBrush(tint)
-                pen = QPen(final_bg)
-                pen.setWidth(1)
-                painter.setPen(pen)
-                painter.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), radius, radius)
-            else:
-                painter.setBrush(final_bg)
-                painter.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), radius, radius)
-
-            # Text
-            painter.setPen(self.text_color if self.isEnabled() else QColor(C.TEXT_DISABLED))
-            painter.setFont(self.font())
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.text())
-        finally:
-            if painter.isActive():
-                painter.end()
+        style_button(self, self.KIND)
 
 
 class PrimaryButton(AnimatedHoverButton):
-    """
-    Primary action button with cyan background and smooth hover.
-    """
-    def __init__(self, text="", parent=None):
-        super().__init__(text, parent)
-        self.bg_color = QColor(C.ACCENT_PRIMARY)
-        self.hover_color = QColor(C.ACCENT_HOVER)
-        self.setStyleSheet(f"padding: {S.PADDING_BUTTON}; font-weight: {T.WEIGHT_BOLD}; border: none; background: transparent;")
-
-
-class DangerButton(AnimatedHoverButton):
-    """
-    Destructive action. Outlined, not filled - see the painter above for why.
-    """
-    def __init__(self, text="", parent=None):
-        super().__init__(text, parent)
-        self.outlined = True
-        self.bg_color = QColor(C.ERROR)
-        self.hover_color = QColor(C.ERROR_BRIGHT)
-        self.text_color = QColor(C.ERROR)
-        self.setStyleSheet(f"padding: {S.PADDING_BUTTON}; font-weight: {T.WEIGHT_BOLD}; border: none; background: transparent;")
-
-
-class SuccessButton(AnimatedHoverButton):
-    """
-    Success/approve button with green background and smooth hover.
-    """
-    def __init__(self, text="", parent=None):
-        super().__init__(text, parent)
-        self.bg_color = QColor(C.SUCCESS)
-        self.hover_color = QColor(C.SUCCESS_HOVER)
-        self.setStyleSheet(f"padding: {S.SM}px; border: none; background: transparent;")
-
-
-class RejectButton(AnimatedHoverButton):
-    """
-    Reject button with dim red background and smooth hover.
-    """
-    def __init__(self, text="", parent=None):
-        super().__init__(text, parent)
-        self.bg_color = QColor(C.ERROR_DIM)
-        self.hover_color = QColor(C.ERROR)
-        self.setStyleSheet(f"padding: {S.SM}px; border: none; background: transparent;")
+    """The one action a screen is for."""
+    KIND = "primary"
 
 
 class SecondaryButton(AnimatedHoverButton):
-    """
-    Secondary action button with transparent background and border.
-    """
-    def __init__(self, text="", parent=None):
-        super().__init__(text, parent)
-        self.bg_color = QColor(0, 0, 0, 0)
-        self.hover_color = QColor(C.ACCENT_PRIMARY)
-        self.text_color = QColor(C.ACCENT_PRIMARY)
-        self.setStyleSheet(f"padding: {S.PADDING_BUTTON}; font-weight: {T.WEIGHT_SEMIBOLD}; border: 1px solid {C.ACCENT_PRIMARY}; background: transparent;")
-
-    def paintEvent(self, event):
-        # Override text color transition for secondary button
-        if self.isEnabled() and self._hover_alpha > 0:
-            # Gradually change text color to inverse
-            inv = QColor(C.TEXT_INVERSE)
-            base_txt = QColor(C.ACCENT_PRIMARY)
-            r = base_txt.red() + (inv.red() - base_txt.red()) * self._hover_alpha / 255
-            g = base_txt.green() + (inv.green() - base_txt.green()) * self._hover_alpha / 255
-            b = base_txt.blue() + (inv.blue() - base_txt.blue()) * self._hover_alpha / 255
-            self.text_color = QColor(int(r), int(g), int(b))
-        else:
-            self.text_color = QColor(C.ACCENT_PRIMARY)
-        super().paintEvent(event)
+    """An ordinary action."""
+    KIND = "secondary"
 
 
-class DropdownButton(AnimatedHoverButton):
-    """
-    Button with a dropdown arrow on the right.
-    """
-    def __init__(self, text="", parent=None):
-        super().__init__(text, parent)
-        self.bg_color = QColor(C.BG_HOVER)
-        self.hover_color = QColor(C.BORDER_DEFAULT)
-        self.text_color = QColor(C.TEXT_PRIMARY)
-        # Add some right padding for the arrow
-        self.setStyleSheet(f"padding: {S.SM}px {S.XL}px {S.SM}px {S.MD}px; font-weight: {T.WEIGHT_BOLD}; border: none; background: transparent;")
-
-    def paintEvent(self, event):
-        super().paintEvent(event)
-
-        # Draw the arrow
-        painter = QPainter(self)
-        try:
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            painter.setPen(self.text_color)
-
-            # Calculate arrow pos (right side)
-            rect = self.rect()
-            arrow_size = 6
-            x = rect.right() - S.LG - arrow_size
-            y = rect.center().y() - 2
-            mid_x = x + (arrow_size // 2)
-
-            # Use drawLine calls for strict PySide6 signature safety.
-            painter.drawLine(x, y, mid_x, y + 4)
-            painter.drawLine(mid_x, y + 4, x + arrow_size, y)
-        finally:
-            if painter.isActive():
-                painter.end()
+class DangerButton(AnimatedHoverButton):
+    """Destroys something: outlined in red, filled only on hover."""
+    KIND = "danger"
 
 
 class GhostButton(AnimatedHoverButton):
     """
-    Transparent button that only shows background on hover.
-    Ideal for icon buttons or subtle actions.
+    Present, but not asking for attention: no fill until hovered, and the same
+    size and weight as every other button (it was 16 px bold on a black block,
+    heavier than the primary button beside it).
     """
+    KIND = "ghost"
+
+
+class SuccessButton(AnimatedHoverButton):
+    """Approve / confirm. There is no green kind: the action a screen is for is primary."""
+    KIND = "primary"
+
+
+class RejectButton(AnimatedHoverButton):
+    """Reject: a destructive decision, so it looks like one."""
+    KIND = "danger"
+
+
+class DropdownButton(AnimatedHoverButton):
+    """
+    A button that opens a menu, with a chevron on the right.
+
+    The chevron has its own reserved space. It used to be painted at a fixed
+    offset over the label, so "Manage Project" ran into it.
+    """
+
+    KIND = "secondary"
+    ARROW_ROOM = 32
+
     def __init__(self, text="", parent=None):
         super().__init__(text, parent)
-        self.bg_color = QColor(0, 0, 0, 0)
-        self.hover_color = QColor(C.BG_HOVER)
-        self.text_color = QColor(C.TEXT_PRIMARY)
-        self.setStyleSheet("border: none; background: transparent; font-size: 16px;")
+        self.setStyleSheet(self.styleSheet() + (
+            "QPushButton { padding-right: %dpx; } "
+            "QPushButton::menu-indicator { image: none; width: 0px; }" % self.ARROW_ROOM))
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        from PySide6.QtGui import QPainter
+        from ..core.icons import icon
+
+        size = 12
+        colour = Gate.TEXT_2 if self.isEnabled() else Gate.IDLE
+        # 8 px clear of where the label can end, 12 px in from the edge.
+        target = QRect(self.width() - self.ARROW_ROOM + 8, (self.height() - size) // 2, size, size)
+        painter = QPainter(self)
+        try:
+            icon("chevron-down", colour, size).paint(painter, target)
+        finally:
+            painter.end()
 
 
 __all__ = [
@@ -240,36 +117,20 @@ __all__ = [
     'AnimatedHoverButton',
 ]
 
+
 class StyledComboBox(QComboBox):
     """
-    A design-token compliant QComboBox.
+    A combo box that looks like every other combo box.
+
+    It carried its own stylesheet, which styled the drop-down but not its
+    arrow - so the arrow was drawn as an accent-coloured block - and its
+    padding made it 43 px tall in a row of 32 px controls. main.qss now draws
+    every combo (height, chevron, pop-up) so this adds only the hand cursor.
     """
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setStyleSheet(f"""
-            QComboBox {{
-                background-color: {C.BG_ELEVATED};
-                color: {C.TEXT_PRIMARY};
-                border: 1px solid {C.BORDER_DEFAULT};
-                border-radius: {R.SM}px;
-                padding: {S.SM}px {S.MD}px;
-                font-weight: {T.WEIGHT_SEMIBOLD};
-            }}
-            QComboBox:hover {{
-                border: 1px solid {C.ACCENT_PRIMARY};
-                background-color: {C.BG_HOVER};
-            }}
-            QComboBox::drop-down {{
-                border: none;
-                width: 24px;
-            }}
-            QComboBox QAbstractItemView {{
-                background-color: {C.BG_SURFACE};
-                color: {C.TEXT_PRIMARY};
-                border: 1px solid {C.BORDER_LIGHT};
-                selection-background-color: {C.ACCENT_PRIMARY};
-            }}
-        """)
+
 
 __all__.append('StyledComboBox')

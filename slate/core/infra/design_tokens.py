@@ -23,82 +23,59 @@ class ColorTokens:
     unrelated accents, and pure #00FF00 next to #4CAF50 for the same idea.
 
     The names are all kept so nothing that imports them has to change. What they
-    point at is now one palette, defined in slate/core/infra/gate.py.
+    point at is now one palette, defined in slate/core/infra/gate.py, and they
+    follow it when the theme changes (see _follow_gate below) - so C.BG_SURFACE
+    is the panel colour of the Light theme when Light is on.
     """
 
-    # === BACKGROUNDS ===
-    BG_MAIN = _G.GROUND
-    BG_PRIMARY = _G.GROUND
-    BG_SURFACE = _G.PANEL
-    BG_ELEVATED = _G.RAISED
-    BG_HOVER = _G.RAISED_HI
-    BG_SIDEBAR = _G.PANEL
-    BG_INPUT = _G.RAISED
-    BG_DARK = _G.PANEL
-    BG_CARD = _G.PANEL
-    BG_DARKER = _G.GROUND
+    # name -> the Gate attribute it reads. Kept as data so the aliases are
+    # refreshed together whenever Gate switches palette.
+    _ALIASES = {
+        # === BACKGROUNDS ===
+        "BG_MAIN": "GROUND", "BG_PRIMARY": "GROUND", "BG_SURFACE": "PANEL",
+        "BG_ELEVATED": "RAISED", "BG_HOVER": "RAISED_HI", "BG_SIDEBAR": "PANEL",
+        "BG_INPUT": "RAISED", "BG_DARK": "PANEL", "BG_CARD": "PANEL",
+        "BG_DARKER": "GROUND",
+        # === ACCENTS ===
+        # One accent, for the single primary action on a screen. The teal,
+        # orange, blue and alternate cyan were each one tab's idea of an accent;
+        # they resolve to the same one so the product reads as a product.
+        "ACCENT_PRIMARY": "ACCENT", "ACCENT_HOVER": "ACCENT_HI",
+        "ACCENT_PRESSED": "ACCENT_DIM", "ACCENT_DARK": "ACCENT_DIM",
+        "ACCENT_BLUE": "ACCENT", "ACCENT_TEAL": "ACCENT", "ACCENT_CYAN_ALT": "ACCENT",
+        # These two carried meaning rather than decoration, so they keep it.
+        "ACCENT_ORANGE": "WARN", "ACCENT_WARNING": "WARN", "ACCENT_INFO": "INFO",
+        # === TEXT ===
+        "TEXT_PRIMARY": "TEXT", "TEXT_SECONDARY": "TEXT_2", "TEXT_TERTIARY": "TEXT_DIM",
+        "TEXT_DISABLED": "IDLE", "TEXT_INVERSE": "TEXT_ON_ACCENT", "TEXT_WHITE": "TEXT",
+        "TEXT_GRAY_LIGHT": "TEXT_DIM", "TEXT_GRAY_LIGHTER": "TEXT_2",
+        "TEXT_BEIGE": "TEXT_DIM", "TEXT_MUTED": "TEXT_DIM",
+        # === SEMANTIC COLORS ===
+        "SUCCESS": "OK", "SUCCESS_DIM": "OK_SURFACE", "SUCCESS_BRIGHT": "OK",
+        "SUCCESS_HOVER": "OK_HI",
+        "ERROR": "BAD", "ERROR_BRIGHT": "BAD_HI", "ERROR_DIM": "BAD_SURFACE",
+        "ERROR_LIGHT": "BAD_TEXT_SOFT",
+        "WARNING": "WARN", "WARNING_ALT": "WARN",
+        "INFO": "INFO", "INFO_CYAN": "ACCENT",
+        # === BORDERS ===
+        "BORDER_DEFAULT": "LINE", "BORDER_SUBTLE": "LINE_SOFT", "BORDER_FOCUS": "ACCENT",
+        "BORDER_HOVER": "ACCENT_HI", "BORDER_LIGHT": "RAISED_HI",
+        # === SPECIAL PURPOSE ===
+        # Machine state on the fleet cards. Pure #00FF00 and #FF0000 were the
+        # only fully saturated colours in the product and glowed against everything.
+        "STATUS_ONLINE": "OK", "STATUS_OFFLINE": "BAD", "STATUS_IDLE": "WARN",
+        "PROGRESS_BG": "RAISED", "PROGRESS_FILL": "ACCENT",
+    }
 
-    # === ACCENTS ===
-    # One accent, for the single primary action on a screen. The teal, orange,
-    # blue and alternate cyan below were each one tab's idea of an accent; they
-    # now resolve to the same one so the product reads as a product.
-    ACCENT_PRIMARY = _G.ACCENT
-    ACCENT_HOVER = _G.ACCENT_HI
-    ACCENT_PRESSED = _G.ACCENT_DIM
-    ACCENT_DARK = _G.ACCENT_DIM
-    ACCENT_BLUE = _G.ACCENT
-    ACCENT_TEAL = _G.ACCENT
-    ACCENT_CYAN_ALT = _G.ACCENT
-    # These two carried meaning rather than decoration, so they keep it.
-    ACCENT_ORANGE = _G.WARN
-    ACCENT_WARNING = _G.WARN
-    ACCENT_INFO = _G.INFO
 
-    # === TEXT ===
-    TEXT_PRIMARY = _G.TEXT
-    TEXT_SECONDARY = _G.TEXT_2
-    TEXT_TERTIARY = _G.TEXT_DIM
-    TEXT_DISABLED = _G.IDLE
-    TEXT_INVERSE = _G.TEXT_ON_ACCENT
-    TEXT_WHITE = _G.TEXT
-    TEXT_GRAY_LIGHT = _G.TEXT_DIM
-    TEXT_GRAY_LIGHTER = _G.TEXT_2
-    TEXT_BEIGE = _G.TEXT_DIM
-    TEXT_MUTED = _G.TEXT_DIM
+def _follow_gate(_mode=None):
+    """Point every ColorTokens name at the active Gate palette."""
+    for alias, source in ColorTokens._ALIASES.items():
+        setattr(ColorTokens, alias, getattr(_G, source))
 
-    # === SEMANTIC COLORS ===
-    SUCCESS = _G.OK
-    SUCCESS_DIM = "#1B3A2C"
-    SUCCESS_BRIGHT = _G.OK
-    SUCCESS_HOVER = "#74CEA0"
 
-    ERROR = _G.BAD
-    ERROR_BRIGHT = "#E4817E"
-    ERROR_DIM = "#3A1F1E"
-    ERROR_LIGHT = "#EFC0BE"
-
-    WARNING = _G.WARN
-    WARNING_ALT = _G.WARN
-
-    INFO = _G.INFO
-    INFO_CYAN = _G.ACCENT
-
-    # === BORDERS ===
-    BORDER_DEFAULT = _G.LINE
-    BORDER_SUBTLE = _G.LINE_SOFT
-    BORDER_FOCUS = _G.ACCENT
-    BORDER_HOVER = _G.ACCENT_HI
-    BORDER_LIGHT = _G.RAISED_HI
-
-    # === SPECIAL PURPOSE ===
-    # Machine state on the fleet cards. Pure #00FF00 and #FF0000 were the only
-    # fully saturated colours in the product and they glowed against everything.
-    STATUS_ONLINE = _G.OK
-    STATUS_OFFLINE = _G.BAD
-    STATUS_IDLE = _G.WARN
-
-    PROGRESS_BG = _G.RAISED
-    PROGRESS_FILL = _G.ACCENT
+_follow_gate()
+_G.on_change(_follow_gate)
 
 
 class SpacingTokens:
