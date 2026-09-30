@@ -20,6 +20,8 @@ from slate.core.domain import leave_policy as lp
 # died with "name 'can' is not defined" before a single widget was drawn.
 from slate.core.domain.access import can
 from slate.gui.core.offline_notice import on_database_error
+from slate.gui.core.controls import style_button
+from slate.gui.core.table_style import style_table
 from slate.core.infra.gate import Gate
 
 class AttendanceTab(QWidget):
@@ -390,11 +392,11 @@ class AttendanceTab(QWidget):
             self.spin_year.setValue(this_year)
             self.spin_year.setMinimumSize(100, 30)
 
-            btn_ref = QPushButton("REFRESH")
+            btn_ref = QPushButton("Refresh")
             btn_ref.setMinimumSize(80, 30)
             btn_ref.clicked.connect(self.refresh_team_view)
 
-            btn_exp = QPushButton("EXPORT")
+            btn_exp = QPushButton("Export")
             btn_exp.setMinimumSize(80, 30)
             btn_exp.clicked.connect(self.export_csv)
 
@@ -404,7 +406,7 @@ class AttendanceTab(QWidget):
             # could be reached from.
             self.btn_holidays = None
             if can(self.roles, "manage_leave"):
-                self.btn_holidays = QPushButton("HOLIDAYS")
+                self.btn_holidays = QPushButton("Holidays")
                 self.btn_holidays.setMinimumSize(95, 30)
                 self.btn_holidays.setToolTip(
                     "The studio's public holidays: the days shaded here, and "
@@ -413,7 +415,7 @@ class AttendanceTab(QWidget):
 
             # The biometric machine's export. Any machine: the columns are
             # worked out from the file and remembered per studio.
-            self.btn_import = QPushButton("IMPORT BIOMETRIC")
+            self.btn_import = QPushButton("Import biometric")
             self.btn_import.setMinimumSize(130, 30)
             self.btn_import.setToolTip(
                 "Import punches from the biometric machine's CSV or Excel export. "
@@ -421,15 +423,14 @@ class AttendanceTab(QWidget):
                 "per day. Importing the same file twice changes nothing.")
             self.btn_import.clicked.connect(self.import_biometric)
 
-            # Common Control Style
-            ctrl_style = f"""
-                background: {Gate.ACCENT_SURFACE}; color: {Gate.TEXT_2}; border: 1px solid {Gate.LINE}; border-radius: 6px; font-size: 11px; font-weight: 600;
-            """
-            controls = [self.combo_month, self.spin_year, btn_ref, btn_exp, self.btn_import]
+            # The month combo and year box take the application's control style
+            # (chevrons, 32 px); a local sheet here turned their arrows into a
+            # cyan bar and two grey dashes.
+            buttons = [btn_ref, btn_exp, self.btn_import]
             if self.btn_holidays is not None:
-                controls.append(self.btn_holidays)
-            for w in controls:
-                w.setStyleSheet(ctrl_style)
+                buttons.append(self.btn_holidays)
+            for w in buttons:
+                style_button(w, "secondary")
 
             ah_layout.addWidget(self.combo_month)
             ah_layout.addWidget(self.spin_year)
@@ -461,28 +462,9 @@ class AttendanceTab(QWidget):
 
 
     def setup_table(self, table):
-        # Premium Table CSS
-        table.setStyleSheet(f"""
-            QTableWidget {{
-                background: {Gate.PANEL};
-                border: 1px solid {Gate.RAISED_HI};
-                gridline-color: {Gate.RAISED};
-                font-family: "Segoe UI";
-                font-size: 13px;
-                selection-background-color: {Gate.RAISED_HI};
-                selection-color: white;
-            }}
-            QHeaderView::section {{
-                background: {Gate.RAISED_HI};
-                color: {Gate.TEXT_2};
-                padding: 6px;
-                border: none;
-                font-weight: bold;
-                text-transform: uppercase;
-                font-size: 11px;
-            }}
-            QTableWidget::item {{ padding: 4px; }}
-        """)
+        # The shared table style (it had its own: grey upper-case headers on a
+        # different grey from every other table in the module).
+        style_table(table)
 
         table.horizontalHeader().setStretchLastSection(True)
         # Edit Triggers: Personal table is ReadOnly. Team table (Admin) handles DoubleClick manually.
@@ -704,6 +686,10 @@ class AttendanceTab(QWidget):
         self.my_table.clear()
         self.my_table.setColumnCount(6)
         self.my_table.setHorizontalHeaderLabels(["Date", "Punch In", "Punch Out", "Total Hours", "Status", "Notes"])
+        style_table(self.my_table, {
+            "Date": "contents", "Punch In": "contents", "Punch Out": "contents",
+            "Total Hours": "numeric", "Status": ("interactive", 150), "Notes": "stretch",
+        })
 
 
         days_in_month = calendar.monthrange(now.year, now.month)[1]
@@ -826,11 +812,10 @@ class AttendanceTab(QWidget):
         self.team_table.setRowCount(len(user_ids))
         self.team_table.setVerticalHeaderLabels([users[u].get('display_name',u) for u in user_ids])
 
-        # Styling
-        self.team_table.setStyleSheet(f"""
-            QTableWidget {{ background: {Gate.PANEL}; border: 1px solid {Gate.RAISED_HI}; gridline-color: {Gate.RAISED}; font-family: "Segoe UI"; font-size: 11px; }}
-            QHeaderView::section {{ background: {Gate.RAISED_HI}; color: {Gate.TEXT_2}; padding: 4px; font-weight: bold; border: 1px solid {Gate.RAISED_HI}; }}
-        """)
+        # The shared table look. This grid keeps its row names (people) down
+        # the side, so it only takes the stylesheet part, and stays a little
+        # smaller than body text because a month is 31 columns wide.
+        self.team_table.setStyleSheet(f"QTableWidget {{ font-size: {Gate.SIZE_SM}px; }}")
 
         for r, uid in enumerate(user_ids):
             # CRITICAL FIX: Attendance data stored with lowercase user IDs

@@ -23,7 +23,7 @@ class ChangePasswordDialog(QDialog):
 
         self.setWindowTitle("Choose your password" if forced else "Change password")
         self.setMinimumWidth(420)
-        self.setStyleSheet(f"background-color: {Gate.RAISED}; color: {Gate.TEXT};")
+        self.setStyleSheet(f"QDialog {{ background-color: {Gate.RAISED}; }}")  # the dialog only: without a selector every field in it took this background
         if forced:
             self.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
 

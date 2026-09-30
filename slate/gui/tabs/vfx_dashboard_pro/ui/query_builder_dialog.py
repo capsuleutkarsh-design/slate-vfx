@@ -67,7 +67,7 @@ class QueryBuilderDialog(QDialog):
         self.setup_ui()
         
     def setup_ui(self):
-        self.setStyleSheet(f"background-color: {C.BG_ELEVATED}; color: {Gate.TEXT};")
+        self.setStyleSheet(f"QDialog {{ background-color: {C.BG_ELEVATED}; }}")  # the dialog only: without a selector every field in it took this background
         
         main_layout = QVBoxLayout(self)
         main_layout.setSpacing(15)
@@ -115,7 +115,7 @@ class QueryBuilderDialog(QDialog):
         self.clear_btn.clicked.connect(self.clear_rules)
         
         self.apply_btn = QPushButton("Apply Query")
-        self.apply_btn.setStyleSheet(f"background: {C.ACCENT_BLUE}; color: {Gate.TEXT}; font-weight: bold; border: none; padding: 8px 24px; border-radius: {R.SM}px;")
+        self.apply_btn.setStyleSheet(f"background: {C.ACCENT_BLUE}; color: {Gate.TEXT_ON_ACCENT}; font-weight: bold; border: none; padding: 8px 24px; border-radius: {R.SM}px;")
         self.apply_btn.clicked.connect(self.apply_query)
         
         footer_layout.addWidget(self.clear_btn)

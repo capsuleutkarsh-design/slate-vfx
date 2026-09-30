@@ -32,7 +32,7 @@ class ImportUsersDialog(QDialog):
 
         self.setWindowTitle("Import people from Excel or CSV")
         self.setMinimumSize(820, 560)
-        self.setStyleSheet(f"background-color: {Gate.RAISED}; color: {Gate.TEXT};")
+        self.setStyleSheet(f"QDialog {{ background-color: {Gate.RAISED}; }}")  # the dialog only: without a selector every field in it took this background
         layout = QVBoxLayout(self)
 
         intro = QLabel(

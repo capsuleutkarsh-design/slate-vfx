@@ -9,6 +9,7 @@ import json
 import logging
 from slate.core.domain.user_manager import UserManager
 from slate.core.infra.gate import Gate
+from slate.gui.core.table_style import style_table
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ class UserDialog(QDialog):
         record = record or {}
 
         self.setWindowTitle("Edit %s" % username if self.editing else "Add New User")
-        self.setStyleSheet(f"background-color: {Gate.RAISED}; color: {Gate.TEXT};")
+        self.setStyleSheet(f"QDialog {{ background-color: {Gate.RAISED}; }}")  # the dialog only: without a selector every field in it took this background
         self.setMinimumWidth(420)
 
         form = QFormLayout(self)
@@ -481,7 +482,7 @@ class UsersPanel(QWidget):
 
         dialog = QDialog(self)
         dialog.setWindowTitle(f"Reset Password for {username}")
-        dialog.setStyleSheet(f"background-color: {Gate.RAISED}; color: {Gate.TEXT};")
+        dialog.setStyleSheet(f"QDialog {{ background-color: {Gate.RAISED}; }}")  # the dialog only: without a selector every field in it took this background
         layout = QFormLayout(dialog)
 
         pass_input = QLineEdit()
@@ -552,30 +553,10 @@ class UsersPanel(QWidget):
                 QMessageBox.warning(self, "Error", f"Failed to delete user: {e}")
 
     def style_table(self, table: QTableWidget):
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        table.setAlternatingRowColors(True)
-        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        table.verticalHeader().setDefaultSectionSize(34)
-        table.setStyleSheet(f"""
-            QTableWidget {{
-                background-color: {Gate.GROUND};
-                color: {Gate.TEXT};
-                gridline-color: {Gate.RAISED};
-                border: 1px solid {Gate.RAISED};
-                border-radius: 6px;
-                font-size: 12px;
-            }}
-            QTableWidget::item:alternate {{ background-color: {Gate.PANEL}; }}
-            QTableWidget::item:selected {{ background-color: {Gate.tint(Gate.ACCENT, 0.18)}; color: {Gate.TEXT}; }}
-            QHeaderView::section {{
-                background-color: {Gate.PANEL};
-                color: {Gate.TEXT_DIM};
-                border: none;
-                border-bottom: 2px solid {Gate.RAISED};
-                border-right: 1px solid {Gate.overlay(0.04)};
-                padding: 8px 10px;
-                font-weight: 700;
-                font-size: 11px;
-                text-transform: uppercase;
-            }}
-        """)
+        """The shared table style (this one had upper-case, letter-spaced
+        headers unlike every other table in the people module)."""
+        style_table(table, {
+            "Username": "contents", "Display Name": ("interactive", 170),
+            "Department (Job Title)": ("interactive", 200), "Roles": "stretch",
+            "Joined": "contents", "Employment": "contents", "Reports To": ("interactive", 150),
+        })
