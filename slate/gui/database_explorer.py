@@ -14,6 +14,7 @@ import logging
 import re
 from functools import partial
 from slate.core.infra.gate import Gate
+from slate.gui.core.stat_card import StatCard as _SharedStatCard
 
 
 def _safe_identifier(name, allowed=None):
@@ -35,79 +36,22 @@ def _safe_identifier(name, allowed=None):
 
 # --- CUSTOM VISUAL WIDGETS ---
 
-class StatCard(QFrame):
-    """A visually appealing card showing a single metric."""
-    def __init__(self, title, value, color_start, color_end, icon="\U0001F4CA"):
-        super().__init__()
-        self.setMinimumSize(220, 120)
-        self.color_start = QColor(color_start)
-        self.color_end = QColor(color_end)
+class StatCard(_SharedStatCard):
+    """
+    One figure on the Data Center overview.
+
+    This used to paint its own gradient card with white text and a colour
+    emoji, which matched nothing else in the product and ignored the theme.
+    It is now the shared card; the gradient's first colour becomes its accent
+    strip, and the icon argument is accepted for callers but not drawn.
+    """
+
+    def __init__(self, title, value, color_start=None, color_end=None, icon=None):
+        super().__init__(title, value, tone=color_start)
+        self.setMinimumWidth(180)
         self.title = title
         self.value = str(value)
-        if isinstance(icon, str) and any(bad in icon for bad in ("\u00f0", "\u00e2", "\ufffd")):
-            t = str(title).lower()
-            if "asset" in t:
-                icon = "\U0001F3A5"
-            elif "user" in t:
-                icon = "\U0001F465"
-            elif "project" in t:
-                icon = "\U0001F4C1"
-            else:
-                icon = "\U0001F4CA"
-        self.icon = icon
-        
-        # Style
-        self.setStyleSheet("""
-            QFrame {
-                background-color: transparent;
-                border-radius: 12px;
-            }
-        """)
-        
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        
-        # Gradient BG
-        grad = QLinearGradient(0, 0, self.width(), self.height())
-        grad.setColorAt(0, self.color_start)
-        grad.setColorAt(1, self.color_end)
-        
-        rect = QRectF(0, 0, self.width(), self.height())
-        p.setBrush(grad)
-        p.setPen(Qt.NoPen)
-        p.drawRoundedRect(rect, 12, 12)
-        
-        # Icon Background Bubble
-        p.setBrush(QColor(255, 255, 255, 40))
-        p.drawEllipse(self.width() - 80, -20, 100, 100)
-        
-        # Text
-        p.setPen(QColor("white"))
-        
-        # Title
-        font_title = QFont()
-        font_title.setPixelSize(14)
-        font_title.setBold(True)
-        font_title.setLetterSpacing(QFont.AbsoluteSpacing, 1)
-        p.setFont(font_title)
-        p.drawText(20, 35, self.title.upper())
-        
-        # Value
-        font_val = QFont()
-        font_val.setPixelSize(36)
-        font_val.setBold(True)
-        p.setFont(font_val)
-        p.drawText(20, 85, self.value)
-        
-        # Icon (Emoji/Text)
-        font_icon = QFont()
-        font_icon.setPixelSize(40)
-        p.setFont(font_icon)
-        p.setPen(QColor(255, 255, 255, 80))
-        p.drawText(self.width() - 50, 45, self.icon)
-        
-        p.end()
+
 
 class SimpleBarChart(QWidget):
     """Draws a simple bar chart given a dict of {label: value}."""
@@ -167,7 +111,7 @@ class SimpleBarChart(QWidget):
             p.drawRoundedRect(rect, 4, 4)
             
             # Value Label (Top of bar)
-            p.setPen(QColor("white"))
+            p.setPen(QColor(Gate.TEXT))
             font_small = QFont(); font_small.setPixelSize(10)
             p.setFont(font_small)
             p.drawText(int(x), int(y - 5), int(bar_width), 20, Qt.AlignmentFlag.AlignCenter, str(val))

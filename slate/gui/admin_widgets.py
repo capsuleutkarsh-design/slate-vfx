@@ -44,6 +44,7 @@ from ..core.infra.style_builder import StyleBuilder
 from .core.controls import make_button
 from .core.icons import icon as draw_icon
 from slate.core.infra.gate import Gate
+from slate.gui.core.empty_state import EmptyState, EmptyStack
 
 
 def _load_json_with_fallback(path: Path):
@@ -433,7 +434,15 @@ class LiveDashboard(QWidget):
         self.grid_layout.setSpacing(15)
         self.grid_layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         self.grid_area.setWidget(self.grid_widget)
-        self.main_layout.addWidget(self.grid_area)
+        # The empty message lives beside the grid, not in its first cell: in
+        # the grid it wrapped in a narrow column in the top-left corner and,
+        # hidden, still took cell (0, 0) so the first machine card was shifted.
+        self._fleet_empty = EmptyState(
+            "No workstations have reported yet",
+            "Machines appear here once the client is running on them.",
+            glyph="monitor")
+        self.fleet_stack = EmptyStack(self.grid_area, self._fleet_empty)
+        self.main_layout.addWidget(self.fleet_stack)
 
         self.pc_widgets = {}
         self.worker = LiveStatusWorker(self.hub)
@@ -513,28 +522,20 @@ class LiveDashboard(QWidget):
                                        known=len(found_pcs))
 
     def _update_fleet_placeholder(self, reporting, known):
-        if getattr(self, "_fleet_placeholder", None) is None:
-            self._fleet_placeholder = QLabel("", self.grid_widget)
-            self._fleet_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._fleet_placeholder.setWordWrap(True)
-            self._fleet_placeholder.setStyleSheet(
-                f"color: {C.TEXT_TERTIARY}; font-size: {T.SIZE_MD}px; "
-                f"background: transparent; padding: 40px;")
-            self.grid_layout.addWidget(self._fleet_placeholder, 0, 0, 1, 4)
-
         if reporting:
-            self._fleet_placeholder.hide()
+            self.fleet_stack.show_empty(False)
             return
 
         if known:
-            self._fleet_placeholder.setText(
+            self._fleet_empty.set_message(
+                "No workstation is online",
                 "No workstation has checked in for the last five minutes. "
                 "%d machine(s) are known, but all are currently offline." % known)
         else:
-            self._fleet_placeholder.setText(
-                "No workstations have reported yet. "
+            self._fleet_empty.set_message(
+                "No workstations have reported yet",
                 "Machines appear here once the client is running on them.")
-        self._fleet_placeholder.show()
+        self.fleet_stack.show_empty(True)
 
     def _on_worker_thread_done(self):
         if self._is_closing:

@@ -17,6 +17,8 @@ from ..core.infra.global_config import GlobalConfig
 from ..core.infra.database_manager import DatabaseManager
 from ..core.infra.app_context import AppContext
 from slate.core.infra.gate import Gate
+from slate.gui.core.controls import style_button
+from slate.gui.core.table_style import style_table
 
 
 # --- LOG PARSER UTILS ---
@@ -80,7 +82,7 @@ class SystemLogViewer(QWidget):
         
         btn_refresh_list = QPushButton("Refresh List")
         btn_refresh_list.clicked.connect(self.refresh_list)
-        btn_refresh_list.setStyleSheet(f"background: {Gate.RAISED}; padding: 5px;")
+        style_button(btn_refresh_list, "secondary")
         v.addWidget(btn_refresh_list)
         
         # Right: Log Content (Table)
@@ -375,13 +377,13 @@ class DatabaseAuditViewer(QWidget):
          
          # Filters
          h = QHBoxLayout()
-         self.search = QLineEdit(); self.search.setPlaceholderText("Search User, Project or Action..."); self.search.setStyleSheet(f"padding:6px; background:{Gate.RAISED}; color:{Gate.TEXT}; border:1px solid {Gate.LINE}; border-radius:4px;")
+         self.search = QLineEdit(); self.search.setPlaceholderText("Search User, Project or Action...")
          self.search.textChanged.connect(self.filter_table)
          
          self.date_filter = QComboBox()
          self.date_filter.addItem("All Dates")
          self.date_filter.currentTextChanged.connect(self.apply_date_filter)
-         self.date_filter.setStyleSheet(f"padding:6px; background:{Gate.RAISED}; color:{Gate.TEXT}; border:1px solid {Gate.LINE}; border-radius:4px;")
+
 
          self.chk_explain = QCheckBox("Simple Mode")
          self.chk_explain.setChecked(True)
@@ -389,7 +391,7 @@ class DatabaseAuditViewer(QWidget):
 
          btn_refresh = QPushButton("Refresh DB")
          btn_refresh.clicked.connect(self.refresh_data)
-         btn_refresh.setStyleSheet(f"padding:6px; background:{Gate.ACCENT}; color:{Gate.TEXT_ON_ACCENT}; font-weight:bold; border-radius:4px;")
+         style_button(btn_refresh, "secondary")     # one button kit, not a cyan one-off
          
          h.addWidget(self.search)
          h.addWidget(QLabel("Filter Date:"))
@@ -406,8 +408,9 @@ class DatabaseAuditViewer(QWidget):
          self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch) # Analysis stretches
          self.table.setColumnWidth(0, 140)
          self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-         self.table.setStyleSheet(f"QTableWidget {{ background: {Gate.PANEL}; border:none; gridline-color: {Gate.RAISED_HI}; color: {Gate.TEXT}; }} QHeaderView::section {{ background: {Gate.RAISED}; padding: 4px; }}")
-         self.table.verticalHeader().setVisible(False)
+         style_table(self.table, {"Time": ("interactive", 150), "User": "contents", "Project": "contents",
+                                  "Action": "contents", "Description": "stretch",
+                                  "Analysis (Simple)": "stretch"})
          layout.addWidget(self.table)
          
          self.refresh_data()

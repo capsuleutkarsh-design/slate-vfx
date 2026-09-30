@@ -149,6 +149,11 @@ class MainWindowBuilderMixin:
             self.sidebar_nav.setObjectName("MainSidebar")
             self.sidebar_nav.setFocusPolicy(Qt.NoFocus)
             self.sidebar_nav.setTextElideMode(Qt.TextElideMode.ElideNone)
+            # Qt ignores font-size on a list's ::item rule, so the nav's size is
+            # set on the widget (it followed the window-wide font rule instead).
+            nav_font = QFont(self.sidebar_nav.font())
+            nav_font.setPixelSize(14)
+            self.sidebar_nav.setFont(nav_font)
 
             self.sidebar_toggle_btn = QPushButton("⮜")
             self.sidebar_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)

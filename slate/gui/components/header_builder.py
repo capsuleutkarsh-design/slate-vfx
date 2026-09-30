@@ -141,7 +141,7 @@ class HeaderBuilder:
                 font-size: 11px;
                 font-weight: 600;
                 background: {Gate.tint(Gate.PANEL, 0.65)};
-                border: 1px solid rgba(148, 163, 184, 0.35);
+                border: 1px solid {Gate.tint(Gate.TEXT_DIM, 0.35)};
                 border-radius: 4px;
                 padding: 2px 8px;
             }}
@@ -158,7 +158,7 @@ class HeaderBuilder:
                 color: {Gate.WARN};
                 font-size: 10px;
                 font-weight: 800;
-                background: rgba(120, 53, 15, 0.45);
+                background: {Gate.WARN_SURFACE};
                 border: 1px solid {Gate.tint(Gate.WARN, 0.55)};
                 border-radius: 4px;
                 padding: 2px 8px;
@@ -179,7 +179,7 @@ class HeaderBuilder:
                 font-size: 10px;
                 font-weight: 600;
                 background: {Gate.tint(Gate.GROUND, 0.75)};
-                border: 1px solid rgba(100, 116, 139, 0.45);
+                border: 1px solid {Gate.tint(Gate.TEXT_DIM, 0.45)};
                 border-radius: 4px;
                 padding: 2px 8px;
             }}
@@ -251,7 +251,7 @@ class HeaderBuilder:
             border = Gate.tint(Gate.WARN, 0.45)
         else:
             color = Gate.ACCENT
-            border = "rgba(147, 197, 253, 0.45)"
+            border = Gate.tint(Gate.ACCENT, 0.45)
 
         self.db_mode_label.setStyleSheet(
             f"""
@@ -289,7 +289,7 @@ class HeaderBuilder:
             border = Gate.tint(Gate.OK, 0.45)
         elif not server_root_ok:
             color = Gate.BAD
-            border = "rgba(248, 113, 113, 0.45)"
+            border = Gate.tint(Gate.BAD, 0.45)
         else:
             color = Gate.WARN
             border = Gate.tint(Gate.WARN, 0.45)
@@ -569,7 +569,7 @@ class HeaderBuilder:
             painter.setBrush(QBrush(QColor(Gate.ACCENT)))  # Sky Blue
             painter.setPen(Qt.NoPen)
             painter.drawEllipse(0, 0, avatar_size, avatar_size)
-            painter.setPen(QColor("white"))
+            painter.setPen(QColor(Gate.TEXT_ON_ACCENT))
             painter.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
             initials = "".join([n[0] for n in display_name.split()[:2]]).upper() if display_name else "GU"
             painter.drawText(QRect(0, 0, avatar_size, avatar_size), Qt.AlignmentFlag.AlignCenter, initials)
