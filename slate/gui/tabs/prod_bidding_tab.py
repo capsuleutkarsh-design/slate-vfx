@@ -6,6 +6,9 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QColor
 from slate.core.infra.database_manager import database_manager
 from slate.gui.core.offline_notice import on_database_error
+from slate.gui.core.controls import make_button, page_title, tidy_form
+from slate.gui.core.stat_card import StatStrip
+from slate.gui.core.table_style import style_table, set_cell_status
 from slate.core.infra.gate import Gate
 
 # Let an outage reach the @on_database_error decorator rather than becoming an
@@ -20,8 +23,7 @@ class AddBidDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("New Project Bid")
-        self.setStyleSheet(f"background-color: {Gate.RAISED}; color: {Gate.TEXT};")
-        layout = QFormLayout(self)
+        layout = tidy_form(QFormLayout(self))
         
         self.proj_input = QComboBox()
         self.populate_projects()
@@ -74,15 +76,9 @@ class AddBidDialog(QDialog):
             self.on_project_changed(self.proj_input.currentText())
 
         btn_layout = QHBoxLayout()
-        save_btn = QPushButton("Save Bid")
-        save_btn.setStyleSheet(f"background-color: {Gate.ACCENT}; font-weight: bold; padding: 5px;")
-        save_btn.clicked.connect(self.accept)
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.setStyleSheet(f"background-color: {Gate.TEXT_DIM}; font-weight: bold; padding: 5px;")
-        cancel_btn.clicked.connect(self.reject)
-        
-        btn_layout.addWidget(save_btn)
-        btn_layout.addWidget(cancel_btn)
+        btn_layout.addStretch()
+        btn_layout.addWidget(make_button("Cancel", on_click=self.reject))
+        btn_layout.addWidget(make_button("Save Bid", "primary", on_click=self.accept))
         layout.addRow(btn_layout)
 
     @on_database_error
@@ -133,76 +129,26 @@ class ProdBiddingTab(QWidget):
         
         self.build_ui(main_layout)
 
-    def create_stat_card(self, title, value, color):
-        card = QFrame()
-        card.setStyleSheet(f"""
-            QFrame {{
-                background-color: {Gate.PANEL};
-                border: 1px solid {Gate.RAISED};
-                border-left: 4px solid {color};
-                border-radius: 6px;
-            }}
-        """)
-        lay = QVBoxLayout(card)
-        lay.setContentsMargins(14, 10, 14, 10)
-        lay.setSpacing(4)
-        
-        t_label = QLabel(title)
-        t_label.setFont(QFont("Inter", 10))
-        t_label.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: 11px; font-weight: 600; text-transform: uppercase; background: transparent; border: none;")
-        
-        v_label = QLabel(str(value))
-        v_label.setFont(QFont("Inter", 20, QFont.Weight.Bold))
-        v_label.setStyleSheet(f"color: {Gate.TEXT}; background: transparent; border: none;")
-        
-        lay.addWidget(t_label)
-        lay.addWidget(v_label)
-        return card, v_label
-
     def build_ui(self, main_layout):
-        header_title = QLabel("Production Bidding")
-        header_title.setFont(QFont("Inter", 16, QFont.Weight.Bold))
-        header_title.setStyleSheet(f"color: {Gate.TEXT}; margin-bottom: 2px;")
-        main_layout.addWidget(header_title)
-        
-        # Summary Cards
-        cards_lay = QHBoxLayout()
-        cards_lay.setSpacing(12)
-        card1, self.lbl_total = self.create_stat_card("Total Bids", "0", Gate.ACCENT)
-        card2, self.lbl_value = self.create_stat_card("Total Pipeline Value", "$0", Gate.OK)
-        card3, self.lbl_approved = self.create_stat_card("Approved", "0", Gate.ACCENT)
-        cards_lay.addWidget(card1)
-        cards_lay.addWidget(card2)
-        cards_lay.addWidget(card3)
-        main_layout.addLayout(cards_lay)
-        
+        main_layout.addWidget(page_title("Bidding", "Bids, their estimates and whether they were won"))
+
+        # Summary on one compact line, so the table keeps the height at 1366x768.
+        strip = StatStrip(compact=True)
+        self.lbl_total = strip.add("Total bids", "0", tone="accent")
+        self.lbl_value = strip.add("Pipeline value", "$0", tone="ok")
+        self.lbl_approved = strip.add("Approved", "0", tone="accent")
+        main_layout.addWidget(strip)
+
         controls = QHBoxLayout()
-        controls.setSpacing(10)
-        add_btn = QPushButton("+ Create New Bid")
-        add_btn.setObjectName("primaryButton")
-        add_btn.clicked.connect(self.add_bid)
-        controls.addWidget(add_btn)
-        
-        approve_btn = QPushButton("Approve Bid")
-        approve_btn.setObjectName("secondaryButton")
-        approve_btn.clicked.connect(lambda: self.update_status("Approved"))
-        controls.addWidget(approve_btn)
-
-        reject_btn = QPushButton("Reject Bid")
-        reject_btn.setObjectName("secondaryButton")
-        reject_btn.clicked.connect(lambda: self.update_status("Rejected"))
-        controls.addWidget(reject_btn)
-
-        edit_btn = QPushButton("Edit Bid")
-        edit_btn.setObjectName("secondaryButton")
-        edit_btn.clicked.connect(self.edit_bid)
-        controls.addWidget(edit_btn)
-
-        del_btn = QPushButton("Delete Bid")
-        del_btn.setObjectName("dangerButton")
-        del_btn.clicked.connect(self.delete_bid)
-        controls.addWidget(del_btn)
-
+        controls.setSpacing(Gate.SPACE_2)
+        controls.addWidget(make_button("Create Bid", "primary", icon="plus", on_click=self.add_bid))
+        controls.addSpacing(Gate.SPACE_2)
+        # Approve and Reject are one decision, so they sit together.
+        controls.addWidget(make_button("Approve Bid", on_click=lambda: self.update_status("Approved")))
+        controls.addWidget(make_button("Reject Bid", on_click=lambda: self.update_status("Rejected")))
+        controls.addSpacing(Gate.SPACE_2)
+        controls.addWidget(make_button("Edit Bid", on_click=self.edit_bid))
+        controls.addWidget(make_button("Delete Bid", "danger", on_click=self.delete_bid))
         controls.addStretch()
         main_layout.addLayout(controls)
 
@@ -211,7 +157,6 @@ class ProdBiddingTab(QWidget):
         self.style_table(self.grid)
         self.load_data()
         
-        self.grid.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.grid.hideColumn(0) # Hide ID
         main_layout.addWidget(self.grid)
 
@@ -234,9 +179,9 @@ class ProdBiddingTab(QWidget):
                         if str(row.get('status') or '') in ('Draft', 'Approved'))
         approved = sum(1 for row in bids if row.get('status') == 'Approved')
         
-        self.lbl_total.setText(str(total))
-        self.lbl_value.setText(f"${total_val:,.0f}")
-        self.lbl_approved.setText(str(approved))
+        self.lbl_total.set_value(total)
+        self.lbl_value.set_value(f"${total_val:,.0f}")
+        self.lbl_approved.set_value(approved)
 
         for r, row in enumerate(bids):
             self.grid.setItem(r, 0, QTableWidgetItem(str(row.get('id', ''))))
@@ -250,9 +195,9 @@ class ProdBiddingTab(QWidget):
             
             status_item = QTableWidgetItem(str(row.get('status', '')))
             if status_item.text() == "Approved":
-                status_item.setForeground(QColor("green"))
+                set_cell_status(status_item, "ok", background=False)
             elif status_item.text() == "Rejected":
-                status_item.setForeground(QColor("red"))
+                set_cell_status(status_item, "bad", background=False)
             self.grid.setItem(r, 8, status_item)
 
     def add_bid(self):
@@ -360,30 +305,15 @@ class ProdBiddingTab(QWidget):
         self.load_data()
             
     def style_table(self, table: QTableWidget):
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        table.setAlternatingRowColors(True)
-        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        table.verticalHeader().setDefaultSectionSize(34)
-        table.setStyleSheet(f"""
-            QTableWidget {{ 
-                background-color: {Gate.GROUND}; 
-                color: {Gate.TEXT}; 
-                gridline-color: {Gate.RAISED}; 
-                border: 1px solid {Gate.RAISED}; 
-                border-radius: 6px;
-                font-size: 12px; 
-            }}
-            QTableWidget::item:alternate {{ background-color: {Gate.PANEL}; }}
-            QTableWidget::item:selected {{ background-color: {Gate.tint(Gate.ACCENT, 0.18)}; color: {Gate.TEXT}; }}
-            QHeaderView::section {{ 
-                background-color: {Gate.PANEL}; 
-                color: {Gate.TEXT_DIM}; 
-                border: none;
-                border-bottom: 2px solid {Gate.RAISED}; 
-                border-right: 1px solid {Gate.overlay(0.04)};
-                padding: 8px 10px; 
-                font-weight: 700;
-                font-size: 11px;
-                text-transform: uppercase;
-            }}
-        """)
+        """The shared table setup: the project takes the spare width, counts
+        and money are as wide as their content and right-aligned."""
+        style_table(table, {
+            "Project Code": "stretch",
+            "Shots": "numeric",
+            "Complexity": "contents",
+            "Est. Days": "numeric",
+            "Margin": "numeric",
+            "Est. Cost": "numeric",
+            "Final Budget": "numeric",
+            "Status": "contents",
+        })
