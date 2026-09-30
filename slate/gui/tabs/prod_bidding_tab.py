@@ -6,6 +6,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QColor
 from slate.core.infra.database_manager import database_manager
 from slate.gui.core.offline_notice import on_database_error
+from slate.gui.core.data_display import money_item, select_row_by_id
+from slate.core.domain import money
 
 # Let an outage reach the @on_database_error decorator rather than becoming an
 # empty grid here. Everything else keeps the fallback it already had.
@@ -28,14 +30,27 @@ class AddBidDialog(QDialog):
         self.shot_count_input = QSpinBox()
         self.shot_count_input.setRange(0, 100000)
         self.shot_count_input.setReadOnly(True) # Auto-calculated from DB
-        
+
+        # Each bid has its own currency: the studio's (rupees unless changed
+        # in the studio settings) or the foreign client's. Every amount in the
+        # dialog is shown in it. A dollar sign used to be written into the
+        # widgets, with digits grouped by the Windows locale - Indian here,
+        # western in the table next to it.
+        self.currency_input = QComboBox()
+        for code, cur in money.CURRENCIES.items():
+            self.currency_input.addItem(f"{cur.symbol}  {code} - {cur.name}", code)
+        index = self.currency_input.findData(money.studio_currency())
+        self.currency_input.setCurrentIndex(max(index, 0))
+
         self.cost_input = QDoubleSpinBox()
-        self.cost_input.setRange(0, 1000000)
-        self.cost_input.setPrefix("$ ")
-        from slate.core.domain.bidding import day_rate as _day_rate
-        self.cost_input.setValue(_day_rate())
-        self.cost_input.setGroupSeparatorShown(True)
+        self.cost_input.setRange(0, 100000000)
+        self.cost_input.setDecimals(2)
+        # No locale grouping in an editable box - the formatted figure is
+        # shown by the budget line below instead.
+        self.cost_input.setGroupSeparatorShown(False)
+        self._rate_touched = False
         self.cost_input.valueChanged.connect(self.update_budget)
+        self.cost_input.editingFinished.connect(self._rate_edited)
 
         from slate.core.domain.bidding import COMPLEXITIES, day_rate
         self.complexity_input = QComboBox()
@@ -54,19 +69,27 @@ class AddBidDialog(QDialog):
         self.days_input.setSuffix(" days")
         self.days_input.setReadOnly(True)
 
+        # Kept (the tab reads it) but not shown: the figure is shown formatted
+        # in its currency by budget_label.
         self.budget_input = QDoubleSpinBox()
-        self.budget_input.setRange(0, 1000000000)
-        self.budget_input.setPrefix("$ ")
-        self.budget_input.setGroupSeparatorShown(True)
+        self.budget_input.setRange(0, 100000000000)
+        self.budget_input.setDecimals(2)
         self.budget_input.setReadOnly(True)
+        self.budget_input.setVisible(False)
+        self.budget_label = QLabel("")
+        self.budget_label.setStyleSheet("font-weight: bold;")
+
+        self._apply_currency(set_rate=True)
+        self.currency_input.currentIndexChanged.connect(lambda *_: self._apply_currency())
 
         layout.addRow("Project Code:", self.proj_input)
+        layout.addRow("Currency:", self.currency_input)
         layout.addRow("Total Shots (Auto):", self.shot_count_input)
         layout.addRow("Average Complexity:", self.complexity_input)
         layout.addRow("Artist Day Rate:", self.cost_input)
         layout.addRow("Target Margin:", self.margin_input)
         layout.addRow("Estimated Artist Days:", self.days_input)
-        layout.addRow("Final Estimated Budget:", self.budget_input)
+        layout.addRow("Final Estimated Budget:", self.budget_label)
         
         self.proj_input.currentTextChanged.connect(self.on_project_changed)
         if self.proj_input.count() > 0:
@@ -111,11 +134,37 @@ class AddBidDialog(QDialog):
         except Exception as e:
             print(f"Error fetching shots: {e}")
 
+    def currency(self) -> str:
+        return self.currency_input.currentData() or money.studio_currency()
+
+    def set_currency(self, code) -> None:
+        index = self.currency_input.findData(money.normalise_code(code, "USD"))
+        if index >= 0:
+            self.currency_input.setCurrentIndex(index)
+
+    def _rate_edited(self):
+        self._rate_touched = True
+
+    def _apply_currency(self, set_rate: bool = False):
+        """Show the day rate in the bid's currency, and the studio's rate for it."""
+        code = self.currency()
+        self.cost_input.setPrefix(money.currency(code).symbol + " ")
+        if set_rate or not self._rate_touched:
+            rate = money.day_rate(code)
+            if rate is None and code == "USD":
+                from slate.core.domain.bidding import day_rate as _day_rate
+                rate = _day_rate()
+            if rate is not None:
+                self.cost_input.setValue(float(rate))
+        self.update_budget()
+
     def update_budget(self):
         # The days-per-shot figures used to be three literals here, so a studio
         # whose comp runs heavier than the default had no way to say so.
         from slate.core.domain.bidding import estimate
 
+        if not hasattr(self, "budget_label"):
+            return      # still being built
         result = estimate(self.shot_count_input.value(),
                           self.complexity_input.currentText(),
                           rate=self.cost_input.value(),
@@ -123,6 +172,7 @@ class AddBidDialog(QDialog):
 
         self.days_input.setValue(result["days"])
         self.budget_input.setValue(result["price"])
+        self.budget_label.setText(money.format_money(result["price"], self.currency()))
 
 class ProdBiddingTab(QWidget):
     def __init__(self, parent=None):
@@ -229,12 +279,17 @@ class ProdBiddingTab(QWidget):
         total = len(bids)
         # Pipeline value is work that might still happen. Rejected bids were
         # counted in it, so the figure grew every time the studio lost a job.
-        total_val = sum(row.get('estimated_budget', 0) or 0 for row in bids
-                        if str(row.get('status') or '') in ('Draft', 'Approved'))
+        # Kept per currency - rupees and dollars do not add up to anything -
+        # and shown short (3.8 Cr, 380.3M) with the exact figures in the
+        # tooltip. It used to be whole dollars while the table showed cents.
+        totals = money.sum_by_currency(
+            (row.get('estimated_budget') or 0, row.get('currency') or 'USD') for row in bids
+            if str(row.get('status') or '') in ('Draft', 'Approved'))
         approved = sum(1 for row in bids if row.get('status') == 'Approved')
-        
+
         self.lbl_total.setText(str(total))
-        self.lbl_value.setText(f"${total_val:,.0f}")
+        self.lbl_value.setText(money.format_totals(totals, compact=True))
+        self.lbl_value.setToolTip(money.format_totals(totals))
         self.lbl_approved.setText(str(approved))
 
         for r, row in enumerate(bids):
@@ -244,8 +299,10 @@ class ProdBiddingTab(QWidget):
             self.grid.setItem(r, 3, QTableWidgetItem(str(row.get('complexity', ''))))
             self.grid.setItem(r, 4, QTableWidgetItem(f"{row.get('estimated_days', 0):.1f} d"))
             self.grid.setItem(r, 5, QTableWidgetItem(f"{row.get('target_margin', 0):.0f}%"))
-            self.grid.setItem(r, 6, QTableWidgetItem(f"${row.get('estimated_cost', 0):,.2f}"))
-            self.grid.setItem(r, 7, QTableWidgetItem(f"${row.get('estimated_budget', 0):,.2f}"))
+            # Bids made before currencies were recorded were in dollars.
+            code = row.get('currency') or 'USD'
+            self.grid.setItem(r, 6, money_item(row.get('estimated_cost') or 0, code))
+            self.grid.setItem(r, 7, money_item(row.get('estimated_budget') or 0, code))
             
             status_item = QTableWidgetItem(str(row.get('status', '')))
             if status_item.text() == "Approved":
@@ -273,15 +330,25 @@ class ProdBiddingTab(QWidget):
                 return
                 
             query = """
-            INSERT INTO prod_bidding 
-            (project_code, project_name, shot_count, complexity, estimated_days, target_margin, estimated_cost, estimated_budget, status) 
-            VALUES 
-            (%s, %s, %s, %s, %s, %s, %s, %s, 'Draft')
+            INSERT INTO prod_bidding
+            (project_code, project_name, shot_count, complexity, estimated_days, target_margin, estimated_cost, estimated_budget, status, currency)
+            VALUES
+            (%s, %s, %s, %s, %s, %s, %s, %s, 'Draft', %s)
+            RETURNING id
             """
-            params = (proj, proj, shots, comp, days, margin, cost, budget)
-            if database_manager.execute_query(query, params, fetch=False):
-                QMessageBox.information(self, "Success", "Added new draft bid.")
-                self.load_data()
+            params = (proj, proj, shots, comp, days, margin, cost, budget, dialog.currency())
+            # execute_query(..., fetch=False) returned None even when the bid
+            # was written, so neither the message nor the reload ran and people
+            # saved again, making duplicates. Checked, reloaded, selected.
+            result = database_manager.execute_update(query, params)
+            self.load_data()
+            if not result:
+                QMessageBox.warning(self, "Not saved", "The bid was not saved:\n\n%s"
+                                    % (result.error or "the database refused it"))
+                return
+            if result.last_id is not None:
+                select_row_by_id(self.grid, result.last_id)
+            QMessageBox.information(self, "Draft bid created", f"Draft bid created for {proj}.")
 
     def _selected_bid_id(self):
         rows = sorted({item.row() for item in self.grid.selectedItems()})
@@ -311,6 +378,7 @@ class ProdBiddingTab(QWidget):
             if index >= 0:
                 dialog.proj_input.setCurrentIndex(index)
             dialog.complexity_input.setCurrentText(str(row.get("complexity") or "Medium"))
+            dialog.set_currency(row.get("currency") or "USD")
             try:
                 dialog.margin_input.setValue(float(row.get("target_margin") or 0))
             except (TypeError, ValueError):
@@ -320,14 +388,18 @@ class ProdBiddingTab(QWidget):
             return
 
         days = dialog.days_input.value()
-        database_manager.execute_query(
+        result = database_manager.execute_update(
             "UPDATE prod_bidding SET complexity = %s, shot_count = %s, "
             "estimated_days = %s, target_margin = %s, estimated_cost = %s, "
-            "estimated_budget = %s WHERE id = %s",
+            "estimated_budget = %s, currency = %s WHERE id = %s",
             (dialog.complexity_input.currentText(), dialog.shot_count_input.value(),
              days, dialog.margin_input.value(), days * dialog.cost_input.value(),
-             dialog.budget_input.value(), bid_id), fetch=False)
+             dialog.budget_input.value(), dialog.currency(), bid_id))
         self.load_data()
+        select_row_by_id(self.grid, bid_id)
+        if not result.changed:
+            QMessageBox.warning(self, "Not saved", "The bid was not changed:\n\n%s"
+                                % (result.error or "it no longer exists"))
 
     def delete_bid(self):
         bid_id = self._selected_bid_id()
@@ -340,9 +412,12 @@ class ProdBiddingTab(QWidget):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         ) != QMessageBox.StandardButton.Yes:
             return
-        database_manager.execute_query(
-            "DELETE FROM prod_bidding WHERE id = %s", (bid_id,), fetch=False)
+        result = database_manager.execute_update(
+            "DELETE FROM prod_bidding WHERE id = %s", (bid_id,))
         self.load_data()
+        if not result:
+            QMessageBox.warning(self, "Not deleted", "The bid was not deleted:\n\n%s"
+                                % (result.error or "the database refused it"))
 
     def update_status(self, new_status):
         selected_rows = set(item.row() for item in self.grid.selectedItems())
@@ -350,13 +425,20 @@ class ProdBiddingTab(QWidget):
             QMessageBox.warning(self, "Selection Empty", "Please select a bid to update.")
             return
             
+        failed = []
         for r in selected_rows:
             item = self.grid.item(r, 0)
             if not item: continue
             bid = item.text()
             query = "UPDATE prod_bidding SET status = %s WHERE id = %s"
-            database_manager.execute_query(query, (new_status, int(bid)), fetch=False)
+            result = database_manager.execute_update(query, (new_status, int(bid)))
+            if not result.changed:
+                failed.append(result.error or "that bid no longer exists")
         self.load_data()
+        if failed:
+            QMessageBox.warning(self, "Not all updated",
+                                "%d bid(s) were not marked %s:\n\n%s"
+                                % (len(failed), new_status, failed[0]))
             
     def style_table(self, table: QTableWidget):
         table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)

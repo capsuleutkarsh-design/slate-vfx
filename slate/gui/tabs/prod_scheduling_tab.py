@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QDate
 from PySide6.QtGui import QFont, QColor
 from slate.gui.core.offline_notice import on_database_error
+from slate.gui.core.data_display import date_item, select_row_by_id, setup_date_edit
 
 # Let an outage reach the @on_database_error decorator rather than becoming an
 # empty grid here. Everything else keeps the fallback it already had.
@@ -60,10 +61,11 @@ class AddMilestoneDialog(QDialog):
         self.proj_cb.currentTextChanged.connect(self.update_deps)
 
         self.ms_input = QLineEdit()
-        self.start_input = QDateEdit(QDate.currentDate())
-        self.start_input.setCalendarPopup(True)
-        self.end_input = QDateEdit(QDate.currentDate().addDays(14))
-        self.end_input.setCalendarPopup(True)
+        # The studio's date format ('3 Oct 2026', as in the table) and a
+        # calendar whose weeks start on Monday. It showed 30-09-2026 next to
+        # a table of 2026-09-30, with Sunday-first weeks.
+        self.start_input = setup_date_edit(QDateEdit(QDate.currentDate()))
+        self.end_input = setup_date_edit(QDateEdit(QDate.currentDate().addDays(14)))
         # A milestone cannot finish before it starts, and cannot start before
         # the thing it waits on has finished. Neither was checked, so a Gantt
         # chart could be built that described an impossible schedule.
@@ -297,8 +299,8 @@ class ProdSchedulingTab(QWidget):
                 if dep_row: dep_name = dep_row.get('milestone', str(dep_id))
             self.grid.setItem(r, 3, QTableWidgetItem(dep_name))
             
-            self.grid.setItem(r, 4, QTableWidgetItem(str(row.get('start_date', ''))))
-            self.grid.setItem(r, 5, QTableWidgetItem(str(row.get('end_date', ''))))
+            self.grid.setItem(r, 4, date_item(row.get('start_date')))
+            self.grid.setItem(r, 5, date_item(row.get('end_date')))
             
             status_item = QTableWidgetItem(str(row.get('status', '')))
             if status_item.text() == "Completed":
@@ -330,10 +332,22 @@ class ProdSchedulingTab(QWidget):
                 
             from slate.core.infra.database_manager import database_manager
             
-            query = "INSERT INTO prod_scheduling (project_code, milestone, start_date, end_date, status, depends_on_id) VALUES (%s, %s, %s, %s, 'Scheduled', %s)"
-            if database_manager.execute_query(query, (proj, ms, start, end, dep_id), fetch=False):
-                QMessageBox.information(self, "Success", "Added new scheduling milestone.")
-                self.load_data()
+            query = ("INSERT INTO prod_scheduling (project_code, milestone, start_date, end_date, status, depends_on_id) "
+                     "VALUES (%s, %s, %s, %s, 'Scheduled', %s) RETURNING id")
+            # execute_query(..., fetch=False) returned None even when the row
+            # was written: no message, no refresh, and people saved again and
+            # made duplicates. The result is checked and the table always
+            # reloads, with the new milestone selected.
+            result = database_manager.execute_update(query, (proj, ms, start, end, dep_id))
+            self.load_data()
+            if not result:
+                QMessageBox.warning(self, "Not saved",
+                                    "The milestone was not saved:\n\n%s"
+                                    % (result.error or "the database refused it"))
+                return
+            if result.last_id is not None:
+                select_row_by_id(self.grid, result.last_id)
+            QMessageBox.information(self, "Added", f"Added \"{ms}\" to {proj}.")
 
     def update_status(self):
         selected_rows = set(item.row() for item in self.grid.selectedItems())
@@ -361,13 +375,19 @@ class ProdSchedulingTab(QWidget):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             new_status = cb.currentText()
             from slate.core.infra.database_manager import database_manager
+            failed = []
             for r in selected_rows:
                 item = self.grid.item(r, 0)
                 if item:
                     mid = item.text()
                     query = "UPDATE prod_scheduling SET status = %s WHERE id = %s"
-                    database_manager.execute_query(query, (new_status, int(mid)), fetch=False)
+                    result = database_manager.execute_update(query, (new_status, int(mid)))
+                    if not result.changed:
+                        failed.append(result.error or "that milestone no longer exists")
             self.load_data()
+            if failed:
+                QMessageBox.warning(self, "Not all updated",
+                                    "%d milestone(s) were not updated:\n\n%s" % (len(failed), failed[0]))
             
     def shift_dates(self):
         selected_rows = set(item.row() for item in self.grid.selectedItems())
@@ -387,6 +407,7 @@ class ProdSchedulingTab(QWidget):
             
             from slate.core.infra.database_manager import database_manager
             import datetime
+            failures = []
             # Recursive shift function with cycle detection
             def shift_downstream(current_id, shift_days, visited=None):
                 if visited is None:
@@ -402,15 +423,17 @@ class ProdSchedulingTab(QWidget):
                     try:
                         s_date = datetime.date.fromisoformat(s_raw) + datetime.timedelta(days=shift_days)
                         e_date = datetime.date.fromisoformat(e_raw) + datetime.timedelta(days=shift_days)
-                        database_manager.execute_query(
+                        result = database_manager.execute_update(
                             "UPDATE prod_scheduling SET start_date = %s, end_date = %s WHERE id = %s",
-                            (str(s_date), str(e_date), int(current_id)),
-                            fetch=False
-                        )
+                            (str(s_date), str(e_date), int(current_id)))
+                        if not result:
+                            failures.append(result.error)
                     except DatabaseUnavailableError:
                         raise
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        # A milestone with no usable dates cannot be moved;
+                        # it is reported rather than silently skipped.
+                        failures.append(str(exc))
                 # Find children
                 children = database_manager.execute_query("SELECT id FROM prod_scheduling WHERE depends_on_id = %s", (int(current_id),)) or []
                 for c in children:
@@ -419,8 +442,15 @@ class ProdSchedulingTab(QWidget):
                         shift_downstream(child_id, shift_days, visited)
                     
             shift_downstream(mid, days)
-            QMessageBox.information(self, "Success", f"Shifted milestone {mid} and all its dependencies by {days} days.")
             self.load_data()
+            select_row_by_id(self.grid, mid)
+            if failures:
+                QMessageBox.warning(self, "Not all shifted",
+                                    "%d milestone(s) could not be moved:\n\n%s"
+                                    % (len(failures), failures[0]))
+            else:
+                QMessageBox.information(self, "Shifted",
+                                        f"The milestone and everything after it moved by {days} day(s).")
 
     def style_table(self, table: QTableWidget):
         table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
