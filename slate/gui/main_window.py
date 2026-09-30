@@ -76,6 +76,10 @@ from .components.sidebar_controller import SidebarControllerMixin
 from .components.quick_search_controller import QuickSearchControllerMixin
 from .components.main_window_builder import MainWindowBuilderMixin
 
+# The smallest the main window may be made (width, height).
+MIN_WINDOW_SIZE = (960, 600)
+
+
 # The mixins come before QMainWindow deliberately.
 #
 # With QMainWindow first, Python resolved resizeEvent to QWidget's and the
@@ -215,7 +219,12 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         
         self.resize(target_w, target_h)
         self.center_window()
-        self.setMinimumSize(1024, 768) # Enforce a sensible minimum
+        # Small enough for a 1280x720 or 1366x768 laptop with a taskbar. It
+        # used to be 1024x768, which is taller than the usable area of those
+        # screens: the footer and the bottom of the window sat off-screen.
+        # Pages scroll inside their frame (tab_coordinator.PageScroll) when
+        # they need more room than this.
+        self.setMinimumSize(*MIN_WINDOW_SIZE)
 
         # Set Window Icon
         icon_path = ResourcePathManager.get_icons_dir() / "app_icon_128.ico"
@@ -232,6 +241,12 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         # 4. Restore State
         self.restore_last_paths()
         self.restore_window_geometry()
+
+        # The entry start-up selected. perform_async_login runs a few seconds
+        # later and used to switch to Home unconditionally - so anybody quick
+        # enough to open a tab first was yanked back to Home. It now only
+        # does that when the person is still where start-up left them.
+        self._startup_row = self.sidebar_nav.currentRow() if getattr(self, "sidebar_nav", None) else -1
         
         # 5. Setup Timers & Shortcuts
         self.cleanup_timer = QTimer(self)
@@ -653,6 +668,19 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         worker.setAutoDelete(True)
         QThreadPool.globalInstance().start(worker)
 
+    def user_has_navigated(self) -> bool:
+        """
+        Whether the sidebar selection has moved since start-up chose a tab.
+
+        Keyboard shortcuts, the command palette and clicks all move the
+        sidebar's current row, so comparing rows catches every route.
+        """
+        nav = getattr(self, "sidebar_nav", None)
+        start = getattr(self, "_startup_row", -1)
+        if nav is None or start is None or start < 0:
+            return False
+        return nav.currentRow() != start
+
     def perform_async_login(self):
         """Log attendance and finish the main window boot sequence."""
         # Only log attendance automatically in Ops or All mode (VFX has attendance removed)
@@ -665,7 +693,11 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         
         # Initiate cinematic mode by default for VFX, Ops, and All (both VFX and Ops have cinematic Home!)
         self.set_cinematic_mode(True)
-        if not self._switch_to_tab_label("Home"):
+        if self.user_has_navigated():
+            # They have already opened something: leave them there.
+            logging.info("Start-up: staying on %s - opened before start-up finished",
+                         self.tab_coordinator.get_current_tab_name())
+        elif not self._switch_to_tab_label("Home"):
             self.set_cinematic_mode(False)
             if getattr(self, "app_mode", "all") == "ops":
                 if not self._switch_to_tab_label("Attendance"):

@@ -6,8 +6,12 @@ Manages tab registration, initialization, visibility and navigation.
 Extracted from main_window.py for better maintainability.
 """
 
-from PySide6.QtWidgets import QListWidgetItem, QWidget, QHBoxLayout, QLabel, QFrame, QSizePolicy
-from PySide6.QtCore import Qt, QSize, Signal, QObject
+from PySide6.QtWidgets import (
+    QListWidgetItem, QWidget, QHBoxLayout, QLabel, QFrame, QSizePolicy, QScrollArea,
+    QStyledItemDelegate,
+)
+from PySide6.QtCore import Qt, QSize, Signal, QObject, QRectF
+from PySide6.QtGui import QColor, QFont, QPainter
 import logging
 
 # A navigation entry and a category rule. They used to be the same height, 50px
@@ -27,6 +31,84 @@ def _apply_nav_icon(item, icon_name):
             item.setIcon(draw_icon(icon_name))
     except Exception as exc:
         logging.debug("Nav icon skipped for %r: %s", icon_name, exc)
+
+
+# Where a sidebar entry keeps its unread / waiting count (see set_badge).
+BADGE_ROLE = Qt.ItemDataRole.UserRole + 40
+
+
+class PageScroll(QScrollArea):
+    """
+    The frame every tab sits in, so a page scrolls instead of forcing the
+    window to be as tall as its tallest page.
+
+    The main window used to refuse any height under 768 px - on a 1366x768
+    laptop with a taskbar the footer and the bottom of every dialog anchor
+    were off-screen. It can now be made much smaller; a page that genuinely
+    needs more room than that shows a scroll bar rather than pushing the
+    window past the screen. A page that fits looks exactly as before: the
+    frame is invisible and the page is resized to fill it.
+    """
+
+    def __init__(self, page: QWidget, parent=None):
+        super().__init__(parent)
+        self.page = page
+        self.setObjectName("PageScroll")
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setStyleSheet("QScrollArea#PageScroll { background: transparent; border: none; }")
+        self.viewport().setAutoFillBackground(False)
+        self.setWidget(page)
+
+
+def page_of(stack_widget):
+    """The tab inside a PageScroll, or the widget itself."""
+    if isinstance(stack_widget, PageScroll):
+        return stack_widget.page
+    return stack_widget
+
+
+class NavBadgeDelegate(QStyledItemDelegate):
+    """
+    Draws a count on a sidebar entry: "3 waiting", "2 new replies".
+
+    Painted over the normal item (so the sidebar stylesheet still decides how
+    the entry itself looks): a small pill on the right when the sidebar is
+    open, a dot on the icon when it is folded to icons.
+    """
+
+    def paint(self, painter, option, index):
+        super().paint(painter, option, index)
+        count = index.data(BADGE_ROLE)
+        try:
+            count = int(count or 0)
+        except (TypeError, ValueError):
+            count = 0
+        if count <= 0:
+            return
+        from slate.core.infra.gate import Gate
+        text = str(count) if count <= 99 else "99+"
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = option.rect
+        collapsed = not str(index.data(Qt.ItemDataRole.DisplayRole) or "").strip()
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(Gate.ACCENT))
+        if collapsed:
+            d = 9.0
+            painter.drawEllipse(QRectF(rect.center().x() + 5, rect.top() + 7, d, d))
+        else:
+            font = QFont(painter.font())
+            font.setPixelSize(11)
+            font.setBold(True)
+            painter.setFont(font)
+            w = max(20.0, painter.fontMetrics().horizontalAdvance(text) + 12.0)
+            h = 18.0
+            pill = QRectF(rect.right() - w - 10, rect.center().y() - h / 2, w, h)
+            painter.drawRoundedRect(pill, h / 2, h / 2)
+            painter.setPen(QColor(Gate.TEXT_ON_ACCENT))
+            painter.drawText(pill, Qt.AlignmentFlag.AlignCenter, text)
+        painter.restore()
 
 
 class CategoryHeaderWidget(QWidget):
@@ -120,6 +202,13 @@ class TabCoordinator(QObject):
         # the window has - the last entries were simply cut off.
         self.groups = []  # [{'label', 'header_row', 'widget', 'rows': [], 'folded': bool}]
 
+        # Counts shown on sidebar entries (set_badge).
+        self._badges = {}
+        try:
+            self.sidebar_nav.setItemDelegate(NavBadgeDelegate(self.sidebar_nav))
+        except Exception as exc:
+            logging.debug("Sidebar badge delegate not installed: %s", exc)
+
         # Connect navigation signal
         self.sidebar_nav.currentRowChanged.connect(self._on_nav_changed)
         # Headers are not selectable, so currentRowChanged never fires for them.
@@ -178,8 +267,8 @@ class TabCoordinator(QObject):
             else:
                 logging.info(f"[OK] Tab '{label}' ALLOWED")
         
-        # Add to stack
-        self.content_stack.addWidget(page_widget)
+        # Add to stack, in the scrolling frame every page sits in.
+        self.content_stack.addWidget(PageScroll(page_widget))
         
         # Add to sidebar
         is_collapsed = getattr(self, "sidebar_collapsed", False)
@@ -431,8 +520,46 @@ class TabCoordinator(QObject):
                 return
     
     def get_current_tab(self):
-        """Return currently active tab widget."""
-        return self.content_stack.currentWidget()
+        """Return currently active tab widget (the page, not its scrolling frame)."""
+        return page_of(self.content_stack.currentWidget())
+
+    def stack_widget_for(self, page_widget):
+        """The widget in the stack that holds this page (its PageScroll)."""
+        for i in range(self.content_stack.count()):
+            candidate = self.content_stack.widget(i)
+            if candidate is page_widget or page_of(candidate) is page_widget:
+                return candidate
+        return page_widget
+
+    # ------------------------------------------------------------ badges
+    def set_badge(self, label, count, tooltip=None):
+        """
+        Show a count on a sidebar entry ("IT Support 3"). 0 or None clears it.
+
+        The count is the screen's to decide - tickets waiting, replies unread,
+        requests to approve. Drawn by NavBadgeDelegate; the entry's text and
+        its label are untouched, so nothing that looks tabs up by name breaks.
+        """
+        try:
+            count = int(count or 0)
+        except (TypeError, ValueError):
+            count = 0
+        self._badges[label] = count
+        for entry in self.nav_items:
+            if entry.get('label') == label and entry.get('item') is not None:
+                item = entry['item']
+                item.setData(BADGE_ROLE, count)
+                if 'base_tooltip' not in entry:
+                    entry['base_tooltip'] = item.toolTip()
+                if count and tooltip:
+                    item.setToolTip(f"{entry['base_tooltip']}\n{tooltip}".strip())
+                else:
+                    item.setToolTip(entry['base_tooltip'])
+                return True
+        return False
+
+    def badge(self, label):
+        return int(self._badges.get(label, 0) or 0)
     
     def get_current_tab_name(self):
         """Return name of currently active tab."""
@@ -600,20 +727,21 @@ class TabCoordinator(QObject):
                 logging.error(f"[LAZY] Missing factory for tab: {label}")
                 return None
             widget = factory()
-            
+
             if widget:
                 self.tab_instances[label] = widget
-                
+                holder = PageScroll(widget)
+
                 # Replace placeholder at `index` in content_stack to keep 1:1 index alignment
                 if 0 <= index < self.content_stack.count():
                     old_widget = self.content_stack.widget(index)
-                    self.content_stack.insertWidget(index, widget)
-                    if old_widget and old_widget != widget:
+                    self.content_stack.insertWidget(index, holder)
+                    if old_widget and old_widget != holder:
                         self.content_stack.removeWidget(old_widget)
                         old_widget.deleteLater()
                 else:
-                    self.content_stack.addWidget(widget)
-                
+                    self.content_stack.addWidget(holder)
+
                 # Update or add to nav_items
                 item = self.sidebar_nav.item(index)
                 for entry in self.nav_items:
@@ -669,12 +797,12 @@ class TabCoordinator(QObject):
                     widget = entry.get("page")
                     break
             if not widget and 0 <= row < self.content_stack.count():
-                widget = self.content_stack.widget(row)
+                widget = page_of(self.content_stack.widget(row))
 
         if not widget:
             return
 
-        self.content_stack.setCurrentWidget(widget)
+        self.content_stack.setCurrentWidget(self.stack_widget_for(widget))
 
         # UX Polish: Force layout calculation to prevent "broken layout on first load" bugs.
         # PySide6 sometimes delays layout math for complex widgets added to a QStackedWidget 

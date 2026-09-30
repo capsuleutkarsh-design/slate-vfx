@@ -64,8 +64,11 @@ class HelpDialog(QDialog):
         super().__init__(parent)
 
         self.setWindowTitle("Slate Help")
-        self.setMinimumSize(940, 620)
-        self.resize(1180, 800)
+        # 1180x800 when the screen has room; on a 1366x768 or 1280x720 laptop
+        # it used to run off the bottom, Close button and all.
+        from .components.screen_fit import fit_to_screen
+        self.setMinimumSize(760, 480)
+        fit_to_screen(self, 1180, 800)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(f"QDialog {{ background: {Gate.GROUND}; }}")
 

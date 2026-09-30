@@ -99,8 +99,10 @@ class SessionManagerMixin:
             
             # Cleanup all tabs that have cleanup_resources method
             if hasattr(self, 'content_stack'):
+                from .tab_coordinator import page_of
                 for i in range(self.content_stack.count()):
-                    page = self.content_stack.widget(i)
+                    # Each tab sits in a scrolling frame; clean up the tab.
+                    page = page_of(self.content_stack.widget(i))
                     if hasattr(page, 'cleanup_resources'):
                         try:
                             page.cleanup_resources()
