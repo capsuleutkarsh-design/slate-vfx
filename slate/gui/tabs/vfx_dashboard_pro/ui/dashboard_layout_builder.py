@@ -232,8 +232,10 @@ def build_dashboard_ui(widget):
         edit_proj_action = proj_menu.addAction("Edit Current Project")
         edit_proj_action.triggered.connect(widget.edit_project_click)
         
-        del_proj_action = proj_menu.addAction("Delete Current Project")
-        del_proj_action.triggered.connect(widget.delete_project_click)
+        from slate.core.domain.access import can_delete_project
+        if can_delete_project(widget.user_roles):
+            del_proj_action = proj_menu.addAction("Delete Current Project")
+            del_proj_action.triggered.connect(widget.delete_project_click)
     
     widget.manage_proj_btn.setMenu(proj_menu)
     right_layout.addWidget(widget.manage_proj_btn)

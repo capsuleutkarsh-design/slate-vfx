@@ -44,6 +44,30 @@ class AppContext:
         self._library_manager = library_manager
         self._asset_api = None
 
+    # ------------------------------------------------------ signed-in user
+    # Who is signed in, so any screen built from this context can ask
+    # access.can(context.current_roles(), "manage_system") without being
+    # handed the user separately. Set by the main window.
+    def set_current_user(self, user_data) -> None:
+        self._current_user = dict(user_data or {})
+
+    def current_user(self) -> dict:
+        return dict(getattr(self, "_current_user", None) or {})
+
+    def current_username(self) -> str:
+        data = self.current_user()
+        return str(data.get("user_id") or data.get("username") or "")
+
+    def current_roles(self) -> list:
+        data = self.current_user()
+        roles = data.get("roles") or data.get("role") or []
+        return [roles] if isinstance(roles, str) else list(roles)
+
+    def can(self, action: str) -> bool:
+        """Whether the signed-in person may do `action` (see slate/core/domain/access.py)."""
+        from ..domain.access import can
+        return can(self.current_roles(), action)
+
     def user_manager(self) -> UserManager:
         if self._user_manager is None:
             self._user_manager = UserManager()

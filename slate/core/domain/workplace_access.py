@@ -57,11 +57,39 @@ def manages_leave(roles=None, allowed_tabs=None) -> bool:
 
 
 def manages_it(roles=None, allowed_tabs=None) -> bool:
-    """True for the people who work the IT queue."""
-    if has_permission(allowed_tabs, MANAGES_IT):
+    """
+    True for the people who work the IT queue (and the IT half of joining
+    and leaving).
+
+    Decided by the manage_it ability alone. It used to be true for the "IT"
+    tab key as well, so one flag both opened the IT screens and took away the
+    person's own "My tickets": an intern given Hardware lost the ability to
+    raise a ticket, and a role with only manage_it got the queue but no IT
+    screens. The tab key now only opens the screens (sees_it_screens). Roles
+    that held the key were given manage_it once on upgrade, so nobody who
+    worked the queue before stops working it.
+    """
+    perms = _permissions(allowed_tabs)
+    if "all" in perms:
         return True
     from .access import can
     return can(_names(roles), "manage_it")
+
+
+def sees_it_screens(roles=None, allowed_tabs=None) -> bool:
+    """Hardware, Licences and Deployment: the "IT" tab key, or working the desk."""
+    return has_permission(allowed_tabs, MANAGES_IT) or manages_it(roles, allowed_tabs)
+
+
+def can_view_licences(roles=None, allowed_tabs=None) -> bool:
+    """
+    Licences, at least read-only: IT, or anybody with view_licences (a
+    Production Head who approves renewals). Editing stays with the IT screens.
+    """
+    if sees_it_screens(roles, allowed_tabs):
+        return True
+    from .access import can
+    return can(_names(roles), "view_licences")
 
 
 # ---------------------------------------------------------------------------

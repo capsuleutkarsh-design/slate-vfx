@@ -159,8 +159,13 @@ class ShiftDatesDialog(QDialog):
         layout.addLayout(btn_box)
 
 class ProdSchedulingTab(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, user_data=None):
         super().__init__(parent)
+        # Who is looking, so the tab can ask access.can(self.user_roles, ...)
+        # (schedule_write / approve_bid). It was built without any user at all.
+        self.user_data = dict(user_data or {})
+        roles = self.user_data.get("roles") or self.user_data.get("role") or []
+        self.user_roles = [roles] if isinstance(roles, str) else list(roles)
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(10, 10, 10, 10)
         

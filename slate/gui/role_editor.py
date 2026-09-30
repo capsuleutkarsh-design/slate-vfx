@@ -26,7 +26,13 @@ class RoleEditor(QWidget):
         self.editor_username = editor_username
         self.current_role = None
         self._stored = []          # the selected role's permissions exactly as stored
+        self._role_refusal = ""    # why the selected role is read-only for this editor
         self.can_edit = self._editor_may_edit()
+        # Every save is checked in UserManager against what this editor may
+        # grant, not only by the boxes on this screen.
+        if editor_username and hasattr(user_manager, "set_acting_user") \
+                and not getattr(user_manager, "acting_user", None):
+            user_manager.set_acting_user(editor_username)
 
         self.setup_ui()
         self.refresh_roles()
@@ -283,33 +289,80 @@ class RoleEditor(QWidget):
         # Developer is the way back in if everything else is misconfigured.
         return str(role or "").strip().lower() == "developer"
 
+    def _is_superuser(self):
+        from slate.core.domain.access import is_superuser
+        return not self.editor_username or is_superuser(self._editor_roles())
+
+    def _grant_refusal_for_role(self, role, stored):
+        """Why this editor may not change the role at all ("" if they may)."""
+        if not self.editor_username:
+            return ""
+        from slate.core.domain.access import role_change_refusal
+        try:
+            return role_change_refusal(self._editor_roles(), role, stored, stored,
+                                       self.user_manager.roles_config)
+        except Exception:
+            return ""
+
+    def _may_grant(self, permission):
+        if self._is_superuser():
+            return True
+        from slate.core.domain.access import can_grant
+        return can_grant(self._editor_roles(), [permission], self.user_manager.roles_config)
+
     def on_role_selected(self, item):
         self.current_role = item.data(ROLE_NAME_ROLE) or item.text()
         self.lbl_editing.setText(f"Permissions: <span style='color:#3EA8BF;'>{self.current_role.upper()}</span>")
         self._stored = self.user_manager.role_permissions(self.current_role)
         holders = self.user_manager.users_with_role(self.current_role)
         status = f"{len(holders)} user(s) have this role." if holders else "Nobody has this role yet."
+        self._role_refusal = ""
         if self._is_locked(self.current_role):
             status += " Developer always has full access and cannot be changed."
-        self.lbl_status.setText(status + " Changes save immediately.")
+        elif self.can_edit:
+            self._role_refusal = self._grant_refusal_for_role(self.current_role, self._stored)
+            if self._role_refusal:
+                status += " " + self._role_refusal
+        if self.can_edit and not self._role_refusal and not self._is_locked(self.current_role):
+            status += " Changes save immediately."
+            if not self._is_superuser():
+                status += (" You can give only what you hold yourself; Full access and "
+                           "the sensitive abilities are for Admin and Developer.")
+        self.lbl_status.setText(status)
         self._show_stored()
 
     def _show_stored(self):
         stored = self._stored
         full = catalog.has_all(stored)
         abilities = catalog.abilities_in(stored)
-        editable = self.can_edit and not self._is_locked(self.current_role)
+        editable = (self.can_edit and not self._is_locked(self.current_role)
+                     and not self._role_refusal)
+        superuser = self._is_superuser()
+        not_yours = "Only what you hold yourself can be given - ask an Admin or Developer."
 
         self.block_signals_checkboxes(True)
         self.cb_all.setChecked(full)
-        self.cb_all.setEnabled(editable)
+        # Full access is Admin and Developer's to give, and nobody else's.
+        self.cb_all.setEnabled(editable and superuser)
+        if not superuser:
+            self.cb_all.setToolTip("Only an Admin or Developer can give Full access.")
         for key, cb in self.tab_boxes.items():
-            cb.setChecked(full or key in stored)
-            cb.setEnabled(editable and not full)
+            checked = full or key in stored
+            cb.setChecked(checked)
+            grantable = checked or self._may_grant(key)
+            cb.setEnabled(editable and not full and grantable)
+            if not grantable:
+                cb.setToolTip(not_yours)
         for key, cb in self.ability_boxes.items():
             granted_by_all = full and key not in catalog.RESTRICTIONS
-            cb.setChecked(granted_by_all or key in abilities)
-            cb.setEnabled(editable and not granted_by_all)
+            checked = granted_by_all or key in abilities
+            cb.setChecked(checked)
+            grantable = checked or self._may_grant(catalog.ability_key(key))
+            cb.setEnabled(editable and not granted_by_all and grantable)
+            if not grantable:
+                cb.setToolTip(
+                    "Only an Admin or Developer can give this." if key in catalog.SENSITIVE_ABILITIES
+                    else not_yours)
         for cb in self._all_boxes():
             cb.setStyleSheet("color: white; font-weight: bold;" if cb.isChecked() else "color: #B4B1AA;")
         self.block_signals_checkboxes(False)
@@ -366,8 +419,12 @@ class RoleEditor(QWidget):
         if not self._warn_if_locking_self_out(new_perms):
             self._show_stored()                 # put the boxes back as they were
             return
-        if self.user_manager.update_role_permissions(self.current_role, new_perms):
-            self._stored = self.user_manager.role_permissions(self.current_role)
+        from slate.core.domain.access import GrantRefused
+        try:
+            if self.user_manager.update_role_permissions(self.current_role, new_perms):
+                self._stored = self.user_manager.role_permissions(self.current_role)
+        except GrantRefused as refused:
+            QMessageBox.warning(self, "Change role", str(refused))
         self._show_stored()
 
     def on_perm_changed(self):
@@ -404,7 +461,12 @@ class RoleEditor(QWidget):
             return
 
         # Create with the basics everybody needs; tick the rest.
-        self.user_manager.create_role(name, ["Settings"])
+        from slate.core.domain.access import GrantRefused
+        try:
+            self.user_manager.create_role(name, ["Settings"])
+        except GrantRefused as refused:
+            QMessageBox.warning(self, "New role", str(refused))
+            return
         self.refresh_roles(select=name)
 
     def delete_role(self):
@@ -425,5 +487,10 @@ class RoleEditor(QWidget):
         confirm = QMessageBox.question(self, "Confirm", f"Delete role '{self.current_role}'?",
                                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if confirm == QMessageBox.StandardButton.Yes:
-            self.user_manager.delete_role(self.current_role)
+            from slate.core.domain.access import GrantRefused
+            try:
+                self.user_manager.delete_role(self.current_role)
+            except GrantRefused as refused:
+                QMessageBox.warning(self, "Delete role", str(refused))
+                return
             self.refresh_roles()

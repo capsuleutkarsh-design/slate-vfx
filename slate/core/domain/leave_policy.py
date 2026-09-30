@@ -210,7 +210,7 @@ def days_charged(start: date, end: date, holidays=None, rules=None,
 
 # -------------------------------------------------------------------- accrual
 
-def accrued_by(as_of: date, joined: date = None, rules=None) -> float:
+def accrued_by(as_of: date, joined: date = None, rules=None, left: date = None) -> float:
     """
     Leave earned up to a date.
 
@@ -232,8 +232,13 @@ def accrued_by(as_of: date, joined: date = None, rules=None) -> float:
 
     Crediting at month end also means the whole studio accrues on the same day,
     which is the version a person can be told without a worked example.
+
+    `left` is the person's last day: nothing is earned after it, and the month
+    they leave part way through is not credited either.
     """
     rules = policy(rules)
+    if left is not None and left < as_of:
+        as_of = left
     rate = float(rules["accrual_days_per_month"])
     if rate <= 0:
         return 0.0

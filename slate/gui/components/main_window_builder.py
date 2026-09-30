@@ -325,7 +325,7 @@ class MainWindowBuilderMixin:
                 # Production Scheduling
                 self.tab_coordinator.register_tab_factory(
                     "Scheduling",
-                    lambda: ProdSchedulingTab(),
+                    lambda: ProdSchedulingTab(user_data=self.user_data),
                     icon="📅",
                     permission_key="Scheduling",
                     user_role=self.user_role,
@@ -336,7 +336,7 @@ class MainWindowBuilderMixin:
                 # Production Bidding
                 self.tab_coordinator.register_tab_factory(
                     "Bidding",
-                    lambda: ProdBiddingTab(),
+                    lambda: ProdBiddingTab(user_data=self.user_data),
                     icon="💰",
                     permission_key="Bidding",
                     user_role=self.user_role,
@@ -418,12 +418,20 @@ class MainWindowBuilderMixin:
 
                 self.tab_coordinator.add_category_header("IT & INFRA")
 
+                # The "IT" tab key opens the IT screens; so does working the
+                # desk (manage_it). They used to be one flag that also swapped
+                # the person's own tickets for the queue.
+                from ...core.domain.workplace_access import can_view_licences, sees_it_screens
+                roles_now = getattr(self, "user_roles", None)
+                it_screens = sees_it_screens(roles_now, self.allowed_tabs)
+                it_key = None if it_screens else "IT"
+
                 # Hardware Inventory
                 self.tab_coordinator.register_tab_factory(
                     "Hardware",
                     lambda: ItInventoryTab(user_data=self.user_data),
                     icon="🖥️",
-                    permission_key="IT",
+                    permission_key=it_key,
                     user_role=self.user_role,
                     allowed_tabs=self.allowed_tabs,
                     tooltip="Studio Hardware Inventory"
@@ -431,11 +439,19 @@ class MainWindowBuilderMixin:
 
                 # Licences. Not an inventory - a compliance and renewal read,
                 # which is the only version of this question anybody asks.
+                #
+                # Also read-only for people with view_licences (a Production
+                # Head who approves renewals) - once the view can be read-only.
+                import inspect
+                licence_read_only = (not it_screens
+                                     and can_view_licences(roles_now, self.allowed_tabs)
+                                     and "read_only" in inspect.signature(LicenceView).parameters)
                 self.tab_coordinator.register_tab_factory(
                     "Licences",
-                    lambda: LicenceView(self._current_username()),
+                    (lambda: LicenceView(self._current_username(), read_only=True))
+                    if licence_read_only else (lambda: LicenceView(self._current_username())),
                     icon="🔑",
-                    permission_key="IT",
+                    permission_key=None if (it_screens or licence_read_only) else "IT",
                     user_role=self.user_role,
                     allowed_tabs=self.allowed_tabs,
                     tooltip="Seats bought against seats used, and what each renewal needs"
@@ -458,7 +474,7 @@ class MainWindowBuilderMixin:
                     "Deployment",
                     lambda: ItDeploymentTab(user_data=self.user_data),
                     icon="📦",
-                    permission_key="IT",
+                    permission_key=it_key,
                     user_role=self.user_role,
                     allowed_tabs=self.allowed_tabs,
                     tooltip="Manage automated script and software deployments"

@@ -79,10 +79,18 @@ class UserDialog(QDialog):
         # starts with nothing ticked - it used to tick the first role in the
         # list, which is Developer, the one with full access.
         from slate.gui.components.check_combo import CheckComboBox
-        available = self.user_manager.get_available_roles() or [
-            "Artist", "Coordinator", "Lead", "Supervisor", "HR", "IT",
-            "Developer", "Tester",
-        ]
+        # Only roles the signed-in person may give (UserManager.assignable_roles:
+        # nobody but Admin and Developer hands out Developer, Admin or the IT
+        # and HR desks), plus whatever this person already has.
+        if hasattr(self.user_manager, "assignable_roles"):
+            available = list(self.user_manager.assignable_roles())
+        else:
+            available = list(self.user_manager.get_available_roles() or [])
+        for held in record.get("roles") or []:
+            if str(held).lower() not in {str(r).lower() for r in available}:
+                available.append(str(held))
+        if not available:
+            available = ["Artist"]
         self.roles_input = CheckComboBox(placeholder="Choose one or more roles…")
         self.roles_input.setStyleSheet("background: #26262D; padding: 4px;")
         self.roles_input.add_items(sorted((str(r) for r in available), key=str.lower))
@@ -226,6 +234,10 @@ class AdminUsersTab(QWidget):
         self.user_role = user_role
         self.user_data = user_data or {}
         self.user_manager = UserManager()
+        # Every change made here is checked against what this person may
+        # grant - in UserManager, not only by what the screen offers.
+        self.user_manager.set_acting_user(
+            self.user_data.get("user_id") or self.user_data.get("username"))
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(10, 10, 10, 10)
@@ -278,7 +290,7 @@ class AdminUsersTab(QWidget):
 
 class UsersPanel(QWidget):
     COLUMNS = ["Username", "Display Name", "Department (Job Title)", "Roles",
-               "Joined", "Employment", "Reports To"]
+               "Joined", "Employment", "Reports To", "Status"]
 
     def __init__(self, user_manager, parent=None):
         super().__init__(parent)
@@ -305,8 +317,24 @@ class UsersPanel(QWidget):
         reset_btn.clicked.connect(self.reset_password)
         controls.addWidget(reset_btn)
 
-        del_btn = QPushButton("Delete User")
-        del_btn.setObjectName("dangerButton")
+        # Deactivate, not delete: a person who leaves keeps their attendance
+        # and leave history. Delete is only for an account with no history.
+        self.deactivate_btn = QPushButton("Deactivate")
+        self.deactivate_btn.setObjectName("dangerButton")
+        self.deactivate_btn.setToolTip(
+            "Switch the account off. Their history is kept and they disappear from "
+            "lists and pickers. Can be undone with Reactivate.")
+        self.deactivate_btn.clicked.connect(self.deactivate_user)
+        controls.addWidget(self.deactivate_btn)
+
+        self.reactivate_btn = QPushButton("Reactivate")
+        self.reactivate_btn.setObjectName("secondaryButton")
+        self.reactivate_btn.clicked.connect(self.reactivate_user)
+        controls.addWidget(self.reactivate_btn)
+
+        del_btn = QPushButton("Delete…")
+        del_btn.setObjectName("secondaryButton")
+        del_btn.setToolTip("Only for an account made by mistake, with no history at all.")
         del_btn.clicked.connect(self.delete_user)
         controls.addWidget(del_btn)
 
@@ -325,11 +353,18 @@ class UsersPanel(QWidget):
         controls.addStretch()
         main_layout.addLayout(controls)
 
+        search_row = QHBoxLayout()
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search by username, name, department or role…")
         self.search.setStyleSheet("background: #26262D; padding: 6px; border-radius: 4px;")
         self.search.textChanged.connect(self.apply_filter)
-        main_layout.addWidget(self.search)
+        search_row.addWidget(self.search, 1)
+        from PySide6.QtWidgets import QCheckBox
+        self.show_inactive = QCheckBox("Show deactivated")
+        self.show_inactive.setToolTip("Include people who were deactivated or whose last day has passed")
+        self.show_inactive.toggled.connect(self.apply_filter)
+        search_row.addWidget(self.show_inactive)
+        main_layout.addLayout(search_row)
 
         self.grid = QTableWidget(0, len(self.COLUMNS))
         self.grid.setHorizontalHeaderLabels(self.COLUMNS)
@@ -341,10 +376,15 @@ class UsersPanel(QWidget):
 
     def apply_filter(self, *_args):
         text = self.search.text().strip().lower()
+        show_inactive = getattr(self, "show_inactive", None)
+        show_inactive = bool(show_inactive and show_inactive.isChecked())
         for row in range(self.grid.rowCount()):
             cells = [self.grid.item(row, c) for c in range(4)]
             haystack = " ".join(c.text().lower() for c in cells if c)
-            self.grid.setRowHidden(row, bool(text) and text not in haystack)
+            first = self.grid.item(row, 0)
+            active = first is None or first.data(Qt.ItemDataRole.UserRole + 1) is not False
+            hidden = (bool(text) and text not in haystack) or (not active and not show_inactive)
+            self.grid.setRowHidden(row, hidden)
 
     def import_users(self):
         from slate.gui.dialogs.import_users_dialog import ImportUsersDialog
@@ -385,6 +425,13 @@ class UsersPanel(QWidget):
             joined = data.get('joined_on')
             joined_str = str(joined)[:10] if joined else "-"
 
+            active = bool(data.get('active', True))
+            if active:
+                status = "Active"
+            elif data.get('deactivated_on'):
+                status = "Deactivated " + str(data.get('deactivated_on'))[:10]
+            else:
+                status = "Left " + str(data.get('last_day') or "")[:10]
             cells = [
                 str(username),
                 str(data.get('display_name', '')),
@@ -393,9 +440,15 @@ class UsersPanel(QWidget):
                 joined_str,
                 str(data.get('employment') or "-"),
                 str(data.get('reports_to') or "-"),
+                status,
             ]
             for c, text in enumerate(cells):
                 item = QTableWidgetItem(text)
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                if c == 0:
+                    item.setData(Qt.ItemDataRole.UserRole + 1, active)
+                if not active:
+                    item.setForeground(QColor("#87857F"))
                 # A missing joining date is not cosmetic - accrual counts from
                 # it, so say so rather than showing a tidy dash.
                 if c == 4 and text == "-":
@@ -429,14 +482,16 @@ class UsersPanel(QWidget):
             if success:
                 self.load_data()
                 QMessageBox.information(
-                    self, "Success",
-                    "User '%s' created successfully in database." % values["username"])
+                    self, "Add user",
+                    "%s can now sign in." % values["username"])
             else:
                 QMessageBox.warning(
-                    self, "Error",
-                    "Failed to add user '%s' to database." % values["username"])
+                    self, "Add user",
+                    "%s could not be saved. Try again." % values["username"])
+        except PermissionError as refused:
+            QMessageBox.warning(self, "Add user", str(refused))
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to add user: {e}")
+            QMessageBox.warning(self, "Add user", f"The account could not be saved: {e}")
 
     def edit_user(self):
         username = self._selected_username()
@@ -463,13 +518,15 @@ class UsersPanel(QWidget):
             )
             if success:
                 self.load_data()
-                QMessageBox.information(self, "Success",
-                                        "User '%s' updated successfully." % username)
+                QMessageBox.information(self, "Edit user",
+                                        "%s is updated." % username)
             else:
-                QMessageBox.warning(self, "Error",
-                                    "Failed to update user '%s'." % username)
+                QMessageBox.warning(self, "Edit user",
+                                    "%s could not be saved. Try again." % username)
+        except PermissionError as refused:
+            QMessageBox.warning(self, "Edit user", str(refused))
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to update user: {e}")
+            QMessageBox.warning(self, "Edit user", f"The account could not be saved: {e}")
 
     def reset_password(self):
         username = self._selected_username()
@@ -519,23 +576,63 @@ class UsersPanel(QWidget):
                 else:
                     QMessageBox.warning(self, "Error",
                                         f"Failed to reset password for '{username}'.")
+            except PermissionError as refused:
+                QMessageBox.warning(self, "Reset password", str(refused))
             except Exception as e:
-                QMessageBox.warning(self, "Error", f"Failed to reset password: {e}")
+                QMessageBox.warning(self, "Reset password", f"The password could not be reset: {e}")
 
-    def delete_user(self):
+    def deactivate_user(self):
         username = self._selected_username()
         if not username:
-            QMessageBox.warning(self, "Selection Error", "Please select a user to delete.")
+            QMessageBox.warning(self, "Deactivate", "Select the person to deactivate.")
+            return
+        reply = QMessageBox.question(
+            self, "Deactivate",
+            f"Deactivate {username}?\n\nTheir attendance, leave and other history are kept. "
+            "They disappear from lists and pickers. You can reactivate them later.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        ok, message = self.user_manager.deactivate_user(username)
+        if ok:
+            self.load_data()
+            QMessageBox.information(self, "Deactivate", message)
+        else:
+            QMessageBox.warning(self, "Deactivate", message)
+
+    def reactivate_user(self):
+        username = self._selected_username()
+        if not username:
+            QMessageBox.warning(self, "Reactivate",
+                                "Select the person to reactivate (tick Show deactivated to see them).")
+            return
+        ok, message = self.user_manager.reactivate_user(username)
+        if ok:
+            self.load_data()
+            QMessageBox.information(self, "Reactivate", message)
+        else:
+            QMessageBox.warning(self, "Reactivate", message)
+
+    def delete_user(self):
+        """
+        Permanent removal, for an account made by mistake. Anybody with any
+        history is refused (UserManager.delete_user) and pointed at Deactivate.
+        """
+        username = self._selected_username()
+        if not username:
+            QMessageBox.warning(self, "Delete account", "Select the account to delete.")
             return
 
         if username.lower() in PROTECTED_USERNAMES:
-            QMessageBox.warning(self, "Protected Account",
-                                f"Cannot delete core system user '{username}'.")
+            QMessageBox.warning(self, "Delete account",
+                                f"{username} is a system account and cannot be deleted.")
             return
 
         reply = QMessageBox.question(
-            self, "Confirm Delete",
-            f"Are you sure you want to permanently delete user '{username}' from the database?",
+            self, "Delete account",
+            f"Delete {username} for good?\n\nOnly an account with no history can be "
+            "deleted. Anybody who has worked here should be deactivated instead.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
         )
@@ -544,11 +641,14 @@ class UsersPanel(QWidget):
                 success = self.user_manager.delete_user(username)
                 if success:
                     self.load_data()
-                    QMessageBox.information(self, "Deleted", f"User '{username}' was deleted.")
+                    QMessageBox.information(self, "Delete account", f"{username} was deleted.")
                 else:
-                    QMessageBox.warning(self, "Error", f"Failed to delete user '{username}'.")
+                    QMessageBox.warning(
+                        self, "Delete account",
+                        getattr(self.user_manager, "last_error", "")
+                        or f"{username} could not be deleted.")
             except Exception as e:
-                QMessageBox.warning(self, "Error", f"Failed to delete user: {e}")
+                QMessageBox.warning(self, "Delete account", f"{username} could not be deleted: {e}")
 
     def style_table(self, table: QTableWidget):
         table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)

@@ -244,6 +244,27 @@ class LeaveRepository:
             return None
         return as_date(row["joined_on"] if isinstance(row, dict) else row[0])
 
+    def last_day(self, username: str):
+        """
+        The person's last working day, if they are leaving or have left.
+        Leave stops accruing after it (see balance).
+        """
+        try:
+            row = self.db.execute_query(
+                "SELECT last_day FROM ut_users WHERE LOWER(username) = LOWER(%s)",
+                (username,), fetch="one")
+        except DatabaseUnavailableError:
+            raise
+        except Exception:
+            logger.debug("last_day not read for %s", username, exc_info=True)
+            return None
+        if not row:
+            return None
+        try:
+            return as_date(row["last_day"] if isinstance(row, dict) else row[0])
+        except (KeyError, IndexError, TypeError, ValueError):
+            return None
+
     def reports_to(self, manager: str) -> set:
         """
         The people whose first approval stage is this person, lower-cased.
@@ -738,7 +759,10 @@ class LeaveRepository:
                 pending[kind] = pending.get(kind, 0.0) + days
 
         earned_from = since or self.joined_on(username)
-        accrued = opening + lp.accrued_by(as_of, earned_from, rules)
+        # Nothing is earned after somebody's last day. It used to keep
+        # crediting a leaver every month for as long as the account existed.
+        accrued = opening + lp.accrued_by(as_of, earned_from, rules,
+                                          left=self.last_day(username))
         spent = sum(used.get(k, 0.0) for k in lp.ACCRUED_TYPES)
         held = sum(pending.get(k, 0.0) for k in lp.ACCRUED_TYPES)
 

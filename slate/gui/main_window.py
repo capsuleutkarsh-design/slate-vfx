@@ -106,6 +106,8 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         self.status_bar = None
         self.attendance_status_signal.connect(self.show_status)
         self.app_context = app_context or AppContext()
+        # Every screen built from the context can ask what this person may do.
+        self.app_context.set_current_user(user_data)
         
         # --- SECURITY CONTEXT ---
         self.user_data = user_data

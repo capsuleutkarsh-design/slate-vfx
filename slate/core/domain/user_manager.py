@@ -28,9 +28,16 @@ class UserManager:
         self.users_file = self.hub.get_users_file()
         self.roles_file = self.hub.get_config_dir() / "roles.json"
 
+        # Who is making changes through this manager (set_acting_user). None
+        # means Slate itself - seeding, imports run by code, tests - and is not
+        # checked; the Users & Roles screen always sets it.
+        self.acting_user = None
+        self.last_error = ""
+
         self._ensure_schema()
         self._run_migration()
         self._ensure_default_roles()
+        self._upgrade_role_abilities()
         self._ensure_essential_accounts()
 
     def _get_db(self):
@@ -70,6 +77,16 @@ class UserManager:
                 db.execute_update("ALTER TABLE ut_users ADD COLUMN must_change_password INTEGER")
         except Exception as e:
             logging.warning("Could not add must_change_password: %s", e)
+        # Deactivation (see deactivate_user). Additive, and NULL means active,
+        # so every existing account stays exactly as it was.
+        try:
+            from ..infra.migrations.workplace_schema import _column_exists
+            for column, kind in (("active", "INTEGER"), ("deactivated_on", "TEXT"),
+                                 ("deactivated_by", "TEXT")):
+                if not _column_exists(db, "ut_users", column):
+                    db.execute_update(f"ALTER TABLE ut_users ADD COLUMN {column} {kind}")
+        except Exception as e:
+            logging.warning("Could not add the account status columns: %s", e)
 
     def _run_migration(self):
         """
@@ -212,6 +229,86 @@ class UserManager:
                 db.execute_update("INSERT INTO ut_role_seeds (role_name) VALUES (%s)", (key,))
         except Exception as exc:
             logging.warning("Could not ensure default roles: %s", exc)
+
+    # ------------------------------------------------------ role upgrades
+    #
+    # New abilities split rights that used to come with a tab or a role name.
+    # Each upgrade runs once per database (ut_role_upgrades remembers it) and
+    # only ever adds, so no role loses anything it could do before. A role the
+    # studio changes afterwards is left alone.
+    ROLE_UPGRADES = ("2026-09-abilities",)
+
+    # Role names (lower-case) of the artist kind, and of supervisors, heads and
+    # coordinators, as far as a name can tell.
+    _ARTIST_WORDS = ("artist", "compositor", "dmp", "generalist", "lead")
+    _OVERSEER_WORDS = ("supervisor", "coordinator", "producer", "head", "editor")
+
+    def _upgrade_role_abilities(self):
+        from slate.core.domain.permissions_catalog import ability_key, has_all
+        try:
+            db = self._get_db()
+            db.execute_update(
+                "CREATE TABLE IF NOT EXISTS ut_role_upgrades ("
+                "name TEXT PRIMARY KEY, applied_at TEXT)")
+            done = {str(r["name"]) for r in
+                    (db.execute_query("SELECT name FROM ut_role_upgrades", fetch="all") or [])}
+            if "2026-09-abilities" in done:
+                return
+            rows = db.execute_query("SELECT role_name, permissions FROM ut_roles", fetch="all") or []
+            for row in rows:
+                role = str(row["role_name"])
+                try:
+                    perms = list(json.loads(row["permissions"] or "[]"))
+                except Exception:
+                    continue
+                if has_all(perms):
+                    continue
+                added = self.upgraded_permissions(role, perms)
+                if added != perms:
+                    db.execute_update("UPDATE ut_roles SET permissions=%s WHERE role_name=%s",
+                                      (json.dumps(added), role))
+                    logging.info("Role %s upgraded: %s", role,
+                                 [p for p in added if p not in perms])
+            from datetime import datetime
+            db.execute_update("INSERT INTO ut_role_upgrades (name, applied_at) VALUES (%s, %s)",
+                              ("2026-09-abilities", datetime.now().isoformat(timespec="seconds")))
+            self._forget_cached_abilities()
+        except Exception as exc:
+            logging.warning("Could not upgrade role abilities: %s", exc)
+
+    @classmethod
+    def upgraded_permissions(cls, role, perms):
+        """
+        What a role's stored list becomes in the 2026-09 upgrade. Only adds:
+
+          Scheduling tab     -> can:schedule_write  (it could edit before)
+          Bidding tab        -> can:approve_bid     (it could mark Won/Lost)
+          IT tab             -> can:manage_it       (the tab key used to give the IT queue)
+          artist-type roles  -> can:assignable      (they were in the Artist pickers)
+          supervisors, coordinators, producers, heads, editors
+                             -> can:dashboard_view_all (they saw every shot)
+        """
+        from slate.core.domain.permissions_catalog import ability_key, abilities_in
+        result = list(perms or [])
+        have = abilities_in(result)
+        name = str(role or "").strip().lower()
+
+        def add(ability):
+            if ability not in have:
+                result.append(ability_key(ability))
+                have.add(ability)
+
+        if "Scheduling" in result:
+            add("schedule_write")
+        if "Bidding" in result:
+            add("approve_bid")
+        if "IT" in result:
+            add("manage_it")
+        if any(word in name for word in cls._ARTIST_WORDS) or name == "cg":
+            add("assignable")
+        if any(word in name for word in cls._OVERSEER_WORDS):
+            add("dashboard_view_all")
+        return result
 
     def _create_default_roles_sql(self, db):
         defaults = {
@@ -424,6 +521,9 @@ class UserManager:
                 "reports_to": r.get('reports_to') or '',
                 "location": r.get('location') or '',
                 "last_day": r.get('last_day'),
+                # Deactivated, or past their last day (see deactivate_user).
+                "active": self._flag_active(r),
+                "deactivated_on": r.get('deactivated_on'),
             }
         return users_dict
 
@@ -447,6 +547,10 @@ class UserManager:
 
         db = self._get_db()
         uid = u.strip()
+
+        # Giving roles, or changing an account, only within what the acting
+        # person may grant (Users & Roles sets acting_user).
+        self._check_account_change(uid, roles)
 
         # Check if user exists (case-insensitive)
         existing = db.execute_query("SELECT username, password_hash, profile_pic_path, display_name, job_title FROM ut_users WHERE LOWER(username)=LOWER(%s)", (uid,), fetch="one")
@@ -503,7 +607,7 @@ class UserManager:
             )
 
         if success:
-            self.audit.log_user_change("System", uid, f"Updated roles: {roles}")
+            self.audit.log_user_change(self._actor(), uid, f"Updated roles: {roles}")
         return success
 
     MIN_PASSWORD_LENGTH = 6
@@ -554,11 +658,250 @@ class UserManager:
                              pic, **extras)
 
     def delete_user(self, u: str) -> bool:
+        """
+        Remove an account for good - only one that has no history at all (a
+        typo, a duplicate). Anyone who has worked here is deactivated instead
+        (deactivate_user), so their attendance and leave keep an owner.
+        The reason for a refusal is in last_error.
+        """
+        uid = str(u or "").strip()
+        self.last_error = ""
+        if self.acting_user and uid.lower() == self.acting_user.lower():
+            self.last_error = "You cannot delete your own account."
+            return False
+        if uid.lower() in self.PROTECTED_ACCOUNTS:
+            self.last_error = f"{uid} is a system account and cannot be deleted."
+            return False
+        try:
+            self._check_account_change(uid)
+        except PermissionError as exc:
+            self.last_error = str(exc)
+            return False
+        if self.has_history(uid):
+            self.last_error = (f"{uid} has attendance, leave or other records, so the account "
+                               "is kept. Deactivate it instead.")
+            return False
         db = self._get_db()
-        success = db.execute_update("DELETE FROM ut_users WHERE LOWER(username)=LOWER(%s)", (u.strip(),))
+        success = db.execute_update("DELETE FROM ut_users WHERE LOWER(username)=LOWER(%s)", (uid,))
         if success:
-            self.audit.log_user_change("System", u, "Deleted")
+            self.audit.log_user_change(self._actor(), uid, "Deleted")
         return success
+
+    # ------------------------------------------------------- who is editing
+    def set_acting_user(self, username):
+        """
+        Say who is making changes through this manager. From then on every
+        change to accounts and roles is checked against what that person may
+        grant (access.can_grant and friends) - here, not only on screen.
+        """
+        self.acting_user = str(username).strip() if username else None
+
+    def _acting_roles(self):
+        if not self.acting_user:
+            return None
+        row = self._get_db().execute_query(
+            "SELECT roles FROM ut_users WHERE LOWER(username)=LOWER(%s)",
+            (self.acting_user,), fetch="one")
+        return self._parse_roles(row.get("roles") if row else None) if row else []
+
+    @staticmethod
+    def _parse_roles(raw):
+        if isinstance(raw, list):
+            return raw
+        if isinstance(raw, str) and raw.strip():
+            try:
+                value = json.loads(raw)
+                return [value] if isinstance(value, str) else list(value or [])
+            except Exception:
+                return [raw]
+        return []
+
+    def _refuse(self, message):
+        from slate.core.domain.access import GrantRefused
+        self.last_error = message
+        logging.warning("Refused for %s: %s", self.acting_user, message)
+        raise GrantRefused(message)
+
+    def _check_account_change(self, username, new_roles=None):
+        """
+        Raise GrantRefused when the acting person may not change this account
+        (or give it these roles). No acting person: no check.
+        """
+        editor_roles = self._acting_roles()
+        if editor_roles is None:
+            return
+        from slate.core.domain import access
+        existing = self._get_db().execute_query(
+            "SELECT roles FROM ut_users WHERE LOWER(username)=LOWER(%s)",
+            (str(username).strip(),), fetch="one")
+        old_roles = self._parse_roles(existing.get("roles")) if existing else []
+        target = old_roles if new_roles is None else list(new_roles)
+        why = access.role_assignment_refusal(
+            editor_roles, old_roles, target, self.get_available_roles(), self.roles_config)
+        if why:
+            self._refuse(why)
+
+    def _actor(self):
+        return self.acting_user or "System"
+
+    def assignable_roles(self) -> List[str]:
+        """The roles the acting person may give to somebody (all of them for Slate itself)."""
+        roles = self.get_available_roles()
+        editor_roles = self._acting_roles()
+        if editor_roles is None:
+            return roles
+        from slate.core.domain import access
+        return access.assignable_roles(editor_roles, roles, self.roles_config)
+
+    # ---------------------------------------------------- account lifecycle
+    #
+    # People leave. Deleting their account (the only option there was) left
+    # their attendance and leave rows pointing at nobody, still showing in HR
+    # and supervisor queues, and you could delete yourself. An account is now
+    # deactivated instead: history kept, hidden from lists and pickers, and
+    # restorable. A person whose last day has passed counts as inactive too.
+    #
+    # Refusing a deactivated person at sign-in belongs to the sign-in code and
+    # is not done here.
+
+    PROTECTED_ACCOUNTS = frozenset({"admin", "developer", "emp0012"})
+
+    @staticmethod
+    def _flag_active(record) -> bool:
+        from datetime import date
+        value = record.get("active")
+        if value is not None and str(value).strip() not in ("", "1", "True", "true"):
+            try:
+                if int(value) == 0:
+                    return False
+            except (TypeError, ValueError):
+                if str(value).strip().lower() in ("false", "no"):
+                    return False
+        last = record.get("last_day")
+        if last:
+            try:
+                text = str(last)[:10]
+                if date.fromisoformat(text) < date.today():
+                    return False
+            except ValueError:
+                pass
+        return True
+
+    def is_active(self, username: str) -> bool:
+        row = self._get_db().execute_query(
+            "SELECT * FROM ut_users WHERE LOWER(username)=LOWER(%s)",
+            (str(username or "").strip(),), fetch="one")
+        return bool(row) and self._flag_active(dict(row))
+
+    def active_users(self) -> Dict[str, Dict[str, Any]]:
+        """Everybody who has not been deactivated or passed their last day."""
+        return {name: data for name, data in self.get_all_users().items() if data.get("active", True)}
+
+    def open_items(self, username: str) -> List[str]:
+        """
+        What must be handled before somebody is deactivated: leave requests
+        still waiting for a decision, and machines still issued to them.
+        """
+        from slate.core.domain import leave_policy as lp
+        db = self._get_db()
+        found = []
+        wanted = str(username or "").strip()
+        try:
+            rows = db.execute_query(
+                "SELECT status FROM leave_requests WHERE LOWER(user_id)=LOWER(%s)",
+                (wanted,), fetch="all") or []
+            waiting = sum(1 for r in rows if lp.normalise_status(r["status"]) in (
+                lp.STATUS_PENDING_SUPERVISOR, lp.STATUS_PENDING_HR))
+            if waiting:
+                found.append(f"{waiting} leave request(s) waiting for a decision")
+        except Exception as exc:
+            logging.debug("Leave requests not checked for %s: %s", wanted, exc)
+        try:
+            rows = db.execute_query(
+                "SELECT machine_name FROM asset_assignments "
+                "WHERE LOWER(user_id)=LOWER(%s) AND returned_on IS NULL",
+                (wanted,), fetch="all") or []
+            machines = sorted({str(r["machine_name"]) for r in rows})
+            if machines:
+                found.append("machine(s) still issued: " + ", ".join(machines))
+        except Exception as exc:
+            logging.debug("Issued machines not checked for %s: %s", wanted, exc)
+        return found
+
+    def deactivate_user(self, username: str, by: str = None):
+        """
+        Switch an account off, keeping everything it did. Returns (ok, message).
+
+        Refused for yourself, for the protected system accounts and while the
+        person still has leave waiting for a decision or a machine issued.
+        """
+        uid = str(username or "").strip()
+        actor = (by or self.acting_user or "").strip()
+        if not uid:
+            return False, "Choose somebody to deactivate."
+        if actor and uid.lower() == actor.lower():
+            return False, "You cannot deactivate your own account."
+        if uid.lower() in self.PROTECTED_ACCOUNTS:
+            return False, f"{uid} is a system account and cannot be deactivated."
+        try:
+            self._check_account_change(uid)
+        except PermissionError as exc:
+            return False, str(exc)
+        waiting = self.open_items(uid)
+        if waiting:
+            return False, (f"{uid} still has " + "; ".join(waiting)
+                           + ". Handle those first, then deactivate the account.")
+        from datetime import date
+        ok = self._get_db().execute_update(
+            "UPDATE ut_users SET active=0, deactivated_on=%s, deactivated_by=%s "
+            "WHERE LOWER(username)=LOWER(%s)",
+            (date.today().isoformat(), actor or "System", uid))
+        if not ok:
+            return False, f"{uid} could not be deactivated. Try again."
+        self.audit.log_user_change(actor or "System", uid, "Deactivated")
+        return True, (f"{uid} is deactivated. Their history is kept, and the account "
+                      "can be reactivated at any time.")
+
+    def reactivate_user(self, username: str, by: str = None):
+        """Switch a deactivated account back on. Returns (ok, message)."""
+        uid = str(username or "").strip()
+        actor = (by or self.acting_user or "").strip()
+        try:
+            self._check_account_change(uid)
+        except PermissionError as exc:
+            return False, str(exc)
+        ok = self._get_db().execute_update(
+            "UPDATE ut_users SET active=1, deactivated_on=NULL, deactivated_by=NULL "
+            "WHERE LOWER(username)=LOWER(%s)", (uid,))
+        if not ok:
+            return False, f"{uid} could not be reactivated. Try again."
+        self.audit.log_user_change(actor or "System", uid, "Reactivated")
+        note = ""
+        try:
+            row = self._get_db().execute_query(
+                "SELECT last_day FROM ut_users WHERE LOWER(username)=LOWER(%s)", (uid,), fetch="one")
+            if row and row.get("last_day") and not self._flag_active({"last_day": row.get("last_day")}):
+                note = " Their last day is in the past - clear it on Edit User if they are back."
+        except Exception:
+            pass
+        return True, f"{uid} is active again.{note}"
+
+    def has_history(self, username: str) -> bool:
+        """Whether anything in the studio's records points at this account."""
+        db = self._get_db()
+        wanted = str(username or "").strip()
+        for table in ("attendance_log", "leave_requests", "asset_assignments",
+                      "onboarding_workflows", "it_tickets"):
+            column = "submitted_by" if table == "it_tickets" else "user_id"
+            try:
+                row = db.execute_query(
+                    f"SELECT 1 AS x FROM {table} WHERE LOWER({column})=LOWER(%s) LIMIT 1",
+                    (wanted,), fetch="one")
+            except Exception:
+                continue
+            if row:
+                return True
+        return False
 
     def get_available_roles(self) -> List[str]:
         db = self._get_db()
@@ -606,6 +949,13 @@ class UserManager:
         db = self._get_db()
         if not tabs:
             tabs = ["Settings"]
+        editor_roles = self._acting_roles()
+        if editor_roles is not None:
+            from slate.core.domain import access
+            why = access.role_change_refusal(
+                editor_roles, role, self.role_permissions(role), tabs, self.roles_config)
+            if why:
+                self._refuse(why)
         tabs_str = json.dumps(tabs)
         # Upsert
         existing = db.execute_query("SELECT 1 FROM ut_roles WHERE role_name=%s", (role,), fetch="one")
@@ -652,6 +1002,13 @@ class UserManager:
         Delete a role nobody holds. Refused while anyone still has it: their
         access would silently change, so move them to another role first.
         """
+        editor_roles = self._acting_roles()
+        if editor_roles is not None:
+            from slate.core.domain import access
+            why = access.role_change_refusal(
+                editor_roles, role, self.role_permissions(role), [], self.roles_config)
+            if why:
+                self._refuse(why)
         if self.users_with_role(role):
             logging.warning("Role %s not deleted: still held by %s", role, self.users_with_role(role))
             return False
