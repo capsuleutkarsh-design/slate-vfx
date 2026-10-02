@@ -70,15 +70,6 @@ class ResourcePathManager:
         return ResourcePathManager.get_resource_path("icons")
     
     @staticmethod
-    def get_stylesheet() -> str:
-        """Get the main stylesheet content."""
-        stylesheet_path = ResourcePathManager.get_resource_path("resources/styles.qss")
-        if stylesheet_path.exists():
-            with open(stylesheet_path, 'r', encoding='utf-8') as f:
-                return f.read()
-        return ""
-    
-    @staticmethod
     def get_ffmpeg_path() -> str:
         """Resolve ffmpeg from env override, bundled path, local cache, or system PATH."""
         return ResourcePathManager.resolve_tool_path("ffmpeg")

@@ -5,8 +5,13 @@ Fleet report export helpers for Admin Panel.
 from datetime import datetime
 
 
-def export_fleet_xlsx(output_path, records, summary, skipped):
-    """Create a color-coded, bordered Excel workbook for the fleet report."""
+def export_fleet_xlsx(output_path, records, summary, skipped, columns=None, header_for=None):
+    """
+    Create a colour-coded, bordered Excel workbook for the fleet report.
+
+    columns / header_for are the report's own column order and human headers
+    (admin_fleet_report_service), so the workbook and the CSV read the same.
+    """
     from openpyxl import Workbook
     from openpyxl.styles import (
         PatternFill, Font, Alignment, Border, Side
@@ -58,12 +63,16 @@ def export_fleet_xlsx(output_path, records, summary, skipped):
     title_cell.alignment = Alignment(horizontal="center", vertical="center")
     ws_sum.row_dimensions[1].height = 36
 
+    # The tiles add up to the total: Unknown (no last report time) used to
+    # be counted in the total and in no tile.
+    not_responding = summary.get("not_responding", summary.get("idle", 0))
     tiles = [
-        ("Total Workstations", len(records), "3498DB"),
+        ("Machines", len(records), "3498DB"),
         ("Online", summary["online"], col_tile_online),
-        ("Idle", summary["idle"], col_tile_idle),
+        ("Not responding", not_responding, col_tile_idle),
         ("Offline", summary["offline"], col_tile_off),
-        ("Skipped (errors)", skipped, "95A5A6"),
+        ("Unknown", summary.get("unknown", 0), "95A5A6"),
+        ("Unreadable files", skipped, "7F8C8D"),
     ]
     headers_row, values_row = 3, 4
     for col_idx, (label, val, color) in enumerate(tiles, start=1):
@@ -91,22 +100,10 @@ def export_fleet_xlsx(output_path, records, summary, skipped):
         wb.save(output_path)
         return
 
-    all_keys = list(dict.fromkeys(k for r in records for k in r))
-
-    header_map = {
-        "pc_name": "PC Name", "status": "Status", "last_seen": "Last Seen",
-        "last_seen_age": "Age", "age_seconds": "Age (s)",
-        "ut_user": "UT User", "os_user": "OS User",
-        "ip_address": "IP Address", "mac_address": "MAC Address",
-        "computer_name": "Computer Name",
-        "manufacturer": "Manufacturer", "model": "Model",
-        "motherboard": "Motherboard", "serial_no": "Serial No",
-        "cpu": "CPU", "gpu": "GPU", "ram_gb": "RAM",
-        "os": "OS", "windows_version": "Win Version",
-        "client_version": "Client Ver",
-        "disk_c_total_gb": "C: Total GB", "disk_c_free_gb": "C: Free GB",
-        "disk_c_usage": "C: Usage", "disk_c_alert": "C: Alert",
-    }
+    all_keys = list(columns) if columns else list(dict.fromkeys(k for r in records for k in r))
+    if header_for is None:
+        def header_for(key):
+            return key.replace("_", " ").capitalize()
 
     header_fill = make_fill(col_header_bg)
     header_font = make_font(col_header_fg, bold=True, size=10)
@@ -114,7 +111,7 @@ def export_fleet_xlsx(output_path, records, summary, skipped):
     header_border = Border(left=thin, right=thin, top=thick, bottom=thick)
 
     for col_idx, key in enumerate(all_keys, start=1):
-        cell = ws.cell(row=1, column=col_idx, value=header_map.get(key, key.replace("_", " ").title()))
+        cell = ws.cell(row=1, column=col_idx, value=header_for(key))
         cell.fill = header_fill
         cell.font = header_font
         cell.alignment = header_align
@@ -123,7 +120,7 @@ def export_fleet_xlsx(output_path, records, summary, skipped):
 
     status_styles = {
         "Online": (col_online_bg, col_online_fg),
-        "Idle": (col_idle_bg, col_idle_fg),
+        "Not responding": (col_idle_bg, col_idle_fg),
         "Offline": (col_offline_bg, col_offline_fg),
         "Unknown": (col_unknown_bg, col_unknown_fg),
     }
@@ -138,30 +135,12 @@ def export_fleet_xlsx(output_path, records, summary, skipped):
         "OK": make_font("FFFFFF", bold=True),
     }
 
-    divider_border = Border(left=thin, right=thin, top=thick, bottom=thick)
-    status_order = {"Online": 0, "Idle": 1, "Offline": 2, "Unknown": 3}
-    divider_labels = {0: "  ONLINE", 1: "  IDLE", 2: "  OFFLINE", 3: "  UNKNOWN"}
-    divider_colors = {0: "27AE60", 1: "F39C12", 2: "E74C3C", 3: "95A5A6"}
-
+    # No divider rows between the groups: they sat inside the filtered range
+    # and got sorted in with the data. The records arrive grouped by status
+    # and every row is coloured by it, which is grouping enough.
     row_idx = 2
-    prev_group = -1
     for record in records:
         status = record.get("status", "Unknown")
-        group = status_order.get(status, 3)
-
-        if group != prev_group:
-            d_fill = make_fill(divider_colors.get(group, "95A5A6"))
-            first_cell = ws.cell(row=row_idx, column=1, value=divider_labels.get(group, ""))
-            first_cell.fill = d_fill
-            first_cell.font = Font(name="Segoe UI", size=9, bold=True, color="FFFFFF", italic=True)
-            first_cell.border = divider_border
-            for col_idx in range(2, len(all_keys) + 1):
-                dc = ws.cell(row=row_idx, column=col_idx, value="")
-                dc.fill = d_fill
-                dc.border = divider_border
-            ws.row_dimensions[row_idx].height = 14
-            row_idx += 1
-            prev_group = group
 
         row_fill = make_fill(status_styles.get(status, (col_unknown_bg, col_unknown_fg))[0])
         row_font = make_font(status_styles.get(status, (col_unknown_bg, col_unknown_fg))[1])
@@ -189,7 +168,7 @@ def export_fleet_xlsx(output_path, records, summary, skipped):
     for col_idx, key in enumerate(all_keys, start=1):
         col_letter = get_column_letter(col_idx)
         max_len = max(
-            len(header_map.get(key, key)),
+            len(str(header_for(key))),
             max((len(str(r.get(key, ""))) for r in records), default=0),
         )
         ws.column_dimensions[col_letter].width = min(max(max_len + 2, 10), 40)

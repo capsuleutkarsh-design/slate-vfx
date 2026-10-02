@@ -17,10 +17,18 @@ class AuditLogger:
             cls._instance._initialized = False
         return cls._instance
     
+    @staticmethod
+    def log_directory():
+        """
+        Where the daily audit files live. The Audit Logs screen reads them from
+        here rather than working the path out again.
+        """
+        return GlobalConfig.server_root() / "Logs" / "Audit"
+
     def __init__(self):
         if self._initialized: return
-        
-        self.log_dir = GlobalConfig.server_root() / "Logs" / "Audit"
+
+        self.log_dir = self.log_directory()
         self._ensure_dir()
         self._initialized = True
         

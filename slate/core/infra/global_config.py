@@ -182,9 +182,29 @@ class GlobalConfig:
             except Exception as e:
                 logging.warning(f"GlobalConfig: Network Discovery failed: {e}")
 
+    # In-memory values that win over the saved ones until cleared (or the
+    # program ends). Never written to disk. The Tester Panel's config sandbox
+    # uses them; it used to poke the singleton's data directly, which applied
+    # one of its two fields and left no way back.
+    _runtime_overrides = {}
+
+    @classmethod
+    def set_runtime_override(cls, key, value):
+        cls._runtime_overrides[key] = value
+
+    @classmethod
+    def clear_runtime_overrides(cls):
+        cls._runtime_overrides.clear()
+
+    @classmethod
+    def runtime_overrides(cls) -> dict:
+        return dict(cls._runtime_overrides)
+
     @classmethod
     def get(cls, key, default=None):
         """Get a specific config value."""
+        if key in cls._runtime_overrides:
+            return cls._runtime_overrides[key]
         if cls._instance is None:
             cls._instance = GlobalConfig()
         if key in cls._instance.data:
@@ -334,7 +354,8 @@ class GlobalConfig:
     @classmethod
     def local_cache_dir(cls) -> Path:
         """Get the absolute path to the local cache directory."""
-        path = Path(os.getenv('LOCALAPPDATA')) / "Slate" / "Cache"
+        override = cls._runtime_overrides.get("LOCAL_CACHE_DIR")
+        path = Path(override) if override else Path(os.getenv('LOCALAPPDATA')) / "Slate" / "Cache"
         path.mkdir(parents=True, exist_ok=True)
         return path
 

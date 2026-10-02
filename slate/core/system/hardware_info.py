@@ -130,6 +130,26 @@ class HardwareInfo:
         return specs
 
     @staticmethod
+    def volume_label(drive_letter: str) -> str:
+        """
+        The drive's own name ('Projects', 'System'), or 'Local disk' when it
+        has none or cannot be asked. Every drive used to be 'Local Disk'.
+        """
+        fallback = "Local disk"
+        if os.name != "nt":
+            return fallback
+        try:
+            import ctypes
+            buffer = ctypes.create_unicode_buffer(261)
+            ok = ctypes.windll.kernel32.GetVolumeInformationW(
+                ctypes.c_wchar_p(drive_letter.rstrip("\\") + "\\"), buffer, len(buffer),
+                None, None, None, None, 0)
+            label = buffer.value.strip() if ok else ""
+        except Exception:
+            label = ""
+        return label or fallback
+
+    @staticmethod
     def get_dynamic_specs() -> Dict[str, Any]:
         """Get drive info using Python standard library (Fast/Safe)."""
         specs = {}
@@ -150,7 +170,7 @@ class HardwareInfo:
                     
                     drives.append({
                         "Root": drive_letter,
-                        "Label": "Local Disk", # Python specific label getting is hard without win32api
+                        "Label": HardwareInfo.volume_label(drive_letter),
                         "Capacity_GB": total_gb,
                         "Free_GB": free_gb,
                         "Usage": f"{used_percent}%"

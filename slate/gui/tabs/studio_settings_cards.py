@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 
-from PySide6.QtCore import QTime
+from PySide6.QtCore import QTime, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGridLayout, QHBoxLayout, QLabel,
     QMessageBox, QSpinBox, QTimeEdit, QVBoxLayout, QWidget,
@@ -117,6 +117,14 @@ class _StudioEditor(QWidget):
 class StudioPolicyEditor(_StudioEditor):
     """Every studio_policy rule: the day, the week, leave accrual and comp-off."""
 
+    # After a successful save, so Settings can recount an open Attendance tab.
+    saved = Signal()
+
+    # A standard day outside these hours is a typing mistake, not a policy;
+    # a late cut-off outside these times is asked about.
+    DAY_HOURS = (4.0, 12.0)
+    USUAL_CUTOFF = (QTime(7, 0), QTime(13, 0))
+
     def __init__(self, parent=None):
         super().__init__(parent)
         note = QLabel(
@@ -137,7 +145,7 @@ class StudioPolicyEditor(_StudioEditor):
         form.addRow("Late after", self.late_cutoff)
 
         self.standard_day = _fixed(QDoubleSpinBox())
-        self.standard_day.setRange(1.0, 24.0)
+        self.standard_day.setRange(*self.DAY_HOURS)
         self.standard_day.setSingleStep(0.5)
         self.standard_day.setSuffix(" hours")
         form.addRow("Standard day", self.standard_day)
@@ -305,6 +313,15 @@ class StudioPolicyEditor(_StudioEditor):
         if len(values["weekly_offs"]) >= 7:
             QMessageBox.warning(self, "Not saved", "At least one day of the week has to be a working day.")
             return False
+        cutoff = self.late_cutoff.time()
+        low, high = self.USUAL_CUTOFF
+        if (cutoff < low or cutoff > high) and QMessageBox.question(
+                self, "Save policy",
+                "People will count as late only after %s, which is unusual for a start time. "
+                "Save it anyway?" % values["late_cutoff"],
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel) != QMessageBox.StandardButton.Yes:
+            return False
         from slate.core.infra import studio_policy
         try:
             result = studio_policy.save_rules(values, by=_username_of(self) or "Settings")
@@ -317,10 +334,10 @@ class StudioPolicyEditor(_StudioEditor):
             return False
         self.load()
         QMessageBox.information(
-            self, "Saved",
+            self, "Save policy",
             "Late after %s, standard day %g hours. Attendance and Leave on every "
-            "workstation use the new policy from now on; open screens pick it up "
-            "the next time they refresh." % (values["late_cutoff"], values["standard_day_hours"]))
+            "workstation use the new policy from now on." % (values["late_cutoff"], values["standard_day_hours"]))
+        self.saved.emit()
         return True
 
 
