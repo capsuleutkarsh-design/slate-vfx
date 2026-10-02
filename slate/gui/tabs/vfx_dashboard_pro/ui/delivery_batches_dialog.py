@@ -194,14 +194,20 @@ class DeliveryBatchesDialog(QDialog):
     """Main dialog to inspect, copy, and manage delivery batches for a project."""
 
     def __init__(self, project_code: str, store: Optional[DeliveryStore] = None,
-                 current_user: str = "", parent=None):
+                 current_user: str = "", parent=None, roles=None, can_manage: bool = None):
         super().__init__(parent)
         self.project_code = project_code
-        self.store = store or DeliveryStore()
+        # The acting person's roles go to the store, which refuses a create or
+        # delete they may not make (not only the hidden buttons).
+        self.store = store or DeliveryStore(roles=roles)
+        if roles is not None and getattr(self.store, "roles", None) is None:
+            self.store.roles = roles
+        self.can_manage = (getattr(self.store, "can_manage", lambda: True)()
+                           if can_manage is None else bool(can_manage))
         self.current_user = current_user
         self.deliveries: List[Delivery] = []
 
-        self.setWindowTitle(f"Delivery Batches - {project_code}")
+        self.setWindowTitle(f"Delivery batches - {project_code}")
         self.resize(1000, 600)
         self._setup_ui()
         self.refresh()

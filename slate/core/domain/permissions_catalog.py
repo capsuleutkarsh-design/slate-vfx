@@ -197,6 +197,13 @@ STUDIO_ROLES = {
                               + [ability_key(a) for a in (
                                   "dashboard_write", "artist_own_status", "excel_sync",
                                   "dashboard_view_all", "schedule_write")],
+    # access.json gives producer dashboard_write and dashboard_view_all; without
+    # a role row a Producer had no Dashboard tab at all.
+    "Producer": ["Dashboard", "Shot Review", "Scheduling", "Stock Browser",
+                 "Folder Creator", "Rename Tool", "Settings"]
+                + [ability_key(a) for a in (
+                    "dashboard_write", "artist_own_status", "excel_sync",
+                    "dashboard_view_all", "schedule_write")],
     "Roto Prep Supervisor": ["Dashboard", "Shot Review", "Stock Browser", "Rename Tool", "Settings"]
                             + _SUPERVISOR_ABILITIES,
     "Comp Supervisor": ["Dashboard", "Shot Review", "Stock Browser", "Rename Tool", "Settings"]

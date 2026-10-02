@@ -47,6 +47,7 @@ from .artist_delegate import ArtistDelegate
 from .cell_delegates import (
     FramesDelegate, PriorityDelegate, ShotTypeDelegate, TargetDateDelegate, TextDelegate,
 )
+from .eliding_combo import ElidingComboBox
 from .frozen_table import FrozenColumnTable
 from .group_header_delegate import GroupHeaderDelegate
 from .header_filter_view import FilterHeaderView
@@ -85,7 +86,7 @@ def build_dashboard_ui(widget):
     row1 = QHBoxLayout()
     row1.setSpacing(sp(10))
 
-    widget.project_combo = QComboBox()
+    widget.project_combo = ElidingComboBox()
     widget.project_combo.setObjectName("projectCombo")
     widget.project_combo.setToolTip("The project on screen")
     # Long names are cut with an ellipsis, with the whole name as the tooltip.
@@ -373,9 +374,10 @@ def build_dashboard_ui(widget):
     header.sectionResized.connect(widget.table.on_main_section_resized)
 
     # Delegates, on both views where the column can show there.
-    widget.group_delegate = GroupHeaderDelegate(widget.table)
+    widget.group_delegate = GroupHeaderDelegate(widget.table, frozen_width=widget.table.frozen_width)
     widget.table.setItemDelegateForColumn(0, widget.group_delegate)
-    widget.table.frozen.setItemDelegateForColumn(0, GroupHeaderDelegate(widget.table.frozen))
+    widget.table.frozen.setItemDelegateForColumn(0, GroupHeaderDelegate(
+        widget.table.frozen, frozen_width=widget.table.frozen_width, frozen=True))
 
     widget.status_delegate = StatusDelegate(widget.table, allowed=widget._allowed_statuses)
     widget.artist_delegate = ArtistDelegate(widget._get_user_list, widget.table)
