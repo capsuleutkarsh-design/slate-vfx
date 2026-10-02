@@ -538,3 +538,14 @@ class TestMore:
         dialog.priority_cb.setChecked(True)
         dialog.priority_combo.setCurrentIndex(dialog.priority_combo.findData(0))
         assert dialog.get_updates() == {"priority": 0}
+
+
+def test_placeholder_thumbnail_paths_are_cleared_once(mock_db):
+    """DSH-052: placeholder paths already stored are repaired; real ones kept."""
+    from slate.core.infra.migrations.dashboard_repairs import clear_placeholder_thumbnails
+    a = _shot("SH010", thumbnail_path=r"C:\Users\dev\Slate\V0040\slate\gui\tabs\vfx_dashboard_pro\cache\thumbnails\placeholder_red.png")
+    b = _shot("SH020", thumbnail_path=r"\server\thumbs\SH020.jpg")
+    handler = _project(mock_db, [a, b])
+    assert clear_placeholder_thumbnails(mock_db) is True
+    paths = {s.shot_name: s.thumbnail_path for s in handler.read_shots()}
+    assert paths == {"SH010": "", "SH020": r"\server\thumbs\SH020.jpg"}
