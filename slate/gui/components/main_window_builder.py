@@ -731,7 +731,7 @@ class MainWindowBuilderMixin:
 
             # Status messages where "TEAM SLATE" used to be (it meant nothing
             # to anybody); the separate status bar under the footer is gone.
-            status = getattr(self, "status_bar", None)
+            status = getattr(self, "status_bar", None) if self is not None else None
             if status is not None:
                 team_layout.addWidget(status, 1)
             else:
@@ -742,7 +742,8 @@ class MainWindowBuilderMixin:
 
             team_layout.addWidget(license_label)
             footer_layout.addLayout(team_layout)
-            self._footer_row = team_layout
+            if self is not None:
+                self._footer_row = team_layout
             return footer
 
     def init_variables(self):

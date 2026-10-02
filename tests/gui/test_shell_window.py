@@ -18,7 +18,14 @@ def window(qtbot, mock_db):
     win.resize(1366, 768)
     win.show()
     qtbot.wait(50)
-    return win
+    # The sidebar state is remembered between windows: start each test from
+    # the first-run state, and leave it that way.
+    win.tab_coordinator.restore_folds([])
+    if not win.sidebar_collapsed:
+        win.toggle_sidebar()
+    yield win
+    win._remember_sidebar("sidebar_folded_groups", [])
+    win._remember_sidebar("sidebar_collapsed", True)
 
 
 def _vfx(qtbot, user=ADMIN):
@@ -76,6 +83,7 @@ def test_the_sidebar_state_is_remembered(window):
     before = window.sidebar_collapsed
     window.toggle_sidebar()
     assert window.global_settings["sidebar_collapsed"] is (not before)
+    window.toggle_sidebar()
     assert window.sidebar_toggle_btn.toolTip() in ("Expand sidebar", "Collapse sidebar")
 
 
