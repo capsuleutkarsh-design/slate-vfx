@@ -223,3 +223,29 @@ def test_the_real_queries_run_on_postgresql(pg_db):
     assert figures["open_tickets"] == 0
     assert worker.todays_punch() == {}
     assert worker.leave_pulse() == []
+
+
+def test_home_text_is_light_on_its_dark_sky_in_every_theme():
+    """In Light the greeting was dark text on the always-dark background."""
+    from slate.core.infra.gate import Gate as ThemeGate
+    previous = ThemeGate.MODE
+    try:
+        ThemeGate.use("Light")
+        dark = ThemeGate.palette("Dark")
+        assert home_tab.Gate.TEXT == dark["TEXT"] != ThemeGate.TEXT
+        assert home_tab.Gate.overlay(0.1) == ThemeGate.tint("#" + "F" * 6, 0.1)
+        assert home_tab.Gate.STATUS["RETAKE"] == dark["BAD"]
+    finally:
+        ThemeGate.use(previous)
+
+
+def test_home_greeting_uses_the_dark_text(qtbot):
+    from slate.core.infra.gate import Gate as ThemeGate
+    previous = ThemeGate.MODE
+    try:
+        ThemeGate.use("Light")
+        tab = HomeTab(user_data={"username": "a", "display_name": "Asha"}, mode="vfx")
+        qtbot.addWidget(tab)
+        assert ThemeGate.palette("Dark")["TEXT"] in tab.greeting_label.styleSheet()
+    finally:
+        ThemeGate.use(previous)

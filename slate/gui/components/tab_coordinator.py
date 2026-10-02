@@ -368,11 +368,11 @@ class TabCoordinator(QObject):
             has_perm = (permission_key in allowed_tabs) or ("ALL" in allowed_tabs)
 
             # DEBUG LOGGING
-            logging.info(f"[SCAN] Tab Registration: '{label}'")
-            logging.info(f"   Permission Key: '{permission_key}'")
-            logging.info(f"   User Role: '{user_role}' | Is Developer: {is_dev}")
-            logging.info(f"   Allowed Tabs: {allowed_tabs}")
-            logging.info(f"   Has Permission: {has_perm}")
+            logging.debug(f"[SCAN] Tab Registration: '{label}'")
+            logging.debug(f"   Permission Key: '{permission_key}'")
+            logging.debug(f"   User Role: '{user_role}' | Is Developer: {is_dev}")
+            logging.debug(f"   Allowed Tabs: {allowed_tabs}")
+            logging.debug(f"   Has Permission: {has_perm}")
             
             # Skip if no permission (unless developer)
             if not (is_dev or has_perm):
@@ -383,7 +383,7 @@ class TabCoordinator(QObject):
                 else:
                     return False
             else:
-                logging.info(f"[OK] Tab '{label}' ALLOWED")
+                logging.debug(f"[OK] Tab '{label}' ALLOWED")
         
         # Add to stack, in the scrolling frame every page sits in.
         self.content_stack.addWidget(PageScroll(page_widget))
@@ -428,7 +428,7 @@ class TabCoordinator(QObject):
             self.tab_labels.append(label)
         self.tab_instances[label] = page_widget
         
-        logging.info(f"Tab registered: {label}")
+        logging.debug(f"Tab registered: {label}")
         return True
     
     def add_category_header(self, label: str):
@@ -472,7 +472,7 @@ class TabCoordinator(QObject):
         header_placeholder = QWidget()
         self.content_stack.addWidget(header_placeholder)
         
-        logging.info(f"Category header added: {label}")
+        logging.debug(f"Category header added: {label}")
     
     def set_tab_visible(self, page_widget, visible, rename_to=None):
         """
@@ -730,9 +730,9 @@ class TabCoordinator(QObject):
             is_dev = str(user_role or "").strip().lower() == "developer"
             has_perm = (permission_key in allowed_tabs) or ("ALL" in allowed_tabs)
 
-            logging.info(f"[LAZY] Registering factory: '{label}'")
-            logging.info(f"   Permission: '{permission_key}' | Role: '{user_role}'")
-            logging.info(f"   Has Permission: {has_perm}")
+            logging.debug(f"[LAZY] Registering factory: '{label}'")
+            logging.debug(f"   Permission: '{permission_key}' | Role: '{user_role}'")
+            logging.debug(f"   Has Permission: {has_perm}")
             
             if not (is_dev or has_perm):
                 # Not yours, so it is not there.
@@ -743,7 +743,7 @@ class TabCoordinator(QObject):
                 # entries they can never open. A navigation full of doors that
                 # do not unlock is worse than a short one: it makes the product
                 # look broken and buries the tabs that do work.
-                logging.info(f"[SKIP] Factory '{label}' - no '{permission_key}' permission")
+                logging.debug(f"[SKIP] Factory '{label}' - no '{permission_key}' permission")
                 return False
         
         # Store factory
@@ -801,7 +801,7 @@ class TabCoordinator(QObject):
         if self.sidebar_nav.currentRow() < 0 and not item.isHidden() and bool(item.flags() & Qt.ItemFlag.ItemIsEnabled):
             self.sidebar_nav.setCurrentRow(self.sidebar_nav.count() - 1)
         
-        logging.info(f"[OK] Factory registered: {label}")
+        logging.debug(f"[OK] Factory registered: {label}")
         return True
 
     

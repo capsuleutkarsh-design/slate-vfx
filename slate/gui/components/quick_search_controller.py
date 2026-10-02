@@ -325,11 +325,24 @@ class QuickSearchControllerMixin:
                     continue
             elif needs and needs not in tabs:
                 continue
-            rows.append({"kind": "action", "label": label, "keywords": keywords, "callback": callback})
+            rows.append({"kind": "action", "label": label, "keywords": keywords, "callback": callback,
+                         # Never the row Enter runs without the person choosing it.
+                         "careful": needs == "__maintenance__"})
         for label in tabs:
             rows.append({"kind": "tab", "label": f"Go to {label}",
                          "keywords": f"go open {label}", "tab_label": label})
         return rows
+
+    @staticmethod
+    def palette_preselect(payloads):
+        """
+        The row Enter would run: the first real row that is not a maintenance
+        or destructive command (an admin's Ctrl+K, Enter started a sweep).
+        """
+        for i, payload in enumerate(payloads):
+            if payload and not payload.get("careful"):
+                return i
+        return None
 
     def _go_to_tab(self, label: str) -> bool:
         """Open a screen by name, unfolding its sidebar group first."""
@@ -534,6 +547,7 @@ class QuickSearchControllerMixin:
     
         command_rows: List[Dict[str, Any]] = self.palette_commands()
         action_lookup = {row["label"]: row["callback"] for row in command_rows if row["kind"] == "action"}
+        careful_labels = {row["label"] for row in command_rows if row.get("careful")}
 
         def add_section(title: str):
             section_item = QListWidgetItem(title)
@@ -646,6 +660,7 @@ class QuickSearchControllerMixin:
                             if not callback:
                                 continue        # not offered to this person here
                             safe_row["callback"] = callback
+                            safe_row["careful"] = safe_row.get("label") in careful_labels
                         item = QListWidgetItem(str(safe_row.get("label", "")))
                         item.setData(Qt.ItemDataRole.UserRole, safe_row)
                         results_list.addItem(item)
@@ -667,16 +682,17 @@ class QuickSearchControllerMixin:
             ranked_tabs.sort(key=lambda x: (x[0], str(x[1].get("label", "")).lower()))
             ranked_shots.sort(key=lambda x: (x[0], str(x[1].get("label", "")).lower()))
     
-            if ranked_actions:
-                add_section("Commands")
-                for _score, row in ranked_actions[:36]:
+            # Screens first: getting somewhere is what the palette is mostly for.
+            if ranked_tabs:
+                add_section("Screens")
+                for _score, row in ranked_tabs[:36]:
                     item = QListWidgetItem(str(row.get("label", "")))
                     item.setData(Qt.ItemDataRole.UserRole, row)
                     results_list.addItem(item)
     
-            if ranked_tabs:
-                add_section("Screens")
-                for _score, row in ranked_tabs[:36]:
+            if ranked_actions:
+                add_section("Commands")
+                for _score, row in ranked_actions[:36]:
                     item = QListWidgetItem(str(row.get("label", "")))
                     item.setData(Qt.ItemDataRole.UserRole, row)
                     results_list.addItem(item)
@@ -688,12 +704,10 @@ class QuickSearchControllerMixin:
                     item.setData(Qt.ItemDataRole.UserRole, row)
                     results_list.addItem(item)
     
-            if results_list.count() > 0:
-                for i in range(results_list.count()):
-                    payload = results_list.item(i).data(Qt.ItemDataRole.UserRole)
-                    if payload:
-                        results_list.setCurrentRow(i)
-                        break
+            preselect_row = self.palette_preselect([results_list.item(i).data(Qt.ItemDataRole.UserRole)
+                                                    for i in range(results_list.count())])
+            if preselect_row is not None:
+                results_list.setCurrentRow(preselect_row)
     
         search_input.textChanged.connect(update_results)
         results_list.itemActivated.connect(lambda _item: accept_current_item())

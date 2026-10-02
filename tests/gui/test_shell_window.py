@@ -206,3 +206,20 @@ def test_workspace_info_shows_the_facts(qtbot):
     assert page.plugin_icon == "info"
     texts = " ".join(l.text() for l in page.findChildren(QLabel))
     assert "Plugin Runtime Status" not in texts and "context" not in texts.lower()
+
+
+def test_starting_does_not_log_every_permission(qtbot, mock_db, caplog):
+    import logging
+    from slate.gui.main_window import VFXFolderCreatorApp
+    with caplog.at_level(logging.INFO):
+        win = VFXFolderCreatorApp(dict(ADMIN))
+        qtbot.addWidget(win)
+    text = "\n".join(r.getMessage() for r in caplog.records if r.levelno >= logging.INFO)
+    assert "Has Permission" not in text and "Permission: '" not in text and "[ROLES]" not in text
+
+
+def test_getting_started_agrees_with_the_shortcut_sheet():
+    from slate.core.help_content import HELP_CONTENT
+    text = HELP_CONTENT["getting_started"]["content"]
+    assert "group headings count as rows" not in text
+    assert "group headings are skipped" in text
