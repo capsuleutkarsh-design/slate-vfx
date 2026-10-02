@@ -450,6 +450,9 @@ class JoiningLeavingView(QWidget):
 
         split.setStretchFactor(0, 2)
         split.setStretchFactor(1, 3)
+        # Enough room on the left for a name beside the four short columns.
+        split.setSizes([520, 680])
+        left.setMinimumWidth(420)
         root.addWidget(split, 1)
 
         self.refresh()
