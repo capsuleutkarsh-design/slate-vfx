@@ -640,22 +640,212 @@ class UserManager:
             return True, "Password changed."
         return False, "The password could not be saved. Try again."
 
+    # "Clear this field" for update_user, as opposed to None ("leave it alone").
+    # Reports to, Employment, Joined and Location could never be emptied: the
+    # dialog sent None for "Nobody" / "Not recorded", which meant "unchanged".
+    CLEAR = "\x00clear"
+
+    PROFILE_FIELDS = ("display_name", "job_title", "profile_pic_path") + EMPLOYMENT_FIELDS
+
+    def _row(self, username):
+        row = self._get_db().execute_query(
+            "SELECT * FROM ut_users WHERE LOWER(username)=LOWER(%s)",
+            (str(username or "").strip(),), fetch="one")
+        return dict(row) if row else None
+
+    def username_problem(self, username: str) -> str:
+        """Why this cannot be a new username, or ''. The import's rule, everywhere."""
+        from slate.core.domain.user_import import USERNAME_PATTERN, USERNAME_RULE
+        uid = str(username or "").strip().lower()
+        if not uid:
+            return "Enter a username."
+        if not USERNAME_PATTERN.match(uid):
+            return "A username is " + USERNAME_RULE + "."
+        if self._row(uid):
+            return "Username already taken."
+        return ""
+
+    def create_user(self, username: str, password: str, roles, display_name: str = "",
+                    job_title: str = "", **fields):
+        """
+        Add a new account - and only that. Returns (ok, message).
+
+        'Add New User' used add_user, which updates an account that already
+        exists: adding 'HR.Kavya' with role Developer took over hr.kavya,
+        password included. A username in use (in any case) is refused here,
+        and the username must follow the same rule as an import.
+        """
+        uid = str(username or "").strip().lower()
+        self.last_error = ""
+        problem = self.username_problem(uid)
+        if problem:
+            self.last_error = problem
+            return False, problem
+        roles = [roles] if isinstance(roles, str) else list(roles or [])
+        if not roles:
+            return False, "Pick at least one role."
+        self._check_account_change(uid, roles)
+        manager = fields.get("reports_to")
+        if manager not in (None, self.CLEAR) and str(manager).strip():
+            why = self.reports_to_problem(uid, manager)
+            if why:
+                return False, why
+        from slate.core.domain.onboarding_service import employment_value
+        if fields.get("employment") not in (None, self.CLEAR):
+            fields["employment"] = employment_value(fields["employment"])
+        columns = ["username", "password_hash", "display_name", "job_title", "roles",
+                   "profile_pic_path"]
+        values = [uid, self._hash_password(password), (display_name or "").strip() or uid,
+                  (job_title or "").strip(), json.dumps(roles), ""]
+        for field in self.EMPLOYMENT_FIELDS:
+            value = fields.get(field)
+            if value in (None, self.CLEAR) or str(value).strip() == "":
+                continue
+            columns.append(field)
+            values.append(value)
+        result = self._get_db().execute_update(
+            "INSERT INTO ut_users (" + ", ".join(columns) + ") VALUES ("
+            + ", ".join(["%s"] * len(columns)) + ")", tuple(values))
+        if not result:
+            message = "The account could not be saved: %s" % (getattr(result, "error", "") or "refused")
+            self.last_error = message
+            return False, message
+        self.audit.log_user_change(self._actor(), uid, "Created with roles %s" % ", ".join(roles))
+        self._forget_people()
+        return True, "Added %s (%s)" % ((display_name or "").strip() or uid, uid)
+
     def update_user(self, username: str, **kwargs) -> bool:
-        """Update specific fields of an existing user or create if not exists."""
-        users = self.get_all_users()
-        existing = users.get(username.strip(), {})
-        
-        password = kwargs.get("password", "KEEP_OLD")
-        roles = kwargs.get("roles", existing.get("roles", ["Artist"]))
-        display_name = kwargs.get("display_name", existing.get("display_name", username))
-        job_title = kwargs.get("job_title", existing.get("job_title", ""))
-        pic = kwargs.get("profile_pic_path", existing.get("profile_pic_path", ""))
+        """
+        Change an existing person's profile: name, department, roles, and the
+        employment record. Never the password (that is Reset Password).
 
-        extras = {field: kwargs[field] for field in self.EMPLOYMENT_FIELDS
-                  if kwargs.get(field) is not None}
+        A field left out, or None, is left alone; UserManager.CLEAR empties
+        it. Every change is written to the audit log with the old and new
+        values and who made it. An account that does not exist is created
+        through add_user, as before.
+        """
+        uid = str(username or "").strip()
+        existing = self._row(uid)
+        if existing is None:
+            password = kwargs.pop("password", "KEEP_OLD")
+            return self.add_user(uid, password, kwargs.get("roles"), kwargs.get("display_name", ""),
+                                 kwargs.get("job_title", ""), kwargs.get("profile_pic_path", ""),
+                                 **{f: kwargs[f] for f in self.EMPLOYMENT_FIELDS
+                                    if kwargs.get(f) not in (None, self.CLEAR)})
+        if kwargs.get("password") not in (None, "KEEP_OLD"):
+            raise ValueError("update_user never changes a password.")
+        target = existing["username"]
 
-        return self.add_user(username, password, roles, display_name, job_title,
-                             pic, **extras)
+        sets, values, changes = [], [], []
+        roles = kwargs.get("roles")
+        if roles is not None:
+            roles = [roles] if isinstance(roles, str) else list(roles)
+            self._check_account_change(target, roles)
+            old_roles = self._parse_roles(existing.get("roles"))
+            if [str(r) for r in old_roles] != [str(r) for r in roles]:
+                sets.append("roles=%s")
+                values.append(json.dumps(roles))
+                changes.append("roles %s -> %s" % (", ".join(map(str, old_roles)) or "-",
+                                                   ", ".join(map(str, roles)) or "-"))
+        else:
+            self._check_account_change(target)
+
+        manager = kwargs.get("reports_to")
+        if manager not in (None, self.CLEAR) and str(manager).strip():
+            why = self.reports_to_problem(target, manager)
+            if why:
+                self.last_error = why
+                from slate.core.domain.access import GrantRefused
+                raise GrantRefused(why)
+        if kwargs.get("employment") not in (None, self.CLEAR):
+            from slate.core.domain.onboarding_service import employment_value
+            kwargs["employment"] = employment_value(kwargs["employment"])
+
+        for field in self.PROFILE_FIELDS:
+            if field not in kwargs or kwargs[field] is None:
+                continue
+            new = None if kwargs[field] == self.CLEAR else kwargs[field]
+            if isinstance(new, str):
+                new = new.strip()
+                if field in ("display_name",) and not new:
+                    continue                     # a name is never blanked
+                if new == "" and field in self.EMPLOYMENT_FIELDS:
+                    new = None
+            old = existing.get(field)
+            if str(old or "")[:10 if field in ("joined_on", "last_day") else None] == str(new or "")[
+                    :10 if field in ("joined_on", "last_day") else None]:
+                continue
+            sets.append(field + "=%s")
+            values.append(new)
+            changes.append("%s %r -> %r" % (field, str(old or "")[:40], str(new or "")[:40]))
+
+        if not sets:
+            return True
+        values.append(target)
+        result = self._get_db().execute_update(
+            "UPDATE ut_users SET " + ", ".join(sets) + " WHERE username=%s", tuple(values))
+        if result:
+            self.audit.log_user_change(self._actor(), target, "Changed: " + "; ".join(changes))
+            self._forget_people()
+        return bool(result)
+
+    @staticmethod
+    def _forget_people():
+        try:
+            from slate.core.domain import people
+            people.refresh()
+        except Exception:
+            pass
+
+    # --------------------------------------------------------- reports to
+    def approvers(self) -> List[str]:
+        """
+        Who can be somebody's 'Reports to': active people who approve leave
+        (a supervisor or lead) or keep it (HR). Anybody else - an artist -
+        left that person's leave waiting for ever.
+        """
+        from slate.core.domain import access
+        from slate.core.domain.workplace_access import manages_leave
+        stored = access._role_permission_lists()
+        out = []
+        for username, data in (self.get_all_users() or {}).items():
+            if not data.get("active", True):
+                continue
+            roles = data.get("roles") or []
+            tabs = set()
+            for role in roles:
+                tabs.update(stored.get(str(role).strip().lower(), []))
+            if access.can(roles, "approve_leave") or manages_leave(roles, tabs):
+                out.append(username)
+        return sorted(out, key=str.lower)
+
+    def would_create_cycle(self, username: str, manager: str) -> bool:
+        """True when manager reports (directly or through others) to username."""
+        target = str(username or "").strip().lower()
+        seen = set()
+        current = str(manager or "").strip().lower()
+        users = {u.lower(): d for u, d in (self.get_all_users() or {}).items()}
+        while current and current not in seen:
+            if current == target:
+                return True
+            seen.add(current)
+            current = str((users.get(current) or {}).get("reports_to") or "").strip().lower()
+        return False
+
+    def reports_to_problem(self, username: str, manager: str) -> str:
+        """Why manager cannot be username's Reports to, or ''."""
+        uid = str(username or "").strip().lower()
+        boss = str(manager or "").strip()
+        if not boss:
+            return ""
+        if boss.lower() == uid:
+            return "Somebody cannot report to themselves."
+        if not self._row(boss):
+            return "There is no account called %s." % boss
+        if self.would_create_cycle(uid, boss):
+            return ("%s already reports to %s (directly or through others), so this "
+                    "would make a loop." % (boss, username))
+        return ""
 
     def delete_user(self, u: str) -> bool:
         """
@@ -1009,6 +1199,56 @@ class UserManager:
             if any(str(r).strip().lower() == wanted for r in roles):
                 holders.append(username)
         return sorted(holders)
+
+    def rename_role(self, old: str, new: str):
+        """
+        Rename a role, keeping who holds it and what it grants. Returns (ok, message).
+
+        There was no rename: a new role, everybody moved across by hand, the
+        old one deleted. One transaction here: the role, every person's role
+        list, and the record of seeded defaults (so a renamed default is not
+        recreated under its old name at the next start).
+        """
+        old_name = str(old or "").strip()
+        new_name = str(new or "").strip()
+        if not new_name:
+            return False, "Enter the new name."
+        if old_name.lower() == "developer":
+            return False, "The Developer role cannot be renamed."
+        if not self.role_exists(old_name):
+            return False, "There is no role called %s." % old_name
+        if new_name.lower() != old_name.lower() and self.role_exists(new_name):
+            return False, "A role called %s already exists." % new_name
+        editor_roles = self._acting_roles()
+        perms = self.role_permissions(old_name)
+        if editor_roles is not None:
+            from slate.core.domain import access
+            why = access.role_change_refusal(editor_roles, old_name, perms, perms, self.roles_config)
+            if why:
+                return False, why
+        stored = next(r for r in self.get_available_roles() if str(r).lower() == old_name.lower())
+        holders = self.users_with_role(stored)
+        from ..infra.transaction import atomic
+        try:
+            with atomic(self._get_db()) as tx:
+                tx.write("UPDATE ut_roles SET role_name=%s WHERE role_name=%s",
+                         (new_name, stored), expect_rows=True)
+                for username in holders:
+                    row = tx.one("SELECT roles FROM ut_users WHERE username=%s", (username,))
+                    roles = self._parse_roles((row or {}).get("roles"))
+                    roles = [new_name if str(r).lower() == stored.lower() else r for r in roles]
+                    tx.write("UPDATE ut_users SET roles=%s WHERE username=%s",
+                             (json.dumps(roles), username))
+                tx.write("DELETE FROM ut_role_seeds WHERE role_name=%s", (new_name.lower(),))
+                tx.write("UPDATE ut_role_seeds SET role_name=%s WHERE role_name=%s",
+                         (new_name.lower(), stored.lower()))
+        except Exception as exc:
+            logging.warning("Role rename %s -> %s failed: %s", stored, new_name, exc)
+            return False, "The role could not be renamed: %s" % exc
+        self._forget_cached_abilities()
+        self.audit.log_event("ROLE_MGMT", self._actor(),
+                             "Renamed role %s to %s (%d holder(s))" % (stored, new_name, len(holders)))
+        return True, "Renamed %s to %s." % (stored, new_name)
 
     def delete_role(self, role: str) -> bool:
         """
