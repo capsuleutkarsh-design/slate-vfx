@@ -343,6 +343,9 @@ class ApplicationEntry:
             sys.exit(3)
 
         self.app.setQuitOnLastWindowClosed(False)
+        # Signing out and in again goes through launch_main_tool too
+        # (MainWindow._open_window_for), so it can find this entry.
+        self.app._slate_entry = self
         self._cleanup_done = False
         self._is_closing = False
         self.loading_dialog = None
@@ -689,7 +692,11 @@ class ApplicationEntry:
                 import os
                 os._exit(3)             # licence section 5: the window lacks the credit line
             logging.info("Showing Main Window...")
-            self.main_window.showMaximized()
+            # As it was left (maximised the first time) - see show_restored.
+            if hasattr(self.main_window, "show_restored"):
+                self.main_window.show_restored()
+            else:
+                self.main_window.showMaximized()
             # Main window is now the primary lifecycle owner.
             self.app.setQuitOnLastWindowClosed(True)
             logging.info("Main Window Launched Successfully.")

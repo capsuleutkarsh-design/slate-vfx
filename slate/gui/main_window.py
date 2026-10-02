@@ -81,6 +81,23 @@ from slate.core.infra.gate import Gate
 MIN_WINDOW_SIZE = (960, 600)
 
 
+# Every keyboard shortcut, in one table. setup_shortcuts binds them, and the
+# Keyboard shortcuts sheet (Account menu, Help) lists them - so the list can no
+# longer miss a key that works, which is how Help came to know only four.
+# (keys, what it does, method on the window, the key it is an alias of)
+SHORTCUTS = (
+    ("Ctrl+K", "Search or jump to a screen, a command or a shot", "show_quick_search", ""),
+    ("Ctrl+P", "Search or jump to (same as Ctrl+K)", "show_quick_search", "Ctrl+K"),
+    ("Ctrl+1 \u2026 Ctrl+9", "Open the 1st to 9th screen in the sidebar", "switch_to_nth_tab", ""),
+    ("F5", "Refresh the screen you are on", "refresh_current_tab", ""),
+    ("Ctrl+R", "Refresh (same as F5)", "refresh_current_tab", "F5"),
+    ("F1", "Help for the screen you are on", "show_help_dialog", ""),
+    ("F11", "Full screen on or off", "toggle_fullscreen", ""),
+    ("Ctrl+Shift+S", "Open Settings", "show_settings_tab", ""),
+    ("Ctrl+Shift+D", "Diagnostics: version, database and shared folder", "show_runtime_diagnostics", ""),
+)
+
+
 # The mixins come before QMainWindow deliberately.
 #
 # With QMainWindow first, Python resolved resizeEvent to QWidget's and the
@@ -143,8 +160,9 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
                 
             self.user_display_name = self.user_data.get('display_name', self.user_data.get('user_id', self.user_data.get('username', 'User')))
             self.current_user = self.user_data.get('user_id', self.user_data.get('username', 'debug_user'))
-            job_title = self.user_data.get('job_title', self.user_role)
-            self.setWindowTitle(f"{suite_title} | {self.user_display_name} ({job_title})")
+            subtitle = self.user_subtitle()
+            self.setWindowTitle(f"{suite_title} | {self.user_display_name}"
+                                + (f" ({subtitle})" if subtitle else ""))
             
             # --- AUTO ATTENDANCE LOGGING (ASYNC) ---
             safe_single_shot(3000, self, self.perform_async_login)
@@ -161,10 +179,12 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         # Use roles list (not single role string) for permission checking
         self.allowed_tabs = self.user_manager.get_allowed_tabs(self.user_roles)
         
-        # DEBUG: Log permissions
-        logging.info(f"User: {self.current_user} | Role: {self.user_role}")
-        logging.info(f"[ACCESS] Allowed Tabs: {self.allowed_tabs}")
-        logging.info(f"[ROLES] All Roles Config: {self.user_manager.roles_config}")
+        # One line at INFO; the full role table only when debugging. It used to
+        # write a 2 KB line into every log on every start.
+        logging.info("User: %s | Role: %s | %d tab permissions",
+                     self.current_user, self.user_role, len(self.allowed_tabs or []))
+        logging.debug(f"[ACCESS] Allowed Tabs: {self.allowed_tabs}")
+        logging.debug(f"[ROLES] All Roles Config: {self.user_manager.roles_config}")
         # ------------------------
         
         self.config_manager = self.app_context.config_manager()
@@ -365,6 +385,27 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         except Exception as e:
             logging.error(f"Error handling RV feedback: {e}")
 
+    def statusBar(self):
+        """
+        The status line in the footer. Asking QMainWindow for its status bar
+        would create a second, empty one under the footer again.
+        """
+        bar = getattr(self, "status_bar", None)
+        return bar if bar is not None else super().statusBar()
+
+    def user_subtitle(self) -> str:
+        """
+        What is shown after the name: the job title, or the role when there is
+        none. The header and the window title both use it - they used to show
+        different things, and "(None)" for a person without a job title.
+        """
+        data = self.user_data or {}
+        job = str(data.get("job_title") or "").strip()
+        if job and job.lower() != "none":
+            return job
+        role = str(getattr(self, "user_role", "") or "").strip()
+        return role if role.lower() != "none" else ""
+
     def fix_selection_colors(self):
         """
         Nothing to do any more: the selection colour comes from the theme's
@@ -394,7 +435,8 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         }
         color = colors.get(level, colors["info"])
         status_bar.setStyleSheet(
-            f"QStatusBar {{ color: {color}; font-weight: {'bold' if level != 'info' else 'normal'}; }}"
+            f"QStatusBar {{ color: {color}; font-weight: {'bold' if level != 'info' else 'normal'}; "
+            "background: transparent; border: none; }"
         )
         status_bar.showMessage(message, duration)
         if duration > 0:
@@ -402,7 +444,8 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
             safe_single_shot(
                 duration + 50,
                 self,
-                lambda: getattr(self, "status_bar", None) and self.status_bar.setStyleSheet(""),
+                lambda: getattr(self, "status_bar", None) and self.status_bar.setStyleSheet(
+                    "QStatusBar { background: transparent; border: none; }"),
             )
 
     def show_feedback(self, message: str, level: str = "info", duration: int = None,
@@ -443,14 +486,12 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         pass
 
     def logout_user(self):
-        """Log out current user and return to login dialog."""
-        reply = QMessageBox.question(
-            self,
-            "Log Out",
-            "Log out and switch user now?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+        """Sign out and show the sign-in window again (same application)."""
+        from .components.feedback import confirm
+        if not confirm(self, "Sign out", "Sign out of Slate?",
+                       yes_label="Sign out", no_label="Cancel",
+                       informative="Your attendance is not affected: signing out "
+                                   "does not punch you out."):
             return
         # Ask the open screens first (unsaved edits, an ingest still copying).
         # closeEvent would ask again; the flag says it has been asked.
@@ -458,7 +499,7 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
             return
         self._work_confirmed = True
         self._logout_requested = True
-        self.show_status("Logging out...", "info", 1200)
+        self.show_status("Signing out\u2026", "info", 1200)
         self.close()
 
     def confirm_open_work(self, action: str) -> bool:
@@ -480,18 +521,52 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         if app:
             app.setQuitOnLastWindowClosed(False)
 
-        login = LoginDialog(app_context=self.app_context)
+        login = LoginDialog(app_context=self.app_context, app_mode=self.app_mode)
         if login.exec() != QDialog.DialogCode.Accepted or not login.user_data:
             if app:
                 app.quit()
             return
+        self._open_window_for(login.user_data, app)
 
-        new_window = VFXFolderCreatorApp(login.user_data, app_context=self.app_context)
-        if app:
+    def _open_window_for(self, user_data, app=None):
+        """
+        The window for the person who just signed in: the same application as
+        this one. Signing out of Slate VFX or Slate Operations used to bring
+        back the all-in-one window, with every group in it.
+
+        Goes the way the first start goes: the loading window, the licence
+        check, and the fleet report told the new name.
+        """
+        app = app or QApplication.instance()
+        entry = getattr(app, "_slate_entry", None) if app else None
+        if entry is not None and hasattr(entry, "launch_main_tool"):
+            if getattr(entry, "reporter", None):
+                try:
+                    entry.reporter.update_user(user_data.get("display_name", "Unknown"))
+                except Exception as exc:
+                    logging.debug("Live reporter user update skipped: %s", exc)
+            entry._show_startup_loading()
+            entry.launch_main_tool(user_data)
+            new_window = getattr(entry, "main_window", None)
+        else:
+            new_window = self.window_for_mode(user_data)
+            from slate import licence
+            if not licence.check_window(new_window):
+                import os
+                os._exit(3)             # licence section 5: the window lacks the credit line
+            new_window.show_restored()
+        if app and new_window is not None:
             # Keep strong ref to avoid GC closing the new main window.
             setattr(app, "_ut_active_window", new_window)
             app.setQuitOnLastWindowClosed(True)
-        new_window.showMaximized()
+        return new_window
+
+    def window_for_mode(self, user_data):
+        """A new window of this one's kind (VFX, Operations or the full suite)."""
+        cls = type(self)
+        if cls is VFXFolderCreatorApp:
+            return cls(user_data, app_context=self.app_context, app_mode=self.app_mode)
+        return cls(user_data, app_context=self.app_context)
 
     # --- ACTION HANDLERS ---
 
@@ -820,10 +895,13 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         fallback_used = bool(status.get("fallback_used", False))
         return active_mode == "sqlite" and fallback_used
 
-    def show_runtime_diagnostics(self):
+    def diagnostics_text(self) -> str:
+        """
+        What IT asks for, in plain words: version, database, shared folder.
+        No passwords or other credentials, ever.
+        """
         status = self._get_db_runtime_status_cached()
-        requested_mode = str(status.get("requested_mode", "unknown"))
-        active_mode = str(status.get("active_mode", "unknown"))
+        active_mode = str(status.get("active_mode", "unknown")).lower()
         fallback_used = bool(status.get("fallback_used", False))
         bootstrap_error = status.get("bootstrap_error")
 
@@ -832,20 +910,69 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         server_root_ok = bool(server_root and server_root.exists() and server_root.is_dir())
         exr_enabled = bool(GlobalConfig.exr_loading_enabled())
 
+        def yes(flag):
+            return "Yes" if flag else "No"
+
+        if active_mode == "postgres" and not fallback_used:
+            database = "Studio database (PostgreSQL)"
+        elif fallback_used:
+            database = "This machine's local copy (SQLite) - the studio database could not be reached"
+        else:
+            database = active_mode.title() or "Unknown"
+        host = str(GlobalConfig.get("db_host", "") or "").strip()
+        port = str(GlobalConfig.get("db_port", "") or "").strip()
+        name = str(GlobalConfig.get("db_name", "") or "").strip()
+        where = ":".join(p for p in (host, port) if p)
+        if name:
+            where = f"{where} / {name}" if where else name
+
         lines = [
-            "Runtime Diagnostics",
+            f"Slate version: {APP_VERSION} ({getattr(self, 'suite_title', 'Slate')})",
+            f"Signed in as: {getattr(self, 'user_display_name', '')} ({getattr(self, 'current_user', '')})",
+            f"Role: {getattr(self, 'user_role', '')}",
             "",
-            f"DB requested mode: {requested_mode}",
-            f"DB active mode: {active_mode}",
-            f"DB fallback used: {fallback_used}",
-            f"SERVER_ROOT: {server_root_value or '(not set)'}",
-            f"SERVER_ROOT reachable: {server_root_ok}",
-            f"EXR loading enabled: {exr_enabled}",
+            f"Database: {database}",
+            f"Database server: {where or 'not set'}",
+            f"Working offline (local mode): {yes(fallback_used)}",
+            "",
+            f"Shared folder: {server_root_value or 'not set'}",
+            f"Shared folder reachable: {yes(server_root_ok)}",
+            f"EXR previews: {'On' if exr_enabled else 'Off'}",
         ]
         if bootstrap_error:
-            lines.append(f"DB bootstrap error: {bootstrap_error}")
+            lines += ["", f"Database problem at start-up: {bootstrap_error}"]
+        return "\n".join(lines)
 
-        QMessageBox.information(self, "Diagnostics", "\n".join(lines))
+    def show_runtime_diagnostics(self):
+        """Diagnostics (Ctrl+Shift+D): the facts above, with a Copy button for a ticket."""
+        from PySide6.QtWidgets import QPlainTextEdit
+        from .core.controls import make_button
+        text = self.diagnostics_text()
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Diagnostics")
+        dialog.setMinimumSize(520, 320)
+        layout = QVBoxLayout(dialog)
+        intro = QLabel("Copy this into an IT ticket if something is not working.")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+        view = QPlainTextEdit(text)
+        view.setReadOnly(True)
+        layout.addWidget(view, 1)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        copy_button = make_button("Copy", "secondary")
+
+        def copy():
+            QApplication.clipboard().setText(text)
+            copy_button.setText("Copied")
+
+        copy_button.clicked.connect(copy)
+        close_button = make_button("Close", "primary", on_click=dialog.accept)
+        row.addWidget(copy_button)
+        row.addWidget(close_button)
+        layout.addLayout(row)
+        self._diagnostics_dialog = dialog
+        dialog.exec()
 
     def _build_sync_disabled_tab(self, title: str, message: str) -> QWidget:
         panel = QWidget()
@@ -861,7 +988,9 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
             f"font-size: 13px; color: {Gate.WARN}; background: {Gate.ACCENT_SURFACE}; "
             f"border: 1px solid {Gate.LINE}; border-radius: 8px; padding: 12px;"
         )
-        hint_label = QLabel("Check DB mode in the header or press Ctrl+Shift+D for diagnostics.")
+        hint_label = QLabel("The LOCAL MODE badge in the header shows while this lasts. "
+                            "Workspace Info and Diagnostics (Ctrl+Shift+D) say more.")
+        hint_label.setWordWrap(True)
         hint_label.setStyleSheet(f"font-size: 12px; color: {Gate.INFO};")
 
         layout.addWidget(title_label)
@@ -1014,74 +1143,75 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
             QMessageBox.warning(self, "Help Error", 
                 f"Could not open help dialog.\n\nError: {str(e)}") 
 
-    def restore_window_geometry(self):
-        geo = self.global_settings.get("window_geometry")
-        if geo:
-            try:
-                x, y, w, h = map(int, geo.split(','))
-                
-                # Validation: Ensure window is visible on current screens
-                rect = QRect(x, y, w, h)
-                valid = False
-                for screen in QApplication.screens():
-                    if screen.availableGeometry().intersects(rect):
-                        valid = True
-                        break
-                
-                if valid:
-                    self.setGeometry(x, y, w, h)
-                else:
-                    self.center_window()
-            except Exception as e:
-                logging.exception(f"Error restoring window geometry: {e}")
-                self.center_window()
-    
     def periodic_cleanup(self):
         """Run background maintenance tasks."""
         if hasattr(self, 'sweeper_engine'):
              self.sweeper_engine.start_sweep()
 
-    # ===== KEYBOARD SHORTCUTS (Improvement #9) =====
+    # ===== KEYBOARD SHORTCUTS =====
     def setup_shortcuts(self):
-        """Setup global keyboard shortcuts for power users"""
+        """Bind the SHORTCUTS table (F1 and F11 are window actions, set up above)."""
         from PySide6.QtGui import QShortcut, QKeySequence
-        
-        # Tab switching: Ctrl+1 through Ctrl+9
-        for i in range(1, 10):
-            shortcut = QShortcut(QKeySequence(f"Ctrl+{i}"), self)
-            # Use lambda with default arg to capture current index
-            shortcut.activated.connect(lambda idx=i-1: self.switch_to_tab_index(idx))
-        
-        # Quick search / Command palette (Ctrl+P)
-        quick_search = QShortcut(QKeySequence("Ctrl+P"), self)
-        quick_search.activated.connect(self.show_quick_search)
-        
-        # Refresh current tab (F5 or Ctrl+R)
-        refresh_f5 = QShortcut(QKeySequence("F5"), self)
-        refresh_f5.activated.connect(self.refresh_current_tab)
-        
-        refresh_ctrl_r = QShortcut(QKeySequence("Ctrl+R"), self)
-        refresh_ctrl_r.activated.connect(self.refresh_current_tab)
-        
-        # Settings shortcut (Ctrl+Shift+S)
-        settings_shortcut = QShortcut(QKeySequence("Ctrl+Shift+S"), self)
-        settings_shortcut.activated.connect(self.show_settings_tab)
 
-        # Diagnostics shortcut (Ctrl+Shift+D)
-        diagnostics_shortcut = QShortcut(QKeySequence("Ctrl+Shift+D"), self)
-        diagnostics_shortcut.activated.connect(self.show_runtime_diagnostics)
+        self._shortcuts = []
+        for keys, _label, method, _alias in SHORTCUTS:
+            if keys in ("F1", "F11"):
+                continue
+            if method == "switch_to_nth_tab":
+                # Ctrl+1 opens the first screen in the sidebar - the first
+                # real one, not a category heading.
+                for n in range(1, 10):
+                    shortcut = QShortcut(QKeySequence(f"Ctrl+{n}"), self)
+                    shortcut.activated.connect(lambda n=n: self.switch_to_nth_tab(n))
+                    self._shortcuts.append(shortcut)
+                continue
+            shortcut = QShortcut(QKeySequence(keys), self)
+            shortcut.activated.connect(getattr(self, method))
+            self._shortcuts.append(shortcut)
+        logging.debug("[SHORTCUTS] %s", ", ".join(k for k, *_ in SHORTCUTS))
 
-        # Quick actions shortcut (Ctrl+K)
-        quick_actions = QShortcut(QKeySequence("Ctrl+K"), self)
-        quick_actions.activated.connect(self.show_quick_search)
-        
-        logging.info("[SHORTCUTS] Registered keyboard shortcuts: Ctrl+1-9, Ctrl+P, Ctrl+K, F5, Ctrl+R, Ctrl+Shift+S, Ctrl+Shift+D")
-    
+    def show_shortcuts(self):
+        """The Keyboard shortcuts sheet (Account menu)."""
+        from PySide6.QtWidgets import QGridLayout
+        from .core.controls import make_button
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Keyboard shortcuts")
+        layout = QVBoxLayout(dialog)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(24)
+        grid.setVerticalSpacing(8)
+        for row, (keys, label, _method, alias) in enumerate(SHORTCUTS):
+            key_label = QLabel(keys)
+            key_label.setStyleSheet(
+                f"font-family: Consolas, monospace; color: {Gate.TEXT}; "
+                f"background: {Gate.RAISED}; border: 1px solid {Gate.LINE}; "
+                "border-radius: 4px; padding: 2px 8px;")
+            what = QLabel(label)
+            what.setStyleSheet(f"color: {Gate.TEXT_DIM if alias else Gate.TEXT_2};")
+            grid.addWidget(key_label, row, 0, Qt.AlignmentFlag.AlignLeft)
+            grid.addWidget(what, row, 1)
+        layout.addLayout(grid)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(make_button("Close", "primary", on_click=dialog.accept))
+        layout.addLayout(row)
+        self._shortcuts_dialog = dialog
+        dialog.exec()
+
     def switch_to_tab_index(self, index):
-        """Switch to tab by numeric index (0-based)"""
+        """Switch to the sidebar row `index` (0-based; headers count)."""
         if 0 <= index < self.tab_coordinator.get_tab_count():
             self.sidebar_nav.setCurrentRow(index)
-            logging.debug(f"[SHORTCUT] Switched to tab {index+1}")
+            logging.debug(f"[SHORTCUT] Switched to row {index}")
+
+    def switch_to_nth_tab(self, n: int) -> bool:
+        """Ctrl+N: the N-th screen this person has, counting from 1 and skipping headings."""
+        rows = self.tab_coordinator.tab_rows()
+        if 1 <= n <= len(rows):
+            self.tab_coordinator._reveal_row(rows[n - 1])
+            self.sidebar_nav.setCurrentRow(rows[n - 1])
+            return True
+        return False
 
     def _switch_to_tab_label(self, label: str) -> bool:
         """Switch to tab by exact label."""
@@ -1226,9 +1356,9 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
                     break
 
             if called_method:
-                self.status_bar.showMessage("\u2705 Tab refreshed", 2000)
+                self.show_status("Refreshed", "info", 2000)
             else:
-                self.status_bar.showMessage("\u2139\uFE0F  This tab doesn't support refresh", 2000)
+                self.show_status("This screen keeps itself up to date", "info", 2000)
             logging.debug(f"[SHORTCUT] Refresh triggered on {self.tab_coordinator.get_current_tab_name()}")
     
     def closeEvent(self, event):
@@ -1381,6 +1511,9 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
                                     icon=tab_icon,
                                 )
                                 
+                                if not hasattr(self, "loaded_plugins"):
+                                    self.loaded_plugins = []
+                                self.loaded_plugins.append(tab_name)
                                 logging.info(f"Loaded Plugin: {name}.{attribute_name}")
                             except Exception as e:
                                 logging.exception(f"Failed to instantiate plugin {attribute_name}: {e}")
