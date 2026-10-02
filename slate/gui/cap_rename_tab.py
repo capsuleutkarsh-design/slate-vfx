@@ -1,170 +1,156 @@
-import os
-import re
-from pathlib import Path
-from typing import List, Tuple, Dict, Any, Optional
+"""
+CAP Rename: rename many files at once, with a preview you can trust.
+
+The rules - what each file would be called, which renames can work, doing it
+and undoing it - live in slate/core/domain/batch_rename.py, without Qt. This
+screen shows the preview, keeps it honest while a rename runs, and offers
+"Undo last rename" from Slate's own journal instead of a .bat beside the plates.
+"""
+
 import logging
-from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
+from PySide6.QtCore import QEvent, Qt, QThread, Signal, Slot
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
-    QCheckBox, QPushButton, QTableWidget, QTableWidgetItem, 
-    QHeaderView, QFileDialog, QMessageBox, QGroupBox,
-    QProgressBar, QAbstractItemView, QSpinBox, QTabWidget
+    QAbstractItemView, QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QLabel,
+    QLineEdit, QMessageBox, QProgressBar, QSizePolicy, QSpinBox, QSplitter,
+    QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
-from PySide6.QtCore import Qt, QThread, Signal, Slot
-from PySide6.QtGui import QColor, QBrush
 
+from ..core.domain import batch_rename as br
 from ..core.infra.config_manager import ConfigManager
-from ..utils.security import SecurityValidator
-from ..core.infra.design_tokens import ColorTokens as C, TypographyTokens as T, RadiusTokens as R, SpacingTokens as S
+from .core.controls import make_button, form_layout
 from .core.icons import icon as draw_icon
 from .core.table_style import style_table, set_cell_status
 from .core.empty_state import EmptyState
 from slate.core.infra.gate import Gate
 
+logger = logging.getLogger(__name__)
+
+# Files nobody means to rename when a whole folder is added.
+_SKIP_NAMES = {"thumbs.db", "desktop.ini", ".ds_store"}
+
+SETTINGS_KEY = "cap_rename"
+
+
 class RenameWorker(QThread):
-    """
-    Worker thread to handle mass file renaming with UNDO script generation.
-    """
+    """Renames the files in the background (see batch_rename.rename_files)."""
+
     progress_signal = Signal(int, str)
-    finished_signal = Signal(bool, str, int) # Success, Message, Count
+    finished_signal = Signal(bool, str, int)   # success, message, count
 
-    def __init__(self, rename_pairs: List[Tuple[Path, Path]]):
+    def __init__(self, rename_pairs, user: str = "", journal_dir=None):
         super().__init__()
-        self.rename_pairs = rename_pairs
-        self.is_running = True
-
-    def run(self):
-        """
-        Rename in two passes, writing the undo script as it goes.
-
-        Two passes because a single one is order-dependent: renaming file 2 to
-        what file 3 is currently called either clobbers file 3 or fails,
-        depending which the loop reaches first. Every file goes to a unique
-        temporary name and only then to its final one - so a set of renames that
-        merely shuffles names around works, which is exactly what serialising an
-        existing sequence does.
-
-        The undo script is written line by line rather than at the end, because
-        the run that most needs undoing is the one that did not finish.
-        """
-        import uuid
-
-        count = 0
-        total = len(self.rename_pairs)
-        undo_file = None
-        handle = None
-
-        try:
-            undo_dir = self.rename_pairs[0][0].parent if self.rename_pairs else Path.home()
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            undo_file = undo_dir / f"undo_rename_{timestamp}.bat"
-
-            try:
-                handle = open(undo_file, "w", encoding="utf-8")
-                handle.write("@echo off\n")
-                handle.write("chcp 65001 > nul\n")
-                handle.write("echo Restoring files...\n")
-                handle.flush()
-            except OSError as exc:
-                logging.warning("Could not open the undo script: %s", exc)
-                handle = None
-
-            # Pass one: everything out of the way, under a name nothing can
-            # collide with.
-            staged = []
-            for i, (old_path, new_path) in enumerate(self.rename_pairs):
-                if not self._is_running:
-                    break
-                try:
-                    if not old_path.exists():
-                        continue
-                    if not new_path.parent.exists():
-                        new_path.parent.mkdir(parents=True, exist_ok=True)
-
-                    holding = old_path.parent / f".slate_rename_{uuid.uuid4().hex}.tmp"
-                    os.rename(old_path, holding)
-                    staged.append((holding, old_path, new_path))
-                except OSError as exc:
-                    logging.exception(f"Failed to stage {old_path.name}: {exc}")
-
-                self.progress_signal.emit(
-                    int(((i + 1) / max(1, total)) * 50), f"Preparing {old_path.name}")
-
-            # Pass two: into place, recording each one as it lands.
-            for i, (holding, old_path, new_path) in enumerate(staged):
-                try:
-                    os.rename(holding, new_path)
-                    count += 1
-                    if handle is not None:
-                        src = str(new_path).replace("/", "\\")
-                        dst = str(old_path).replace("/", "\\")
-                        handle.write(f'move "{src}" "{dst}" > nul\n')
-                        handle.flush()
-                except OSError as exc:
-                    logging.exception(f"Failed to rename to {new_path.name}: {exc}")
-                    # Put it back under its own name rather than leaving a
-                    # temporary file nobody would recognise.
-                    try:
-                        os.rename(holding, old_path)
-                    except OSError:
-                        logging.error("Left %s staged as %s", old_path.name, holding.name)
-
-                self.progress_signal.emit(
-                    50 + int(((i + 1) / max(1, len(staged))) * 50),
-                    f"Renaming {new_path.name}")
-
-            if handle is not None:
-                handle.write("echo Done.\n")
-                handle.write("pause\n")
-                handle.flush()
-
-            msg = f"Completed. Renamed {count} files."
-            if undo_file is not None and handle is not None:
-                msg += f"\nUndo script saved to:\n{undo_file.name}"
-            self.finished_signal.emit(True, msg, count)
-
-        except Exception as exc:
-            logging.exception("Rename run failed: %s", exc)
-            self.finished_signal.emit(False, f"Rename failed: {exc}", count)
-        finally:
-            if handle is not None:
-                try:
-                    handle.close()
-                except OSError:
-                    pass
+        self.rename_pairs = list(rename_pairs)
+        self.user = user
+        self.journal_dir = journal_dir
+        self._is_running = True
+        self.outcome: Optional[br.RenameOutcome] = None
+        self.journal: Optional[Path] = None
 
     def stop(self):
-        self.is_running = False
+        """Stop between files. Files already staged go back under their own names."""
+        self._is_running = False
+
+    def run(self):
+        total = len(self.rename_pairs)
+
+        def progress(done, _total, name):
+            pct = int(done / max(1, total) * 100)
+            self.progress_signal.emit(pct, f"Renaming {min(done, total)} of {total}…")
+
+        try:
+            outcome = br.rename_files(self.rename_pairs,
+                                      should_stop=lambda: not self._is_running,
+                                      progress=progress)
+        except Exception as exc:   # a disk vanishing mid-run
+            logger.exception("Rename run failed: %s", exc)
+            self.outcome = br.RenameOutcome()
+            self.finished_signal.emit(False, "The rename stopped because of an error - see the log.", 0)
+            return
+
+        self.outcome = outcome
+        # The journal is written only once something was renamed, so a run
+        # that renamed nothing leaves nothing behind.
+        self.journal = br.write_journal(outcome.renamed, user=self.user,
+                                        app_dir=self.journal_dir)
+
+        if outcome.cancelled:
+            self.finished_signal.emit(False, "Rename cancelled - nothing was renamed.", 0)
+        elif outcome.failed:
+            message = (f"{len(outcome.failed)} file(s) could not be renamed - see the log. "
+                       f"{outcome.count} renamed.")
+            for path, why in outcome.failed:
+                logger.warning("CAP Rename could not rename %s: %s", path, why)
+            self.finished_signal.emit(False, message, outcome.count)
+        else:
+            self.finished_signal.emit(True, f"Renamed {outcome.count} file(s).", outcome.count)
 
 
 class CapRenameTab(QWidget):
-    """
-    A PowerRename-style utility with VFX-specific features.
-    """
-    
-    # Proposed names go through the same validator the rest of the pipeline
-    # uses, so a pattern that produces something Windows will refuse is caught
-    # in the preview rather than part way through the run.
-    def __init__(self, config_manager: Optional[ConfigManager] = None):
+    """Batch renaming: find and replace, or number as a sequence."""
+
+    def __init__(self, config_manager: Optional[ConfigManager] = None, user_data: Optional[dict] = None):
         super().__init__()
         self.config_manager = config_manager
+        self.user_data = dict(user_data or {})
         self.files: List[Path] = []
-        self.preview_map: List[Tuple[Path, Path]] = []
-        self.security_validator = SecurityValidator()
+        self.preview_map = []
+        self._plan: br.RenamePlan = br.RenamePlan()
         self._conflicts: List[str] = []
-        self._claimed = set()
-        self._sources = set()
-        self.worker = None
+        self.worker: Optional[RenameWorker] = None
         self._is_closing = False
-        self._is_cleaned = False
+        self._last_folder = ""
+        self._busy = False
+        self.setAcceptDrops(True)
         self.setup_ui()
-        if config_manager:
-            self.apply_global_settings(config_manager.settings.get("global_settings", {}))
+        if config_manager is not None:
+            self.apply_global_settings(getattr(config_manager, "settings", {}) or {})
+        self.update_preview()
 
-    # --- CLOSING SLATE WHILE WORKING (slate/gui/components/work_guard.py) ---
+    # ------------------------------------------------------------ settings
+    def _settings(self) -> Dict[str, Any]:
+        settings = getattr(self.config_manager, "settings", None)
+        if not isinstance(settings, dict):
+            return {}
+        value = settings.get(SETTINGS_KEY)
+        return value if isinstance(value, dict) else {}
+
+    def apply_global_settings(self, settings: Dict[str, Any]):
+        """The last folder, 'Keep extension' and the last mode, remembered per machine."""
+        if not isinstance(settings, dict):
+            return
+        mine = settings.get(SETTINGS_KEY) if isinstance(settings.get(SETTINGS_KEY), dict) else {}
+        self._last_folder = str(mine.get("last_folder") or "")
+        widgets = (self.file_only_cb, self.mode_tabs)
+        for w in widgets:
+            w.blockSignals(True)
+        try:
+            self.file_only_cb.setChecked(bool(mine.get("keep_extension", True)))
+            self.mode_tabs.setCurrentIndex(1 if mine.get("mode") == br.MODE_SEQUENCE else 0)
+        finally:
+            for w in widgets:
+                w.blockSignals(False)
+
+    def _remember(self, **values):
+        settings = getattr(self.config_manager, "settings", None)
+        if not isinstance(settings, dict):
+            return
+        mine = dict(self._settings())
+        if all(mine.get(k) == v for k, v in values.items()):
+            return
+        mine.update(values)
+        settings[SETTINGS_KEY] = mine
+        save = getattr(self.config_manager, "save_settings", None)
+        if callable(save):
+            try:
+                save(settings)
+            except Exception as exc:
+                logger.debug("CAP Rename settings not saved: %s", exc)
+
+    # ------------------------------------------------------------ closing
     def busy_reason(self):
-        """A rename in progress, or None."""
         worker = self.worker
         try:
             if worker is not None and worker.isRunning():
@@ -174,10 +160,7 @@ class CapRenameTab(QWidget):
         return None
 
     def shutdown(self, timeout_ms: int = 15000) -> bool:
-        """
-        Let a running rename finish rather than cut it off: stopping between
-        the two passes would leave files under their temporary names.
-        """
+        """Let a running rename finish: stopping between passes is handled, but a clean finish is better."""
         worker = self.worker
         try:
             if worker is None or not worker.isRunning():
@@ -193,619 +176,755 @@ class CapRenameTab(QWidget):
             return True
 
     def _cleanup_worker(self, timeout_ms: int = 2000):
+        """Never deleteLater a thread that is still renaming."""
         worker = self.worker
         if worker is None:
             return
-        worker.stop()
-        if worker.isRunning():
-            worker.requestInterruption()
-            worker.wait(timeout_ms)
         try:
-            worker.deleteLater()
+            if worker.isRunning():
+                worker.stop()
+                worker.wait(timeout_ms)
+            if not worker.isRunning():
+                worker.deleteLater()
         except RuntimeError as exc:
-            logging.debug("CAP rename worker deleteLater skipped: %s", exc)
+            logger.debug("CAP rename worker cleanup skipped: %s", exc)
         self.worker = None
 
+    # ------------------------------------------------------------ layout
     def setup_ui(self):
-        # A. Modern Styling
-        self.setStyleSheet(f"""
-            QWidget {{
-                font-family: {T.FONT_FAMILY};
-                color: {C.TEXT_PRIMARY};
-            }}
-            QGroupBox {{
-                border: 1px solid {C.BORDER_SUBTLE};
-                border-radius: {R.LG}px;
-                margin-top: 1.2em; /* Leave space for title */
-                padding: {S.LG}px;
-                background-color: {C.BG_SURFACE}; 
-            }}
-            QGroupBox::title {{
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                left: 10px;
-                padding: 0 5px;
-                color: {C.ACCENT_PRIMARY};
-                font-weight: {T.WEIGHT_STYLE_BOLD};
-                font-size: 11pt;
-            }}
-            /* Fields, spin boxes and check boxes take the application's
-               style: overriding them here drew the spin arrows as two grey
-               dashes and the unchecked boxes nearly invisible. */
-            QTabWidget::pane {{
-                border: 1px solid {C.BORDER_SUBTLE};
-                border-radius: {R.MD}px;
-                background-color: {C.BG_SURFACE};
-                top: -1px; 
-            }}
-            QTabBar::tab {{
-                background: {C.BG_ELEVATED};
-                border: 1px solid {C.BORDER_SUBTLE};
-                padding: 12px 24px;
-                margin-right: 4px;
-                border-top-left-radius: {R.MD}px;
-                border-top-right-radius: {R.MD}px;
-                color: {C.TEXT_SECONDARY};
-                font-weight: {T.WEIGHT_STYLE_BOLD};
-            }}
-            QTabBar::tab:selected {{
-                background: {C.BG_SURFACE};
-                color: {C.TEXT_WHITE};
-                border-bottom: 3px solid {C.ACCENT_PRIMARY};
-            }}
-            QTabBar::tab:hover:!selected {{
-                background: {C.BG_HOVER};
-                color: {C.TEXT_PRIMARY};
-            }}
-            QLabel {{
-                background: transparent;
-                color: {C.TEXT_PRIMARY};
-            }}
-            QLabel#headerLabel {{
-                font-size: 15px;
-                font-weight: {T.WEIGHT_STYLE_BOLD};
-                color: {C.TEXT_WHITE};
-                padding-bottom: 5px;
-                background: transparent;
-            }}
-            QLabel#descLabel {{
-                color: {C.TEXT_SECONDARY};
-                font-style: italic;
-                margin-bottom: 10px;
-                background: transparent;
-            }}
-        """)
-
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(15)
+        layout.setContentsMargins(Gate.SPACE_4, Gate.SPACE_3, Gate.SPACE_4, Gate.SPACE_3)
+        layout.setSpacing(Gate.SPACE_2)
 
-        # --- 1. MODE SELECTION (TABS) ---
         self.mode_tabs = QTabWidget()
-        layout.addWidget(self.mode_tabs)
-
-        # === TAB A: SEARCH & REPLACE ===
+        self.mode_tabs.setDocumentMode(True)
         self.tab_replace = QWidget()
         self.setup_replace_ui()
-        self.mode_tabs.addTab(self.tab_replace, "Search and replace")
+        self.mode_tabs.addTab(self.tab_replace, "Find and replace")
         self.mode_tabs.setTabIcon(0, draw_icon("search"))
-
-        # === TAB B: SERIALIZE (SEQUENCE) ===
+        self.mode_tabs.setTabToolTip(0, "Find text in the names and replace it. The clean-up options act on "
+                                        "the name before the extension.")
         self.tab_sequence = QWidget()
         self.setup_sequence_ui()
-        self.mode_tabs.addTab(self.tab_sequence, "Serialize (make sequence)")
-        self.mode_tabs.setTabIcon(1, draw_icon("film"))
-        
-        self.mode_tabs.currentChanged.connect(self.update_preview)
+        self.mode_tabs.addTab(self.tab_sequence, "Number as a sequence")
+        self.mode_tabs.setTabIcon(1, draw_icon("sequence"))
+        self.mode_tabs.setTabToolTip(1, "Rename the files into one numbered sequence, in the order of the list.")
+        self.mode_tabs.currentChanged.connect(self._mode_changed)
+        self.mode_tabs.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
 
-        # --- 2. PREVIEW TABLE ---
+        # The table is the main content: the options sit in a splitter above
+        # it and give way, so a laptop screen still shows a screenful of rows.
+        table_panel = QWidget()
+        table_layout = QVBoxLayout(table_panel)
+        table_layout.setContentsMargins(0, 0, 0, 0)
+        table_layout.setSpacing(Gate.SPACE_2)
+        table_layout.addLayout(self._build_list_toolbar())
+
         self.table = QTableWidget()
         self.table.setColumnCount(3)
-        self.table.setHorizontalHeaderLabels(["Original Filename", "New Filename", "Status"])
-        # The shared table style. This table's own stylesheet styled ::item,
-        # which makes Qt ignore the colours set on cells - so a CONFLICT row
-        # looked exactly like one that would rename cleanly.
-        style_table(self.table, {"Original Filename": "stretch", "New Filename": "stretch",
+        self.table.setHorizontalHeaderLabels(["Original name", "New name", "Status"])
+        style_table(self.table, {"Original name": "stretch", "New name": "stretch",
                                  "Status": ("fixed", 130)})
-        # A preview, not an editor: typed names were shown and then ignored -
-        # the rename always used the computed name. Rows stay in file order.
         from slate.gui.components.table_tools import setup_table
         setup_table(self.table, sortable=False)
-        layout.addWidget(self.table)
+        self.table.setAcceptDrops(True)
+        self.table.viewport().setAcceptDrops(True)
+        self.table.setDragDropMode(QAbstractItemView.DragDropMode.DropOnly)
+        self.table.itemSelectionChanged.connect(self._sync_list_buttons)
+        table_layout.addWidget(self.table, 1)
         self.table_empty = EmptyState.over(
             self.table, "Nothing to rename yet",
-            "Load files or drop them here to preview their new names.", glyph="sequence")
-        
-        # --- 3. ACTIONS ---
+            "Add files, or drop files or a folder here, to preview their new names.", glyph="sequence")
+
+        # Delete takes the selected files out of the list (never off the disk).
+        self.table.installEventFilter(self)
+
+
+        self.splitter = QSplitter(Qt.Orientation.Vertical)
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.addWidget(self.mode_tabs)
+        self.splitter.addWidget(table_panel)
+        self.splitter.setStretchFactor(0, 0)
+        self.splitter.setStretchFactor(1, 1)
+        layout.addWidget(self.splitter, 1)
+
+        # Actions
         action_layout = QHBoxLayout()
-        self.load_btn = QPushButton("Load Files")
-        self.load_btn.setMinimumHeight(40)
-        self.load_btn.setStyleSheet(f"""
-            QPushButton {{ background-color: {C.BG_ELEVATED}; color: {C.TEXT_PRIMARY}; border: 1px solid {C.BORDER_LIGHT}; border-radius: {R.SM}px; }}
-            QPushButton:hover {{ background-color: {C.BG_HOVER}; border: 1px solid {C.ACCENT_PRIMARY}; }}
-        """)
-        self.load_btn.clicked.connect(self.load_files)
-        
-        self.rename_btn = QPushButton("Rename Files")
-        self.rename_btn.setObjectName("primaryButton")
-        self.rename_btn.setMinimumHeight(40)
-        self.rename_btn.setMinimumWidth(150)
-        self.rename_btn.setStyleSheet(f"""
-            QPushButton {{ background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {C.ACCENT_HOVER}, stop:1 {C.ACCENT_DARK}); color: {Gate.TEXT_ON_ACCENT}; border: none; border-radius: {R.SM}px; font-weight: bold; font-size: 14px; }}
-            QPushButton:hover {{ background-color: {C.ACCENT_PRIMARY}; }}
-            QPushButton:disabled {{ background-color: {C.BG_INPUT}; color: {C.TEXT_DISABLED}; }}
-        """)
-        self.rename_btn.clicked.connect(self.execute_rename)
-        self.rename_btn.setEnabled(False)
-        
-        action_layout.addWidget(self.load_btn)
-        
-        self.help_btn = QPushButton("Help")
-        self.help_btn.setMinimumHeight(40)
-        self.help_btn.setStyleSheet(f"""
-            QPushButton {{ background-color: {C.BG_ELEVATED}; color: {C.TEXT_PRIMARY}; border: 1px solid {C.BORDER_LIGHT}; border-radius: {R.SM}px; }}
-            QPushButton:hover {{ background-color: {C.BG_HOVER}; border: 1px solid {C.ACCENT_PRIMARY}; }}
-        """)
-        self.help_btn.clicked.connect(self.show_help_dialog)
+        action_layout.setSpacing(Gate.SPACE_2)
+        self.help_btn = make_button("Help", "ghost", on_click=self.show_help_dialog,
+                                    tooltip="How CAP Rename works")
+        self.undo_btn = make_button("Undo last rename", "secondary", on_click=self.undo_last_rename,
+                                    icon="undo")
         action_layout.addWidget(self.help_btn)
-        
+        action_layout.addWidget(self.undo_btn)
+        action_layout.addSpacing(Gate.SPACE_3)
+        # How many files, how many change, how many cannot - at a glance.
+        self.summary_label = QLabel()
+        self.summary_label.setStyleSheet(f"color: {Gate.TEXT_2};")
+        action_layout.addWidget(self.summary_label)
         action_layout.addStretch()
+
+        self.progress_label = QLabel("")
+        self.progress_label.setStyleSheet(f"color: {Gate.TEXT_2};")
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setFixedWidth(220)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setVisible(False)
+        action_layout.addWidget(self.progress_label)
+        action_layout.addWidget(self.progress_bar)
+
+        self.cancel_btn = make_button("Cancel", "secondary", on_click=self.cancel_rename,
+                                      tooltip="Stop renaming. Files not yet renamed keep their names.")
+        self.cancel_btn.setVisible(False)
+        action_layout.addWidget(self.cancel_btn)
+        self.rename_btn = make_button("Rename files", "primary", on_click=self.execute_rename)
+        self.rename_btn.setMinimumWidth(140)
+        self.rename_btn.setEnabled(False)
         action_layout.addWidget(self.rename_btn)
         layout.addLayout(action_layout)
 
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setVisible(False)
-        self.progress_bar.setFixedHeight(4) # Slim progress bar
-        layout.addWidget(self.progress_bar)
+        self._sync_undo_button()
 
-    def show_help_dialog(self):
-        msg = QMessageBox(self)
-        msg.setWindowTitle("Cap Rename Help")
-        msg.setTextFormat(Qt.TextFormat.RichText)
-        msg.setText("""
-        <h3>Cap Rename Tool Guide</h3>
-        <p>This tool offers two powerful modes for renaming files:</p>
-        
-        <h4>1. Search & Replace</h4>
-        <ul>
-            <li><b>Find/Replace:</b> Standard text substitution.</li>
-            <li><b>VFX Utilities:</b> Quick fixers for common pipeline tasks.
-                <ul>
-                    <li><i>Sanitize:</i> Removes spaces and special chars.</li>
-                    <li><i>Re-Pad:</i> Corrects frame numbers (e.g., _1 -> _0001).</li>
-                </ul>
-            </li>
-            <li><b>Regex:</b> Supports Python Regular Expressions for advanced matching.</li>
-        </ul>
-
-        <h4>2. Serialize (Make Sequence)</h4>
-        <p>Perfect for creating clean image sequences from messy files.</p>
-        <ul>
-            <li><b>Base Name:</b> The prefix (e.g., 'sc01_sh010_').</li>
-            <li><b>Start:</b> The first frame number (default 1001).</li>
-            <li><b>Step:</b> Increment size (usually 1).</li>
-        </ul>
-
-        <p><b>Undo:</b> every rename writes an undo script, <code>undo_rename_&lt;date&gt;_&lt;time&gt;.bat</code>, next to the files as it goes. Run it to put the old names back - it covers the files renamed so far, even if the rename stopped half way.</p>
-        """)
-        msg.exec()
+    def _build_list_toolbar(self):
+        bar = QHBoxLayout()
+        bar.setSpacing(Gate.SPACE_2)
+        self.load_btn = make_button("Add files…", "secondary", on_click=self.load_files, icon="plus",
+                                    tooltip="Add files to the list (they are added to what is already there).")
+        self.add_folder_btn = make_button("Add folder…", "secondary", on_click=self.load_folder, icon="folder",
+                                          tooltip="Add every file in a folder (not its sub-folders).")
+        self.remove_btn = make_button("Remove selected", "ghost", on_click=self.remove_selected,
+                                      tooltip="Take the selected files out of the list (Delete). Nothing on disk changes.")
+        self.clear_btn = make_button("Clear list", "ghost", on_click=self.clear_list,
+                                     tooltip="Empty the list. Nothing on disk changes.")
+        self.up_btn = make_button("", "ghost", on_click=lambda: self.move_selected(-1), icon="chevron-up",
+                                  tooltip="Move the selected files up (the order decides the numbering).")
+        self.down_btn = make_button("", "ghost", on_click=lambda: self.move_selected(1), icon="chevron-down",
+                                    tooltip="Move the selected files down (the order decides the numbering).")
+        self.sort_combo = QComboBox()
+        self.sort_combo.addItems(["Sort by name", "Sort by date modified", "Custom order"])
+        self.sort_combo.setToolTip("The order of the list - and of the numbers in 'Number as a sequence'.")
+        self.sort_combo.activated.connect(self._sort_chosen)
+        for widget in (self.load_btn, self.add_folder_btn, self.remove_btn, self.clear_btn):
+            bar.addWidget(widget)
+        bar.addStretch()
+        self.filter_combo = QComboBox()
+        self.filter_combo.addItems(["Show all files", "Show changes", "Show conflicts"])
+        self.filter_combo.setToolTip("Show every file, only the ones whose name changes, or only the ones that cannot be renamed.")
+        self.filter_combo.currentIndexChanged.connect(self._apply_filter)
+        bar.addWidget(self.filter_combo)
+        bar.addWidget(self.sort_combo)
+        bar.addWidget(self.up_btn)
+        bar.addWidget(self.down_btn)
+        return bar
 
     def setup_replace_ui(self):
         layout = QVBoxLayout(self.tab_replace)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(15)
-        
-        # Header Info
-        head = QLabel("Find and Replace Text")
-        head.setObjectName("headerLabel")
-        layout.addWidget(head)
-        
-        desc = QLabel("Search for patterns in filenames and replace them with new text. Use 'VFX Utilities' for common cleanup tasks.")
-        desc.setObjectName("descLabel")
-        desc.setWordWrap(True)
-        layout.addWidget(desc)
+        layout.setContentsMargins(Gate.SPACE_2, Gate.SPACE_2, Gate.SPACE_2, Gate.SPACE_1)
+        layout.setSpacing(Gate.SPACE_2)
 
-        # A. Inputs
-        bg_layout = QHBoxLayout()
+        row = QHBoxLayout()
+        row.setSpacing(Gate.SPACE_2)
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("Find (e.g. 'shot_v01')...")
-        self.search_edit.setToolTip("Enter the text you want to find in the filenames. Supports Regex if enabled below.")
+        self.search_edit.setPlaceholderText("e.g. shot_v01")
+        self.search_edit.setToolTip(
+            "Text to find. Matching ignores upper and lower case unless 'Case sensitive' is ticked.\n"
+            "With 'Use regex' this is a Python regular expression, e.g. _(\\d+)$")
         self.search_edit.textChanged.connect(self.update_preview)
-        
         self.replace_edit = QLineEdit()
-        self.replace_edit.setPlaceholderText("Replace with (e.g. 'shot_v02')...")
-        self.replace_edit.setToolTip("Enter the text to replace the found text with.")
+        self.replace_edit.setPlaceholderText("e.g. shot_v02")
+        self.replace_edit.setToolTip(
+            "What to put in its place.\nWith 'Use regex', refer to a bracketed group as \\1, \\2 "
+            "(Python style - $1 does not work).")
         self.replace_edit.textChanged.connect(self.update_preview)
-        
-        bg_layout.addWidget(QLabel("Find:"))
-        bg_layout.addWidget(self.search_edit, 1)
-        bg_layout.addWidget(QLabel("Replace:"))
-        bg_layout.addWidget(self.replace_edit, 1)
-        layout.addLayout(bg_layout)
+        row.addWidget(QLabel("Find"))
+        row.addWidget(self.search_edit, 1)
+        row.addWidget(QLabel("Replace with"))
+        row.addWidget(self.replace_edit, 1)
+        layout.addLayout(row)
 
-        # B. VFX Modifiers
-        mod_group = QGroupBox("VFX Utilities")
-        mod_layout = QHBoxLayout(mod_group)
-        mod_layout.setContentsMargins(15, 25, 15, 15)
-        mod_layout.setSpacing(20)
+        self.pattern_error_label = QLabel("")
+        self.pattern_error_label.setWordWrap(True)
+        self.pattern_error_label.setStyleSheet(f"color: {Gate.BAD};")
+        self.pattern_error_label.setVisible(False)
+        layout.addWidget(self.pattern_error_label)
 
-        self.lower_cb = QCheckBox("To Lowercase")
-        self.lower_cb.setToolTip("Forces the entire filename to lowercase letters.")
+        options = QHBoxLayout()
+        options.setSpacing(Gate.SPACE_4)
+        self.regex_cb = QCheckBox("Use regex")
+        self.regex_cb.setToolTip("Treat Find as a Python regular expression. Groups are written \\1 in Replace with.")
+        self.regex_cb.toggled.connect(self.update_preview)
+        self.case_cb = QCheckBox("Case sensitive")
+        self.case_cb.setToolTip("When ticked, 'Shot' does not match 'shot'. Off by default.")
+        self.case_cb.toggled.connect(self.update_preview)
+        self.file_only_cb = QCheckBox("Keep extension")
+        self.file_only_cb.setChecked(True)
+        self.file_only_cb.setToolTip("Leave .exr, .jpg ... exactly as they are. Untick to let Find and replace "
+                                     "change the extension too; rows where it changes are flagged.")
+        self.file_only_cb.toggled.connect(self._keep_extension_toggled)
+        for w in (self.regex_cb, self.case_cb, self.file_only_cb):
+            options.addWidget(w)
+        options.addSpacing(Gate.SPACE_4)
+
+        self.lower_cb = QCheckBox("To lowercase")
+        self.lower_cb.setToolTip("Lower-case the name.")
         self.lower_cb.toggled.connect(self.update_preview)
-
-        self.cleanup_cb = QCheckBox("Sanitize Name")
-        self.cleanup_cb.setToolTip("Replaces spaces and dots with underscores (_), and removes special characters for safety.")
+        self.cleanup_cb = QCheckBox("Sanitize")
+        self.cleanup_cb.setToolTip("Spaces and dots become _, symbols are removed. Letters in any language are kept.")
         self.cleanup_cb.toggled.connect(self.update_preview)
-
-        self.padding_cb = QCheckBox("Re-Pad Numbers")
-        self.padding_cb.setToolTip("Finds the last number sequence in the filename and formats it to the specified digit count.")
+        self.padding_cb = QCheckBox("Re-pad numbers to")
+        self.padding_cb.setToolTip("Write the last number in the name with this many digits: _1 -> _0001.")
         self.padding_cb.toggled.connect(self.toggle_padding)
-        
         self.padding_spin = QSpinBox()
         self.padding_spin.setRange(1, 8)
         self.padding_spin.setValue(4)
-        # The label sits beside the box, not inside it. As a prefix it shared
-        # the same 100px with the value and the arrows, and ran underneath them.
-        self.padding_spin.setToolTip("Target number of digits (e.g. 4 -> 0001).")
-        self.padding_spin.setFixedWidth(74)
+        self.padding_spin.setToolTip("Digits, e.g. 4 -> 0001.")
         self.padding_spin.setEnabled(False)
         self.padding_spin.valueChanged.connect(self.update_preview)
-
-        mod_layout.addWidget(self.lower_cb)
-        mod_layout.addWidget(self.cleanup_cb)
-        
-        pad_layout = QHBoxLayout()
-        pad_layout.setSpacing(8)
-        pad_layout.addWidget(self.padding_cb)
-        self.padding_label = QLabel("Digits")
-        self.padding_label.setStyleSheet("background: transparent; border: none;")
-        pad_layout.addWidget(self.padding_label)
-        pad_layout.addWidget(self.padding_spin)
-        pad_layout.addStretch(1)
-        mod_layout.addLayout(pad_layout)
-        
-        mod_layout.addStretch()
-        layout.addWidget(mod_group)
-        
-        # C. Options
-        options_layout = QHBoxLayout()
-        options_layout.setContentsMargins(5, 0, 0, 0)
-        
-        self.regex_cb = QCheckBox("Use Regex")
-        self.regex_cb.setToolTip("Enable Regular Expressions for advanced pattern matching.")
-        self.regex_cb.toggled.connect(self.update_preview)
-        
-        self.case_cb = QCheckBox("Case Sensitive")
-        self.case_cb.setToolTip("If checked, 'Shot' will not match 'shot'.")
-        self.case_cb.toggled.connect(self.update_preview)
-        
-        self.file_only_cb = QCheckBox("File Name Only")
-        self.file_only_cb.setToolTip("Modify only the filename, leaving the extension (.jpg, .exr) untouched.")
-        self.file_only_cb.setChecked(False)
-        self.file_only_cb.toggled.connect(self.update_preview)
-        
-        options_layout.addWidget(self.regex_cb)
-        options_layout.addWidget(self.case_cb)
-        options_layout.addWidget(self.file_only_cb)
-        options_layout.addStretch()
-        layout.addLayout(options_layout)
-        layout.addStretch()
+        self.padding_label = QLabel("digits")
+        for w in (self.lower_cb, self.cleanup_cb, self.padding_cb, self.padding_spin, self.padding_label):
+            options.addWidget(w)
+        options.addStretch()
+        layout.addLayout(options)
 
     def setup_sequence_ui(self):
         layout = QVBoxLayout(self.tab_sequence)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(15)
-        
-        # Header Info
-        head = QLabel("Create Numbered Sequence")
-        head.setObjectName("headerLabel")
-        layout.addWidget(head)
-        
-        desc = QLabel("Rename all loaded files into a consistent, numbered sequence. The files will be renamed in the order they appear in the list below.")
-        desc.setObjectName("descLabel")
-        desc.setWordWrap(True)
-        layout.addWidget(desc)
-        
-        # Row 1: Base Name (Full Width)
-        row1 = QHBoxLayout()
+        layout.setContentsMargins(Gate.SPACE_2, Gate.SPACE_2, Gate.SPACE_2, Gate.SPACE_1)
+        layout.setSpacing(Gate.SPACE_2)
+
+        row = QHBoxLayout()
+        row.setSpacing(Gate.SPACE_2)
         self.seq_base = QLineEdit()
-        self.seq_base.setPlaceholderText("e.g. shot_010_v01_")
-        self.seq_base.setToolTip("The common prefix for all files (e.g. 'shot_01_').")
+        self.seq_base.setPlaceholderText("Required, e.g. shot_010_v01_")
+        self.seq_base.setToolTip("The name every file gets before its number.")
         self.seq_base.textChanged.connect(self.update_preview)
-        row1.addWidget(QLabel("Base Name:"))
-        row1.addWidget(self.seq_base)
-        layout.addLayout(row1)
-        
-        # Row 2: Numbering Controls
-        row2 = QHBoxLayout()
-        row2.setSpacing(20)
-        
-        # Start
         self.seq_start = QSpinBox()
         self.seq_start.setRange(0, 999999)
         self.seq_start.setValue(1001)
-        self.seq_start.setPrefix("Start: ")
-        self.seq_start.setToolTip("The number to start counting from (usually 1001 for VFX).")
-        self.seq_start.setMinimumWidth(120)
+        self.seq_start.setToolTip("The number of the first file (VFX plates usually start at 1001).")
         self.seq_start.valueChanged.connect(self.update_preview)
-        
-        # Step
         self.seq_step = QSpinBox()
         self.seq_step.setRange(1, 100)
         self.seq_step.setValue(1)
-        self.seq_step.setPrefix("Inc: ")
-        self.seq_step.setToolTip("The increment for each file (e.g. 10 for 1010, 1020, 1030).")
-        self.seq_step.setMinimumWidth(100)
+        self.seq_step.setToolTip("How much each number goes up by (10 gives 1010, 1020 ...).")
         self.seq_step.valueChanged.connect(self.update_preview)
-        
-        # Padding
         self.seq_padding = QSpinBox()
         self.seq_padding.setRange(1, 8)
         self.seq_padding.setValue(4)
-        self.seq_padding.setPrefix("Pad: ")
-        self.seq_padding.setToolTip("The minimum number of digits to use (e.g. 4 -> 0001).")
-        self.seq_padding.setMinimumWidth(100)
+        self.seq_padding.setToolTip("How many digits each number is written with (4 -> 0001).")
         self.seq_padding.valueChanged.connect(self.update_preview)
-        
-        row2.addWidget(self.seq_start)
-        row2.addWidget(self.seq_step)
-        row2.addWidget(self.seq_padding)
-        row2.addStretch()
-        
-        layout.addLayout(row2)
-        layout.addStretch()
+        row.addWidget(QLabel("Base name"))
+        row.addWidget(self.seq_base, 1)
+        for label, spin in (("Start frame", self.seq_start), ("Step", self.seq_step),
+                            ("Padding", self.seq_padding)):
+            row.addSpacing(Gate.SPACE_2)
+            row.addWidget(QLabel(label))
+            row.addWidget(spin)
+        layout.addLayout(row)
 
+        warn_row = QHBoxLayout()
+        self.padding_warning = QLabel("")
+        self.padding_warning.setStyleSheet(f"color: {Gate.WARN};")
+        self.padding_fix_btn = make_button("Use more digits", "ghost", on_click=self._raise_padding)
+        warn_row.addWidget(self.padding_warning)
+        warn_row.addWidget(self.padding_fix_btn)
+        warn_row.addStretch()
+        layout.addLayout(warn_row)
+        self.padding_warning.setVisible(False)
+        self.padding_fix_btn.setVisible(False)
+
+    # ------------------------------------------------------------ options
     def toggle_padding(self, checked):
         self.padding_spin.setEnabled(checked)
         self.update_preview()
 
-    def apply_global_settings(self, global_settings: Dict[str, Any]):
-        """Apply global app settings relevant to this tab."""
-        if not isinstance(global_settings, dict):
-            return
-        # Rename tab doesn't have specific global settings yet, but this hook
-        # ensures compatibility with the main app's settings system
+    def _keep_extension_toggled(self, checked):
+        self._remember(keep_extension=bool(checked))
+        self.update_preview()
 
-    def update_preview(self):
-        self.table.setRowCount(0)
-        self.preview_map = []
-        # What the proposed names claim, and what the loaded files currently
-        # occupy. Renaming onto a name held by another file in this same batch
-        # is fine - the worker stages everything first - but renaming onto an
-        # unrelated file already on disk is not.
-        self._claimed = set()
-        self._conflicts = []
-        self._sources = {str(p.resolve()).lower() for p in self.files}
-        self.table.setRowCount(len(self.files))
-        
-        # Check current mode
-        is_sequence_mode = (self.mode_tabs.currentIndex() == 1)
+    def _mode_changed(self, index):
+        self._remember(mode=br.MODE_SEQUENCE if index == 1 else br.MODE_REPLACE)
+        self.update_preview()
 
-        if is_sequence_mode:
-            # === SEQUENCE LOGIC ===
-            base_name = self.seq_base.text()
-            start_num = self.seq_start.value()
-            step_num = self.seq_step.value()
-            pad = self.seq_padding.value()
-            
-            for row, file_path in enumerate(self.files):
-                ext = file_path.suffix
-                current_num = start_num + (row * step_num)
-                num_str = str(current_num).zfill(pad)
-                
-                # Construct new name
-                if base_name:
-                    new_filename = f"{base_name}{num_str}{ext}"
-                else:
-                    # If empty, just number? No, unsafe. Use original stem + number
-                    new_filename = f"{file_path.stem}_{num_str}{ext}"
+    def _raise_padding(self):
+        needed = getattr(self._plan, "padding_needed", 0)
+        if needed:
+            self.seq_padding.setValue(needed)
 
-                self._add_row(row, file_path, new_filename)
+    def rules(self) -> br.RenameRules:
+        if self.mode_tabs.currentIndex() == 1:
+            return br.RenameRules(mode=br.MODE_SEQUENCE, base_name=self.seq_base.text(),
+                                  start=self.seq_start.value(), step=self.seq_step.value(),
+                                  padding=self.seq_padding.value())
+        return br.RenameRules(
+            mode=br.MODE_REPLACE, search=self.search_edit.text(), replace=self.replace_edit.text(),
+            use_regex=self.regex_cb.isChecked(), case_sensitive=self.case_cb.isChecked(),
+            keep_extension=self.file_only_cb.isChecked(), lowercase=self.lower_cb.isChecked(),
+            sanitize=self.cleanup_cb.isChecked(), repad=self.padding_cb.isChecked(),
+            repad_digits=self.padding_spin.value())
 
-        else:
-            # === SEARCH/REPLACE LOGIC ===
-            search_txt = self.search_edit.text()
-            replace_txt = self.replace_edit.text()
-            use_regex = self.regex_cb.isChecked()
-            item_only = self.file_only_cb.isChecked()
-            
-            # VFX Flags
-            do_lower = self.lower_cb.isChecked()
-            do_cleanup = self.cleanup_cb.isChecked()
-            do_padding = self.padding_cb.isChecked()
-            pad_target = self.padding_spin.value()
-            flags = 0 if self.case_cb.isChecked() else re.IGNORECASE
+    # ------------------------------------------------------------ preview
+    def update_preview(self, *_):
+        plan = br.plan(self.files, self.rules())
+        self._plan = plan
+        self.preview_map = plan.renames
+        self._conflicts = [f"{row.source.name} - {row.reason}" for row in plan.conflicts]
 
-            for row, file_path in enumerate(self.files):
-                original = file_path.name
-                stem = file_path.stem
-                ext = file_path.suffix
-                
-                target = stem if item_only else original
-                processed = target
-                
-                # 1. Search & Replace
-                if search_txt:
-                    try:
-                        if use_regex:
-                            processed = re.sub(search_txt, replace_txt, processed, flags=flags)
-                        else:
-                            pattern = re.escape(search_txt)
-                            processed = re.sub(pattern, replace_txt, processed, flags=flags)
-                    except re.error:
-                         processed = "REGEX ERROR"
+        self.table.setUpdatesEnabled(False)
+        try:
+            self.table.setRowCount(len(plan.rows))
+            for row_index, row in enumerate(plan.rows):
+                self._add_row(row_index, row)
+        finally:
+            self.table.setUpdatesEnabled(True)
 
-                # 2. VFX Actions
-                if do_cleanup:
-                    processed = re.sub(r'[\s\.]+', '_', processed)
-                    processed = re.sub(r'[^a-zA-Z0-9_\-]', '', processed)
-                
-                if do_lower:
-                    processed = processed.lower()
-                    
-                if do_padding:
-                    match = re.search(r'(\d+)$', processed)
-                    if match:
-                        num_str = match.group(1)
-                        padded_num = num_str.zfill(pad_target)
-                        processed = processed[:match.start()] + padded_num + processed[match.end():]
+        error = plan.pattern_error
+        self.pattern_error_label.setVisible(bool(error))
+        self.pattern_error_label.setText(f"The Find pattern is not valid: {error}" if error else "")
+        self.search_edit.setStyleSheet(f"QLineEdit {{ border: 1px solid {Gate.BAD}; }}" if error else "")
 
-                new_filename = processed + ext if item_only else processed
-                self._add_row(row, file_path, new_filename)
+        needed = plan.padding_needed
+        self.padding_warning.setVisible(bool(needed))
+        self.padding_fix_btn.setVisible(bool(needed))
+        if needed:
+            self.padding_warning.setText(
+                f"The last numbers need {needed} digits - with {self.seq_padding.value()} the "
+                f"sequence mixes widths and tools stop seeing it as one sequence.")
+            self.padding_fix_btn.setText(f"Use {needed} digits")
 
+        self._update_summary()
+        self._apply_filter()
         self._sync_rename_button()
+        self._sync_list_buttons()
+
+    def _add_row(self, row_index: int, row: br.RowPlan):
+        original = QTableWidgetItem(row.source.name)
+        original.setToolTip(str(row.source))
+        new_item = QTableWidgetItem(row.new_name)
+        status = QTableWidgetItem(row.status)
+        tip = row.reason or row.warning
+        if row.status == br.CONFLICT:
+            set_cell_status(new_item, "bad")
+            set_cell_status(status, "bad", background=False)
+        elif row.warning:
+            set_cell_status(new_item, "warn")
+            set_cell_status(status, "warn", background=False)
+            status.setText(f"{br.WILL_RENAME} - check")
+        elif row.status == br.WILL_RENAME:
+            set_cell_status(new_item, "accent")
+            set_cell_status(status, "accent", background=False)
+        if tip:
+            new_item.setToolTip(tip)
+            status.setToolTip(tip)
+        self.table.setItem(row_index, 0, original)
+        self.table.setItem(row_index, 1, new_item)
+        self.table.setItem(row_index, 2, status)
+
+    def _update_summary(self):
+        counts = self._plan.counts
+        if not counts["files"]:
+            self.summary_label.setText("")
+            return
+        parts = [f"{counts['files']} file(s)", f"{counts['rename']} will be renamed"]
+        if counts["conflict"]:
+            parts.append(f"{counts['conflict']} conflict(s)")
+        if counts["warning"]:
+            parts.append(f"{counts['warning']} to check")
+        self.summary_label.setText("  ·  ".join(parts))
+
+    def _apply_filter(self, *_):
+        choice = self.filter_combo.currentIndex()
+        for index, row in enumerate(self._plan.rows):
+            if choice == 1:
+                hide = row.status == br.UNCHANGED
+            elif choice == 2:
+                hide = row.status != br.CONFLICT
+            else:
+                hide = False
+            self.table.setRowHidden(index, hide)
 
     def _sync_rename_button(self):
-        """
-        Renaming is offered only when every row can actually be renamed.
-
-        A partial run is the worst outcome here: half a sequence renamed and
-        half not, with nothing in the filenames to say which half.
-        """
-        if not hasattr(self, "rename_btn"):
-            return
-        conflicts = getattr(self, "_conflicts", None) or []
-        self.rename_btn.setEnabled(bool(self.preview_map) and not conflicts)
-        if conflicts:
-            self.rename_btn.setToolTip(
-                "%d row(s) cannot be renamed:\n%s"
-                % (len(conflicts), "\n".join(conflicts[:6])))
+        """Rename only when every row can really be renamed - and never twice at once."""
+        running = self._running()
+        can = self._plan.can_run and not running
+        self.rename_btn.setEnabled(can)
+        if running:
+            self.rename_btn.setToolTip("A rename is already running.")
+        elif can:
+            self.rename_btn.setToolTip(f"Rename {len(self.preview_map)} file(s) on disk.")
         else:
-            self.rename_btn.setToolTip("")
+            self.rename_btn.setToolTip(self._plan.why_not())
 
-    def _add_row(self, row, file_path, new_name):
-        """
-        Show one proposed rename, and refuse the ones that cannot work.
+    def _sync_list_buttons(self):
+        running = self._running()
+        has_files = bool(self.files)
+        selected = bool(self.table.selectionModel().selectedRows()) if self.table.selectionModel() else False
+        self.remove_btn.setEnabled(has_files and selected and not running)
+        self.clear_btn.setEnabled(has_files and not running)
+        self.up_btn.setEnabled(selected and not running)
+        self.down_btn.setEnabled(selected and not running)
+        self.sort_combo.setEnabled(has_files and not running)
 
-        Nothing used to check for a collision. Two files mapping to one name, or
-        a name already taken on disk, were queued anyway and found out one at a
-        time part way through the run - by which point some files had been
-        renamed and some had not, and the filenames no longer said which.
-        """
-        original = file_path.name
-        target = file_path.parent / new_name
-        status = "Unchanged"
-        color = None
-        conflict = ""
+    def _sync_undo_button(self):
+        journal = br.latest_journal(self._journal_dir()) if not self._running() else None
+        self.undo_btn.setEnabled(journal is not None)
+        if journal is None:
+            self.undo_btn.setToolTip("Nothing to undo yet.")
+            return
+        try:
+            record = br.read_journal(journal)
+            self.undo_btn.setToolTip(
+                f"Put back the names from the last rename: {record.get('count', 0)} file(s) "
+                f"in {record.get('folder') or 'several folders'}.")
+        except (OSError, ValueError):
+            self.undo_btn.setToolTip("Put back the names from the last rename.")
 
-        if "ERROR" in new_name:
-            conflict = "Check the search pattern"
-        elif new_name != original:
-            # The validator cleans a name rather than refusing it, so what
-            # matters is whether it had to change anything: if it did, the name
-            # the pattern produced is not one the filesystem will take.
-            ok, sanitized, why = self.security_validator.sanitize_filename(new_name)
-            if not ok:
-                conflict = why or "Not a valid filename"
-            elif sanitized != new_name:
-                conflict = "Not a valid filename - would become %s" % sanitized
-            elif str(target).lower() in self._claimed:
-                conflict = "Two files would take this name"
-            elif target.exists() and str(target.resolve()).lower() not in self._sources:
-                conflict = "A file with this name is already there"
+    def _running(self) -> bool:
+        if self._busy:
+            return True
+        worker = self.worker
+        try:
+            return worker is not None and worker.isRunning()
+        except RuntimeError:
+            return False
 
-        if conflict:
-            status = "CONFLICT"
-            color = "bad"
-            self._conflicts.append("%s - %s" % (original, conflict))
-        elif new_name != original:
-            status = "Will Rename"
-            color = "accent"
-            self._claimed.add(str(target).lower())
-            self.preview_map.append((file_path, target))
+    # ------------------------------------------------------------ the list
+    def _add_paths(self, paths):
+        known = {str(p).lower() for p in self.files}
+        added = []
+        for raw in paths:
+            path = Path(raw)
+            if path.is_dir():
+                try:
+                    children = [c for c in path.iterdir() if c.is_file()]
+                except OSError:
+                    children = []
+                candidates = br.natural_sorted(children)
+            else:
+                candidates = [path]
+            for candidate in candidates:
+                if candidate.name.lower() in _SKIP_NAMES or candidate.name.startswith(".slate_rename_"):
+                    continue
+                key = str(candidate).lower()
+                if key in known or not candidate.is_file():
+                    continue
+                known.add(key)
+                added.append(candidate)
+        if not added:
+            return 0
+        self.files.extend(added)
+        if self.sort_combo.currentIndex() == 0:
+            self.files = br.natural_sorted(self.files)
+        elif self.sort_combo.currentIndex() == 1:
+            self._sort_by_date()
+        self._remember(last_folder=str(added[-1].parent))
+        self._last_folder = str(added[-1].parent)
+        self.update_preview()
+        return len(added)
 
-        self.table.setItem(row, 0, QTableWidgetItem(original))
-        item_new = QTableWidgetItem(new_name)
-        item_status = QTableWidgetItem(status)
-        if color:
-            # The new name gets a wash of the status colour and the status
-            # word its colour, so the two cases read apart at a glance.
-            set_cell_status(item_new, color)
-            item_new.setForeground(QBrush(QColor(Gate.TEXT)))
-            set_cell_status(item_status, color, background=False)
-        if conflict:
-            item_new.setToolTip(conflict)
-            item_status.setToolTip(conflict)
-        self.table.setItem(row, 1, item_new)
-        self.table.setItem(row, 2, item_status)
+    def _start_folder(self) -> str:
+        folder = self._last_folder
+        if folder and Path(folder).is_dir():
+            return folder
+        return str(Path.home())
 
     def load_files(self):
-        """Open file dialog to select files."""
-        files, _ = QFileDialog.getOpenFileNames(
-            self, "Select Files to Rename", str(Path.home())
-        )
+        """Add files to the list (appended, duplicates ignored)."""
+        files, _ = QFileDialog.getOpenFileNames(self, "Add files to rename", self._start_folder())
         if files:
-            self.files = [Path(f) for f in files]
-            # update_preview decides whether renaming is possible at all, so it
-            # owns the button. Switching it on here as well re-enabled it over a
-            # list full of collisions.
-            self.update_preview()
+            self._add_paths(files)
+
+    def load_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, "Add every file in a folder", self._start_folder())
+        if folder:
+            self._add_paths([folder])
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls() and not self._running():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        self.dragEnterEvent(event)
+
+    def dropEvent(self, event):
+        paths = [url.toLocalFile() for url in event.mimeData().urls() if url.isLocalFile()]
+        if paths and not self._running():
+            self._add_paths(paths)
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def eventFilter(self, watched, event):
+        if (watched is getattr(self, "table", None) and event.type() == QEvent.Type.KeyPress
+                and event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace)):
+            self.remove_selected()
+            return True
+        return super().eventFilter(watched, event)
+
+    def _selected_indexes(self) -> List[int]:
+        model = self.table.selectionModel()
+        if model is None:
+            return []
+        return sorted({index.row() for index in model.selectedRows()
+                       if not self.table.isRowHidden(index.row())})
+
+    def remove_selected(self):
+        if self._running():
+            return
+        rows = set(self._selected_indexes())
+        if not rows:
+            return
+        self.files = [f for i, f in enumerate(self.files) if i not in rows]
+        self.table.clearSelection()
+        self.update_preview()
+
+    def move_selected(self, step: int):
+        rows = self._selected_indexes()
+        if not rows or self._running():
+            return
+        files = list(self.files)
+        order = rows if step < 0 else list(reversed(rows))
+        moved = []
+        for row in order:
+            target = row + step
+            if 0 <= target < len(files) and target not in moved:
+                files[row], files[target] = files[target], files[row]
+                moved.append(target)
+            else:
+                moved.append(row)
+        self.files = files
+        self.sort_combo.setCurrentIndex(2)
+        self.update_preview()
+        self.table.clearSelection()
+        mode = self.table.selectionMode()
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
+        for row in moved:
+            self.table.selectRow(row)
+        self.table.setSelectionMode(mode)
+
+    def _sort_by_date(self):
+        def mtime(path):
+            try:
+                return path.stat().st_mtime
+            except OSError:
+                return 0
+        self.files = sorted(self.files, key=lambda p: (mtime(p), br.natural_key(p)))
+
+    def _sort_chosen(self, index):
+        if index == 0:
+            self.files = br.natural_sorted(self.files)
+        elif index == 1:
+            self._sort_by_date()
+        self.update_preview()
 
     def clear_list(self):
+        if self._running():
+            return
         self.files = []
-        self._conflicts = []
-        self.preview_map = []
-        self.table.setRowCount(0)
-        self.rename_btn.setEnabled(False)
+        self.update_preview()
+
+    # ------------------------------------------------------------ renaming
+    def _confirm(self, title: str, text: str, yes_label: str) -> bool:
+        from slate.gui.components.feedback import confirm
+        return confirm(self, title, text, yes_label=yes_label, no_label="Cancel")
+
+    def _set_running(self, running: bool):
+        for widget in (self.mode_tabs, self.load_btn, self.add_folder_btn, self.filter_combo):
+            widget.setEnabled(not running)
+        self.cancel_btn.setVisible(running)
+        self.cancel_btn.setEnabled(running)
+        self.progress_bar.setVisible(running)
+        if not running:
+            self.progress_label.setText("")
+        self._sync_rename_button()
+        self._sync_list_buttons()
+        self.undo_btn.setEnabled(False if running else self.undo_btn.isEnabled())
+        if not running:
+            self._sync_undo_button()
 
     def execute_rename(self):
-        """Starts the Worker Thread to perform renaming."""
-        if not self.preview_map:
-            QMessageBox.information(self, "No Changes", "No files need renaming based on your current rules.")
+        """Ask, showing what will happen, then rename in the background."""
+        if self._running():
             return
-        if getattr(self, "_conflicts", None):
-            QMessageBox.warning(
-                self, "Cannot rename yet",
-                "%d row(s) would collide or are not valid filenames, so nothing "
-                "has been renamed:\n\n%s\n\nChange the pattern, or take those "
-                "files out of the list."
-                % (len(self._conflicts), "\n".join(self._conflicts[:8])))
+        self.update_preview()
+        if not self._plan.can_run:
+            from slate.gui.components.feedback import warn
+            warn(self, "Rename files", self._plan.why_not() or "Nothing to rename.")
             return
-            
-        confirm = QMessageBox.question(
-            self, "Confirm Rename", 
-            f"Rename {len(self.preview_map)} files on disk?\n\nAn undo script (undo_rename_<date>_<time>.bat) is "
-            "saved next to them; run it to put the old names back.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        
-        if confirm == QMessageBox.StandardButton.Yes:
-            self.progress_bar.setVisible(True)
-            self.progress_bar.setValue(0)
-            
-            # Disable inputs during processing
-            self.rename_btn.setEnabled(False)
 
-            self._cleanup_worker()
-            self.worker = RenameWorker(self.preview_map)
-            self.worker.progress_signal.connect(self.update_progress)
-            self.worker.finished_signal.connect(self.on_rename_finished)
-            self.worker.finished.connect(self._on_worker_thread_finished)
-            self.worker.finished.connect(self.worker.deleteLater)
-            self.worker.start()
+        pairs = self.preview_map
+        folders = sorted({str(old.parent) for old, _ in pairs})
+        where = folders[0] if len(folders) == 1 else f"{len(folders)} folders"
+        examples = "\n".join(f"  {old.name}  ->  {new.name}" for old, new in pairs[:4])
+        more = f"\n  ... and {len(pairs) - 4} more" if len(pairs) > 4 else ""
+        text = (f"Rename {len(pairs)} file(s) in {where}?\n\n{examples}{more}\n\n"
+                "You can put the old names back with 'Undo last rename'.")
+        if not self._confirm("Rename files", text, f"Rename {len(pairs)} file(s)"):
+            return
+
+        self._cleanup_worker()
+        self.worker = RenameWorker(pairs, user=self._username(), journal_dir=self._journal_dir())
+        self.worker.progress_signal.connect(self.update_progress)
+        self.worker.finished_signal.connect(self.on_rename_finished)
+        self.progress_bar.setValue(0)
+        self._busy = True
+        self._set_running(True)
+        self.progress_label.setText(f"Renaming 0 of {len(pairs)}…")
+        self.worker.start()
+
+    def cancel_rename(self):
+        if self.worker is not None:
+            self.worker.stop()
+            self.cancel_btn.setEnabled(False)
+            self.progress_label.setText("Cancelling…")
 
     @Slot(int, str)
     def update_progress(self, value, msg):
         self.progress_bar.setValue(value)
-        # Optional: Status bar update could go here
+        if self.cancel_btn.isEnabled():
+            self.progress_label.setText(msg)
 
     @Slot(bool, str, int)
     def on_rename_finished(self, success, msg, count):
-        if self.sender() is not self.worker:
+        worker = self.worker
+        if self.sender() is not None and self.sender() is not worker:
             return
-        self.progress_bar.setVisible(False)
-        self.rename_btn.setEnabled(True)
-        
-        if success:
-            QMessageBox.information(self, "Success", msg)
-            # Clear list or reload? Usually clear to prevent double rename errors
-            self.clear_list() 
-        else:
-            QMessageBox.critical(self, "Error", f"Renaming failed: {msg}")
+        outcome = getattr(worker, "outcome", None)
+        renamed = dict((str(old), new) for old, new in (outcome.renamed if outcome else []))
+        if renamed:
+            # The list now shows the files under their new names, ready for
+            # another pass - clearing it hid what had just happened.
+            self.files = [renamed.get(str(f), f) for f in self.files]
+            self._audit(outcome, getattr(worker, "journal", None))
 
-    def _on_worker_thread_finished(self):
-        if self.sender() is self.worker:
-            self.worker = None
+        from slate.gui.components.feedback import toast
+        if success:
+            toast(self, msg, "success", action=("Undo", self.undo_last_rename))
+        elif count:
+            toast(self, msg, "warning", action=("Undo", self.undo_last_rename))
+        else:
+            toast(self, msg, "info" if outcome and outcome.cancelled else "error")
+        self._finish_run()
+
+    def _finish_run(self):
+        worker = self.worker
+        self.worker = None
+        try:
+            if worker is not None:
+                worker.wait(2000)
+                if not worker.isRunning():
+                    worker.deleteLater()
+        except RuntimeError:
+            pass
+        self._busy = False
+        self._set_running(False)
+        self.update_preview()
+
+    # ------------------------------------------------------------ undo
+    def _journal_dir(self):
+        """Slate's own folder (the journals go in its rename_undo sub-folder)."""
+        app_dir = getattr(self.config_manager, "app_data_dir", None)
+        return Path(app_dir) if isinstance(app_dir, (str, Path)) and str(app_dir) else None
+
+    def undo_last_rename(self):
+        if self._running():
+            return
+        from slate.gui.components.feedback import toast, warn
+        journal = br.latest_journal(self._journal_dir())
+        if journal is None:
+            warn(self, "Undo last rename", "There is no rename to undo.")
+            self._sync_undo_button()
+            return
+        try:
+            record = br.read_journal(journal)
+        except (OSError, ValueError) as exc:
+            warn(self, "Undo last rename", f"The undo record could not be read: {exc}")
+            return
+        count = int(record.get("count") or 0)
+        if not self._confirm("Undo last rename",
+                             f"Put back the old names of {count} file(s) in "
+                             f"{record.get('folder') or 'several folders'}?",
+                             "Undo rename"):
+            return
+        result = br.undo(journal)
+        if result.refused:
+            warn(self, "Undo last rename", result.refused)
+        else:
+            new_to_old = {}
+            for entry in record.get("pairs") or []:
+                new_to_old[str(entry.get("new", "")).lower()] = Path(entry.get("old", ""))
+            self.files = [new_to_old.get(str(f).lower(), f) for f in self.files]
+            if result.failed:
+                toast(self, f"{result.restored} name(s) put back; {len(result.failed)} could not be.", "warning")
+            else:
+                toast(self, f"{result.restored} name(s) put back.", "success")
+            self._audit_undo(record, result)
+        self._sync_undo_button()
+        self.update_preview()
+
+    # ------------------------------------------------------------ record
+    def _username(self) -> str:
+        data = self.user_data or {}
+        return str(data.get("username") or data.get("user_id") or "")
+
+    def _audit(self, outcome, journal):
+        """Who renamed what, in the studio audit log (the tab is open to artists)."""
+        folders = sorted({str(old.parent) for old, _ in outcome.renamed})
+        details = (f"Renamed {outcome.count} file(s) in {', '.join(folders[:3])}"
+                   + (f" (+{len(folders) - 3} more folders)" if len(folders) > 3 else "")
+                   + (f"; undo journal {Path(journal).stem}" if journal else ""))
+        logger.info("CAP Rename: %s", details)
+        try:
+            from slate.core.infra.audit_logger import AuditLogger
+            AuditLogger().log_event("RENAME", self._username() or "unknown", details)
+        except Exception as exc:
+            logger.debug("Rename not written to the audit log: %s", exc)
+
+    def _audit_undo(self, record, result):
+        details = (f"Undid rename {record.get('id', '')}: {result.restored} name(s) put back "
+                   f"in {record.get('folder') or 'several folders'}")
+        try:
+            from slate.core.infra.audit_logger import AuditLogger
+            AuditLogger().log_event("RENAME", self._username() or "unknown", details)
+        except Exception as exc:
+            logger.debug("Undo not written to the audit log: %s", exc)
+
+    # ------------------------------------------------------------ help
+    def help_text(self) -> str:
+        return """
+        <h3>CAP Rename</h3>
+        <p>Rename many files at once. Nothing changes on disk until you press
+        <b>Rename files</b>, and the preview shows every new name first.</p>
+        <h4>Find and replace</h4>
+        <ul>
+          <li><b>Find / Replace with:</b> plain text, matched without regard to case unless
+              <i>Case sensitive</i> is ticked.</li>
+          <li><b>Use regex:</b> Find is a Python regular expression; refer to groups as
+              <code>\\1</code>, <code>\\2</code> in Replace with (not <code>$1</code>).</li>
+          <li><b>Keep extension</b> (on by default): the extension is never touched.</li>
+          <li><b>Sanitize</b>, <b>To lowercase</b> and <b>Re-pad numbers</b> act on the name
+              before the extension.</li>
+        </ul>
+        <h4>Number as a sequence</h4>
+        <p>Every file becomes <i>base name + number</i>, in the order of the list. Sort the
+        list by name or date, or move files up and down, to set the order.</p>
+        <h4>Conflicts</h4>
+        <p>When two files would end up with the same name, a name is not allowed, or a file
+        with that name is already in the folder, the row says <b>Conflict</b> and nothing is
+        renamed until it is fixed. Remove files with <b>Remove selected</b> or the Delete key.</p>
+        <h4>Undo</h4>
+        <p><b>Undo last rename</b> puts the old names back, even when names were swapped or
+        shifted. It refuses, and changes nothing, if the files were moved or renamed again
+        since.</p>
+        """
+
+    def show_help_dialog(self):
+        msg = QMessageBox(self)
+        msg.setWindowTitle("CAP Rename help")
+        msg.setTextFormat(Qt.TextFormat.RichText)
+        msg.setText(self.help_text())
+        msg.exec()
 
     def closeEvent(self, event):
         self._is_closing = True

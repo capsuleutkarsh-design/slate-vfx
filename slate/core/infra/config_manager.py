@@ -406,18 +406,20 @@ class ConfigManager:
     def default_format_mapping(self) -> Dict[str, str]:
         """Get default format mapping."""
         return {
-            'dpx': 'Scan/Dpx',
-            'exr': 'Scan/Exr',
-            'tif': 'Scan/Tiff',
-            'tiff': 'Scan/Tiff',
-            'mov': 'Scan/Mov',
-            'avi': 'Scan/Avi',
-            'png': 'Scan/Png',
-            'jpg': 'Scan/Jpg',
-            'jpeg': 'Scan/Jpg',
-            'raw': 'Scan/Raw',
-            'cine': 'Scan/Cine',
-            'r3d': 'Scan/R3d'
+            # Upper case, the way the templates write format folders
+            # (08_Deliver/EXR): plates used to land in 01_Scan/v001/Exr.
+            'dpx': 'Scan/DPX',
+            'exr': 'Scan/EXR',
+            'tif': 'Scan/TIFF',
+            'tiff': 'Scan/TIFF',
+            'mov': 'Scan/MOV',
+            'avi': 'Scan/AVI',
+            'png': 'Scan/PNG',
+            'jpg': 'Scan/JPG',
+            'jpeg': 'Scan/JPG',
+            'raw': 'Scan/RAW',
+            'cine': 'Scan/CINE',
+            'r3d': 'Scan/R3D'
         }
 
     @property

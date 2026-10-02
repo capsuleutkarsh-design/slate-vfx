@@ -87,3 +87,22 @@ class ProjectRepository:
             (op_id, name, str(src), str(dst), size, duration, status, error),
             fetch="none",
         )
+
+    def record_task_details(self, rows) -> None:
+        """
+        Many task rows in a few statements: a 5,000-frame ingest used to make
+        5,000 round trips to the database for its bookkeeping alone.
+
+        Each row is (op_id, name, src, dst, size, duration, status[, error]).
+        """
+        rows = list(rows or [])
+        columns = "(operation_id, item_name, source_path, dest_path, file_size, duration, status, error_msg)"
+        for start in range(0, len(rows), 100):
+            chunk = rows[start:start + 100]
+            params = []
+            for row in chunk:
+                row = tuple(row) + ("",) * max(0, 8 - len(row))
+                params.extend((row[0], row[1], str(row[2]), str(row[3]), row[4], row[5], row[6], row[7] or ""))
+            values = ", ".join(["(%s, %s, %s, %s, %s, %s, %s, %s)"] * len(chunk))
+            self.db.execute_query(
+                f"INSERT INTO task_details {columns} VALUES {values}", tuple(params), fetch="none")

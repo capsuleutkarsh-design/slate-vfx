@@ -1,168 +1,282 @@
 """
-SECURE Dialog for creating custom VFX templates with input validation.
+Creating and editing a pipeline template.
 
-Extracted from folder_creator_tab.py for better modularity.
+The old dialog sorted folders into categories by guessing from their text -
+'SHOT_A' under 'Layout' became an outsource folder because 'layout' contains
+'out', 'EXR' under '01_Scan' was dropped, and nested folders lost their parent.
+Here the categories are explicit sections, every folder keeps its full path
+('02_Dmp/Work/PSD'), and a saved template opens again exactly as it was saved.
+
+* Name (required, checked as you type - a built-in's name is refused) and a
+  description that is saved.
+* Folders are added and renamed in place (Enter / F2 / double-click) and can
+  be dragged within the tree.
+* A template with no per-shot folders says what Slate will add instead.
 """
 
+from typing import Dict, Iterable, List, Optional
+
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QLineEdit,
-    QTreeWidget, QTreeWidgetItem, QTreeWidgetItemIterator,
-    QInputDialog, QMessageBox,
+    QAbstractItemView, QDialog, QDialogButtonBox, QHBoxLayout, QHeaderView,
+    QLabel, QLineEdit, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
 )
 
-from ...utils.security import SecurityValidator, SecurityError
+from ...core.domain.naming import folder_path_problem, name_problem
+from slate.core.infra.gate import Gate
+from slate.gui.core.controls import form_layout, make_button
+
+# (template key, what the person sees). The order is the order on screen.
+SECTIONS = (
+    ("base_folders", "Project folders"),
+    ("production_subfolders", "Production (inside 04_Production)"),
+    ("outsource_subfolders", "Outsource (inside 04_Production)"),
+    ("shot_folders", "Per shot"),
+    ("scan_version_folders", "Inside each scan version"),
+)
+
+DEFAULT_SHOT_FOLDERS = ("01_Scan", "07_Comp", "08_Output")
+
+_SECTION_ROLE = Qt.ItemDataRole.UserRole + 1
+
+
+def template_key(name: str) -> str:
+    """The key a template is saved under: 'Client X (v2)' -> 'client_x_(v2)'."""
+    return str(name or "").strip().lower().replace(" ", "_")
 
 
 class CustomTemplateDialog(QDialog):
-    """SECURE Dialog for creating custom templates with input validation and enhanced UX."""
+    """New or edit: pass `template` (and its key) to edit an existing one."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, template: Optional[Dict] = None, *, original_key: str = "",
+                 builtin_keys: Iterable[str] = (), user_keys: Iterable[str] = (), title: str = ""):
         super().__init__(parent)
-        self.security_validator = SecurityValidator()
-        self.setWindowTitle("Create Custom Template")
+        self.original_key = original_key
+        self.builtin_keys = {k.lower() for k in builtin_keys}
+        self.user_keys = {k.lower() for k in user_keys}
+        self.setWindowTitle(title or ("Edit template" if template else "New template"))
         self.setModal(True)
-        self.resize(600, 500)
+        self.resize(640, 560)
 
         layout = QVBoxLayout(self)
+        layout.setSpacing(Gate.SPACE_2)
 
-        # Template name input
-        name_layout = QHBoxLayout()
-        name_layout.addWidget(QLabel("Template Name:"))
+        form = form_layout()
         self.name_input = QLineEdit()
-        self.name_input.setPlaceholderText("Enter template name...")
-        name_layout.addWidget(self.name_input)
-        layout.addLayout(name_layout)
+        self.name_input.setPlaceholderText("Required, e.g. Client X episodic")
+        self.name_input.textChanged.connect(self._validate)
+        form.addRow("Name", self.name_input)
+        self.description_input = QLineEdit()
+        self.description_input.setPlaceholderText("What this template is for (optional)")
+        form.addRow("Description", self.description_input)
+        layout.addLayout(form)
 
-        # Tree widget for folder structure
         self.tree_widget = QTreeWidget()
-        self.tree_widget.setHeaderLabels(["Folder Structure", "Type"])
-        self.tree_widget.setAlternatingRowColors(True)
-        self.tree_widget.setAnimated(True)
-        layout.addWidget(self.tree_widget)
+        self.tree_widget.setHeaderHidden(True)
+        self.tree_widget.setColumnCount(1)
+        self.tree_widget.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.tree_widget.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.tree_widget.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked
+                                         | QAbstractItemView.EditTrigger.EditKeyPressed
+                                         | QAbstractItemView.EditTrigger.SelectedClicked)
+        self.tree_widget.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.tree_widget.invisibleRootItem().setFlags(Qt.ItemFlag.ItemIsEnabled)
+        layout.addWidget(self.tree_widget, 1)
 
-        # Buttons for adding folders
+        self.sections: Dict[str, QTreeWidgetItem] = {}
+        for key, label in SECTIONS:
+            item = QTreeWidgetItem(self.tree_widget, [label])
+            item.setData(0, _SECTION_ROLE, key)
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsDropEnabled)
+            font = item.font(0)
+            font.setBold(True)
+            item.setFont(0, font)
+            item.setExpanded(True)
+            self.sections[key] = item
+        self.tree_widget.itemChanged.connect(lambda *_: self._validate())
+
+        self.shot_note = QLabel(
+            "No folders under 'Per shot': every shot gets " + ", ".join(DEFAULT_SHOT_FOLDERS) + ".")
+        self.shot_note.setStyleSheet(f"color: {Gate.WARN};")
+        self.shot_note.setWordWrap(True)
+        layout.addWidget(self.shot_note)
+
         btn_layout = QHBoxLayout()
-
-        self.add_base_btn = QPushButton("Add Base Folder")
-        self.add_base_btn.clicked.connect(self.add_base_folder)
-        btn_layout.addWidget(self.add_base_btn)
-
-        self.add_sub_btn = QPushButton("Add Sub Folder")
-        self.add_sub_btn.clicked.connect(self.add_sub_folder)
-        btn_layout.addWidget(self.add_sub_btn)
-
-        self.remove_btn = QPushButton("Remove Selected")
-        self.remove_btn.clicked.connect(self.remove_selected)
-        btn_layout.addWidget(self.remove_btn)
-
+        self.add_base_btn = make_button("Add folder", "secondary", icon="plus", on_click=self.add_base_folder,
+                                        tooltip="Add a folder to the selected section (or beside the selected folder).")
+        self.add_sub_btn = make_button("Add sub-folder", "secondary", on_click=self.add_sub_folder,
+                                       tooltip="Add a folder inside the selected folder.")
+        self.rename_btn = make_button("Rename", "ghost", on_click=self.rename_selected,
+                                      tooltip="Rename the selected folder (F2 or double-click works too).")
+        self.remove_btn = make_button("Remove", "ghost", on_click=self.remove_selected,
+                                      tooltip="Remove the selected folder and everything in it.")
+        for b in (self.add_base_btn, self.add_sub_btn, self.rename_btn, self.remove_btn):
+            btn_layout.addWidget(b)
+        btn_layout.addStretch()
         layout.addLayout(btn_layout)
 
-        # OK and Cancel buttons
-        ok_cancel_layout = QHBoxLayout()
-        self.ok_btn = QPushButton("OK")
-        self.ok_btn.clicked.connect(self.accept)
-        ok_cancel_layout.addWidget(self.ok_btn)
+        self.error_label = QLabel()
+        self.error_label.setWordWrap(True)
+        self.error_label.setStyleSheet(f"color: {Gate.BAD};")
+        layout.addWidget(self.error_label)
 
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.clicked.connect(self.reject)
-        ok_cancel_layout.addWidget(cancel_btn)
+        self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                           | QDialogButtonBox.StandardButton.Cancel)
+        self.ok_btn = self.button_box.button(QDialogButtonBox.StandardButton.Ok)
+        self.ok_btn.setText("Save template")
+        self.ok_btn.setProperty("kind", "primary")
+        self.ok_btn.setDefault(True)
+        self.button_box.accepted.connect(self.accept)
+        self.button_box.rejected.connect(self.reject)
+        layout.addWidget(self.button_box)
 
-        layout.addLayout(ok_cancel_layout)
+        if template:
+            self.load_template(template)
+        self._validate()
+
+    # ------------------------------------------------------------ the tree
+    def load_template(self, template: Dict):
+        source = template.get("structure") if isinstance(template.get("structure"), dict) else template
+        self.name_input.setText(str(template.get("name", "")))
+        self.description_input.setText(str(template.get("description", "")))
+        for key, _label in SECTIONS:
+            for path in source.get(key, []) or []:
+                self._add_path(self.sections[key], str(path))
+        self._validate()
+
+    def _add_path(self, section: QTreeWidgetItem, path: str):
+        parent = section
+        for part in [p for p in path.replace("\\", "/").split("/") if p]:
+            found = None
+            for i in range(parent.childCount()):
+                if parent.child(i).text(0) == part:
+                    found = parent.child(i)
+                    break
+            if found is None:
+                found = self._folder_item(parent, part)
+            parent = found
+        parent.setExpanded(True)
+
+    def _folder_item(self, parent, name: str) -> QTreeWidgetItem:
+        item = QTreeWidgetItem(parent, [name])
+        item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEditable
+                      | Qt.ItemFlag.ItemIsDragEnabled | Qt.ItemFlag.ItemIsDropEnabled)
+        parent.setExpanded(True)
+        return item
+
+    def _selected(self) -> Optional[QTreeWidgetItem]:
+        return self.tree_widget.currentItem()
+
+    @staticmethod
+    def _is_section(item) -> bool:
+        return item is not None and item.data(0, _SECTION_ROLE) is not None
+
+    def _new_name(self, parent) -> str:
+        names = {parent.child(i).text(0) for i in range(parent.childCount())}
+        name, n = "New folder", 2
+        while name in names:
+            name = f"New folder {n}"
+            n += 1
+        return name
 
     def add_base_folder(self):
-        """SECURE: Add a base folder with security validation."""
-        folder_name, ok = QInputDialog.getText(self, "Add Base Folder", "Enter base folder name:")
-        if ok and folder_name:
-            is_valid, sanitized_name, error_msg = self.security_validator.sanitize_filename(folder_name)
-            if not is_valid:
-                QMessageBox.warning(self, "Security Warning",
-                                  f"Invalid folder name:\n{error_msg}\n\nPlease use a different name.")
-                return
-            item = QTreeWidgetItem(self.tree_widget)
-            item.setText(0, sanitized_name)
-            item.setText(1, "base")
+        """Add a folder to the selected section, or beside the selected folder."""
+        current = self._selected()
+        if current is None:
+            parent = self.sections["base_folders"]
+        elif self._is_section(current):
+            parent = current
+        else:
+            parent = current.parent() or self.sections["base_folders"]
+        self._start_new(parent)
 
     def add_sub_folder(self):
-        """SECURE: Add a sub folder with security validation."""
-        selected = self.tree_widget.currentItem()
-        if not selected:
-            QMessageBox.warning(self, "No Selection", "Please select a parent folder first.")
-            return
+        current = self._selected()
+        parent = current if current is not None else self.sections["base_folders"]
+        self._start_new(parent)
 
-        folder_name, ok = QInputDialog.getText(self, "Add Sub Folder", "Enter sub folder name:")
-        if ok and folder_name:
-            is_valid, sanitized_name, error_msg = self.security_validator.sanitize_filename(folder_name)
-            if not is_valid:
-                QMessageBox.warning(self, "Security Warning",
-                                  f"Invalid folder name:\n{error_msg}\n\nPlease use a different name.")
-                return
-            item = QTreeWidgetItem(selected)
-            item.setText(0, sanitized_name)
-            item.setText(1, "sub")
+    def _start_new(self, parent):
+        item = self._folder_item(parent, self._new_name(parent))
+        self.tree_widget.setCurrentItem(item)
+        self.tree_widget.editItem(item, 0)
+        self._validate()
+        return item
+
+    def rename_selected(self):
+        current = self._selected()
+        if current is not None and not self._is_section(current):
+            self.tree_widget.editItem(current, 0)
 
     def remove_selected(self):
-        """Remove the selected item."""
-        selected = self.tree_widget.currentItem()
-        if selected:
-            parent = selected.parent()
-            if parent:
-                parent.removeChild(selected)
+        current = self._selected()
+        if current is None or self._is_section(current):
+            return
+        parent = current.parent()
+        if parent is not None:
+            parent.removeChild(current)
+        self._validate()
+
+    # ------------------------------------------------------------ result
+    def _paths(self, item: QTreeWidgetItem, prefix: str = "") -> List[str]:
+        out = []
+        for i in range(item.childCount()):
+            child = item.child(i)
+            path = f"{prefix}/{child.text(0).strip()}" if prefix else child.text(0).strip()
+            if child.childCount():
+                out.extend(self._paths(child, path))
             else:
-                self.tree_widget.takeTopLevelItem(self.tree_widget.indexOfTopLevelItem(selected))
+                out.append(path)
+        return out
 
-    def get_template_data(self):
-        """Get the template data from the tree."""
-        template_name = self.name_input.text().strip()
+    def template_key(self) -> str:
+        return template_key(self.name_input.text())
 
-        # SECURITY: Validate template name
-        if template_name:
-            name_valid, sanitized_name, name_error = self.security_validator.sanitize_filename(template_name)
-            if not name_valid:
-                raise SecurityError(f"Invalid template name: {name_error}")
+    def problems(self) -> List[str]:
+        out = []
+        name = self.name_input.text().strip()
+        if not name:
+            out.append("Enter a name for the template.")
         else:
-            sanitized_name = "Unnamed_Template"
+            problem = name_problem(name, "The template name")
+            if problem:
+                out.append(problem)
+            elif self.template_key() in self.builtin_keys:
+                out.append(f"'{name}' is the name of a built-in template. Choose another name.")
+        for key, label in SECTIONS:
+            for path in self._paths(self.sections[key]):
+                problem = folder_path_problem(path, f"A folder in '{label}'")
+                if problem:
+                    out.append(problem)
+                    break
+        return out
 
-        template_data = {
-            "name": sanitized_name,
-            "description": "Custom template created by user",
-            "base_folders": [],
-            "production_subfolders": [],
-            "outsource_subfolders": [],
-            "shot_folders": []
+    def _validate(self, *_):
+        problems = self.problems()
+        self.error_label.setText("\n".join(problems[:3]))
+        self.error_label.setVisible(bool(problems) and bool(self.name_input.text().strip()))
+        self.ok_btn.setEnabled(not problems)
+        self.ok_btn.setToolTip(problems[0] if problems else "")
+        self.shot_note.setVisible(not self._paths(self.sections["shot_folders"]))
+
+    def overwrites_another(self) -> bool:
+        """Saving would replace a different user template of the same name."""
+        key = self.template_key()
+        return key in self.user_keys and key != (self.original_key or "").lower()
+
+    def accept(self):
+        if self.problems():
+            self._validate()
+            return
+        super().accept()
+
+    def get_template_data(self) -> Dict:
+        """The template, with every folder as its full path."""
+        data = {
+            "name": self.name_input.text().strip(),
+            "description": self.description_input.text().strip() or "Custom template",
         }
-
-        # Extract data from tree
-        iterator = QTreeWidgetItemIterator(self.tree_widget)
-        while iterator.value():
-            item = iterator.value()
-            item_text = item.text(0)
-            item_type = item.text(1)
-
-            # SECURITY: Validate item text
-            if item_text:
-                text_valid, sanitized_text, text_error = self.security_validator.sanitize_filename(item_text)
-                if text_valid:
-                    item_text = sanitized_text
-                else:
-                    iterator += 1
-                    continue
-
-            # Determine parent type if it exists
-            parent = item.parent()
-            parent_text = parent.text(0) if parent else None
-
-            if item_type == "base":
-                template_data["base_folders"].append(item_text)
-            elif parent_text and ("production" in parent_text.lower() or "prod" in parent_text.lower()):
-                template_data["production_subfolders"].append(item_text)
-            elif parent_text and ("outsource" in parent_text.lower() or "out" in parent_text.lower()):
-                template_data["outsource_subfolders"].append(item_text)
-            elif parent_text and ("reel" in parent_text.lower() or "shot" in item_text.lower() or "scan" in item_text.lower() or "output" in item_text.lower()):
-                template_data["shot_folders"].append(item_text)
-            elif not parent:
-                template_data["base_folders"].append(item_text)
-
-            iterator += 1
-
-        return template_data
+        for key, _label in SECTIONS:
+            data[key] = self._paths(self.sections[key])
+        if not data["scan_version_folders"]:
+            data.pop("scan_version_folders")
+        return data

@@ -10,6 +10,47 @@ import logging
 from datetime import datetime
 import psutil
 import sys
+import os
+# Read and hashed in 8 MB pieces: big enough to stream a ProRes file quickly,
+# small enough to keep memory flat.
+CHECKSUM_CHUNK = 8 * 1024 * 1024
+
+_LONG_PREFIX = "\\\\?\\"           # \\?\
+_UNC_PREFIX = "\\\\?\\UNC\\"       # \\?\UNC\
+
+
+def long_path(path) -> str:
+    """
+    The path as a string Windows accepts past 260 characters.
+
+    Every file-system call goes through this, not only the copy: the copy used
+    the long form while the existence, size and checksum checks used the short
+    one, so any destination past 260 characters "failed verification" and the
+    file could never be brought in (ING-007). A UNC share takes the UNC form -
+    putting the long prefix in front of a share name names nothing.
+    """
+    text = os.path.abspath(str(path))
+    if sys.platform != "win32" or text.startswith(_LONG_PREFIX):
+        return text
+    if text.startswith("\\\\"):
+        return _UNC_PREFIX + text[2:]
+    return _LONG_PREFIX + text
+
+
+def same_volume(a, b) -> bool:
+    """Whether a rename can move a file from a to b (same drive, same volume)."""
+    try:
+        a, b = Path(a), Path(b)
+        if a.drive.lower() != b.drive.lower():
+            return False
+        probe = b
+        while not os.path.exists(long_path(probe)) and probe.parent != probe:
+            probe = probe.parent
+        return os.stat(long_path(a)).st_dev == os.stat(long_path(probe)).st_dev
+    except OSError:
+        return False
+
+
 class SafeFileOperations:
     """
     ENTERPRISE-GRADE file operations for sensitive VFX production data.
@@ -18,15 +59,13 @@ class SafeFileOperations:
 
     @staticmethod
     def _to_long_path(path: Path) -> str:
-        """
-        Convert path to Windows long path format (UNC) to bypass 260-char MAX_PATH limit.
-        Only applies on Windows.
-        """
-        path_str = str(path.resolve())
-        if sys.platform == 'win32' and not path_str.startswith('\\\\?\\'):
-            return f'\\\\?\\{path_str}'
-        return path_str
-    
+        """Kept for callers outside the ingest: see long_path()."""
+        return long_path(path)
+
+    @staticmethod
+    def exists(path) -> bool:
+        return os.path.exists(long_path(path))
+
     @staticmethod
     def safe_create_directory(directory_path: Path) -> Tuple[bool, str]:
         """
@@ -34,188 +73,190 @@ class SafeFileOperations:
         Returns (success, message)
         """
         try:
-            if directory_path.exists():
+            target = long_path(directory_path)
+            if os.path.isdir(target):
                 return True, f"Directory already exists: {directory_path}"
-            
-            # Create with parents
-            directory_path.mkdir(parents=True, exist_ok=True)
-            
-            # Verify creation
-            if not directory_path.exists():
+
+            os.makedirs(target, exist_ok=True)
+
+            if not os.path.isdir(target):
                 return False, f"Failed to create directory: {directory_path}"
-            
-            # Set appropriate permissions (read/write for user, read for others)
+
             try:
-                directory_path.chmod(0o755)  # rwxr-xr-x
+                os.chmod(target, 0o755)  # rwxr-xr-x
             except Exception as perm_error:
                 logging.warning(f"Could not set permissions on {directory_path}: {perm_error}")
-            
-            logging.info(f"[OK] Created directory: {directory_path}")
+
+            logging.debug(f"[OK] Created directory: {directory_path}")
             return True, f"Successfully created directory: {directory_path}"
-            
+
         except Exception as e:
             error_msg = f"Failed to create directory {directory_path}: {str(e)}"
             logging.exception(error_msg, exc_info=True)
             return False, error_msg
-    
+
     @staticmethod
-    def safe_move_with_verification(source: Path, destination: Path, 
-                                  verify_checksum: bool = True) -> Tuple[bool, str, int]:
+    def safe_move_with_verification(source: Path, destination: Path,
+                                  verify_checksum: bool = True,
+                                  allow_rename: bool = False) -> Tuple[bool, str, int]:
         """
-        PRODUCTION: Move files with comprehensive verification.
-        Uses Copy -> Verify -> Delete strategy to ensure source data safety.
-        Returns (success, message, bytes_moved)
+        Move a file: copy, verify, then delete the source.
+
+        With allow_rename and both ends on one volume the file is simply
+        renamed into place - nothing is copied, so there is nothing to verify
+        beyond the file arriving whole. Returns (success, message, bytes_moved).
         """
         try:
-            # 1. Attempt Safe Copy
-            # This handles checks, copy, verification, and cleanup details
+            source, destination = Path(source), Path(destination)
+            if (allow_rename and not SafeFileOperations.exists(destination)
+                    and same_volume(source, destination)):
+                size = SafeFileOperations._get_path_size(source)
+                parent_ok, message = SafeFileOperations.safe_create_directory(destination.parent)
+                if not parent_ok:
+                    return False, message, 0
+                os.rename(long_path(source), long_path(destination))
+                if SafeFileOperations._get_path_size(destination) != size:
+                    return False, f"Size changed while moving {source.name}", 0
+                return True, f"Successfully moved {source.name}", size
+
             success, message, size = SafeFileOperations.safe_copy_with_verification(
                 source, destination, verify_checksum
             )
-            
+
             if not success:
                 return False, f"Move failed during copy phase: {message}", 0
-            
-            # 2. If Copy Succeeded, Delete Source
-            # We verify again that destination exists before deleting source, just to be paranoid
-            if not destination.exists():
-                 return False, "Critical: Copy reported success but destination missing!", 0
 
-            # Safe delete source
+            if not SafeFileOperations.exists(destination):
+                return False, "Critical: Copy reported success but destination missing!", 0
+
             if not SafeFileOperations._safe_delete(source):
-                # Warning: Duplicate data exists
-                return False, f"Moved {source.name} successfully but failed to delete source file.", size
-            
-            logging.info(f"[OK] Verified move (Copy+Delete): {source} -> {destination}")
+                return False, f"Copied {source.name} but could not remove it from the source.", size
+
+            logging.debug(f"[OK] Verified move (Copy+Delete): {source} -> {destination}")
             return True, f"Successfully moved {source.name}", size
-            
+
         except Exception as e:
-            error_msg = f"Safe move failed: {source} -> {destination}. Error: {str(e)}"
+            error_msg = f"Could not move {source} to {destination}: {str(e)}"
             logging.exception(error_msg, exc_info=True)
             return False, error_msg, 0
-    
+
     @staticmethod
     def safe_copy_with_verification(source: Path, destination: Path,
                                   verify_checksum: bool = True) -> Tuple[bool, str, int]:
         """
-        PRODUCTION: Copy files with verification for critical data.
-        Returns (success, message, bytes_copied)
+        Copy a file and check the copy: always its size, and with
+        verify_checksum an MD5 of both ends, whatever the file's size (large
+        MOV/ProRes files used to get a size check only). Returns
+        (success, message, bytes_copied).
         """
         try:
-            if not source.exists():
+            source, destination = Path(source), Path(destination)
+            if not SafeFileOperations.exists(source):
                 return False, f"Source does not exist: {source}", 0
-            
+
             source_size = SafeFileOperations._get_path_size(source)
             source_checksum = None
-            
-            if verify_checksum and source_size < 1024**3:
+
+            if verify_checksum:
                 source_checksum = SafeFileOperations._calculate_checksum(source)
-            
-            # Ensure destination directory
+
             dest_parent = destination.parent
-            if not dest_parent.exists():
+            if not SafeFileOperations.exists(dest_parent):
                 success, message = SafeFileOperations.safe_create_directory(dest_parent)
                 if not success:
                     return False, f"Failed to create destination directory: {message}", 0
-            
-            # Check disk space
+
             disk_ok, disk_msg = SafeFileOperations._check_disk_space(source_size, dest_parent)
             if not disk_ok:
                 return False, disk_msg, 0
-            
-            # Perform copy operation
-            long_source = SafeFileOperations._to_long_path(source)
-            long_dest = SafeFileOperations._to_long_path(destination)
-            if source.is_dir():
+
+            long_source = long_path(source)
+            long_dest = long_path(destination)
+            if os.path.isdir(long_source):
                 shutil.copytree(long_source, long_dest)
             else:
                 shutil.copy2(long_source, long_dest)
-            
-            # Verify copy
+
             verification = SafeFileOperations._verify_copy_result(
                 source, destination, source_checksum, source_size
             )
-            
+
             if not verification[0]:
-                # Clean up failed copy
                 SafeFileOperations._safe_delete(destination)
                 return False, f"Copy verification failed: {verification[1]}", 0
-            
-            logging.info(f"[OK] Verified copy: {source} -> {destination}")
+
+            logging.debug(f"[OK] Verified copy: {source} -> {destination}")
             return True, f"Successfully copied {source.name}", source_size
-            
+
         except Exception as e:
-            error_msg = f"Safe copy failed: {source} -> {destination}. Error: {str(e)}"
+            error_msg = f"Could not copy {source} to {destination}: {str(e)}"
             logging.exception(error_msg, exc_info=True)
             return False, error_msg, 0
-    
 
-    
     @staticmethod
     def _verify_copy_result(source: Path, destination: Path,
                           original_checksum: Optional[str], original_size: int) -> Tuple[bool, str]:
         """Verify that copy operation completed successfully."""
         try:
-            if not destination.exists():
+            if not SafeFileOperations.exists(destination):
                 return False, f"Destination not created: {destination}"
-            
-            # Verify both source and destination exist (for copy)
-            if not source.exists():
+
+            if not SafeFileOperations.exists(source):
                 return False, f"Source missing after copy: {source}"
-            
-            # Verify size
+
             dest_size = SafeFileOperations._get_path_size(destination)
             if dest_size != original_size:
                 return False, f"Size mismatch: source={original_size}, dest={dest_size}"
-            
-            # Verify checksum if available
+
             if original_checksum:
                 dest_checksum = SafeFileOperations._calculate_checksum(destination)
                 if dest_checksum != original_checksum:
                     return False, f"Checksum mismatch: {destination.name}"
-            
+
             return True, "Copy verification passed"
-            
+
         except Exception as e:
             return False, f"Verification error: {str(e)}"
-    
+
     @staticmethod
     def _calculate_checksum(path: Path) -> str:
-        """Calculate MD5 checksum for file or directory."""
+        """MD5 of a file (streamed), or of a folder's names and sizes."""
         hash_md5 = hashlib.md5()
-        
-        if path.is_file():
-            with open(path, "rb") as f:
-                for chunk in iter(lambda: f.read(8192), b""):
+        target = long_path(path)
+
+        if os.path.isfile(target):
+            with open(target, "rb") as f:
+                for chunk in iter(lambda: f.read(CHECKSUM_CHUNK), b""):
                     hash_md5.update(chunk)
         else:
-            # For directories, create a consistent hash based on file structure
             file_info = []
-            for file_path in sorted(path.rglob('*')):
+            for file_path in sorted(Path(path).rglob('*')):
                 if file_path.is_file():
-                    # Use filename and size for directory checksum (faster than hashing all content)
                     file_info.append(f"{file_path.name}:{file_path.stat().st_size}")
             hash_md5.update(str(sorted(file_info)).encode())
-            
+
         return hash_md5.hexdigest()
-    
+
     @staticmethod
     def _get_path_size(path: Path) -> int:
         """Get total size of file or directory in bytes."""
-        if path.is_file():
-            return path.stat().st_size
-        else:
-            try:
-                return sum(f.stat().st_size for f in path.rglob('*') if f.is_file())
-            except Exception as e:
-                logging.warning(f"Could not calculate size for {path}: {e}")
-                return 0
-    
+        target = long_path(path)
+        if os.path.isfile(target):
+            return os.stat(target).st_size
+        try:
+            return sum(f.stat().st_size for f in Path(path).rglob('*') if f.is_file())
+        except Exception as e:
+            logging.warning(f"Could not calculate size for {path}: {e}")
+            return 0
+
     @staticmethod
     def _check_disk_space(required_size: int, location: Path) -> Tuple[bool, str]:
         """Check if there's sufficient disk space with safety buffer."""
         try:
-            available_space = psutil.disk_usage(str(location)).free
+            # The volume's root: a deep destination may not exist yet, or be
+            # past 260 characters, and the free space is the volume's anyway.
+            probe = Path(location)
+            available_space = psutil.disk_usage(probe.anchor or str(probe)).free
             
             # 20% safety buffer
             required_with_buffer = required_size * 1.2
@@ -241,12 +282,11 @@ class SafeFileOperations:
     def _safe_delete(path: Path) -> bool:
         """Safely delete file or directory."""
         try:
-            long_path = SafeFileOperations._to_long_path(path)
-            if path.is_dir():
-                shutil.rmtree(long_path)
+            target = long_path(path)
+            if os.path.isdir(target):
+                shutil.rmtree(target)
             else:
-                import os
-                os.remove(long_path)
+                os.remove(target)
             return True
         except Exception as e:
             logging.exception(f"Failed to delete {path}: {e}")

@@ -43,8 +43,13 @@ def _build_client_drive(root: Path, with_root_level_media=False, with_junk=False
     return root
 
 
-def _run_autoscan(source, target, mock_db, project_name="PRJ"):
-    """Run FolderCreationWorker synchronously in Auto-Scan configuration."""
+def _run_autoscan(source, target, mock_db, project_name="PRJ", operation="move"):
+    """
+    Run FolderCreationWorker synchronously in Auto-Scan configuration.
+
+    These tests check that nothing is left behind on the client drive, so they
+    run the Move option; Copy (the default) has its own tests below.
+    """
     import slate.core.workers.structure as structure_module
 
     structure_module.database_manager = mock_db
@@ -59,6 +64,7 @@ def _run_autoscan(source, target, mock_db, project_name="PRJ"):
         dry_run=False,
         format_mapping={},
         fast_mode=True,
+        operation=operation,
     )
 
     logs = []
@@ -150,7 +156,7 @@ class TestAutoScanIngest:
         """A move that fails must be counted, not reported as a success."""
         import slate.core.workers.structure as structure_module
 
-        def always_fail(src, dst, verify_checksum=True):
+        def always_fail(src, dst, verify_checksum=True, **_):
             return (False, "SIMULATED: destination unreachable", 0)
 
         monkeypatch.setattr(

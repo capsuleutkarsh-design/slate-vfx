@@ -261,8 +261,12 @@ class TestPartsWithClashingFileNames:
         assert worker.files_skipped == 0
         assert len(_files(version)) == 4
 
-    def test_the_second_part_is_kept_in_its_own_folder(
+    def test_every_part_is_kept_in_its_own_folder(
             self, temp_vfx_root, mock_db):
+        """
+        Both parts go in their own sub-folder (ING-049). Only the second used
+        to, so the first part sat in v001/EXR looking like the whole plate.
+        """
         target = temp_vfx_root / "Projects"
         target.mkdir()
         drive = self._clashing_drive(temp_vfx_root)
@@ -272,8 +276,9 @@ class TestPartsWithClashingFileNames:
 
         version = (target / "PRJ" / "05_Reels" / "ReelA" / "SH010"
                    / "01_Scan" / "v001")
-        assert "EXR/plate.0001.exr" in _files(version)
+        assert "A/EXR/plate.0001.exr" in _files(version)
         assert "B/EXR/plate.0001.exr" in _files(version)
+        assert not any(f.startswith("EXR/") for f in _files(version))
 
     def test_parts_with_different_names_still_sit_flat_together(
             self, temp_vfx_root, mock_db):
