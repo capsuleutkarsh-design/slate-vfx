@@ -23,7 +23,10 @@ except ImportError as e:
     logging.critical("Missing required dependency 'qasync'. Please install it using 'pip install qasync'.")
     from PySide6.QtWidgets import QApplication, QMessageBox
     app = QApplication(sys.argv)
-    QMessageBox.critical(None, "Startup Error", "Missing required background software 'qasync'.\nPlease install it or contact support.")
+    QMessageBox.critical(
+        None, "Starting Slate",
+        "Slate could not start: a part it needs (qasync) is missing from this "
+        "installation.\n\nReinstall Slate, or ask IT to.")
     sys.exit(1)
 
 
