@@ -212,6 +212,15 @@ class TestBuilding:
 
         text = result.summary()
 
-        assert "1 proxy(s) made" in text
+        assert "1 proxy made" in text
         assert "1 already there" in text
         assert "1 failed" in text
+
+
+def test_the_plan_leaves_out_proxies_that_exist(tmp_path):
+    """MED-090: it offered to build proxies that were already there."""
+    jobs = plan([_shot(tmp_path)], tmp_path)
+    jobs[0].target.parent.mkdir(parents=True)
+    jobs[0].target.write_bytes(b"already")
+    assert plan([_shot(tmp_path)], tmp_path) == []
+    assert len(plan([_shot(tmp_path)], tmp_path, rebuild=True)) == len(jobs)

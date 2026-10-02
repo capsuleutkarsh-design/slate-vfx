@@ -127,6 +127,7 @@ class AdvancedPlayer(QWidget):
     next_requested = Signal()         # Playlist navigation
     prev_requested = Signal()
     playing_changed = Signal(bool)
+    media_finished = Signal()         # a clip played to its end (loop off)
     snapshot_saved = Signal(str)
     _snapshot_done = Signal(str, str)  # path, error (from the snapshot thread)
 
@@ -541,6 +542,7 @@ class AdvancedPlayer(QWidget):
             return
         self._set_play_icon(False)
         self.audio.pause()
+        self.media_finished.emit()
 
     def _on_looped(self):
         if self.media_kind == "stream":

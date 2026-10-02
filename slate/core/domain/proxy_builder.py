@@ -66,9 +66,12 @@ class ProxyBuildResult:
         if self.error:
             return self.error
 
+        def proxies(n):
+            return f"{n} prox{'y' if n == 1 else 'ies'}"
+
         parts = []
         if self.built:
-            parts.append(f"{len(self.built)} proxy(s) made")
+            parts.append(f"{proxies(len(self.built))} made")
         if self.already_there:
             parts.append(f"{len(self.already_there)} already there")
         if self.failed:
@@ -111,8 +114,14 @@ def needs_proxy(clip: MediaClip) -> bool:
     return clip.path.suffix.lower() not in MOVIE_SUFFIXES
 
 
-def plan(shots, project_root=None, folder_resolver=None) -> List[ProxyJob]:
-    """Every proxy this project is missing, plate first for each shot."""
+def plan(shots, project_root=None, folder_resolver=None, rebuild: bool = False) -> List[ProxyJob]:
+    """
+    Every proxy this project is missing, plate first for each shot.
+
+    A proxy that is already there is not offered again unless rebuild=True:
+    the question used to be "Build 8 proxies?" and the answer "8 already
+    there" (MED-090).
+    """
     jobs: List[ProxyJob] = []
 
     for shot in shots or []:
@@ -129,11 +138,14 @@ def plan(shots, project_root=None, folder_resolver=None) -> List[ProxyJob]:
             source = first_frame_file(clip)
             if not source.exists():
                 continue
+            target = proxy_path_for(clip, shot_name)
+            if not rebuild and target.exists():
+                continue
             jobs.append(ProxyJob(
                 shot_name=shot_name,
                 department=key,
                 source=source,
-                target=proxy_path_for(clip, shot_name),
+                target=target,
                 is_sequence=clip.is_sequence,
             ))
 
