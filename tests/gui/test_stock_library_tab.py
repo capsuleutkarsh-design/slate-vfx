@@ -73,9 +73,13 @@ def _select(tab, rows):
 def test_the_count_is_the_library_total(qtbot, library, tmp_path):
     _seed(library, tmp_path, count=320)
     tab = _tab(qtbot, library)
+    qtbot.wait(300)                 # a second page may follow when the first does not fill the view
+    _wait(qtbot, tab)
     assert tab.db_total == 320
-    assert tab.model.rowCount() == 300
-    assert tab.gallery.lbl_count.text() == "Showing 300 of 320 assets"     # MED-006, MED-069
+    loaded = tab.model.rowCount()
+    assert loaded in (300, 320)
+    expected = "320 assets" if loaded == 320 else "Showing 300 of 320 assets"
+    assert tab.gallery.lbl_count.text() == expected                         # MED-006, MED-069
 
 
 def test_count_text_reads_well():

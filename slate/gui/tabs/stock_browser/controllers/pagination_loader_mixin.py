@@ -180,6 +180,8 @@ class PaginationLoaderMixin:
                                            current=getattr(self, "current_category", "All"))
 
         self.gallery.set_loading_state(False)
+        # A fresh list drops the selection without saying so.
+        self.sidebar.set_selection_count(len(self.gallery.selected_rows()))
         self.apply_post_load_filters()
         self.check_missing_files(new_assets)
         if self.has_more:

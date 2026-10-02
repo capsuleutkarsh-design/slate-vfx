@@ -437,6 +437,10 @@ class AdvancedPlayer(QWidget):
             from ...utils.sequence_utils import sequence_for
             try:
                 seq = sequence_for(path_obj)
+                # The library's rule: numbered variants are stills.
+                from ...core.domain.sequence_rules import is_real_sequence
+                if seq is not None and not is_real_sequence(seq):
+                    seq = None
             except Exception as e:
                 logging.exception(f"Sequence detection error: {e}")
             if seq is not None:
@@ -569,6 +573,10 @@ class AdvancedPlayer(QWidget):
 
     # --------------------------------------------------------- controls
     def toggle_play(self):
+        if self._load_timer.isActive():
+            # Still about to load: play it when it is in.
+            self._pending_autoplay = not self._pending_autoplay
+            return
         if not self.active_engine or self.media_kind == "image":
             return
         if self.is_playing():
@@ -577,6 +585,9 @@ class AdvancedPlayer(QWidget):
             self.active_engine.play()
 
     def play(self):
+        if self._load_timer.isActive():
+            self._pending_autoplay = True
+            return
         if self.active_engine and self.media_kind != "image":
             self.active_engine.play()
 

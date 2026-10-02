@@ -90,6 +90,14 @@ class ProxyManager:
         return prefix + absolute
 
     @classmethod
+    def exists(cls, path) -> bool:
+        """os.path.exists that also sees files past 260 characters."""
+        try:
+            return bool(path) and os.path.exists(cls.long_path(path))
+        except (OSError, ValueError):
+            return False
+
+    @classmethod
     def _usable(cls, path: Path) -> bool:
         """A cached file counts only if it is there and has something in it."""
         try:
@@ -130,14 +138,25 @@ class ProxyManager:
     def _commit_partial(cls, partial: Path, final: Path) -> bool:
         """Move a finished partial file into place, or clean it up."""
         src, dst = cls.long_path(partial), cls.long_path(final)
-        try:
-            if os.path.exists(src) and os.path.getsize(src) > 0:
-                os.replace(src, dst)
-                return True
-            logging.warning("Could not finish %s: the new file was not there to move "
-                            "into place (path %d characters long).", final.name, len(str(final)))
-        except OSError as exc:
-            logging.warning("Could not finish %s: %s", final.name, exc)
+        # A file written a moment ago is often held briefly by a virus scanner
+        # or the indexer ("being used by another process"); a large ingest lost
+        # a thumbnail or two that way. A few short retries ride it out.
+        import time
+        for attempt in range(6):
+            try:
+                if os.path.exists(src) and os.path.getsize(src) > 0:
+                    os.replace(src, dst)
+                    return True
+                logging.warning("Could not finish %s: the new file was not there to move "
+                                "into place (path %d characters long).", final.name, len(str(final)))
+                break
+            except PermissionError as exc:
+                if attempt == 5:
+                    logging.warning("Could not finish %s: %s", final.name, exc)
+                time.sleep(0.1 * (attempt + 1))
+            except OSError as exc:
+                logging.warning("Could not finish %s: %s", final.name, exc)
+                break
         cls._discard(partial)
         return False
 

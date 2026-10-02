@@ -1,3 +1,4 @@
+import os
 import sys
 import time
 import logging
@@ -119,20 +120,22 @@ class StreamEngine(BaseMediaEngine):
         return bytes(data)
 
     def _stop_producer(self):
-        """Stops and cleans up the producer thread and FFmpeg process."""
+        """
+        Stop ffmpeg and the producer thread, then let go of the pipes.
+
+        In that order: the pipes used to be closed (by the tracker) while the
+        producer thread could still be reading them, which crashes natively on
+        Windows. Killing ffmpeg ends the read; the thread is joined; only then
+        are the pipes closed.
+        """
         self.running = False
-        if self.process:
-            subprocess_tracker.unregister(self.process)
+        proc = self.process
+        self.process = None
+        if proc is not None:
             try:
-                self.process.kill()
-                try:
-                    self.process.stdout.read()
-                except (AttributeError, OSError, ValueError):
-                    pass
-                self.process.wait(timeout=1.0)
-            except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired) as e:
+                proc.kill()
+            except (OSError, subprocess.SubprocessError) as e:
                 logging.debug(f"Failed to stop FFmpeg process cleanly: {e}")
-            self.process = None
 
         if self.producer_thread and self.producer_thread.is_alive():
             if threading.current_thread() != self.producer_thread:
@@ -140,6 +143,13 @@ class StreamEngine(BaseMediaEngine):
                 if self.producer_thread.is_alive():
                     logging.warning("StreamEngine: Producer thread stuck, ignoring...")
         self.producer_thread = None
+
+        if proc is not None:
+            subprocess_tracker.unregister(proc)
+            try:
+                proc.wait(timeout=1.0)
+            except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired) as e:
+                logging.debug(f"FFmpeg did not exit cleanly: {e}")
 
     def _start_producer(self, start_frame: int = 0):
         """Starts the background producer thread."""
@@ -262,10 +272,22 @@ class StreamEngine(BaseMediaEngine):
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             creationflags = subprocess.CREATE_NO_WINDOW
 
-        proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            bufsize=self.render_w*self.render_h*4*4, startupinfo=startupinfo, creationflags=creationflags
-        )
+        # stderr goes to a pipe of our own, read and closed only by the drain
+        # thread. Through stderr=subprocess.PIPE the process tracker closed it
+        # while the drain thread was still reading - a native crash on Windows
+        # that took the whole program down when clips were switched quickly.
+        err_read, err_write = os.pipe()
+        try:
+            proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=err_write,
+                bufsize=self.render_w*self.render_h*4*4, startupinfo=startupinfo, creationflags=creationflags
+            )
+        except Exception:
+            os.close(err_read)
+            raise
+        finally:
+            os.close(err_write)
+        stderr_stream = os.fdopen(err_read, "rb")
 
         # Keep what ffmpeg says. It used to go to DEVNULL, so when a file would
         # not play there was no way to find out why - the picture simply stayed
@@ -287,7 +309,7 @@ class StreamEngine(BaseMediaEngine):
                 except Exception:
                     pass
 
-        threading.Thread(target=_drain, args=(proc.stderr,), daemon=True,
+        threading.Thread(target=_drain, args=(stderr_stream,), daemon=True,
                          name="slate-ffmpeg-stderr").start()
         return subprocess_tracker.register(proc)
 
@@ -402,6 +424,16 @@ class StreamEngine(BaseMediaEngine):
             except Exception as e:
                 logging.exception(f"Producer Error (Frame Read): {e}")
                 break
+
+        # Stopped while restarting: a process launched after the stop is ours
+        # to end (stop() had already taken the one before it).
+        if not self.running and self.process is not None:
+            leftover, self.process = self.process, None
+            try:
+                leftover.kill()
+            except (OSError, subprocess.SubprocessError):
+                pass
+            subprocess_tracker.unregister(leftover)
 
     def stop(self):
         was_playing = self.is_playing()

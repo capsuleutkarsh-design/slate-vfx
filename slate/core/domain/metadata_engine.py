@@ -336,7 +336,8 @@ class SmartMetadataManager:
         and cool hue ranges, not by an average hue: reds sit at both ends of
         the hue circle, and averaging them called a red flame "cold".
         """
-        if not thumb_path or not os.path.exists(thumb_path):
+        from .proxy_manager import ProxyManager
+        if not thumb_path or not ProxyManager.exists(thumb_path):
             return []
         try:
             from PySide6.QtCore import Qt as _Qt

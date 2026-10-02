@@ -244,7 +244,8 @@ class ThumbnailLoader(QThread):
 
             self.mutex.unlock()
 
-            if not Path(path).exists():
+            from slate.core.domain.proxy_manager import ProxyManager
+            if not ProxyManager.exists(path):
                 logging.debug(f"Thumbnail Missing on Disk: {path}")
                 self.mutex.lock()
                 self.processed.discard(path)
@@ -391,7 +392,7 @@ class StockModel(QAbstractTableModel):
             if column != 0:
                 return None
             pixmap = self._pixmap_for(asset)
-            return QIcon(pixmap) if pixmap is not None else None
+            return self._row_icon(pixmap) if pixmap is not None else None
         if role == Qt.ItemDataRole.ForegroundRole and asset.get('_missing'):
             return QColor(Gate.BAD)
         if role in (Qt.ItemDataRole.DisplayRole, SORT_ROLE):
@@ -412,6 +413,28 @@ class StockModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.TextAlignmentRole and column in (4,):
             return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         return None
+
+    ROW_ICON = QSize(48, 27)
+
+    def _row_icon(self, pixmap):
+        """The List view's thumbnail: fitted, centred in one fixed box so names line up."""
+        key = pixmap.cacheKey()
+        cache = self.__dict__.setdefault("_row_icons", OrderedDict())
+        if key in cache:
+            return cache[key]
+        box = QPixmap(self.ROW_ICON)
+        box.fill(Qt.GlobalColor.transparent)
+        scaled = pixmap.scaled(self.ROW_ICON, Qt.AspectRatioMode.KeepAspectRatio,
+                               Qt.TransformationMode.SmoothTransformation)
+        painter = QPainter(box)
+        painter.drawPixmap((box.width() - scaled.width()) // 2,
+                           (box.height() - scaled.height()) // 2, scaled)
+        painter.end()
+        icon = QIcon(box)
+        cache[key] = icon
+        if len(cache) > self.MAX_CACHE_SIZE:
+            cache.popitem(last=False)
+        return icon
 
     # ---- changes
     def load_data(self, new_assets):

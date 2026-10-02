@@ -122,29 +122,7 @@ VALID_EXTENSIONS = frozenset({
 # Camera raw: stored and searchable, but nothing in Slate can decode them.
 RAW_EXTENSIONS = frozenset({'.r3d', '.ari'})
 
-# A numbered group is a sequence when this much of its range is present.
-MIN_COVERAGE = 0.9
-
-
-def is_real_sequence(seq) -> bool:
-    """
-    Whether a group of numbered files is a clip rather than a set of stills.
-
-    group_frames() already insists on two or more frames with the same name
-    and padding. Stock libraries are full of numbered variants
-    (fire_burst_01, _03, _05...; sparks_1, sparks_2), so the library also
-    asks that the numbers run on - at least 90% of the range present - and
-    that there are three frames, or the numbers are padded like frame numbers
-    (0001, 1001), before it treats them as one clip.
-    """
-    count = len(seq.frames)
-    span = seq.end - seq.start + 1
-    if count < 2 or span <= 0:
-        return False
-    if count / span < MIN_COVERAGE:
-        return False
-    looks_like_frames = seq.padding >= 3 or seq.start >= 100
-    return count >= 3 or looks_like_frames
+from .sequence_rules import MIN_COVERAGE, is_real_sequence  # noqa: F401 (shared with the player)
 
 
 def sequence_display_name(seq) -> str:

@@ -402,7 +402,8 @@ class StockInspectorPanel(QWidget):
             self.btn_copy_missing.hide()
             self.notice_row.show()
             return
-        target = proxy if (proxy and os.path.exists(proxy)) else path
+        from slate.core.domain.proxy_manager import ProxyManager
+        target = proxy if (proxy and ProxyManager.exists(proxy)) else path
         self.player._pending_autoplay = bool(autoplay)
         # The original carries the sound; a proxy is made without it.
         self.player.load(target, audio_source=path)

@@ -380,7 +380,8 @@ class StockBrowserTab(
 
     def _preview_path(self, asset):
         proxy = asset.get("proxy_path")
-        return proxy if proxy and os.path.exists(proxy) else asset_path(asset)
+        from ...core.domain.proxy_manager import ProxyManager
+        return proxy if proxy and ProxyManager.exists(proxy) else asset_path(asset)
 
     def _quick_look_step(self, step):
         """Move the selection and hand Quick Look what to show next (name, path) or None."""
