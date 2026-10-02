@@ -467,7 +467,9 @@ class ItInventoryTab(QWidget):
                 % (machine, held[0].get("user_id")))
             return
 
-        people = [str(p.get("username")) for p in service.people() if p.get("username")]
+        # Nobody who has left or been deactivated is handed a machine.
+        people = [str(p.get("username")) for p in service.people(active_only=True)
+                  if p.get("username")]
         if not people:
             QMessageBox.warning(self, "Nobody to issue to",
                                 "There are no users in the database.")

@@ -124,12 +124,28 @@ class StartPersonDialog(QDialog):
         text = self.person.currentText().strip()
         if username:
             self.person_hint.setText("")
+        elif text and self._inactive_named(text):
+            self.person_hint.setText(
+                "%s is deactivated or has left - reactivate the account on "
+                "Users & Roles first." % self._inactive_named(text))
         elif text:
             self.person_hint.setText(
                 "No such person - create the account on Users & Roles first.")
         else:
             self.person_hint.setText("")
         self.start_button.setEnabled(bool(username))
+
+    def _inactive_named(self, text: str) -> str:
+        """The username of a switched-off account this text names, if any."""
+        if not hasattr(self, "_inactive"):
+            from slate.gui.components.person_picker import label_for, people
+            self._inactive = {}
+            for username, display, record in people(include_inactive=True):
+                if record.get("active", True):
+                    continue
+                for name in (username, display, label_for(username, display)):
+                    self._inactive[str(name).casefold()] = username
+        return self._inactive.get(text.strip().casefold(), "")
 
     def payload(self):
         # Only a real username; never the text as typed.

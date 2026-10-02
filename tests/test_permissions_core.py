@@ -262,6 +262,44 @@ def test_leave_stops_accruing_after_the_last_day():
     assert left == accrued_by(date(2026, 6, 30), joined)
 
 
+def test_joining_is_refused_for_a_deactivated_account(users, db):
+    """Ticking a joining list for somebody Slate treats as gone changes nothing."""
+    from slate.core.infra.migrations.workplace_schema import apply_migration
+    from slate.core.domain.onboarding_service import (
+        InactivePerson, LEAVING, JOINING, OnboardingService)
+    apply_migration(db)
+    users.deactivate_user("kabir", by="hr.meera")
+    service = OnboardingService(db=db)
+    with pytest.raises(InactivePerson):
+        service.start("kabir", JOINING)
+    # A person who has left may still have kit to collect.
+    assert service.start("kabir", LEAVING) > 0
+    users.reactivate_user("kabir", by="hr.meera")
+    assert service.start("kabir", JOINING) > 0
+
+
+def test_machine_and_task_pickers_leave_out_leavers(users, db):
+    from slate.core.infra.migrations.workplace_schema import apply_migration
+    from slate.core.domain.onboarding_service import OnboardingService
+    apply_migration(db)
+    users.deactivate_user("kabir", by="hr.meera")
+    service = OnboardingService(db=db)
+    everybody = {p["username"]: p["active"] for p in service.people()}
+    assert everybody["kabir"] is False and everybody["hr.meera"] is True
+    assert "kabir" not in {p["username"] for p in service.people(active_only=True)}
+
+
+def test_year_end_leaves_out_people_who_left_before_the_year(users, db):
+    from slate.core.infra.migrations.workplace_schema import apply_migration
+    from slate.core.infra.leave_repository import LeaveRepository
+    apply_migration(db)
+    users.update_user("kabir", last_day="2025-03-31")
+    users.update_user("it.sam", last_day="2026-06-30")     # left during the year
+    names = {row["user_id"] for row in LeaveRepository(db=db).preview_close(2026)}
+    assert "kabir" not in names
+    assert "it.sam" in names and "hr.meera" in names
+
+
 @pytest.fixture
 def qapp():
     from PySide6.QtWidgets import QApplication

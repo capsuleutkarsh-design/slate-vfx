@@ -662,8 +662,9 @@ class LeaveRepository:
         trust in the whole module.
         """
         try:
+            # SELECT *: last_day / deactivated_on may not exist on an old table.
             rows = self.db.execute_query(
-                "SELECT username FROM ut_users ORDER BY username", fetch="all") or []
+                "SELECT * FROM ut_users ORDER BY username", fetch="all") or []
         except DatabaseUnavailableError:
             raise
         except Exception:
@@ -671,10 +672,19 @@ class LeaveRepository:
             return []
 
         as_of = date(year, 12, 31)
+        year_start = date(year, 1, 1)
         out = []
         for row in rows:
-            name = (row["username"] if isinstance(row, dict) else row[0]) or ""
+            record = dict(row) if hasattr(row, "keys") else {"username": row[0]}
+            name = record.get("username") or ""
             if not name:
+                continue
+            # Somebody who had left (or was deactivated) before the year began
+            # has nothing to close: their balance stopped with their last day.
+            # They were listed - and written - every year for ever.
+            ended = [as_date(record.get(k)) for k in ("last_day", "deactivated_on")]
+            ended = [d for d in ended if d]
+            if ended and min(ended) < year_start:
                 continue
             closing = self.balance(name, rules, as_of)["available"]
             split = lp.carry_forward(closing, rules)

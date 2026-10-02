@@ -764,7 +764,9 @@ class UserManager:
     # Refusing a deactivated person at sign-in belongs to the sign-in code and
     # is not done here.
 
-    PROTECTED_ACCOUNTS = frozenset({"admin", "developer", "emp0012"})
+    # The accounts Slate itself relies on. (Users & Roles also shields EMP0012
+    # from a mis-click; here it may still be removed deliberately.)
+    PROTECTED_ACCOUNTS = frozenset({"admin", "developer"})
 
     @staticmethod
     def _flag_active(record) -> bool:

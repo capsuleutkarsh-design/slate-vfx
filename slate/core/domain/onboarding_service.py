@@ -82,6 +82,22 @@ class UnknownPerson(ValueError):
     """A checklist for a username that has no account."""
 
 
+class InactivePerson(UnknownPerson):
+    """
+    A joining checklist for an account that is switched off.
+
+    Somebody coming back is reactivated on Users & Roles first (and their old
+    last day cleared there); otherwise the account stays inactive however many
+    joining lines are ticked, and leave keeps not accruing.
+    """
+
+
+def _is_active(record: dict) -> bool:
+    """The same rule as UserManager: not deactivated and last day not passed."""
+    from .user_manager import UserManager
+    return UserManager._flag_active(record or {})
+
+
 class OnboardingService:
     def __init__(self, db=None):
         if db is None:
@@ -90,19 +106,36 @@ class OnboardingService:
         self.db = db
 
     # ------------------------------------------------------------------ people
-    def people(self) -> list:
-        """Everyone, with whatever onboarding state they have."""
+    def people(self, active_only: bool = False) -> list:
+        """
+        Everyone, with whatever onboarding state they have.
+
+        Each row carries "active" (deactivated people and people whose last day
+        has passed are not). Pickers that hand somebody a machine or a task ask
+        for active_only; a list of finished checklists wants everybody.
+        """
         try:
+            # SELECT *: the deactivation columns are added by UserManager and
+            # may not be there yet on a database it has not opened.
             rows = self.db.execute_query(
-                "SELECT username, display_name, job_title, joined_on, employment, reports_to "
-                "FROM ut_users ORDER BY COALESCE(joined_on, CURRENT_DATE) DESC",
+                "SELECT * FROM ut_users ORDER BY COALESCE(joined_on, CURRENT_DATE) DESC",
                 fetch="all") or []
-            return [dict(r) for r in rows]
         except DatabaseUnavailableError:
             raise
         except Exception:
             logger.exception("people failed")
             return []
+        out = []
+        for row in rows:
+            row = dict(row)
+            person = {key: row.get(key) for key in (
+                "username", "display_name", "job_title", "joined_on", "employment",
+                "reports_to", "last_day")}
+            person["active"] = _is_active(row)
+            if active_only and not person["active"]:
+                continue
+            out.append(person)
+        return out
 
     def joining_finished(self) -> set:
         """Usernames (lower-case) whose joining checklist is complete."""
@@ -186,7 +219,7 @@ class OnboardingService:
         # nobody used to start the checklist for whoever was still selected.
         try:
             found = self.db.execute_query(
-                "SELECT username FROM ut_users WHERE LOWER(username) = LOWER(%s)",
+                "SELECT * FROM ut_users WHERE LOWER(username) = LOWER(%s)",
                 (str(username or "").strip(),), fetch="one")
         except DatabaseUnavailableError:
             raise
@@ -197,7 +230,16 @@ class OnboardingService:
             raise UnknownPerson(
                 "There is no account called %r. Create it on Users & Roles first, "
                 "then start the checklist." % str(username or ""))
-        username = str(found["username"] if isinstance(found, dict) else found[0])
+        found = dict(found)
+        username = str(found["username"])
+        # Joining an account that is switched off would tick through a whole
+        # checklist for somebody Slate still treats as gone. Leaving is allowed:
+        # a person who has already left may still have kit to collect.
+        if direction == JOINING and not _is_active(found):
+            raise InactivePerson(
+                "%s's account is deactivated or their last day has passed. If they "
+                "are coming back, reactivate the account on Users & Roles (and clear "
+                "the old last day there), then start joining." % username)
 
         already = {t["task_name"] for t in self.tasks_for(username, direction)}
         self._record_employment(username, direction, employment, effective_date)
