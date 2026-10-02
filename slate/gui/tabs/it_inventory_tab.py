@@ -243,9 +243,14 @@ class AddPCDialog(QDialog):
             return
         from PySide6.QtWidgets import QInputDialog
         old = self.name_label.text()
-        new, ok = QInputDialog.getText(self, "Rename machine", "New name for %s:" % old, text=old)
-        new = (new or "").strip()
-        if not ok or not new or new == old:
+        ask = QInputDialog(self)
+        ask.setWindowTitle("Rename machine")
+        ask.setLabelText("New name for %s:" % old)
+        ask.setTextValue(old)
+        if ask.exec() != QDialog.DialogCode.Accepted:
+            return
+        new = (ask.textValue() or "").strip()
+        if not new or new == old:
             return
         try:
             self.repo.rename(old, new)
