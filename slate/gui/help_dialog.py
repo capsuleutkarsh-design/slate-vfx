@@ -181,7 +181,7 @@ class HelpDialog(QDialog):
             }}
             QListWidget::item:hover {{ background: {Gate.RAISED}; color: {Gate.TEXT}; }}
             QListWidget::item:selected {{
-                background: rgba(62, 168, 191, 0.15);
+                background: {Gate.tint(Gate.ACCENT, 0.15)};
                 color: {Gate.ACCENT};
             }}
         """)

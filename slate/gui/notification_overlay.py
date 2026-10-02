@@ -2,6 +2,7 @@ from PySide6.QtWidgets import QWidget, QLabel, QVBoxLayout
 from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QPoint
 from PySide6.QtGui import QColor, QPainter, QBrush, QPen
 from .components.qt_safety import safe_single_shot
+from slate.core.infra.gate import Gate
 
 class NotificationOverlay(QWidget):
     """
@@ -20,10 +21,10 @@ class NotificationOverlay(QWidget):
         layout.setContentsMargins(15, 10, 15, 10)
         
         self.lbl_title = QLabel("Notification")
-        self.lbl_title.setStyleSheet("color: #3EA8BF; font-weight: bold; font-size: 14px;")
+        self.lbl_title.setStyleSheet(f"color: {Gate.ACCENT}; font-weight: bold; font-size: 14px;")
         
         self.lbl_msg = QLabel("Message content goes here...")
-        self.lbl_msg.setStyleSheet("color: white; font-size: 12px;")
+        self.lbl_msg.setStyleSheet(f"color: {Gate.TEXT}; font-size: 12px;")
         self.lbl_msg.setWordWrap(True)
         
         layout.addWidget(self.lbl_title)

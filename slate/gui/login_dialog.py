@@ -78,33 +78,33 @@ class LoginDialog(QDialog):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
         self.setStyleSheet(
-            """
-            QDialog { background: transparent; }
-            QFrame#MainFrame {
-                background-color: #16161A;
-                border: 1px solid #26262D;
+            f"""
+            QDialog {{ background: transparent; }}
+            QFrame#MainFrame {{
+                background-color: {Gate.PANEL};
+                border: 1px solid {Gate.RAISED_HI};
                 border-radius: 15px;
-            }
-            QLabel {
-                color: #E8E6E1;
+            }}
+            QLabel {{
+                color: {Gate.TEXT};
                 font-family: 'Segoe UI';
                 background: transparent;
-            }
-            QLineEdit {
-                padding: 12px; border: 1px solid #2C2C34;
-                border-radius: 6px; background: #1D1D22; color: white;
+            }}
+            QLineEdit {{
+                padding: 12px; border: 1px solid {Gate.LINE};
+                border-radius: 6px; background: {Gate.RAISED}; color: {Gate.TEXT};
                 font-size: 14px;
-            }
-            QLineEdit:focus { border: 1px solid #3EA8BF; background: #1D1D22; }
-            QPushButton {
-                background-color: #3EA8BF; color: #000; font-weight: bold;
+            }}
+            QLineEdit:focus {{ border: 1px solid {Gate.ACCENT}; background: {Gate.RAISED}; }}
+            QPushButton {{
+                background-color: {Gate.ACCENT}; color: {Gate.TEXT_ON_ACCENT}; font-weight: bold;
                 padding: 12px; border-radius: 6px; font-size: 14px;
-            }
-            QPushButton:hover { background-color: #3EA8BF; }
-            QPushButton#CloseBtn {
-                background: transparent; color: #87857F; font-size: 16px; border: none;
-            }
-            QPushButton#CloseBtn:hover { color: #E8E6E1; }
+            }}
+            QPushButton:hover {{ background-color: {Gate.ACCENT}; }}
+            QPushButton#CloseBtn {{
+                background: transparent; color: {Gate.TEXT_DIM}; font-size: 16px; border: none;
+            }}
+            QPushButton#CloseBtn:hover {{ color: {Gate.TEXT}; }}
             """
         )
 
@@ -154,7 +154,7 @@ class LoginDialog(QDialog):
 
         subtitle = QLabel(f"VFX Production  {APP_VERSION}")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        subtitle.setStyleSheet("color: #87857F; font-size: 11px; margin-bottom: 20px; text-transform: uppercase;")
+        subtitle.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: 11px; margin-bottom: 20px; text-transform: uppercase;")
         frame_layout.addWidget(subtitle)
 
         frame_layout.addWidget(QLabel("Employee ID"))
@@ -175,11 +175,11 @@ class LoginDialog(QDialog):
         self.status_lbl = QLabel("")
         self.status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_lbl.setStyleSheet(
-            """
-            color: #E8E6E1;
+            f"""
+            color: {Gate.TEXT};
             font-size: 12px;
             background-color: rgba(255, 85, 85, 0.2);
-            border: 1px solid #D9635F;
+            border: 1px solid {Gate.BAD};
             border-radius: 4px;
             padding: 8px;
             font-weight: bold;
@@ -200,7 +200,7 @@ class LoginDialog(QDialog):
         self.reconfigure_btn.setAutoDefault(False)  # Fix auto-trigger on Enter key
         self.reconfigure_btn.setFocusPolicy(Qt.NoFocus)  # Prevent tab-focus auto-trigger
         self.reconfigure_btn.setStyleSheet(
-            "color: #87857F; font-size: 11px; background: transparent;"
+            f"color: {Gate.TEXT_DIM}; font-size: 11px; background: transparent;"
             " border: none; text-decoration: underline; padding: 4px;"
         )
         self.reconfigure_btn.clicked.connect(self._open_reconfigure)

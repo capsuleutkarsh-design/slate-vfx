@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from slate.core.infra.gate import Gate
 
 
 class KanbanCard(QWidget):
@@ -40,17 +41,17 @@ class KanbanCard(QWidget):
     def _set_card_style(self, highlight: bool = False):
         # We ignore inherit_app_theme here to ensure the premium look is preserved
         status = self.task_data.get("status", "").upper()
-        accent = "#2C2C34"
-        if status in ["DONE", "APPROVED", "FINAL"]: accent = "#5FBF8F"
-        elif status in ["WIP", "IN PROGRESS", "IP"]: accent = "#D9A441"
-        elif status in ["REVIEW", "SENT FOR REVIEW"]: accent = "#3EA8BF"
-        elif status in ["RETAKE", "SI"]: accent = "#D9635F"
+        accent = Gate.LINE
+        if status in ["DONE", "APPROVED", "FINAL"]: accent = Gate.OK
+        elif status in ["WIP", "IN PROGRESS", "IP"]: accent = Gate.WARN
+        elif status in ["REVIEW", "SENT FOR REVIEW"]: accent = Gate.ACCENT
+        elif status in ["RETAKE", "SI"]: accent = Gate.BAD
             
         if highlight:
             self.setStyleSheet(
                 f"""
                 QWidget {{
-                    background-color: #26262D;
+                    background-color: {Gate.RAISED_HI};
                     border-radius: 8px;
                     border: 1px solid {accent};
                 }}
@@ -61,14 +62,14 @@ class KanbanCard(QWidget):
             self.setStyleSheet(
                 f"""
                 QWidget {{
-                    background-color: #26262D;
+                    background-color: {Gate.RAISED_HI};
                     border-radius: 8px;
-                    border: 1px solid rgba(255, 255, 255, 0.1);
+                    border: 1px solid {Gate.overlay(0.1)};
                     border-left: 5px solid {accent};
                 }}
                 QWidget:hover {{
-                    background-color: #26262D;
-                    border: 1px solid rgba(255, 255, 255, 0.2);
+                    background-color: {Gate.RAISED_HI};
+                    border: 1px solid {Gate.overlay(0.2)};
                     border-left: 5px solid {accent};
                 }}
                 QLabel {{ border: none; background: transparent; }}
@@ -91,7 +92,7 @@ class KanbanCard(QWidget):
         header_layout = QHBoxLayout()
         shot_code = self.task_data.get("shot_code", "UNKNOWN")
         lbl_shot = QLabel(f"{shot_code}")
-        lbl_shot.setStyleSheet("font-weight: 800; font-size: 11px; color: #E8E6E1;")
+        lbl_shot.setStyleSheet(f"font-weight: 800; font-size: 11px; color: {Gate.TEXT};")
         header_layout.addWidget(lbl_shot)
         header_layout.addStretch()
         layout.addLayout(header_layout)
@@ -99,7 +100,7 @@ class KanbanCard(QWidget):
         task_name = self.task_data.get("task_name", "Task")
         lbl_task = QLabel(task_name)
         lbl_task.setWordWrap(True)
-        lbl_task.setStyleSheet("color: rgba(255,255,255,0.7); font-size: 11px; line-height: 1.4;")
+        lbl_task.setStyleSheet(f"color: {Gate.overlay(0.7)}; font-size: 11px; line-height: 1.4;")
         layout.addWidget(lbl_task)
 
         layout.addSpacing(6)
@@ -117,7 +118,7 @@ class KanbanCard(QWidget):
             self.lbl_artist.setStyleSheet(
                 f"""
                 background-color: hsla({hue}, 60%, 40%, 1.0);
-                color: white;
+                color: {Gate.TEXT};
                 border-radius: 11px;
                 font-weight: bold;
                 font-size: 9px;
@@ -126,7 +127,7 @@ class KanbanCard(QWidget):
             )
             
             lbl_name = QLabel(self.assignee.split(" ")[0]) # First name only
-            lbl_name.setStyleSheet("color: rgba(255,255,255,0.5); font-size: 10px; font-weight: 600;")
+            lbl_name.setStyleSheet(f"color: {Gate.overlay(0.5)}; font-size: 10px; font-weight: 600;")
             
             footer_layout.addWidget(self.lbl_artist)
             footer_layout.addWidget(lbl_name)
@@ -136,11 +137,11 @@ class KanbanCard(QWidget):
             self.lbl_artist.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.lbl_artist.setToolTip("Unassigned (Drag artist here)")
             self.lbl_artist.setStyleSheet(
-                """
-                background-color: rgba(255,255,255,0.05);
-                color: rgba(255,255,255,0.4);
+                f"""
+                background-color: {Gate.overlay(0.05)};
+                color: {Gate.overlay(0.4)};
                 border-radius: 11px;
-                border: 1px dashed rgba(255,255,255,0.2);
+                border: 1px dashed {Gate.overlay(0.2)};
                 font-size: 10px;
                 """
             )
@@ -151,13 +152,13 @@ class KanbanCard(QWidget):
         status = self.task_data.get("status", "").upper()
         
         # Style status as a nice pill
-        status_accent = "#2C2C34"
-        if status in ["DONE", "APPROVED", "FINAL"]: status_accent = "rgba(95, 191, 143, 0.2)"
-        elif status in ["WIP", "IN PROGRESS", "IP"]: status_accent = "rgba(255, 214, 0, 0.2)"
-        elif status in ["REVIEW", "SENT FOR REVIEW"]: status_accent = "rgba(0, 229, 255, 0.2)"
-        elif status in ["RETAKE", "SI"]: status_accent = "rgba(255, 23, 68, 0.2)"
+        status_accent = Gate.LINE
+        if status in ["DONE", "APPROVED", "FINAL"]: status_accent = Gate.tint(Gate.OK, 0.2)
+        elif status in ["WIP", "IN PROGRESS", "IP"]: status_accent = Gate.tint(Gate.WARN, 0.2)
+        elif status in ["REVIEW", "SENT FOR REVIEW"]: status_accent = Gate.tint(Gate.INFO, 0.2)
+        elif status in ["RETAKE", "SI"]: status_accent = Gate.tint(Gate.BAD, 0.2)
         
-        text_accent = status_accent.replace("0.2", "1.0") if "0.2" in status_accent else "#E8E6E1"
+        text_accent = status_accent.replace("0.2", "1.0") if "0.2" in status_accent else Gate.TEXT
             
         lbl_status = QLabel(status)
         lbl_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -221,42 +222,42 @@ class KanbanColumn(QListWidget):
 
         # Force QScrollBar styling to avoid the checkerboard
         self.setStyleSheet(
-            """
-            QListWidget {
+            f"""
+            QListWidget {{
                 background-color: transparent;
                 border: none;
                 outline: none;
-            }
-            QListWidget::item {
+            }}
+            QListWidget::item {{
                 background: transparent;
                 padding: 0px;
                 margin-bottom: 12px;
-            }
-            QListWidget::item:selected {
+            }}
+            QListWidget::item:selected {{
                 background: transparent;
-            }
-            QScrollBar:vertical {
+            }}
+            QScrollBar:vertical {{
                 border: none;
-                background: rgba(255, 255, 255, 0.02);
+                background: {Gate.overlay(0.02)};
                 width: 8px;
                 border-radius: 4px;
-            }
-            QScrollBar::handle:vertical {
-                background: rgba(255, 255, 255, 0.1);
+            }}
+            QScrollBar::handle:vertical {{
+                background: {Gate.overlay(0.1)};
                 min-height: 20px;
                 border-radius: 4px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: rgba(255, 255, 255, 0.2);
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: {Gate.overlay(0.2)};
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
                 border: none;
                 background: none;
                 height: 0px;
-            }
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+            }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
                 background: none;
-            }
+            }}
             """
         )
 
@@ -349,12 +350,12 @@ class KanbanBoard(QWidget):
         for title, key in self.column_defs:
             col_container = QWidget()
             # Force background styling
-            col_container.setStyleSheet("""
-                QWidget {
-                    background-color: #16161A;
+            col_container.setStyleSheet(f"""
+                QWidget {{
+                    background-color: {Gate.PANEL};
                     border-radius: 12px;
-                    border: 1px solid rgba(255, 255, 255, 0.05);
-                }
+                    border: 1px solid {Gate.overlay(0.05)};
+                }}
             """)
             col_layout = QVBoxLayout(col_container)
             col_layout.setContentsMargins(12, 16, 12, 12)
@@ -362,7 +363,7 @@ class KanbanBoard(QWidget):
 
             lbl_title = QLabel(f"{title}")
             lbl_title.setAlignment(Qt.AlignmentFlag.AlignLeft)
-            lbl_title.setStyleSheet("font-weight: 900; font-size: 14px; color: rgba(255,255,255,0.9); padding-left: 4px; background: transparent; border: none; letter-spacing: 0.5px;")
+            lbl_title.setStyleSheet(f"font-weight: 900; font-size: 14px; color: {Gate.overlay(0.9)}; padding-left: 4px; background: transparent; border: none; letter-spacing: 0.5px;")
             col_layout.addWidget(lbl_title)
 
             kanban_list = KanbanColumn(title, key, inherit_app_theme=self.inherit_app_theme)
@@ -371,7 +372,7 @@ class KanbanBoard(QWidget):
             def update_count(count_label, title_text, list_widget):
                 def _update():
                     count = list_widget.count()
-                    count_label.setText(f"{title_text}  <span style='color: rgba(255,255,255,0.4); font-size: 12px;'>{count}</span>")
+                    count_label.setText(f"{title_text}  <span style='color: {Gate.overlay(0.4)}; font-size: 12px;'>{count}</span>")
                 return _update
                 
             update_func = update_count(lbl_title, title, kanban_list)

@@ -19,6 +19,7 @@ from PySide6.QtCore import Qt
 
 from ...core.domain.stitch_detect import StitchGroup, apply_groups
 from ...core.infra.design_tokens import ColorTokens as C, TypographyTokens as T
+from slate.core.infra.gate import Gate
 
 
 class StitchConfirmDialog(QDialog):
@@ -77,7 +78,7 @@ class StitchConfirmDialog(QDialog):
         confirm = QPushButton("Continue")
         confirm.setDefault(True)
         confirm.setStyleSheet(
-            f"background-color: {C.ACCENT_TEAL}; color: white; "
+            f"background-color: {C.ACCENT_TEAL}; color: {Gate.TEXT_ON_ACCENT}; "
             f"font-weight: {T.WEIGHT_STYLE_BOLD}; padding: 5px 18px;"
         )
         confirm.clicked.connect(self.accept)

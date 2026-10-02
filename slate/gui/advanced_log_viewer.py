@@ -16,6 +16,9 @@ from PySide6.QtGui import QColor
 from ..core.infra.global_config import GlobalConfig
 from ..core.infra.database_manager import DatabaseManager
 from ..core.infra.app_context import AppContext
+from slate.core.infra.gate import Gate
+from slate.gui.core.controls import style_button
+from slate.gui.core.table_style import style_table
 
 
 # --- LOG PARSER UTILS ---
@@ -74,12 +77,12 @@ class SystemLogViewer(QWidget):
         
         self.list_widget = QListWidget()
         self.list_widget.itemClicked.connect(self.load_log_file)
-        self.list_widget.setStyleSheet("QListWidget { background: #16161A; border: 1px solid #26262D; } QListWidget::item:selected { background: #3EA8BF; color: black; }")
+        self.list_widget.setStyleSheet(f"QListWidget {{ background: {Gate.PANEL}; border: 1px solid {Gate.RAISED_HI}; }} QListWidget::item:selected {{ background: {Gate.ACCENT}; color: {Gate.TEXT_ON_ACCENT}; }}")
         v.addWidget(self.list_widget)
         
         btn_refresh_list = QPushButton("Refresh List")
         btn_refresh_list.clicked.connect(self.refresh_list)
-        btn_refresh_list.setStyleSheet("background: #1D1D22; padding: 5px;")
+        style_button(btn_refresh_list, "secondary")
         v.addWidget(btn_refresh_list)
         
         # Right: Log Content (Table)
@@ -89,7 +92,7 @@ class SystemLogViewer(QWidget):
         # Header / Filters
         h_filter = QHBoxLayout()
         self.lbl_viewing = QLabel("Select a machine to view logs")
-        self.lbl_viewing.setStyleSheet("color: #3EA8BF; font-weight: bold;")
+        self.lbl_viewing.setStyleSheet(f"color: {Gate.ACCENT}; font-weight: bold;")
         h_filter.addWidget(self.lbl_viewing)
         
         h_filter.addStretch()
@@ -116,16 +119,16 @@ class SystemLogViewer(QWidget):
         self.log_table.setColumnWidth(0, 140) # Time
         self.log_table.setColumnWidth(1, 80)  # Level
         self.log_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.log_table.setStyleSheet("""
-            QTableWidget { background: #0D0D0F; border: none; gridline-color: #26262D; color: #E8E6E1; font-family: Consolas; font-size: 11px; }
-            QHeaderView::section { background: #1D1D22; padding: 4px; font-family: Segoe UI; }
+        self.log_table.setStyleSheet(f"""
+            QTableWidget {{ background: {Gate.GROUND}; border: none; gridline-color: {Gate.RAISED_HI}; color: {Gate.TEXT}; font-family: Consolas; font-size: 11px; }}
+            QHeaderView::section {{ background: {Gate.RAISED}; padding: 4px; font-family: Segoe UI; }}
         """)
         self.log_table.verticalHeader().setVisible(False)
         v2.addWidget(self.log_table)
         
         # Warning Label for Truncation
         self.lbl_info = QLabel("")
-        self.lbl_info.setStyleSheet("color: #87857F; font-style: italic; font-size: 10px;")
+        self.lbl_info.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-style: italic; font-size: 10px;")
         v2.addWidget(self.lbl_info)
         
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -301,9 +304,9 @@ class SystemLogViewer(QWidget):
             # Level
             l_item = QTableWidgetItem(row['level'])
             l_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            if row['level'] == "ERROR": l_item.setForeground(QColor("#D9635F"))
-            elif row['level'] == "WARN": l_item.setForeground(QColor("#D9A441"))
-            elif row['level'] == "INFO": l_item.setForeground(QColor("#5FBF8F"))
+            if row['level'] == "ERROR": l_item.setForeground(QColor(Gate.BAD))
+            elif row['level'] == "WARN": l_item.setForeground(QColor(Gate.WARN))
+            elif row['level'] == "INFO": l_item.setForeground(QColor(Gate.OK))
             self.log_table.setItem(r, 1, l_item)
             
             # Message
@@ -314,7 +317,7 @@ class SystemLogViewer(QWidget):
             # Explanation
             e_item = QTableWidgetItem(row['explanation'])
             if row['explanation'] and row['explanation'] != "ℹ️ System Info":
-                 e_item.setForeground(QColor("#3EA8BF"))
+                 e_item.setForeground(QColor(Gate.ACCENT))
             self.log_table.setItem(r, 3, e_item)
 
         self.toggle_explanation_column(self.chk_explain.isChecked())
@@ -374,13 +377,13 @@ class DatabaseAuditViewer(QWidget):
          
          # Filters
          h = QHBoxLayout()
-         self.search = QLineEdit(); self.search.setPlaceholderText("Search User, Project or Action..."); self.search.setStyleSheet("padding:6px; background:#1D1D22; color:white; border:1px solid #2C2C34; border-radius:4px;")
+         self.search = QLineEdit(); self.search.setPlaceholderText("Search User, Project or Action...")
          self.search.textChanged.connect(self.filter_table)
          
          self.date_filter = QComboBox()
          self.date_filter.addItem("All Dates")
          self.date_filter.currentTextChanged.connect(self.apply_date_filter)
-         self.date_filter.setStyleSheet("padding:6px; background:#1D1D22; color:white; border:1px solid #2C2C34; border-radius:4px;")
+
 
          self.chk_explain = QCheckBox("Simple Mode")
          self.chk_explain.setChecked(True)
@@ -388,7 +391,7 @@ class DatabaseAuditViewer(QWidget):
 
          btn_refresh = QPushButton("Refresh DB")
          btn_refresh.clicked.connect(self.refresh_data)
-         btn_refresh.setStyleSheet("padding:6px; background:#3EA8BF; color:black; font-weight:bold; border-radius:4px;")
+         style_button(btn_refresh, "secondary")     # one button kit, not a cyan one-off
          
          h.addWidget(self.search)
          h.addWidget(QLabel("Filter Date:"))
@@ -405,8 +408,9 @@ class DatabaseAuditViewer(QWidget):
          self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch) # Analysis stretches
          self.table.setColumnWidth(0, 140)
          self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-         self.table.setStyleSheet("QTableWidget { background: #16161A; border:none; gridline-color: #26262D; color: #E8E6E1; } QHeaderView::section { background: #1D1D22; padding: 4px; }")
-         self.table.verticalHeader().setVisible(False)
+         style_table(self.table, {"Time": ("interactive", 150), "User": "contents", "Project": "contents",
+                                  "Action": "contents", "Description": "stretch",
+                                  "Analysis (Simple)": "stretch"})
          layout.addWidget(self.table)
          
          self.refresh_data()
@@ -502,12 +506,12 @@ class DatabaseAuditViewer(QWidget):
             for c, val in enumerate(vals):
                 item = QTableWidgetItem(val)
                 # Color coding
-                if c == 1 and val == "Unknown": item.setForeground(QColor("#87857F")) # Grey unknowns
+                if c == 1 and val == "Unknown": item.setForeground(QColor(Gate.TEXT_DIM)) # Grey unknowns
                 if c == 3: # Action
-                    if "UPDATE" in val: item.setForeground(QColor("#D9A441"))
-                    elif "CREATE" in val: item.setForeground(QColor("#5FBF8F"))
+                    if "UPDATE" in val: item.setForeground(QColor(Gate.WARN))
+                    elif "CREATE" in val: item.setForeground(QColor(Gate.OK))
                 if c == 5: # Analysis
-                    item.setForeground(QColor("#3EA8BF"))
+                    item.setForeground(QColor(Gate.ACCENT))
                     
                 self.table.setItem(r, c, item)
                 
@@ -530,10 +534,10 @@ class UnifiedLogViewer(QWidget):
         layout = QVBoxLayout(self); layout.setContentsMargins(0,0,0,0)
         
         self.tabs = QTabWidget()
-        self.tabs.setStyleSheet("""
-            QTabWidget::pane { border: 1px solid #26262D; background: #16161A; }
-            QTabBar::tab { background: #1D1D22; color: #87857F; padding: 8px 20px; }
-            QTabBar::tab:selected { background: #16161A; color: #3EA8BF; border-top: 2px solid #3EA8BF; }
+        self.tabs.setStyleSheet(f"""
+            QTabWidget::pane {{ border: 1px solid {Gate.RAISED_HI}; background: {Gate.PANEL}; }}
+            QTabBar::tab {{ background: {Gate.RAISED}; color: {Gate.TEXT_DIM}; padding: 8px 20px; }}
+            QTabBar::tab:selected {{ background: {Gate.PANEL}; color: {Gate.ACCENT}; border-top: 2px solid {Gate.ACCENT}; }}
         """)
         
         self.sys_logs = SystemLogViewer()

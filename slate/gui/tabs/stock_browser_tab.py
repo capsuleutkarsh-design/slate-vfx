@@ -329,7 +329,7 @@ class StockBrowserTab(
 
     def toggle_ingest_pause(self):
         is_paused = self.ingest_controller.toggle_pause()
-        self.sidebar.set_pause_btn_text("\u25b6 Resume" if is_paused else "\u23f8 Pause")
+        self.sidebar.set_pause_btn_text("Resume" if is_paused else "Pause")
 
     def stop_ingest(self):
         self.ingest_controller.stop_ingest()

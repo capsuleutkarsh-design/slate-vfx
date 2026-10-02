@@ -4,6 +4,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal
 from slate.core.infra.design_tokens import ColorTokens as C, RadiusTokens as R
+from slate.core.infra.gate import Gate
 
 class QueryRuleWidget(QWidget):
     remove_requested = Signal(QWidget)
@@ -24,18 +25,18 @@ class QueryRuleWidget(QWidget):
             "Assigned Artist", "Priority", "Description", "Internal Comment", "Client Feedback"
         ])
         self.field_combo.setMinimumWidth(120)
-        self.field_combo.setStyleSheet(f"background: {C.BG_INPUT}; color: white; border: 1px solid {C.BORDER_DEFAULT}; border-radius: {R.SM}px; padding: 4px;")
+        self.field_combo.setStyleSheet(f"background: {C.BG_INPUT}; color: {Gate.TEXT}; border: 1px solid {C.BORDER_DEFAULT}; border-radius: {R.SM}px; padding: 4px;")
         
         # Operator
         self.op_combo = QComboBox()
         self.op_combo.addItems(["Equals", "Not Equals", "Contains", "Does Not Contain", "Is Empty", "Is Not Empty"])
         self.op_combo.setMinimumWidth(120)
-        self.op_combo.setStyleSheet(f"background: {C.BG_INPUT}; color: white; border: 1px solid {C.BORDER_DEFAULT}; border-radius: {R.SM}px; padding: 4px;")
+        self.op_combo.setStyleSheet(f"background: {C.BG_INPUT}; color: {Gate.TEXT}; border: 1px solid {C.BORDER_DEFAULT}; border-radius: {R.SM}px; padding: 4px;")
         
         # Value
         self.value_input = QLineEdit()
         self.value_input.setPlaceholderText("Value...")
-        self.value_input.setStyleSheet(f"background: {C.BG_INPUT}; color: white; border: 1px solid {C.BORDER_DEFAULT}; border-radius: {R.SM}px; padding: 4px;")
+        self.value_input.setStyleSheet(f"background: {C.BG_INPUT}; color: {Gate.TEXT}; border: 1px solid {C.BORDER_DEFAULT}; border-radius: {R.SM}px; padding: 4px;")
         
         # Remove Btn
         self.remove_btn = QPushButton("✕")
@@ -66,7 +67,7 @@ class QueryBuilderDialog(QDialog):
         self.setup_ui()
         
     def setup_ui(self):
-        self.setStyleSheet(f"background-color: {C.BG_ELEVATED}; color: white;")
+        self.setStyleSheet(f"QDialog {{ background-color: {C.BG_ELEVATED}; }}")  # the dialog only: without a selector every field in it took this background
         
         main_layout = QVBoxLayout(self)
         main_layout.setSpacing(15)
@@ -79,7 +80,7 @@ class QueryBuilderDialog(QDialog):
         
         self.match_combo = QComboBox()
         self.match_combo.addItems(["Match ALL rules (AND)", "Match ANY rule (OR)"])
-        self.match_combo.setStyleSheet(f"background: {C.BG_INPUT}; color: white; border: 1px solid {C.BORDER_DEFAULT}; border-radius: {R.SM}px; padding: 4px;")
+        self.match_combo.setStyleSheet(f"background: {C.BG_INPUT}; color: {Gate.TEXT}; border: 1px solid {C.BORDER_DEFAULT}; border-radius: {R.SM}px; padding: 4px;")
         
         header_layout.addWidget(title)
         header_layout.addStretch()
@@ -114,7 +115,7 @@ class QueryBuilderDialog(QDialog):
         self.clear_btn.clicked.connect(self.clear_rules)
         
         self.apply_btn = QPushButton("Apply Query")
-        self.apply_btn.setStyleSheet(f"background: {C.ACCENT_BLUE}; color: white; font-weight: bold; border: none; padding: 8px 24px; border-radius: {R.SM}px;")
+        self.apply_btn.setStyleSheet(f"background: {C.ACCENT_BLUE}; color: {Gate.TEXT_ON_ACCENT}; font-weight: bold; border: none; padding: 8px 24px; border-radius: {R.SM}px;")
         self.apply_btn.clicked.connect(self.apply_query)
         
         footer_layout.addWidget(self.clear_btn)

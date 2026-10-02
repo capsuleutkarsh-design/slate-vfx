@@ -18,6 +18,9 @@ from ..core.infra.config_manager import ConfigManager
 from ..utils.security import SecurityValidator
 from ..core.infra.design_tokens import ColorTokens as C, TypographyTokens as T, RadiusTokens as R, SpacingTokens as S
 from .core.icons import icon as draw_icon
+from .core.table_style import style_table, set_cell_status
+from .core.empty_state import EmptyState
+from slate.core.infra.gate import Gate
 
 class RenameWorker(QThread):
     """
@@ -196,19 +199,9 @@ class CapRenameTab(QWidget):
                 font-weight: {T.WEIGHT_STYLE_BOLD};
                 font-size: 11pt;
             }}
-            QLineEdit, QSpinBox {{
-                padding: 12px;
-                border-radius: {R.SM}px;
-                background-color: {C.BG_INPUT};
-                border: 1px solid {C.BORDER_DEFAULT};
-                font-size: 13px;
-                color: {C.TEXT_PRIMARY};
-                selection-background-color: {C.ACCENT_PRIMARY};
-            }}
-            QLineEdit:focus, QSpinBox:focus {{
-                border: 1px solid {C.ACCENT_PRIMARY};
-                background-color: {C.BG_DARKER};
-            }}
+            /* Fields, spin boxes and check boxes take the application's
+               style: overriding them here drew the spin arrows as two grey
+               dashes and the unchecked boxes nearly invisible. */
             QTabWidget::pane {{
                 border: 1px solid {C.BORDER_SUBTLE};
                 border-radius: {R.MD}px;
@@ -233,25 +226,6 @@ class CapRenameTab(QWidget):
             QTabBar::tab:hover:!selected {{
                 background: {C.BG_HOVER};
                 color: {C.TEXT_PRIMARY};
-            }}
-            QCheckBox {{
-                spacing: 10px;
-                color: {C.TEXT_PRIMARY};
-                background: transparent;
-            }}
-            QCheckBox::indicator {{
-                width: 18px;
-                height: 18px;
-                border: 1px solid {C.BORDER_LIGHT};
-                border-radius: {R.XS}px;
-                background: {C.BG_INPUT};
-            }}
-            QCheckBox::indicator:hover {{
-                border: 1px solid {C.ACCENT_HOVER};
-            }}
-            QCheckBox::indicator:checked {{
-                background: {C.ACCENT_PRIMARY};
-                border: 1px solid {C.ACCENT_PRIMARY};
             }}
             QLabel {{
                 background: transparent;
@@ -298,15 +272,15 @@ class CapRenameTab(QWidget):
         self.table = QTableWidget()
         self.table.setColumnCount(3)
         self.table.setHorizontalHeaderLabels(["Original Filename", "New Filename", "Status"])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self.table.setColumnWidth(2, 120)
-        self.table.setAlternatingRowColors(True)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setShowGrid(False)  # Cleaner look
-        self.table.setStyleSheet(f"QTableWidget {{ background-color: {C.BG_SURFACE}; gridline-color: transparent; border: 1px solid {C.BORDER_SUBTLE}; border-radius: {R.MD}px; }} QTableWidget::item {{ padding: 5px; border-bottom: 1px solid {C.BORDER_SUBTLE}; }} QTableWidget::item:selected {{ background-color: rgba(62, 168, 191, 0.15); }} QHeaderView::section {{ background-color: {C.BG_ELEVATED}; padding: 8px; border: none; border-bottom: 1px solid {C.BORDER_SUBTLE}; font-weight: bold; color: {C.TEXT_SECONDARY}; }}")
+        # The shared table style. This table's own stylesheet styled ::item,
+        # which makes Qt ignore the colours set on cells - so a CONFLICT row
+        # looked exactly like one that would rename cleanly.
+        style_table(self.table, {"Original Filename": "stretch", "New Filename": "stretch",
+                                 "Status": ("fixed", 130)})
         layout.addWidget(self.table)
+        self.table_empty = EmptyState.over(
+            self.table, "Nothing to rename yet",
+            "Load files or drop them here to preview their new names.", glyph="sequence")
         
         # --- 3. ACTIONS ---
         action_layout = QHBoxLayout()
@@ -323,7 +297,7 @@ class CapRenameTab(QWidget):
         self.rename_btn.setMinimumHeight(40)
         self.rename_btn.setMinimumWidth(150)
         self.rename_btn.setStyleSheet(f"""
-            QPushButton {{ background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {C.ACCENT_HOVER}, stop:1 {C.ACCENT_DARK}); color: white; border: none; border-radius: {R.SM}px; font-weight: bold; font-size: 14px; }}
+            QPushButton {{ background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {C.ACCENT_HOVER}, stop:1 {C.ACCENT_DARK}); color: {Gate.TEXT_ON_ACCENT}; border: none; border-radius: {R.SM}px; font-weight: bold; font-size: 14px; }}
             QPushButton:hover {{ background-color: {C.ACCENT_PRIMARY}; }}
             QPushButton:disabled {{ background-color: {C.BG_INPUT}; color: {C.TEXT_DISABLED}; }}
         """)
@@ -698,22 +672,28 @@ class CapRenameTab(QWidget):
 
         if conflict:
             status = "CONFLICT"
-            color = QColor(217, 99, 95, 60)
+            color = "bad"
             self._conflicts.append("%s - %s" % (original, conflict))
         elif new_name != original:
             status = "Will Rename"
-            color = QColor(0, 180, 216, 40)  # Cyan highlight
+            color = "accent"
             self._claimed.add(str(target).lower())
             self.preview_map.append((file_path, target))
 
         self.table.setItem(row, 0, QTableWidgetItem(original))
         item_new = QTableWidgetItem(new_name)
+        item_status = QTableWidgetItem(status)
         if color:
-            item_new.setBackground(QBrush(color))
+            # The new name gets a wash of the status colour and the status
+            # word its colour, so the two cases read apart at a glance.
+            set_cell_status(item_new, color)
+            item_new.setForeground(QBrush(QColor(Gate.TEXT)))
+            set_cell_status(item_status, color, background=False)
         if conflict:
             item_new.setToolTip(conflict)
+            item_status.setToolTip(conflict)
         self.table.setItem(row, 1, item_new)
-        self.table.setItem(row, 2, QTableWidgetItem(status))
+        self.table.setItem(row, 2, item_status)
 
     def load_files(self):
         """Open file dialog to select files."""

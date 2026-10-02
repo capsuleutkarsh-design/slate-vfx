@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QTextEdit
 )
+from slate.core.infra.gate import Gate
 
 
 class ConflictResolverDialog(QDialog):
@@ -21,11 +22,11 @@ class ConflictResolverDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Data Conflict Detected — Optimistic Concurrency Control")
         self.resize(650, 400)
-        self.setStyleSheet("""
-            QDialog { background-color: #16323A; color: #3EA8BF; }
-            QLabel { color: #3EA8BF; }
-            QTextEdit { background-color: #16323A; color: #D9635F; border: 1px solid #6BA4C9; border-radius: 6px; }
-            QPushButton { border-radius: 6px; padding: 8px 16px; font-weight: bold; }
+        self.setStyleSheet(f"""
+            QDialog {{ background-color: {Gate.ACCENT_SURFACE}; color: {Gate.ACCENT}; }}
+            QLabel {{ color: {Gate.ACCENT}; }}
+            QTextEdit {{ background-color: {Gate.ACCENT_SURFACE}; color: {Gate.BAD}; border: 1px solid {Gate.INFO}; border-radius: 6px; }}
+            QPushButton {{ border-radius: 6px; padding: 8px 16px; font-weight: bold; }}
         """)
 
         self.action_selected = "cancel"
@@ -40,7 +41,7 @@ class ConflictResolverDialog(QDialog):
 
         title_lbl = QLabel("Concurrent Modifications Detected")
         title_lbl.setFont(QFont("Inter", 14, QFont.Weight.Bold))
-        title_lbl.setStyleSheet("color: #D9A441;")
+        title_lbl.setStyleSheet(f"color: {Gate.WARN};")
         hdr_layout.addWidget(title_lbl)
         hdr_layout.addStretch()
         layout.addLayout(hdr_layout)
@@ -50,7 +51,7 @@ class ConflictResolverDialog(QDialog):
             "To prevent silently overwriting their work, your save was paused."
         )
         desc_lbl.setWordWrap(True)
-        desc_lbl.setStyleSheet("color: #6BA4C9; font-size: 13px;")
+        desc_lbl.setStyleSheet(f"color: {Gate.INFO}; font-size: 13px;")
         layout.addWidget(desc_lbl)
 
         # Conflict Details Box
@@ -67,19 +68,19 @@ class ConflictResolverDialog(QDialog):
         btn_layout.setSpacing(10)
 
         self.btn_refresh = QPushButton("Reload Latest from Database (Recommended)")
-        self.btn_refresh.setStyleSheet("background-color: #3EA8BF; color: #16323A;")
+        self.btn_refresh.setStyleSheet(f"background-color: {Gate.ACCENT}; color: {Gate.ACCENT_SURFACE};")
         self.btn_refresh.clicked.connect(self._on_reload)
         btn_layout.addWidget(self.btn_refresh)
 
         if can_force:
             self.btn_force = QPushButton("Force Overwrite")
-            self.btn_force.setStyleSheet("background-color: #D9635F; color: #16323A;")
+            self.btn_force.setStyleSheet(f"background-color: {Gate.BAD}; color: {Gate.ACCENT_SURFACE};")
             self.btn_force.setToolTip("Overwrite database records with your local version")
             self.btn_force.clicked.connect(self._on_force)
             btn_layout.addWidget(self.btn_force)
 
         self.btn_cancel = QPushButton("Cancel")
-        self.btn_cancel.setStyleSheet("background-color: #6BA4C9; color: #3EA8BF;")
+        self.btn_cancel.setStyleSheet(f"background-color: {Gate.INFO}; color: {Gate.ACCENT};")
         self.btn_cancel.clicked.connect(self.reject)
         btn_layout.addWidget(self.btn_cancel)
 

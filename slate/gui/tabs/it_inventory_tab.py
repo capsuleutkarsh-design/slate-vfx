@@ -10,8 +10,10 @@ from ...core.infra.app_context import AppContext
 import json
 import logging
 from ..core.empty_state import EmptyState
-from ..core.controls import page_title, gate_selection_buttons
+from ..core.controls import page_title, gate_selection_buttons, make_button, tidy_form
+from ..core.table_style import style_table, dim_cell, set_cell_status
 from slate.gui.core.offline_notice import on_database_error
+from slate.core.infra.gate import Gate
 
 # Let an outage reach the @on_database_error decorator rather than becoming an
 # empty grid here. Everything else keeps the fallback it already had.
@@ -33,34 +35,14 @@ class AddPCDialog(QDialog):
             self.setWindowTitle("Add New PC")
             
         self.setMinimumWidth(420)
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #0D0D0F;
-                color: #D9A441;
-            }
-            QLabel {
-                color: #87857F;
-                font-weight: 600;
-                background: transparent;
-                border: none;
-            }
-            QLineEdit {
-                background-color: #16161A;
-                border: 1px solid #26262D;
-                border-radius: 4px;
-                color: #D9A441;
-                padding: 6px;
-            }
-            QLineEdit:focus {
-                border-color: #3EA8BF;
-            }
-        """)
+        # No stylesheet of its own: it drew every value in amber (the warning
+        # colour), square fields beside a pill combo, and a large gradient
+        # "Save PC" next to a small Cancel.
         
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
-        form = QFormLayout()
-        form.setSpacing(10)
+        form = tidy_form(QFormLayout())
         
         self.inp_name = QLineEdit()
         self.inp_cpu = QLineEdit()
@@ -68,6 +50,10 @@ class AddPCDialog(QDialog):
         self.inp_ram = QLineEdit()
         self.inp_storage = QLineEdit()
         self.inp_location = QLineEdit()
+        # Examples go in the field, not in the label beside it.
+        self.inp_ram.setPlaceholderText("e.g. 64 GB")
+        self.inp_storage.setPlaceholderText("e.g. 2 TB NVMe")
+        self.inp_location.setPlaceholderText("e.g. Comp bay 2")
 
         # Status is set here. It used to be impossible to say a machine was in
         # for repair or free to hand out, so every row said Active for ever.
@@ -94,8 +80,8 @@ class AddPCDialog(QDialog):
         form.addRow("Machine Name:", self.inp_name)
         form.addRow("CPU:", self.inp_cpu)
         form.addRow("GPU:", self.inp_gpu)
-        form.addRow("RAM (e.g. 64GB):", self.inp_ram)
-        form.addRow("Storage (e.g. 2TB NVMe):", self.inp_storage)
+        form.addRow("RAM:", self.inp_ram)
+        form.addRow("Storage:", self.inp_storage)
         form.addRow("Location/Dept:", self.inp_location)
         form.addRow("Status:", self.inp_status)
 
@@ -110,27 +96,23 @@ class AddPCDialog(QDialog):
             "machine. That writes the loan record offboarding reads."
         )
         owner_note.setWordWrap(True)
-        owner_note.setStyleSheet("color: #87857F; font-size: 11px; background: transparent; border: none;")
+        owner_note.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: 11px; background: transparent; border: none;")
         layout.addWidget(owner_note)
         
+        # Enter saves. The auto-fill button used to be the dialog's default,
+        # so Enter in any field went scanning the Live Ops share instead.
         if not self.edit_data:
-            btn_scan = QPushButton("Auto-fill from Live Ops (Network)")
-            btn_scan.setObjectName("secondaryButton")
-            btn_scan.clicked.connect(self.auto_fill)
+            btn_scan = make_button("Auto-fill from Live Ops", "secondary",
+                                   tooltip="Read CPU, GPU, RAM and storage from this machine's Live Ops report",
+                                   on_click=self.auto_fill)
             layout.addWidget(btn_scan)
-        
+
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.setObjectName("secondaryButton")
-        cancel_btn.clicked.connect(self.reject)
-        
-        ok_btn = QPushButton("Save PC")
-        ok_btn.setObjectName("primaryButton")
-        ok_btn.clicked.connect(self.accept)
-        
-        btn_layout.addWidget(cancel_btn)
-        btn_layout.addWidget(ok_btn)
+        self.cancel_btn = make_button("Cancel", on_click=self.reject)
+        self.ok_btn = make_button("Save PC", "primary", on_click=self.accept)
+        btn_layout.addWidget(self.cancel_btn)
+        btn_layout.addWidget(self.ok_btn)
         layout.addLayout(btn_layout)
 
     def auto_fill(self):
@@ -188,66 +170,28 @@ class ItInventoryTab(QWidget):
         controls = QHBoxLayout()
         controls.setSpacing(10)
         
-        lbl = QLabel("Filter by Status:")
-        lbl.setStyleSheet("color: #87857F; font-weight: 600; background: transparent; border: none;")
+        lbl = QLabel("Status:")
+        lbl.setStyleSheet(f"color: {Gate.TEXT_DIM}; background: transparent; border: none;")
         controls.addWidget(lbl)
         
         self.filter_cb = QComboBox()
         self.filter_cb.addItems(["All", "Active", "Repair", "Available"])
-        self.filter_cb.setStyleSheet("""
-            QComboBox {
-                background: #16161A;
-                color: #D9A441;
-                border: 1px solid #26262D;
-                border-radius: 4px;
-                padding: 4px 10px;
-                min-height: 24px;
-            }
-            QComboBox:focus { border-color: #3EA8BF; }
-            QComboBox QAbstractItemView {
-                background-color: #16161A;
-                color: #E8E6E1;
-                border: 1px solid #26262D;
-                selection-background-color: #1D1D22;
-                selection-color: #3EA8BF;
-            }
-        """)
         self.filter_cb.currentTextChanged.connect(self.load_data)
         controls.addWidget(self.filter_cb)
         controls.addStretch()
         
-        add_btn = QPushButton("+ Add PC")
-        add_btn.setObjectName("primaryButton")
-        add_btn.clicked.connect(self.add_workstation)
-        controls.addWidget(add_btn)
-        
-        edit_btn = QPushButton("Edit Selected")
-        edit_btn.setObjectName("secondaryButton")
-        edit_btn.clicked.connect(self.edit_workstation)
-        controls.addWidget(edit_btn)
-        
-        self.issue_btn = QPushButton("Issue to...")
-        self.issue_btn.setObjectName("secondaryButton")
-        self.issue_btn.setToolTip("Hand this machine to somebody, and record the loan")
-        self.issue_btn.clicked.connect(self.issue_selected)
+        controls.addWidget(make_button("Add PC", "primary", icon="plus", on_click=self.add_workstation))
+        controls.addWidget(make_button("Edit Selected", on_click=self.edit_workstation))
+        self.issue_btn = make_button("Issue to...", tooltip="Hand this machine to somebody, and record the loan",
+                                     on_click=self.issue_selected)
         controls.addWidget(self.issue_btn)
-
-        self.collect_btn = QPushButton("Collect")
-        self.collect_btn.setObjectName("secondaryButton")
-        self.collect_btn.setToolTip("Take this machine back and free it in the inventory")
-        self.collect_btn.clicked.connect(self.collect_selected)
+        self.collect_btn = make_button("Collect", tooltip="Take this machine back and free it in the inventory",
+                                       on_click=self.collect_selected)
         controls.addWidget(self.collect_btn)
-
-        delete_btn = QPushButton("Delete Selected")
-        delete_btn.setObjectName("dangerButton")
-        delete_btn.clicked.connect(self.delete_workstation)
-        controls.addWidget(delete_btn)
-        
-        sync_btn = QPushButton("Sync from Live Ops")
-        sync_btn.setObjectName("secondaryButton")
-        sync_btn.setToolTip("Automatically import any unknown online PCs from Live Ops")
-        sync_btn.clicked.connect(self.sync_from_live_ops)
-        controls.addWidget(sync_btn)
+        controls.addWidget(make_button("Delete Selected", "danger", on_click=self.delete_workstation))
+        controls.addWidget(make_button("Sync from Live Ops",
+                                       tooltip="Automatically import any unknown online PCs from Live Ops",
+                                       on_click=self.sync_from_live_ops))
         
         main_layout.addLayout(controls)
 
@@ -260,7 +204,6 @@ class ItInventoryTab(QWidget):
         from slate.gui.components.auto_refresh import AutoRefresh
         self._auto_refresh = AutoRefresh(self, self.load_data, seconds=30, topics=("hardware_inventory", "asset_assignments"))
         
-        self.grid.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         main_layout.addWidget(self.grid)
 
         # What this table says when there is nothing in it. It used to
@@ -310,9 +253,12 @@ class ItInventoryTab(QWidget):
             
         self.grid.setRowCount(len(self.hardware_data))
         for r, row in enumerate(self.hardware_data):
-            assigned = row.get('display_name') or row.get('username') or row.get('assigned_to') or "Unassigned"
+            assigned = row.get('display_name') or row.get('username') or row.get('assigned_to')
             self.grid.setItem(r, 0, QTableWidgetItem(str(row.get('machine_name', ''))))
-            self.grid.setItem(r, 1, QTableWidgetItem(assigned))
+            assigned_item = QTableWidgetItem(assigned or "Unassigned")
+            if not assigned:
+                dim_cell(assigned_item)        # a placeholder, not a name
+            self.grid.setItem(r, 1, assigned_item)
             self.grid.setItem(r, 2, QTableWidgetItem(str(row.get('location', ''))))
             self.grid.setItem(r, 3, QTableWidgetItem(str(row.get('cpu', 'N/A'))))
             self.grid.setItem(r, 4, QTableWidgetItem(str(row.get('gpu', 'N/A'))))
@@ -322,13 +268,13 @@ class ItInventoryTab(QWidget):
             status_item = QTableWidgetItem(str(row.get('status', '')))
             st_text = status_item.text().strip().lower()
             if st_text == "active":
-                status_item.setForeground(QColor("#5FBF8F"))
+                set_cell_status(status_item, "ok", background=False)
             elif st_text == "repair":
-                status_item.setForeground(QColor("#D9635F"))
+                set_cell_status(status_item, "bad", background=False)
             elif st_text == "available":
-                status_item.setForeground(QColor("#3EA8BF"))
+                set_cell_status(status_item, "accent", background=False)
             else:
-                status_item.setForeground(QColor("#87857F"))
+                dim_cell(status_item)
             self.grid.setItem(r, 7, status_item)
 
     def _selected_row(self):
@@ -591,34 +537,15 @@ class ItInventoryTab(QWidget):
         self.load_data()
 
     def style_table(self, table: QTableWidget):
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        table.setAlternatingRowColors(True)
-        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        table.verticalHeader().setVisible(False)
-        table.verticalHeader().setDefaultSectionSize(34)
-        table.setStyleSheet("""
-            QTableWidget { 
-                background-color: #16161A; 
-                color: #D9A441; 
-                gridline-color: #1D1D22; 
-                border: 1px solid #1D1D22; 
-                border-radius: 6px;
-                font-size: 12px;
-            }
-            QTableWidget::item {
-                padding: 4px 8px;
-                border-bottom: 1px solid #1D1D22;
-            }
-            QTableWidget::item:alternate { background-color: #16161A; }
-            QTableWidget::item:selected { background-color: #16323A; color: #3EA8BF; }
-            QHeaderView::section { 
-                background-color: #16161A; 
-                color: #87857F; 
-                border: 1px solid #1D1D22; 
-                padding: 6px 10px; 
-                font-weight: 700;
-                font-size: 11px;
-                text-transform: uppercase;
-                letter-spacing: 0.5px;
-            }
-        """)
+        """The shared table style: data in text colour (it was all amber, the
+        warning colour), readable size and padding, one selection colour."""
+        style_table(table, {
+            "Machine Name": "contents",
+            "Assigned To": ("interactive", 160),
+            "Location": ("interactive", 130),
+            "CPU": "stretch",
+            "GPU": "stretch",
+            "RAM": "contents",
+            "Storage": "contents",
+            "Status": "contents",
+        })

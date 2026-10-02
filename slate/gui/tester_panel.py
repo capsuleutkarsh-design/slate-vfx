@@ -24,6 +24,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QThread, QObject, QDate, QTime, QDateTime
 from ..core.domain.asset_ingestor import IngestWorker
 from slate.gui.core.offline_notice import on_database_error
+from slate.core.infra.gate import Gate
+from slate.gui.core.controls import plain
 
 # Let an outage reach the @on_database_error decorator rather than becoming an
 # empty grid here. Everything else keeps the fallback it already had.
@@ -308,9 +310,9 @@ class ValidationWorker(QThread):
                                   except (OSError, ValueError, TypeError) as e:
                                       logging.debug(f"Size check skipped for {task.get('item_name')}: {e}")
                          
-                         if not missing and not size_mismatch: report.append("<font color='#5FBF8F'>INTEGRITY PASS</font>")
+                         if not missing and not size_mismatch: report.append(f"<font color='{Gate.OK}'>INTEGRITY PASS</font>")
                          else:
-                             report.append("<font color='#D9635F'>FAIL</font>")
+                             report.append(f"<font color='{Gate.BAD}'>FAIL</font>")
                              if missing: report.append(f"Missing: {len(missing)}")
                              if size_mismatch: report.append(f"Size Mismatch: {len(size_mismatch)}")
 
@@ -335,9 +337,9 @@ class ValidationWorker(QThread):
                              if abs_path not in db_paths:
                                  ghosts.append(abs_path)
                      
-                     if not ghosts: report.append("<font color='#5FBF8F'>CLEAN: no ghost files found.</font>")
+                     if not ghosts: report.append(f"<font color='{Gate.OK}'>CLEAN: no ghost files found.</font>")
                      else:
-                         report.append(f"<font color='#D9635F'>FOUND {len(ghosts)} GHOST FILES</font>")
+                         report.append(f"<font color='{Gate.BAD}'>FOUND {len(ghosts)} GHOST FILES</font>")
                          report.append("(Files on disk but NOT in Database)")
                          for g in ghosts[:10]: report.append(f" - {g}")
                          if len(ghosts) > 10: report.append(f"... and {len(ghosts)-10} more.")
@@ -366,9 +368,9 @@ class ValidationWorker(QThread):
                         corrupted.append(f"{name} (Src: {size}B != Dst: {dst_files[name]}B)")
                 
                 if not missing and not corrupted:
-                    report.append("<font color='#5FBF8F'>FILESYSTEM INTEGRITY: PASS</font>")
+                    report.append(f"<font color='{Gate.OK}'>FILESYSTEM INTEGRITY: PASS</font>")
                 else:
-                    report.append("<font color='#D9635F'>FILESYSTEM INTEGRITY: FAIL</font>")
+                    report.append(f"<font color='{Gate.BAD}'>FILESYSTEM INTEGRITY: FAIL</font>")
                     if missing: report.append(f"  - Missing: {len(missing)} files (e.g. {missing[:3]})")
                     if corrupted: report.append(f"  - Corrupted: {len(corrupted)} files (e.g. {corrupted[:3]})")
 
@@ -407,9 +409,9 @@ class ValidationWorker(QThread):
                                         db_ghosts.append(task['item_name'])
                             
                             if not db_ghosts:
-                                report.append("<font color='#5FBF8F'>REPORT ACCURACY: PASS</font> (All DB 'Success' files exist)")
+                                report.append(f"<font color='{Gate.OK}'>REPORT ACCURACY: PASS</font> (All DB 'Success' files exist)")
                             else:
-                                report.append("<font color='#D9635F'>REPORT ACCURACY: FAIL</font>")
+                                report.append(f"<font color='{Gate.BAD}'>REPORT ACCURACY: FAIL</font>")
                                 report.append(f"  - Ghost Files (In Report but NOT on Disk): {len(db_ghosts)}")
                         else:
                             report.append("No operations found in Database.")
@@ -447,7 +449,7 @@ class TesterPanel(QWidget):
         layout = QVBoxLayout(self)
         
         # Header
-        header = QLabel("TESTER PANEL"); header.setAlignment(Qt.AlignmentFlag.AlignCenter); header.setStyleSheet("font-size: 18px; font-weight: bold; color: #D9A441; background: transparent; border: none;")
+        header = QLabel("TESTER PANEL"); header.setAlignment(Qt.AlignmentFlag.AlignCenter); header.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {Gate.WARN}; background: transparent; border: none;")
         layout.addWidget(header)
 
         self.tabs = QTabWidget()
@@ -466,7 +468,7 @@ class TesterPanel(QWidget):
         layout.addWidget(self.tabs)
         
         # Log Area
-        self.log_area = QTextEdit(); self.log_area.setReadOnly(True); self.log_area.setStyleSheet("background: #1D1D22; color: #5FBF8F; font-family: Consolas;")
+        self.log_area = QTextEdit(); self.log_area.setReadOnly(True); self.log_area.setStyleSheet(f"background: {Gate.RAISED}; color: {Gate.OK}; font-family: Consolas;")
         layout.addWidget(self.log_area)
 
     def closeEvent(self, event):
@@ -545,7 +547,7 @@ class TesterPanel(QWidget):
         l.addWidget(config_box); l.addWidget(type_box)
         
         # Action
-        self.btn_gen = QPushButton("▶ GENERATE DUMMY FILES"); self.btn_gen.setStyleSheet("background: #3EA8BF; font-weight: bold; padding: 10px;")
+        self.btn_gen = QPushButton("▶ GENERATE DUMMY FILES"); self.btn_gen.setStyleSheet(f"background: {Gate.ACCENT}; font-weight: bold; padding: 10px;")
         self.btn_gen.clicked.connect(self.start_generation)
         l.addWidget(self.btn_gen)
         
@@ -558,7 +560,7 @@ class TesterPanel(QWidget):
         w = QWidget(); l = QVBoxLayout(w)
         
         info = QLabel("<b>Workflow Simulator</b><br>Autogenerates 'For_move' structure and Excel Template.")
-        info.setStyleSheet("color: #E8E6E1; font-size: 14px;")
+        info.setStyleSheet(f"color: {Gate.TEXT}; font-size: 14px;")
         l.addWidget(info)
         
         # --- TEST DATASET CONFIG ---
@@ -596,7 +598,7 @@ class TesterPanel(QWidget):
         
         l.addWidget(complex_box)
 
-        btn_sim = QPushButton("CREATE TEST ENVIRONMENT"); btn_sim.setStyleSheet("background: #5FBF8F; font-weight: bold; padding: 15px; font-size: 14px;")
+        btn_sim = QPushButton("CREATE TEST ENVIRONMENT"); btn_sim.setStyleSheet(f"background: {Gate.OK}; font-weight: bold; padding: 15px; font-size: 14px;")
         btn_sim.clicked.connect(self.start_workflow_sim)
         l.addWidget(btn_sim)
         
@@ -641,7 +643,7 @@ class TesterPanel(QWidget):
         self.bg_mode.buttonClicked.connect(self.update_analyzer_ui)
         self.update_analyzer_ui()
         
-        btn_an = QPushButton("ANALYZE RESULTS"); btn_an.setStyleSheet("background: #3EA8BF; font-weight: bold; padding: 15px;")
+        btn_an = QPushButton("ANALYZE RESULTS"); btn_an.setStyleSheet(f"background: {Gate.ACCENT}; font-weight: bold; padding: 15px;")
         btn_an.clicked.connect(self.start_analysis)
         l.addWidget(btn_an)
         
@@ -707,7 +709,7 @@ class TesterPanel(QWidget):
         fl.addRow("Sibling Folders:", self.spin_folders)
         l.addWidget(form_box)
         
-        btn_create = QPushButton("CREATE STRUCTURE"); btn_create.setStyleSheet("background: #D9A441; font-weight: bold; padding: 10px;")
+        btn_create = QPushButton("CREATE STRUCTURE"); btn_create.setStyleSheet(f"background: {Gate.WARN}; font-weight: bold; padding: 10px;")
         btn_create.clicked.connect(self.start_structure)
         l.addWidget(btn_create)
         l.addStretch()
@@ -716,7 +718,7 @@ class TesterPanel(QWidget):
     def create_utils_tab(self):
         w = QWidget(); l = QVBoxLayout(w)
         
-        btn_wipe = QPushButton("WIPE TESTER FOLDER"); btn_wipe.setStyleSheet("background: #D9635F; padding: 10px;")
+        btn_wipe = QPushButton("WIPE TESTER FOLDER"); btn_wipe.setStyleSheet(f"background: {Gate.BAD}; padding: 10px;")
         btn_wipe.clicked.connect(self.wipe_folder)
         l.addWidget(btn_wipe)
         l.addStretch()
@@ -728,7 +730,7 @@ class TesterPanel(QWidget):
         # 1. LIVE LOG VIEWER
         log_group = QGroupBox("Live Log Viewer (System)"); ll = QVBoxLayout(log_group)
         self.live_log_text = QTextEdit(); self.live_log_text.setReadOnly(True)
-        self.live_log_text.setStyleSheet("background: #1D1D22; color: #B4B1AA; font-family: Consolas; font-size: 11px;")
+        self.live_log_text.setStyleSheet(f"background: {Gate.RAISED}; color: {Gate.TEXT_2}; font-family: Consolas; font-size: 11px;")
         ll.addWidget(self.live_log_text)
         
         # Attach Handler
@@ -740,9 +742,9 @@ class TesterPanel(QWidget):
         l.addWidget(log_group, 2) # Stretch factor 2
         
         # 2. ACTIONS
-        action_group = QGroupBox("Stress & Crash"); al = QHBoxLayout(action_group)
+        action_group = QGroupBox(plain("Stress & Crash")); al = QHBoxLayout(action_group)
         
-        btn_crash = QPushButton("Simulator Crash"); btn_crash.setStyleSheet("background: #D9635F")
+        btn_crash = QPushButton("Simulator Crash"); btn_crash.setStyleSheet(f"background: {Gate.BAD}")
         btn_crash.clicked.connect(self.simulate_crash)
         al.addWidget(btn_crash)
         
@@ -783,10 +785,10 @@ class TesterPanel(QWidget):
         w = QWidget(); l = QVBoxLayout(w)
         
         info = QLabel("<b>Regression Suite (One-Click Verify)</b><br>Runs: Generate -> Ingest -> Verify.")
-        info.setStyleSheet("color: #B4B1AA;")
+        info.setStyleSheet(f"color: {Gate.TEXT_2};")
         l.addWidget(info)
         
-        btn_reg = QPushButton("▶ RUN FULL REGRESSION TEST"); btn_reg.setStyleSheet("background: #D9A441; font-weight: bold; padding: 20px; font-size: 16px;")
+        btn_reg = QPushButton("▶ RUN FULL REGRESSION TEST"); btn_reg.setStyleSheet(f"background: {Gate.WARN}; font-weight: bold; padding: 20px; font-size: 16px;")
         btn_reg.clicked.connect(self.run_regression)
         l.addWidget(btn_reg)
         

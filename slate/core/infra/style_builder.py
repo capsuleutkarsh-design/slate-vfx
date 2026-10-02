@@ -19,7 +19,7 @@ class StyleBuilder:
     # === CONTAINERS ===
     
     @staticmethod
-    def card(background=C.BG_SURFACE, border=C.BORDER_DEFAULT, radius=R.LG, hover_border=None):
+    def card(background=None, border=None, radius=R.LG, hover_border=None):
         """
         Standard card/panel style.
         
@@ -32,6 +32,10 @@ class StyleBuilder:
         Returns:
             Qt stylesheet string
         """
+        # Colours are looked up when the style is built, not when this module
+        # was imported, so a card follows the active theme.
+        background = background or C.BG_SURFACE
+        border = border or C.BORDER_DEFAULT
         style = f"""
             QFrame {{
                 background-color: {background};
@@ -238,6 +242,9 @@ class StyleBuilder:
         Returns:
             Qt stylesheet string
         """
+        # The drop-down and its chevron come from the application stylesheet
+        # (main.qss). Drawing the arrow here out of borders - which Qt does not
+        # render - is what left a bar where the arrow should be.
         return f"""
             QComboBox {{
                 background-color: {C.BG_ELEVATED};
@@ -249,21 +256,12 @@ class StyleBuilder:
             QComboBox:focus {{
                 border-color: {C.BORDER_FOCUS};
             }}
-            QComboBox::drop-down {{
-                border: none;
-            }}
-            QComboBox::down-arrow {{
-                image: none;
-                border-left: 4px solid transparent;
-                border-right: 4px solid transparent;
-                border-top: 6px solid {C.TEXT_PRIMARY};
-            }}
         """
-    
+
     # === LABELS ===
     
     @staticmethod
-    def label(color=C.TEXT_PRIMARY, size=T.SIZE_MD, weight=T.WEIGHT_NORMAL):
+    def label(color=None, size=T.SIZE_MD, weight=T.WEIGHT_NORMAL):
         """
         Standard label style.
         
@@ -275,6 +273,7 @@ class StyleBuilder:
         Returns:
             Qt stylesheet string
         """
+        color = color or C.TEXT_PRIMARY
         return f"color: {color}; font-size: {size}px; font-weight: {weight};"
     
     @staticmethod
@@ -343,7 +342,7 @@ class StyleBuilder:
     # === GROUP BOXES ===
     
     @staticmethod
-    def group_box(border_color=C.SUCCESS_BRIGHT):
+    def group_box(border_color=None):
         """
         Standard group box with colored border.
         
@@ -353,6 +352,7 @@ class StyleBuilder:
         Returns:
             Qt stylesheet string
         """
+        border_color = border_color or C.SUCCESS_BRIGHT
         return f"""
             QGroupBox {{
                 border: 2px solid {border_color};

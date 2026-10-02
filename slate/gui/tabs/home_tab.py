@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QUrl, QTimer, Signal, QThread, QMetaObject, Q_ARG, Slot
 from PySide6.QtGui import QColor, QFont
+from slate.core.infra.gate import Gate
 
 try:
     from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -37,18 +38,18 @@ class QuickActionBtn(QFrame):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         self.setMinimumHeight(85)
         self.setObjectName("QuickBtn")
-        self.setStyleSheet("""
-            QFrame#QuickBtn {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(255, 255, 255, 0.08), stop:1 rgba(255, 255, 255, 0.02));
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-top: 1px solid rgba(255, 255, 255, 0.2);
+        self.setStyleSheet(f"""
+            QFrame#QuickBtn {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {Gate.overlay(0.08)}, stop:1 {Gate.overlay(0.02)});
+                border: 1px solid {Gate.overlay(0.1)};
+                border-top: 1px solid {Gate.overlay(0.2)};
                 border-radius: 12px;
-            }
-            QFrame#QuickBtn:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(255, 255, 255, 0.15), stop:1 rgba(255, 255, 255, 0.06));
-                border: 1px solid rgba(255, 255, 255, 0.3);
-                border-top: 1px solid rgba(255, 255, 255, 0.5);
-            }
+            }}
+            QFrame#QuickBtn:hover {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {Gate.overlay(0.15)}, stop:1 {Gate.overlay(0.06)});
+                border: 1px solid {Gate.overlay(0.3)};
+                border-top: 1px solid {Gate.overlay(0.5)};
+            }}
         """)
         
         layout = QVBoxLayout(self)
@@ -62,19 +63,19 @@ class QuickActionBtn(QFrame):
             from ..core.icons import icon as draw_icon, has_icon
             if has_icon(glyph):
                 mark = QLabel()
-                mark.setPixmap(draw_icon(glyph, "#E8E6E1", 17).pixmap(17, 17))
+                mark.setPixmap(draw_icon(glyph, Gate.TEXT, 17).pixmap(17, 17))
                 mark.setStyleSheet("background: transparent; border: none;")
                 mark.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
                 title_row.addWidget(mark)
 
         lbl_title = QLabel(title)
-        lbl_title.setStyleSheet("background: none; background-color: transparent; border: none; color: white; font-size: 16px; font-weight: 800; letter-spacing: 1px;")
+        lbl_title.setStyleSheet(f"background: none; background-color: transparent; border: none; color: {Gate.TEXT}; font-size: 16px; font-weight: 800; letter-spacing: 1px;")
         lbl_title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         title_row.addWidget(lbl_title)
         title_row.addStretch(1)
         
         lbl_sub = QLabel(subtitle)
-        lbl_sub.setStyleSheet("background: none; background-color: transparent; border: none; color: #B4B1AA; font-size: 12px; font-weight: 500;")
+        lbl_sub.setStyleSheet(f"background: none; background-color: transparent; border: none; color: {Gate.TEXT_2}; font-size: 12px; font-weight: 500;")
         lbl_sub.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         
         layout.addLayout(title_row)
@@ -82,24 +83,24 @@ class QuickActionBtn(QFrame):
         
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            self.setStyleSheet("""
-                QFrame#QuickBtn {
-                    background: rgba(255, 255, 255, 0.05);
-                    border: 1px solid rgba(255, 255, 255, 0.1);
+            self.setStyleSheet(f"""
+                QFrame#QuickBtn {{
+                    background: {Gate.overlay(0.05)};
+                    border: 1px solid {Gate.overlay(0.1)};
                     border-radius: 12px;
-                }
+                }}
             """)
         super().mousePressEvent(event)
         
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            self.setStyleSheet("""
-                QFrame#QuickBtn {
-                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(255, 255, 255, 0.15), stop:1 rgba(255, 255, 255, 0.06));
-                    border: 1px solid rgba(255, 255, 255, 0.3);
-                    border-top: 1px solid rgba(255, 255, 255, 0.5);
+            self.setStyleSheet(f"""
+                QFrame#QuickBtn {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {Gate.overlay(0.15)}, stop:1 {Gate.overlay(0.06)});
+                    border: 1px solid {Gate.overlay(0.3)};
+                    border-top: 1px solid {Gate.overlay(0.5)};
                     border-radius: 12px;
-                }
+                }}
             """)
             self.clicked.emit()
         super().mouseReleaseEvent(event)
@@ -316,8 +317,8 @@ class HomeTab(QWidget):
         # --- LAYER 0: WEBGL BACKGROUND ---
         if HAS_WEBENGINE:
             self.web_view = QWebEngineView()
-            self.web_view.page().setBackgroundColor(QColor("#0D0D0F"))
-            self.web_view.setStyleSheet("background-color: #0D0D0F;")
+            self.web_view.page().setBackgroundColor(QColor(Gate.GROUND))
+            self.web_view.setStyleSheet(f"background-color: {Gate.GROUND};")
             # Operations runs its own sky - blue through red into yellow - so
             # the two modes are told apart before any text is read. Production
             # keeps the green and cyan. If the ops file is missing for any
@@ -335,17 +336,17 @@ class HomeTab(QWidget):
             if os.path.exists(html_path):
                 self.web_view.setUrl(QUrl.fromLocalFile(html_path))
             else:
-                self.web_view.setHtml("<html><body style='background:#0D0D0F; color:#E8E6E1;'>Background missing</body></html>")
+                self.web_view.setHtml(f"<html><body style='background:{Gate.GROUND}; color:{Gate.TEXT};'>Background missing</body></html>")
                 
             self.web_view.titleChanged.connect(self._on_title_changed)
             self.stack.addWidget(self.web_view)
         else:
             self.web_view = QWidget()
-            self.web_view.setStyleSheet("background-color: #0D0D0F;")
+            self.web_view.setStyleSheet(f"background-color: {Gate.GROUND};")
             fallback_layout = QVBoxLayout(self.web_view)
             fallback_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl = QLabel("Background missing (QtWebEngine disabled)")
-            lbl.setStyleSheet("color: #2C2C34;")
+            lbl.setStyleSheet(f"color: {Gate.LINE};")
             fallback_layout.addWidget(lbl)
             self.stack.addWidget(self.web_view)
         
@@ -369,8 +370,8 @@ class HomeTab(QWidget):
         # Top Bar
         top_bar = QHBoxLayout()
         greeting = QLabel(f"Welcome back, {self.user_display_name}")
-        greeting.setStyleSheet("""
-            color: white; 
+        greeting.setStyleSheet(f"""
+            color: {Gate.TEXT}; 
             font-size: 28px; 
             font-weight: 300; 
             font-family: 'Inter', sans-serif;
@@ -386,10 +387,10 @@ class HomeTab(QWidget):
             att_layout.setContentsMargins(20, 10, 20, 10)
             
             self.lbl_punch_status = QLabel("Status: Unknown")
-            self.lbl_punch_status.setStyleSheet("color: #E8E6E1; font-size: 14px;")
+            self.lbl_punch_status.setStyleSheet(f"color: {Gate.TEXT}; font-size: 14px;")
             
-            self.btn_punch_in = self._build_glass_button("PUNCH IN", "#5FBF8F")
-            self.btn_punch_out = self._build_glass_button("PUNCH OUT", "#D9635F")
+            self.btn_punch_in = self._build_glass_button("PUNCH IN", Gate.OK)
+            self.btn_punch_out = self._build_glass_button("PUNCH OUT", Gate.BAD)
             
             self.btn_punch_in.clicked.connect(lambda: self.do_punch("in"))
             self.btn_punch_out.clicked.connect(lambda: self.do_punch("out"))
@@ -406,7 +407,7 @@ class HomeTab(QWidget):
             badge_layout = QHBoxLayout(hub_badge)
             badge_layout.setContentsMargins(18, 10, 18, 10)
             lbl_hub = QLabel("VFX PRODUCTION HUB")
-            lbl_hub.setStyleSheet("color: #3EA8BF; font-size: 13px; font-weight: 800; letter-spacing: 2px; background: transparent; border: none;")
+            lbl_hub.setStyleSheet(f"color: {Gate.ACCENT}; font-size: 13px; font-weight: 800; letter-spacing: 2px; background: transparent; border: none;")
             badge_layout.addWidget(lbl_hub)
             top_bar.addWidget(hub_badge)
 
@@ -424,7 +425,7 @@ class HomeTab(QWidget):
         ql_layout.setContentsMargins(20, 20, 20, 20)
         
         ql_title = QLabel("OPERATIONS LAUNCH" if self.mode == "ops" else "QUICK LAUNCH")
-        ql_title.setStyleSheet("color: #3EA8BF; font-size: 14px; font-weight: 800; letter-spacing: 3px; background: transparent; border: none;")
+        ql_title.setStyleSheet(f"color: {Gate.ACCENT}; font-size: 14px; font-weight: 800; letter-spacing: 3px; background: transparent; border: none;")
         ql_layout.addWidget(ql_title)
         
         grid_layout = QVBoxLayout()
@@ -487,13 +488,13 @@ class HomeTab(QWidget):
         
         tasks_title_text = "HRMS & OPERATIONS PULSE" if self.mode == "ops" else "MY RECENT TASKS"
         tasks_title = QLabel(tasks_title_text)
-        tasks_title.setStyleSheet("color: #3EA8BF; font-size: 14px; font-weight: 800; letter-spacing: 3px; background: transparent; border: none;")
+        tasks_title.setStyleSheet(f"color: {Gate.ACCENT}; font-size: 14px; font-weight: 800; letter-spacing: 3px; background: transparent; border: none;")
         tasks_layout.addWidget(tasks_title)
         
         self.tasks_container_layout = QVBoxLayout()
         empty_text = "Loading operations status..." if self.mode == "ops" else "Loading assigned shots..."
         empty_lbl = QLabel(empty_text)
-        empty_lbl.setStyleSheet("background: none; background-color: transparent; border: none; color: #87857F; font-style: italic;")
+        empty_lbl.setStyleSheet(f"background: none; background-color: transparent; border: none; color: {Gate.TEXT_DIM}; font-style: italic;")
         self.tasks_container_layout.addWidget(empty_lbl)
         tasks_layout.addLayout(self.tasks_container_layout)
         right_panel_layout.addWidget(tasks_panel)
@@ -505,7 +506,7 @@ class HomeTab(QWidget):
         stats_layout.setContentsMargins(20, 20, 20, 20)
         
         stats_title = QLabel("LIVE STUDIO TELEMETRY")
-        stats_title.setStyleSheet("color: #3EA8BF; font-size: 14px; font-weight: 800; letter-spacing: 3px; background: transparent; border: none;")
+        stats_title.setStyleSheet(f"color: {Gate.ACCENT}; font-size: 14px; font-weight: 800; letter-spacing: 3px; background: transparent; border: none;")
         stats_layout.addWidget(stats_title)
         
         stat_row = QHBoxLayout()
@@ -549,14 +550,14 @@ class HomeTab(QWidget):
         # small labels under the telemetry figures washed out completely. A
         # dark backing keeps the text readable whatever the animation is doing
         # behind it, and matters more now Operations runs a brighter palette.
-        frame.setStyleSheet("""
-            QFrame#GlassPanel {
+        frame.setStyleSheet(f"""
+            QFrame#GlassPanel {{
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                            stop:0 rgba(13, 13, 15, 0.78), stop:1 rgba(13, 13, 15, 0.62));
-                border: 1px solid rgba(255, 255, 255, 0.14);
-                border-top: 1px solid rgba(255, 255, 255, 0.22);
+                            stop:0 {Gate.tint(Gate.GROUND, 0.78)}, stop:1 {Gate.tint(Gate.GROUND, 0.62)});
+                border: 1px solid {Gate.overlay(0.14)};
+                border-top: 1px solid {Gate.overlay(0.22)};
                 border-radius: 16px;
-            }
+            }}
         """)
         shadow = QGraphicsDropShadowEffect()
         shadow.setBlurRadius(25)
@@ -570,7 +571,7 @@ class HomeTab(QWidget):
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.setStyleSheet(f"""
             QPushButton {{
-                background-color: rgba(255, 255, 255, 0.05);
+                background-color: {Gate.overlay(0.05)};
                 border: 1px solid {color_hex};
                 color: {color_hex};
                 border-radius: 6px;
@@ -580,10 +581,10 @@ class HomeTab(QWidget):
             }}
             QPushButton:hover {{
                 background-color: {color_hex};
-                color: black;
+                color: {Gate.TEXT_ON_ACCENT};
             }}
             QPushButton:pressed {{
-                background-color: rgba(255, 255, 255, 0.2);
+                background-color: {Gate.overlay(0.2)};
             }}
         """)
         return btn
@@ -597,11 +598,11 @@ class HomeTab(QWidget):
         lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         v = QLabel(value)
-        v.setStyleSheet("background: none; background-color: transparent; border: none; color: #5FBF8F; font-size: 28px; font-weight: 900; font-family: monospace;")
+        v.setStyleSheet(f"background: none; background-color: transparent; border: none; color: {Gate.OK}; font-size: 28px; font-weight: 900; font-family: monospace;")
         v.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         l = QLabel(label)
-        l.setStyleSheet("background: none; background-color: transparent; border: none; color: #B4B1AA; font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;")
+        l.setStyleSheet(f"background: none; background-color: transparent; border: none; color: {Gate.TEXT_2}; font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;")
         l.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         lay.addWidget(v)
@@ -657,18 +658,18 @@ class HomeTab(QWidget):
         if not items:
             no_data_msg = "All operations up to date." if self.mode == "ops" else "No shots assigned to you currently."
             empty_lbl = QLabel(no_data_msg)
-            empty_lbl.setStyleSheet("background: none; background-color: transparent; border: none; color: #87857F; font-style: italic;")
+            empty_lbl.setStyleSheet(f"background: none; background-color: transparent; border: none; color: {Gate.TEXT_DIM}; font-style: italic;")
             self.tasks_container_layout.addWidget(empty_lbl)
         else:
             for it in items[:5]:
                 row = QHBoxLayout()
                 lbl_name = QLabel(it.get('title', 'Item'))
-                lbl_name.setStyleSheet("background: none; background-color: transparent; border: none; color: white; font-weight: bold;")
+                lbl_name.setStyleSheet(f"background: none; background-color: transparent; border: none; color: {Gate.TEXT}; font-weight: bold;")
                 
                 status_str = it.get('status', 'Active')
-                badge_color = "#5FBF8F" if status_str in ("Approved", "Done", "Resolved") else ("#D9A441" if status_str in ("Pending", "WIP") else "#3EA8BF")
+                badge_color = Gate.OK if status_str in ("Approved", "Done", "Resolved") else (Gate.WARN if status_str in ("Pending", "WIP") else Gate.ACCENT)
                 lbl_status = QLabel(status_str)
-                lbl_status.setStyleSheet(f"color: {badge_color}; font-weight: bold; padding: 2px 8px; border-radius: 4px; background-color: rgba(255, 255, 255, 0.08);")
+                lbl_status.setStyleSheet(f"color: {badge_color}; font-weight: bold; padding: 2px 8px; border-radius: 4px; background-color: {Gate.overlay(0.08)};")
                 
                 row.addWidget(lbl_name)
                 row.addStretch()

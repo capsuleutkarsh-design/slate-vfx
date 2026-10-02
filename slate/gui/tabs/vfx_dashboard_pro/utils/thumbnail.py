@@ -8,6 +8,7 @@ from slate.core.infra.global_config import GlobalConfig
 from slate.utils.resource_manager import ResourcePathManager
 from PySide6.QtGui import QImage, QColor
 from PySide6.QtCore import QCoreApplication, QThread
+from slate.core.infra.gate import Gate
 
 
 logger = logging.getLogger(__name__)
@@ -59,10 +60,10 @@ class ThumbnailGenerator:
             return str(path) # Return path anyway, caller handles missing file
 
     def get_yellow_placeholder(self):
-        return self._get_status_image(self.yellow_path, '#D9A441')
+        return self._get_status_image(self.yellow_path, Gate.WARN)
 
     def get_red_placeholder(self):
-        return self._get_status_image(self.red_path, '#D9635F')
+        return self._get_status_image(self.red_path, Gate.BAD)
 
     @staticmethod
     def _normalize_reel_folder(reel: str) -> str:

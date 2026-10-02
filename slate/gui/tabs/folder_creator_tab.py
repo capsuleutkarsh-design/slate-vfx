@@ -19,6 +19,8 @@ from ...utils.text_utils import get_resolved_project_root
 from ...core.infra.design_tokens import ColorTokens as C, TypographyTokens as T
 from ...gui.dialogs.custom_template_dialog import CustomTemplateDialog
 from ...gui.dialogs.stitch_confirm_dialog import StitchConfirmDialog
+from slate.core.infra.gate import Gate
+from slate.gui.core.controls import plain
 
 
 
@@ -325,19 +327,20 @@ class FolderCreatorTab(QWidget):
             # Check if this specific project folder already exists
             if target_path.exists() and target_path.is_dir():
                 # IT EXISTS -> SWITCH TO UPDATE MODE VISUALS
-                self.create_btn.setText("Update & Ingest New Files")
+                # plain(): a bare "&" is a Qt shortcut marker, and showed as "Update_Ingest".
+                self.create_btn.setText(plain("Update & Ingest New Files"))
                 
                 # Make it look distinct (Green for safe update)
-                self.create_btn.setStyleSheet(f"background-color: {C.ACCENT_TEAL}; color: white; font-weight: {T.WEIGHT_STYLE_BOLD}; border: 1px solid #16323A;")
+                self.create_btn.setStyleSheet(f"background-color: {C.ACCENT_TEAL}; color: {Gate.TEXT_ON_ACCENT}; font-weight: {T.WEIGHT_STYLE_BOLD}; border: 1px solid {Gate.ACCENT_SURFACE};")
                 self.stats_label.setText("Info: Project exists. Running in SAFE UPDATE mode (No overwrites).")
                 self.stats_label.setStyleSheet(f"color: {C.ACCENT_TEAL}; font-weight: {T.WEIGHT_STYLE_BOLD};")
                 
             else:
                 # IT DOES NOT EXIST -> SWITCH TO CREATE MODE VISUALS
-                self.create_btn.setText("Build & Move Files")
+                self.create_btn.setText(plain("Build & Move Files"))
                 
                 # Revert to default primary button style (preserve gradient effect)
-                self.create_btn.setStyleSheet("background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3EA8BF, stop:1 #3EA8BF); border: 1px solid #3EA8BF; color: white; font-weight: bold;")
+                self.create_btn.setStyleSheet(f"background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {Gate.ACCENT}, stop:1 {Gate.ACCENT}); border: 1px solid {Gate.ACCENT}; color: {Gate.TEXT_ON_ACCENT}; font-weight: bold;")
                 self.stats_label.setText("Ready to create new project.")
                 self.stats_label.setStyleSheet(f"color: {C.TEXT_GRAY_LIGHTER};")
                 

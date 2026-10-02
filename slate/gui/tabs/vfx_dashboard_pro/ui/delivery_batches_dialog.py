@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 from slate.core.domain.deliveries import DeliveryStore, Delivery
 from slate.core.domain.versions import VersionStore
 from slate.gui.core.offline_notice import on_database_error
+from slate.core.infra.gate import Gate
 
 # Let an outage reach the @on_database_error decorator rather than becoming an
 # empty grid here. Everything else keeps the fallback it already had.
@@ -48,7 +49,7 @@ class CreateDeliveryDialog(QDialog):
 
         self.setWindowTitle(f"Create Delivery Batch - {project_code}")
         self.resize(700, 520)
-        self.setStyleSheet("QDialog { background-color: #0D0D0F; color: #E8E6E1; } QLabel { background: transparent; border: none; }")
+        self.setStyleSheet(f"QDialog {{ background-color: {Gate.GROUND}; color: {Gate.TEXT}; }} QLabel {{ background: transparent; border: none; }}")
 
         self._setup_ui()
 
@@ -58,7 +59,7 @@ class CreateDeliveryDialog(QDialog):
 
         # Form fields
         form_frame = QFrame()
-        form_frame.setStyleSheet("background: #16161A; border: 1px solid #1D1D22; border-radius: 6px; padding: 10px;")
+        form_frame.setStyleSheet(f"background: {Gate.PANEL}; border: 1px solid {Gate.RAISED}; border-radius: 6px; padding: 10px;")
         form_l = QVBoxLayout(form_frame)
         form_l.setSpacing(8)
 
@@ -97,27 +98,27 @@ class CreateDeliveryDialog(QDialog):
         self.versions_table.setAlternatingRowColors(True)
         self.versions_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.versions_table.horizontalHeader().setStretchLastSection(True)
-        self.versions_table.setStyleSheet("""
-            QTableWidget {
-                background-color: #0D0D0F;
-                color: #E8E6E1;
-                gridline-color: #1D1D22;
-                border: 1px solid #1D1D22;
+        self.versions_table.setStyleSheet(f"""
+            QTableWidget {{
+                background-color: {Gate.GROUND};
+                color: {Gate.TEXT};
+                gridline-color: {Gate.RAISED};
+                border: 1px solid {Gate.RAISED};
                 border-radius: 6px;
-            }
-            QTableWidget::item:alternate { background-color: #16161A; }
-            QTableWidget::item:selected { background-color: rgba(62, 168, 191, 0.18); }
-            QHeaderView::section {
-                background-color: #16161A;
-                color: #87857F;
+            }}
+            QTableWidget::item:alternate {{ background-color: {Gate.PANEL}; }}
+            QTableWidget::item:selected {{ background-color: {Gate.tint(Gate.ACCENT, 0.18)}; }}
+            QHeaderView::section {{
+                background-color: {Gate.PANEL};
+                color: {Gate.TEXT_DIM};
                 border: none;
-                border-bottom: 2px solid #1D1D22;
-                border-right: 1px solid rgba(255, 255, 255, 0.04);
+                border-bottom: 2px solid {Gate.RAISED};
+                border-right: 1px solid {Gate.overlay(0.04)};
                 padding: 6px 10px;
                 font-weight: 700;
                 font-size: 11px;
                 text-transform: uppercase;
-            }
+            }}
         """)
         layout.addWidget(self.versions_table)
 
@@ -223,7 +224,7 @@ class DeliveryBatchesDialog(QDialog):
 
         self.setWindowTitle(f"Delivery Batches - {project_code}")
         self.resize(1000, 600)
-        self.setStyleSheet("QDialog { background-color: #0D0D0F; color: #E8E6E1; } QLabel { background: transparent; border: none; }")
+        self.setStyleSheet(f"QDialog {{ background-color: {Gate.GROUND}; color: {Gate.TEXT}; }} QLabel {{ background: transparent; border: none; }}")
 
         self._setup_ui()
         self.refresh()
@@ -242,27 +243,27 @@ class DeliveryBatchesDialog(QDialog):
         left_layout.setSpacing(8)
 
         lbl_hdr = QLabel("Delivery Packages:")
-        lbl_hdr.setStyleSheet("font-weight: 700; color: #E8E6E1; font-size: 13px;")
+        lbl_hdr.setStyleSheet(f"font-weight: 700; color: {Gate.TEXT}; font-size: 13px;")
         left_layout.addWidget(lbl_hdr)
 
         self.delivery_list = QListWidget()
-        self.delivery_list.setStyleSheet("""
-            QListWidget {
-                background-color: #16161A;
-                border: 1px solid #1D1D22;
+        self.delivery_list.setStyleSheet(f"""
+            QListWidget {{
+                background-color: {Gate.PANEL};
+                border: 1px solid {Gate.RAISED};
                 border-radius: 6px;
                 padding: 4px;
-            }
-            QListWidget::item {
+            }}
+            QListWidget::item {{
                 padding: 8px 12px;
                 border-radius: 4px;
-                color: #E8E6E1;
-            }
-            QListWidget::item:selected {
-                background-color: rgba(62, 168, 191, 0.18);
-                color: #3EA8BF;
+                color: {Gate.TEXT};
+            }}
+            QListWidget::item:selected {{
+                background-color: {Gate.tint(Gate.ACCENT, 0.18)};
+                color: {Gate.ACCENT};
                 font-weight: bold;
-            }
+            }}
         """)
         self.delivery_list.currentRowChanged.connect(self._on_delivery_selected)
         left_layout.addWidget(self.delivery_list)
@@ -290,20 +291,20 @@ class DeliveryBatchesDialog(QDialog):
 
         # Meta info card
         self.meta_frame = QFrame()
-        self.meta_frame.setStyleSheet("background: #16161A; border: 1px solid #1D1D22; border-radius: 6px; padding: 12px;")
+        self.meta_frame.setStyleSheet(f"background: {Gate.PANEL}; border: 1px solid {Gate.RAISED}; border-radius: 6px; padding: 12px;")
         meta_l = QVBoxLayout(self.meta_frame)
         meta_l.setSpacing(4)
 
         self.title_lbl = QLabel("Select a delivery package from the left.")
-        self.title_lbl.setStyleSheet("font-size: 15px; font-weight: 700; color: #E8E6E1;")
+        self.title_lbl.setStyleSheet(f"font-size: 15px; font-weight: 700; color: {Gate.TEXT};")
         meta_l.addWidget(self.title_lbl)
 
         self.info_lbl = QLabel("")
-        self.info_lbl.setStyleSheet("font-size: 12px; color: #87857F;")
+        self.info_lbl.setStyleSheet(f"font-size: 12px; color: {Gate.TEXT_DIM};")
         meta_l.addWidget(self.info_lbl)
 
         self.notes_lbl = QLabel("")
-        self.notes_lbl.setStyleSheet("font-size: 12px; color: #E8E6E1; font-style: italic;")
+        self.notes_lbl.setStyleSheet(f"font-size: 12px; color: {Gate.TEXT}; font-style: italic;")
         self.notes_lbl.setWordWrap(True)
         meta_l.addWidget(self.notes_lbl)
 
@@ -311,7 +312,7 @@ class DeliveryBatchesDialog(QDialog):
 
         # Items Table
         lbl_tbl = QLabel("Versions Included in Delivery:")
-        lbl_tbl.setStyleSheet("font-weight: 700; color: #E8E6E1; font-size: 13px; margin-top: 4px;")
+        lbl_tbl.setStyleSheet(f"font-weight: 700; color: {Gate.TEXT}; font-size: 13px; margin-top: 4px;")
         right_layout.addWidget(lbl_tbl)
         self.items_table = QTableWidget(0, 5)
         self.items_table.setHorizontalHeaderLabels(["Shot", "Version", "Dept", "Status at Send", "Media Path"])
@@ -319,27 +320,27 @@ class DeliveryBatchesDialog(QDialog):
         self.items_table.setAlternatingRowColors(True)
         self.items_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.items_table.horizontalHeader().setStretchLastSection(True)
-        self.items_table.setStyleSheet("""
-            QTableWidget {
-                background-color: #0D0D0F;
-                color: #E8E6E1;
-                gridline-color: #1D1D22;
-                border: 1px solid #1D1D22;
+        self.items_table.setStyleSheet(f"""
+            QTableWidget {{
+                background-color: {Gate.GROUND};
+                color: {Gate.TEXT};
+                gridline-color: {Gate.RAISED};
+                border: 1px solid {Gate.RAISED};
                 border-radius: 6px;
-            }
-            QTableWidget::item:alternate { background-color: #16161A; }
-            QTableWidget::item:selected { background-color: rgba(62, 168, 191, 0.18); }
-            QHeaderView::section {
-                background-color: #16161A;
-                color: #87857F;
+            }}
+            QTableWidget::item:alternate {{ background-color: {Gate.PANEL}; }}
+            QTableWidget::item:selected {{ background-color: {Gate.tint(Gate.ACCENT, 0.18)}; }}
+            QHeaderView::section {{
+                background-color: {Gate.PANEL};
+                color: {Gate.TEXT_DIM};
                 border: none;
-                border-bottom: 2px solid #1D1D22;
-                border-right: 1px solid rgba(255, 255, 255, 0.04);
+                border-bottom: 2px solid {Gate.RAISED};
+                border-right: 1px solid {Gate.overlay(0.04)};
                 padding: 6px 10px;
                 font-weight: 700;
                 font-size: 11px;
                 text-transform: uppercase;
-            }
+            }}
         """)
         right_layout.addWidget(self.items_table)
 

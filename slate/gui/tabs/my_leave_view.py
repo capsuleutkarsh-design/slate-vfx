@@ -27,6 +27,7 @@ from slate.core.domain import leave_policy as lp
 from ..core.controls import make_button, page_title
 from ..core.offline_notice import on_database_error
 from ..core.empty_state import EmptyState
+from ..core.table_style import style_table
 
 
 def _tone(token: str) -> str:
@@ -97,7 +98,7 @@ class RequestLeaveDialog(QDialog):
         self.username = (username or "").strip()
         self.setWindowTitle("Request leave")
         self.setMinimumWidth(460)
-        self.setStyleSheet(f"background-color: {Gate.GROUND}; color: {Gate.TEXT};")
+        self.setStyleSheet(f"QDialog {{ background-color: {Gate.GROUND}; }}")  # the dialog only: without a selector every field in it took this background
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(22, 20, 22, 18)
@@ -311,14 +312,10 @@ class MyLeaveView(QWidget):
         self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(
             ["From", "To", "Type", "Days", "Status", "Waiting on", "Reason"])
-        self.table.verticalHeader().setVisible(False)
-        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table.setAlternatingRowColors(True)
-        head = self.table.horizontalHeader()
-        for i in range(6):
-            head.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
-        head.setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
+        style_table(self.table, {
+            "From": "contents", "To": "contents", "Type": "contents", "Days": "numeric",
+            "Status": "contents", "Waiting on": "contents", "Reason": "stretch",
+        })
         self.table.itemSelectionChanged.connect(self._sync_cancel)
         root.addWidget(self.table, 1)
 

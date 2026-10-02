@@ -32,6 +32,7 @@ from ..core.infra.design_tokens import ColorTokens as C, TypographyTokens as T, 
 from ..core.infra.style_builder import StyleBuilder
 from .core.icons import icon as draw_icon
 from .core.controls import make_button
+from slate.core.infra.gate import Gate
 
 # Import shared PyToggle widget (no more duplication!)
 
@@ -81,12 +82,12 @@ STYLE_SIDEBAR = f"""
         border: 1px solid transparent;
     }} 
     QListWidget::item:hover {{ 
-        background-color: #16161A; 
-        color: white; 
+        background-color: {Gate.PANEL}; 
+        color: {Gate.TEXT}; 
         border: 1px solid {C.BORDER_DEFAULT};
     }} 
     QListWidget::item:selected {{ 
-        background-color: #16323A; 
+        background-color: {Gate.ACCENT_SURFACE}; 
         color: {C.BORDER_HOVER}; 
         border: 1px solid {C.BORDER_HOVER}; 
         font-weight: {T.WEIGHT_STYLE_BOLD};
@@ -262,7 +263,7 @@ class AdminPanelTab(QWidget):
             # Already running, just open the dashboard
             QDesktopServices.openUrl(QUrl(f"http://{host}:8000/admin"))
             self.btn_api.setText("Open API Dashboard")
-            self.btn_api.setStyleSheet("background-color: #3EA8BF; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-weight: bold;")
+            self.btn_api.setStyleSheet(f"background-color: {Gate.ACCENT}; color: {Gate.TEXT_ON_ACCENT}; border: none; padding: 6px 12px; border-radius: 4px; font-weight: bold;")
             return
             
         try:
@@ -282,7 +283,7 @@ class AdminPanelTab(QWidget):
             self.log_action("Started API Gateway (FastAPI) on port 8000")
             
             self.btn_api.setText("Open API Dashboard")
-            self.btn_api.setStyleSheet("background-color: #3EA8BF; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-weight: bold;")
+            self.btn_api.setStyleSheet(f"background-color: {Gate.ACCENT}; color: {Gate.TEXT_ON_ACCENT}; border: none; padding: 6px 12px; border-radius: 4px; font-weight: bold;")
             QMessageBox.information(self, "API Started", "The Waiter (FastAPI) is now booting up on port 8000!\n\nClick the button again to view the Admin Dashboard.")
             
         except Exception as e:

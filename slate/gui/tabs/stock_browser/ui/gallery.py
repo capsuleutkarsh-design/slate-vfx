@@ -13,6 +13,8 @@ from ....stock_model import StockDelegate, StockListDelegate
 from ....components.qt_safety import safe_single_shot
 from .....core.infra.design_tokens import ColorTokens as C, TypographyTokens as T
 from ....widgets.styled_buttons import SecondaryButton, GhostButton, StyledComboBox
+from slate.core.infra.gate import Gate
+from ....core.icons import icon as draw_icon
 
 class EmptyStateWidget(QWidget):
     """Displayed when the library is empty."""
@@ -23,8 +25,10 @@ class EmptyStateWidget(QWidget):
         layout.setSpacing(20)
         
         # Icon / Illustration
-        lbl_icon = QLabel("\U0001F4C2")
-        lbl_icon.setStyleSheet("font-size: 64px;")
+        # A drawn icon, not a colour emoji: it matches the rest of the app's
+        # line icons and follows the theme.
+        lbl_icon = QLabel()
+        lbl_icon.setPixmap(draw_icon("folder", Gate.TEXT_DIM, 56).pixmap(56, 56))
         lbl_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         # Text
@@ -49,8 +53,8 @@ class NoResultsWidget(QWidget):
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.setSpacing(12)
 
-        lbl_icon = QLabel("\U0001F50D")
-        lbl_icon.setStyleSheet("font-size: 48px;")
+        lbl_icon = QLabel()
+        lbl_icon.setPixmap(draw_icon("search", Gate.TEXT_DIM, 44).pixmap(44, 44))
         lbl_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         lbl_text = QLabel("No Matching Assets")
@@ -93,7 +97,7 @@ class SkeletonStateWidget(QWidget):
         for idx in range(8):
             tile = QFrame()
             tile.setFixedSize(160, 100)
-            tile.setStyleSheet("border-radius: 8px; background-color: #26262D;")
+            tile.setStyleSheet(f"border-radius: 8px; background-color: {Gate.RAISED_HI};")
             self._tiles.append(tile)
             grid.addWidget(tile, idx // 4, idx % 4)
         layout.addWidget(grid_host, 0, Qt.AlignmentFlag.AlignCenter)
@@ -111,7 +115,7 @@ class SkeletonStateWidget(QWidget):
         self._apply_pulse(self._pulse_state)
 
     def _apply_pulse(self, bright: bool):
-        color = "#2C2C34" if bright else "#26262D"
+        color = Gate.LINE if bright else Gate.RAISED_HI
         for tile in self._tiles:
             tile.setStyleSheet(f"border-radius: 8px; background-color: {color};")
 
@@ -156,9 +160,10 @@ class StockGallery(QWidget):
         top_bar = QHBoxLayout()
         top_bar.setSpacing(8)
 
-        self.btn_show_filters = GhostButton("\u25B8 Filters", self)
+        # Same size and weight as the rest of the row (it was 16 px bold).
+        self.btn_show_filters = GhostButton("Filters", self)
+        self.btn_show_filters.setIcon(draw_icon("chevron-right", Gate.TEXT_2, 14))
         self.btn_show_filters.setToolTip("Show filter sidebar")
-        self.btn_show_filters.setMinimumHeight(34)
         self.btn_show_filters.setVisible(False)
         self.btn_show_filters.clicked.connect(self.sidebar_expand_requested.emit)
         top_bar.addWidget(self.btn_show_filters)
@@ -172,24 +177,13 @@ class StockGallery(QWidget):
 
         # Search Bar
         self.search_bar = QLineEdit()
-        self.search_bar.setPlaceholderText("\U0001F50D  Search assets...")
+        self.search_bar.setPlaceholderText("Search assets...")
+        self.search_bar.addAction(draw_icon("search", Gate.TEXT_DIM, 16), QLineEdit.ActionPosition.LeadingPosition)
         self.search_bar.setMinimumWidth(190)
         self.search_bar.setFixedHeight(32)
         self.search_bar.setMaximumWidth(320)
-        self.search_bar.setStyleSheet(f"""
-            QLineEdit {{
-                background-color: rgba(255, 255, 255, 0.05);
-                color: {C.TEXT_PRIMARY};
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 16px;
-                padding: 4px 14px;
-                font-size: 13px;
-            }}
-            QLineEdit:focus {{
-                border: 1px solid {C.ACCENT_PRIMARY};
-                background-color: rgba(0, 204, 255, 0.05);
-            }}
-        """)
+        # The field takes the application's input style (one height, one
+        # radius), not a pill of its own beside square combos.
         top_bar.addWidget(self.search_bar)
 
         top_bar.addStretch(1)
@@ -244,7 +238,7 @@ class StockGallery(QWidget):
         top_bar_host.setStyleSheet(
             f"""
             QWidget#StockTopBar {{
-                border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+                border-bottom: 1px solid {Gate.overlay(0.05)};
                 background-color: transparent;
             }}
             """
@@ -348,12 +342,10 @@ class StockGallery(QWidget):
         
         from PySide6.QtWidgets import QMenu
         menu = QMenu(self)
-        menu.setStyleSheet(f"QMenu {{ background-color: {C.BG_SURFACE}; color: {C.TEXT_PRIMARY}; border: 1px solid {C.BORDER_LIGHT}; }} QMenu::item:selected {{ background-color: {C.ACCENT_PRIMARY}; }}")
-        
-        action_copy = menu.addAction("\U0001F4C4 Copy Path")
+        action_copy = menu.addAction(draw_icon("copy"), "Copy Path")
         action_copy.triggered.connect(lambda: self._copy_path_to_clipboard(index))
         
-        action_reveal = menu.addAction("\U0001F4C2 Reveal")
+        action_reveal = menu.addAction(draw_icon("folder"), "Reveal")
         action_reveal.triggered.connect(lambda: self._reveal_in_explorer(index))
         
         menu.addSeparator()
@@ -503,7 +495,7 @@ class StockGallery(QWidget):
         else:
             self.btn_view_toggle.setText("List" if compact else "View: List")
 
-        self.btn_show_filters.setText("\u25B8" if ultra_compact else "\u25B8 Filters")
+        self.btn_show_filters.setText("" if ultra_compact else "Filters")
 
         self.btn_img.setText("Img" if ultra_compact else "Images")
         self.btn_vid.setText("Vid" if ultra_compact else "Videos")

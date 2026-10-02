@@ -22,6 +22,7 @@ from slate.core.domain.versions import (
     Version, VersionStore, STATUS_APPROVED, STATUS_RETAKE, SENT_INTERNAL,
 )
 from slate.gui.widgets.advanced_player import AdvancedPlayer
+from slate.core.infra.gate import Gate
 
 
 class ReviewPlayerDialog(QDialog):
@@ -42,11 +43,11 @@ class ReviewPlayerDialog(QDialog):
         self.setWindowTitle(f"Review: {version.shot_name} - {version.version_name}")
         self.resize(1280, 800)
         self.setModal(True)
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #0D0D0F;
-                color: #E8E6E1;
-            }
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {Gate.GROUND};
+                color: {Gate.TEXT};
+            }}
         """)
 
         self._setup_ui()
@@ -61,48 +62,48 @@ class ReviewPlayerDialog(QDialog):
         self.header_bar = QFrame()
         self.header_bar.setObjectName("reviewHeaderBar")
         self.header_bar.setFixedHeight(46)
-        self.header_bar.setStyleSheet("""
-            QFrame#reviewHeaderBar {
-                background: #16161A;
-                border: 1px solid #1D1D22;
+        self.header_bar.setStyleSheet(f"""
+            QFrame#reviewHeaderBar {{
+                background: {Gate.PANEL};
+                border: 1px solid {Gate.RAISED};
                 border-radius: 6px;
-            }
+            }}
         """)
         header_layout = QHBoxLayout(self.header_bar)
         header_layout.setContentsMargins(12, 0, 12, 0)
         header_layout.setSpacing(10)
 
         self.title_label = QLabel()
-        self.title_label.setStyleSheet("font-size: 13px; font-weight: 700; color: #E8E6E1; background: transparent; border: none;")
+        self.title_label.setStyleSheet(f"font-size: 13px; font-weight: 700; color: {Gate.TEXT}; background: transparent; border: none;")
         header_layout.addWidget(self.title_label)
 
         self.meta_label = QLabel()
-        self.meta_label.setStyleSheet("font-size: 11px; color: #87857F; background: transparent; border: none;")
+        self.meta_label.setStyleSheet(f"font-size: 11px; color: {Gate.TEXT_DIM}; background: transparent; border: none;")
         header_layout.addWidget(self.meta_label)
 
         header_layout.addStretch()
 
         # Queue Navigation
-        nav_btn_style = """
-            QPushButton {
-                background: #1D1D22;
-                border: 1px solid #26262D;
+        nav_btn_style = f"""
+            QPushButton {{
+                background: {Gate.RAISED};
+                border: 1px solid {Gate.RAISED_HI};
                 border-radius: 4px;
-                color: #E8E6E1;
+                color: {Gate.TEXT};
                 font-size: 11px;
                 font-weight: 600;
                 padding: 4px 10px;
-            }
-            QPushButton:hover {
-                background: #26262D;
-                border-color: #2C2C34;
-                color: #3EA8BF;
-            }
-            QPushButton:disabled {
-                background: #16161A;
-                border-color: #1D1D22;
-                color: #2C2C34;
-            }
+            }}
+            QPushButton:hover {{
+                background: {Gate.RAISED_HI};
+                border-color: {Gate.LINE};
+                color: {Gate.ACCENT};
+            }}
+            QPushButton:disabled {{
+                background: {Gate.PANEL};
+                border-color: {Gate.RAISED};
+                color: {Gate.LINE};
+            }}
         """
         self.prev_btn = QPushButton("◀ Previous")
         self.prev_btn.setStyleSheet(nav_btn_style)
@@ -110,7 +111,7 @@ class ReviewPlayerDialog(QDialog):
         header_layout.addWidget(self.prev_btn)
 
         self.queue_pos_label = QLabel("1 / 1")
-        self.queue_pos_label.setStyleSheet("color: #E8E6E1; font-weight: 600; font-size: 11px; padding: 0 8px; background: transparent; border: none;")
+        self.queue_pos_label.setStyleSheet(f"color: {Gate.TEXT}; font-weight: 600; font-size: 11px; padding: 0 8px; background: transparent; border: none;")
         header_layout.addWidget(self.queue_pos_label)
 
         self.next_btn = QPushButton("Next ▶")
@@ -122,16 +123,16 @@ class ReviewPlayerDialog(QDialog):
 
         # 2. Main Content: Splitter with Player and Notes sidebar
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setStyleSheet("""
-            QSplitter::handle {
-                background: #1D1D22;
+        splitter.setStyleSheet(f"""
+            QSplitter::handle {{
+                background: {Gate.RAISED};
                 width: 2px;
-            }
+            }}
         """)
 
         # Left: Media Player
         player_container = QWidget()
-        player_container.setStyleSheet("background-color: #0D0D0F;")
+        player_container.setStyleSheet(f"background-color: {Gate.GROUND};")
         player_layout = QVBoxLayout(player_container)
         player_layout.setContentsMargins(0, 0, 0, 0)
         player_layout.setSpacing(4)
@@ -140,7 +141,7 @@ class ReviewPlayerDialog(QDialog):
         player_layout.addWidget(self.player, 1)
 
         self.media_path_label = QLabel()
-        self.media_path_label.setStyleSheet("font-size: 11px; color: #87857F; padding: 2px 4px; background: transparent;")
+        self.media_path_label.setStyleSheet(f"font-size: 11px; color: {Gate.TEXT_DIM}; padding: 2px 4px; background: transparent;")
         player_layout.addWidget(self.media_path_label, 0)
 
         splitter.addWidget(player_container)
@@ -148,19 +149,19 @@ class ReviewPlayerDialog(QDialog):
         # Right: Notes & History Sidebar
         sidebar = QFrame()
         sidebar.setObjectName("reviewSidebar")
-        sidebar.setStyleSheet("""
-            QFrame#reviewSidebar {
-                background: #16161A;
-                border: 1px solid #1D1D22;
+        sidebar.setStyleSheet(f"""
+            QFrame#reviewSidebar {{
+                background: {Gate.PANEL};
+                border: 1px solid {Gate.RAISED};
                 border-radius: 6px;
-            }
+            }}
         """)
         sidebar_layout = QVBoxLayout(sidebar)
         sidebar_layout.setContentsMargins(12, 12, 12, 12)
         sidebar_layout.setSpacing(8)
 
         sidebar_title = QLabel("VERSION HISTORY & NOTES")
-        sidebar_title.setStyleSheet("font-size: 10px; font-weight: 700; color: #87857F; letter-spacing: 0.5px;")
+        sidebar_title.setStyleSheet(f"font-size: 10px; font-weight: 700; color: {Gate.TEXT_DIM}; letter-spacing: 0.5px;")
         sidebar_layout.addWidget(sidebar_title)
 
         self.notes_scroll = QScrollArea()
@@ -177,24 +178,24 @@ class ReviewPlayerDialog(QDialog):
 
         # New Note Input
         new_note_label = QLabel("ADD REVIEW NOTE")
-        new_note_label.setStyleSheet("font-size: 10px; font-weight: 700; color: #87857F; letter-spacing: 0.5px;")
+        new_note_label.setStyleSheet(f"font-size: 10px; font-weight: 700; color: {Gate.TEXT_DIM}; letter-spacing: 0.5px;")
         sidebar_layout.addWidget(new_note_label)
 
         self.note_edit = QTextEdit()
         self.note_edit.setPlaceholderText("Enter feedback or revision notes...")
         self.note_edit.setMaximumHeight(90)
-        self.note_edit.setStyleSheet("""
-            QTextEdit {
-                background: #16161A;
-                border: 1px solid #26262D;
+        self.note_edit.setStyleSheet(f"""
+            QTextEdit {{
+                background: {Gate.PANEL};
+                border: 1px solid {Gate.RAISED_HI};
                 border-radius: 4px;
-                color: #E8E6E1;
+                color: {Gate.TEXT};
                 padding: 8px;
                 font-size: 12px;
-            }
-            QTextEdit:focus {
-                border-color: #3EA8BF;
-            }
+            }}
+            QTextEdit:focus {{
+                border-color: {Gate.ACCENT};
+            }}
         """)
         sidebar_layout.addWidget(self.note_edit)
 
@@ -203,35 +204,35 @@ class ReviewPlayerDialog(QDialog):
         verdict_layout.setSpacing(8)
 
         self.approve_btn = QPushButton("Approve")
-        self.approve_btn.setStyleSheet("""
-            QPushButton {
-                background: #5FBF8F;
-                color: #0D0D0F;
+        self.approve_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {Gate.OK};
+                color: {Gate.GROUND};
                 font-weight: 700;
                 font-size: 12px;
                 padding: 8px 16px;
                 border-radius: 4px;
                 border: none;
-            }
-            QPushButton:hover { background: #5FBF8F; }
-            QPushButton:pressed { background: #5FBF8F; }
+            }}
+            QPushButton:hover {{ background: {Gate.OK}; }}
+            QPushButton:pressed {{ background: {Gate.OK}; }}
         """)
         self.approve_btn.clicked.connect(self._on_approve_clicked)
         verdict_layout.addWidget(self.approve_btn)
 
         self.retake_btn = QPushButton("Retake")
-        self.retake_btn.setStyleSheet("""
-            QPushButton {
-                background: #D9635F;
-                color: #E8E6E1;
+        self.retake_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {Gate.BAD};
+                color: {Gate.TEXT};
                 font-weight: 700;
                 font-size: 12px;
                 padding: 8px 16px;
                 border-radius: 4px;
                 border: none;
-            }
-            QPushButton:hover { background: #D9635F; }
-            QPushButton:pressed { background: #D9635F; }
+            }}
+            QPushButton:hover {{ background: {Gate.BAD}; }}
+            QPushButton:pressed {{ background: {Gate.BAD}; }}
         """)
         self.retake_btn.clicked.connect(self._on_retake_clicked)
         verdict_layout.addWidget(self.retake_btn)
@@ -294,30 +295,30 @@ class ReviewPlayerDialog(QDialog):
 
         if not notes:
             empty_lbl = QLabel("No notes attached yet.")
-            empty_lbl.setStyleSheet("color: #87857F; font-style: italic; font-size: 12px; padding: 6px;")
+            empty_lbl.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-style: italic; font-size: 12px; padding: 6px;")
             self.notes_list_layout.insertWidget(0, empty_lbl)
             return
 
         for idx, note in enumerate(notes):
             card = QFrame()
-            card.setStyleSheet("""
-                QFrame {
-                    background: #16161A;
-                    border: 1px solid #1D1D22;
+            card.setStyleSheet(f"""
+                QFrame {{
+                    background: {Gate.PANEL};
+                    border: 1px solid {Gate.RAISED};
                     border-radius: 6px;
                     padding: 6px;
-                }
+                }}
             """)
             card_l = QVBoxLayout(card)
             card_l.setContentsMargins(8, 6, 8, 6)
             card_l.setSpacing(4)
 
             header = QLabel(f"<b>{note.author or 'Unknown'}</b> ({note.source or 'internal'}) · {note.note_date}")
-            header.setStyleSheet("font-size: 11px; color: #3EA8BF; font-weight: 600;")
+            header.setStyleSheet(f"font-size: 11px; color: {Gate.ACCENT}; font-weight: 600;")
             card_l.addWidget(header)
 
             body = QLabel(note.text)
-            body.setStyleSheet("font-size: 12px; color: #E8E6E1; line-height: 1.4;")
+            body.setStyleSheet(f"font-size: 12px; color: {Gate.TEXT}; line-height: 1.4;")
             body.setWordWrap(True)
             card_l.addWidget(body)
 

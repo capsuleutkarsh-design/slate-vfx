@@ -20,6 +20,7 @@ import ctypes
 from ctypes import wintypes
 
 from PySide6.QtCore import QTimer, QEvent, QThread, Signal
+from slate.core.infra.gate import Gate
 
 # Windows API Constants for Embedding
 GWL_STYLE = -16
@@ -176,7 +177,7 @@ class LineupEditorMode(QWidget):
         
         # 1. Olive Container (The "Stage") -> Takes ALL space when active
         self.olive_container = QFrame()
-        self.olive_container.setStyleSheet("background-color: #1D1D22;")
+        self.olive_container.setStyleSheet(f"background-color: {Gate.RAISED};")
         self.olive_container.hide()
         # Install event filter to catch resize events on the container
         self.olive_container.installEventFilter(self)
@@ -200,11 +201,11 @@ class LineupEditorMode(QWidget):
         
         # Header
         header_group = QGroupBox("Olive Integration Bridge")
-        header_group.setStyleSheet("QGroupBox { font-weight: bold; font-size: 14px; border: 1px solid #2C2C34; margin-top: 10px; }")
+        header_group.setStyleSheet(f"QGroupBox {{ font-weight: bold; font-size: 14px; border: 1px solid {Gate.LINE}; margin-top: 10px; }}")
         h_layout = QHBoxLayout(header_group)
         
         self.status_label = QLabel("Ready to Sync")
-        self.status_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #3EA8BF;")
+        self.status_label.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {Gate.ACCENT};")
         h_layout.addWidget(self.status_label)
         h_layout.addStretch()
         self.sync_time_label = QLabel("Last Sync: Never")
@@ -235,13 +236,13 @@ class LineupEditorMode(QWidget):
         
         self.btn_sync = QPushButton("Sync to Olive")
         self.btn_sync.setMinimumHeight(50)
-        self.btn_sync.setStyleSheet(self._get_btn_style("#D9635F"))
+        self.btn_sync.setStyleSheet(self._get_btn_style(Gate.BAD))
         self.btn_sync.clicked.connect(self.sync_lineup)
         a_layout.addWidget(self.btn_sync)
         
         self.btn_proxy = QPushButton("Make Review Proxies")
         self.btn_proxy.setMinimumHeight(40)
-        self.btn_proxy.setStyleSheet(self._get_btn_style("#16323A"))
+        self.btn_proxy.setStyleSheet(self._get_btn_style(Gate.ACCENT_SURFACE))
         self.btn_proxy.setToolTip(
             "Build an MP4 beside each plate and render so the timeline and RV "
             "play smoothly. Run this once an ingest has been checked over."
@@ -251,12 +252,12 @@ class LineupEditorMode(QWidget):
 
         self.proxy_status = QLabel("")
         self.proxy_status.setWordWrap(True)
-        self.proxy_status.setStyleSheet("color: #B4B1AA;")
+        self.proxy_status.setStyleSheet(f"color: {Gate.TEXT_2};")
         a_layout.addWidget(self.proxy_status)
 
         self.btn_launch = QPushButton("Launch Olive Editor")
         self.btn_launch.setMinimumHeight(50)
-        self.btn_launch.setStyleSheet(self._get_btn_style("#3EA8BF"))
+        self.btn_launch.setStyleSheet(self._get_btn_style(Gate.ACCENT))
         self.btn_launch.clicked.connect(self.launch_olive)
         a_layout.addWidget(self.btn_launch)
         
@@ -267,14 +268,14 @@ class LineupEditorMode(QWidget):
 
     def setup_compact_toolbar(self, parent):
         """Slim bar shown when Olive is active"""
-        parent.setStyleSheet("background-color: #26262D; border-top: 2px solid #3EA8BF;")
+        parent.setStyleSheet(f"background-color: {Gate.RAISED_HI}; border-top: 2px solid {Gate.ACCENT};")
         
         layout = QHBoxLayout(parent)
         layout.setContentsMargins(10, 5, 10, 5)
         
         # Status
         lbl = QLabel("Olive Active")
-        lbl.setStyleSheet("font-weight: bold; color: #3EA8BF; font-size: 14px;")
+        lbl.setStyleSheet(f"font-weight: bold; color: {Gate.ACCENT}; font-size: 14px;")
         layout.addWidget(lbl)
         
         layout.addStretch()
@@ -283,12 +284,12 @@ class LineupEditorMode(QWidget):
         btn_sync_mini = QPushButton("Re-Sync")
         btn_sync_mini.setToolTip("Generate new project file")
         btn_sync_mini.clicked.connect(self.sync_lineup)
-        btn_sync_mini.setStyleSheet("background-color: #D9635F; color: white; border-radius: 4px; padding: 5px 15px; font-weight:bold;")
+        btn_sync_mini.setStyleSheet(f"background-color: {Gate.BAD}; color: {Gate.TEXT_ON_BAD}; border-radius: 4px; padding: 5px 15px; font-weight:bold;")
         layout.addWidget(btn_sync_mini)
         
         btn_close = QPushButton("Close / Expand")
         btn_close.clicked.connect(self.return_to_dashboard)
-        btn_close.setStyleSheet("background-color: #2C2C34; color: white; border-radius: 4px; padding: 5px 15px;")
+        btn_close.setStyleSheet(f"background-color: {Gate.LINE}; color: {Gate.TEXT}; border-radius: 4px; padding: 5px 15px;")
         layout.addWidget(btn_close)
 
     def return_to_dashboard(self):
@@ -404,7 +405,7 @@ class LineupEditorMode(QWidget):
         return f"""
             QPushButton {{
                 background-color: {color};
-                color: white;
+                color: {Gate.TEXT};
                 font-weight: bold;
                 font-size: 14px;
                 border-radius: 6px;

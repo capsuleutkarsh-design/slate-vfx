@@ -5,6 +5,10 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QDate
 from PySide6.QtGui import QFont, QColor
 from slate.gui.core.offline_notice import on_database_error
+from slate.gui.core.controls import make_button, page_title, tidy_form
+from slate.gui.core.stat_card import StatStrip
+from slate.gui.core.table_style import style_table, set_cell_status
+from slate.core.infra.gate import Gate
 
 # Let an outage reach the @on_database_error decorator rather than becoming an
 # empty grid here. Everything else keeps the fallback it already had.
@@ -18,11 +22,12 @@ class AddMilestoneDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("New Milestone")
-        self.setStyleSheet("background-color: #1D1D22; color: white;")
-        layout = QFormLayout(self)
-        
+        # The dialog takes the application's control styles: its own sheet
+        # (and the per-field ones) made the combos pills, the date edits flat
+        # 22 px boxes and the labels sit above the middle of their rows.
+        layout = tidy_form(QFormLayout(self))
+
         self.proj_cb = QComboBox()
-        self.proj_cb.setStyleSheet("background: #26262D; color: white; padding: 4px;")
         
         # Populate project code dropdown.
         #
@@ -55,7 +60,6 @@ class AddMilestoneDialog(QDialog):
                 self.proj_cb.addItem("N/A")
             
         self.dep_cb = QComboBox()
-        self.dep_cb.setStyleSheet("background: #26262D; color: white; padding: 4px;")
         
         self.proj_cb.currentTextChanged.connect(self.update_deps)
 
@@ -79,15 +83,9 @@ class AddMilestoneDialog(QDialog):
         self.update_deps()
         
         btn_layout = QHBoxLayout()
-        save_btn = QPushButton("Save")
-        save_btn.setStyleSheet("background-color: #3EA8BF; font-weight: bold; padding: 5px;")
-        save_btn.clicked.connect(self.accept)
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.setStyleSheet("background-color: #87857F; font-weight: bold; padding: 5px;")
-        cancel_btn.clicked.connect(self.reject)
-        
-        btn_layout.addWidget(save_btn)
-        btn_layout.addWidget(cancel_btn)
+        btn_layout.addStretch()
+        btn_layout.addWidget(make_button("Cancel", on_click=self.reject))
+        btn_layout.addWidget(make_button("Save", "primary", on_click=self.accept))
         layout.addRow(btn_layout)
         
     def _start_moved(self, value):
@@ -137,7 +135,6 @@ class ShiftDatesDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Shift Dates")
-        self.setStyleSheet("background-color: #1D1D22; color: white;")
         layout = QVBoxLayout(self)
         
         layout.addWidget(QLabel("Shift by (days):"))
@@ -145,17 +142,12 @@ class ShiftDatesDialog(QDialog):
         self.days_spin = QSpinBox()
         self.days_spin.setRange(-1000, 1000)
         self.days_spin.setValue(1)
-        self.days_spin.setStyleSheet("padding: 4px;")
         layout.addWidget(self.days_spin)
-        
+
         btn_box = QHBoxLayout()
-        ok_btn = QPushButton("Shift Downstream")
-        ok_btn.setStyleSheet("background-color: #D9A441; color: white; font-weight: bold;")
-        ok_btn.clicked.connect(self.accept)
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.clicked.connect(self.reject)
-        btn_box.addWidget(ok_btn)
-        btn_box.addWidget(cancel_btn)
+        btn_box.addStretch()
+        btn_box.addWidget(make_button("Cancel", on_click=self.reject))
+        btn_box.addWidget(make_button("Shift Downstream", "primary", on_click=self.accept))
         layout.addLayout(btn_box)
 
 class ProdSchedulingTab(QWidget):
@@ -166,66 +158,21 @@ class ProdSchedulingTab(QWidget):
         
         self.build_ui(main_layout)
 
-    def create_stat_card(self, title, value, color):
-        card = QFrame()
-        card.setStyleSheet(f"""
-            QFrame {{
-                background-color: #16161A;
-                border: 1px solid #1D1D22;
-                border-left: 4px solid {color};
-                border-radius: 6px;
-            }}
-        """)
-        lay = QVBoxLayout(card)
-        lay.setContentsMargins(14, 10, 14, 10)
-        lay.setSpacing(4)
-        
-        t_label = QLabel(title)
-        t_label.setFont(QFont("Inter", 10))
-        t_label.setStyleSheet("color: #87857F; font-size: 11px; font-weight: 600; text-transform: uppercase; background: transparent; border: none;")
-        
-        v_label = QLabel(str(value))
-        v_label.setFont(QFont("Inter", 20, QFont.Weight.Bold))
-        v_label.setStyleSheet("color: #E8E6E1; background: transparent; border: none;")
-        
-        lay.addWidget(t_label)
-        lay.addWidget(v_label)
-        return card, v_label
-
     def build_ui(self, main_layout):
-        header_title = QLabel("Production Scheduling")
-        header_title.setFont(QFont("Inter", 16, QFont.Weight.Bold))
-        header_title.setStyleSheet("color: #E8E6E1; margin-bottom: 2px;")
-        main_layout.addWidget(header_title)
-        
-        # Summary Cards
-        cards_lay = QHBoxLayout()
-        cards_lay.setSpacing(12)
-        card1, self.lbl_active = self.create_stat_card("Active Projects", "0", "#3EA8BF")
-        card2, self.lbl_upcoming = self.create_stat_card("In Progress", "0", "#D9A441")
-        card3, self.lbl_completed = self.create_stat_card("Completed Milestones", "0", "#5FBF8F")
-        cards_lay.addWidget(card1)
-        cards_lay.addWidget(card2)
-        cards_lay.addWidget(card3)
-        main_layout.addLayout(cards_lay)
-        
+        main_layout.addWidget(page_title("Scheduling", "Milestones, dependencies and dates"))
+
+        # Summary on one compact line, so the table keeps the height at 1366x768.
+        strip = StatStrip(compact=True)
+        self.lbl_active = strip.add("Active projects", "0", tone="accent")
+        self.lbl_upcoming = strip.add("In progress", "0", tone="warn")
+        self.lbl_completed = strip.add("Completed milestones", "0", tone="ok")
+        main_layout.addWidget(strip)
+
         controls = QHBoxLayout()
-        controls.setSpacing(10)
-        add_btn = QPushButton("+ Add New Milestone")
-        add_btn.setObjectName("primaryButton")
-        add_btn.clicked.connect(self.add_milestone)
-        controls.addWidget(add_btn)
-        
-        update_btn = QPushButton("Update Status")
-        update_btn.setObjectName("secondaryButton")
-        update_btn.clicked.connect(self.update_status)
-        controls.addWidget(update_btn)
-        
-        shift_btn = QPushButton("Shift Dates (Dependency)")
-        shift_btn.setObjectName("secondaryButton")
-        shift_btn.clicked.connect(self.shift_dates)
-        controls.addWidget(shift_btn)
-        
+        controls.setSpacing(Gate.SPACE_2)
+        controls.addWidget(make_button("Add Milestone", "primary", icon="plus", on_click=self.add_milestone))
+        controls.addWidget(make_button("Update Status", on_click=self.update_status))
+        controls.addWidget(make_button("Shift Dates (Dependency)", on_click=self.shift_dates))
         controls.addStretch()
         main_layout.addLayout(controls)
 
@@ -233,8 +180,7 @@ class ProdSchedulingTab(QWidget):
         self.grid.setHorizontalHeaderLabels(["ID", "Project Code", "Milestone", "Depends On", "Start Date", "End Date", "Status"])
         self.style_table(self.grid)
         self.load_data()
-        
-        self.grid.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+
         self.grid.hideColumn(0) # Hide ID
         main_layout.addWidget(self.grid)
 
@@ -280,10 +226,11 @@ class ProdSchedulingTab(QWidget):
                       and str(row.get('end_date'))[:10] < today)
         in_progress = len(sched) - completed - overdue
 
-        self.lbl_active.setText(str(active_projects))
-        self.lbl_upcoming.setText("%d  (%d overdue)" % (in_progress, overdue)
-                                  if overdue else str(in_progress))
-        self.lbl_completed.setText(str(completed))
+        self.lbl_active.set_value(active_projects)
+        self.lbl_upcoming.set_value("%d  (%d overdue)" % (in_progress, overdue)
+                                    if overdue else str(in_progress))
+        self.lbl_upcoming.set_tone("bad" if overdue else "warn")
+        self.lbl_completed.set_value(completed)
 
         for r, row in enumerate(sched):
             self.grid.setItem(r, 0, QTableWidgetItem(str(row.get('id', ''))))
@@ -302,9 +249,9 @@ class ProdSchedulingTab(QWidget):
             
             status_item = QTableWidgetItem(str(row.get('status', '')))
             if status_item.text() == "Completed":
-                status_item.setForeground(QColor("green"))
+                set_cell_status(status_item, "ok", background=False)
             elif status_item.text() == "In Progress":
-                status_item.setForeground(QColor("yellow"))
+                set_cell_status(status_item, "warn", background=False)
             self.grid.setItem(r, 6, status_item)
 
     def add_milestone(self):
@@ -343,19 +290,16 @@ class ProdSchedulingTab(QWidget):
             
         dialog = QDialog(self)
         dialog.setWindowTitle("Update Status")
-        dialog.setStyleSheet("background-color: #1D1D22; color: white;")
         lay = QVBoxLayout(dialog)
         lay.addWidget(QLabel("Select new status:"))
         cb = QComboBox()
         cb.addItems(["Scheduled", "In Progress", "Completed"])
-        cb.setStyleSheet("background: #26262D; padding: 4px;")
         lay.addWidget(cb)
-        
+
         btn_box = QHBoxLayout()
-        ok_btn = QPushButton("Update")
-        ok_btn.setStyleSheet("background-color: #5FBF8F; font-weight:bold;")
-        ok_btn.clicked.connect(dialog.accept)
-        btn_box.addWidget(ok_btn)
+        btn_box.addStretch()
+        btn_box.addWidget(make_button("Cancel", on_click=dialog.reject))
+        btn_box.addWidget(make_button("Update", "primary", on_click=dialog.accept))
         lay.addLayout(btn_box)
         
         if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -423,30 +367,13 @@ class ProdSchedulingTab(QWidget):
             self.load_data()
 
     def style_table(self, table: QTableWidget):
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        table.setAlternatingRowColors(True)
-        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        table.verticalHeader().setDefaultSectionSize(34)
-        table.setStyleSheet("""
-            QTableWidget { 
-                background-color: #0D0D0F; 
-                color: #E8E6E1; 
-                gridline-color: #1D1D22; 
-                border: 1px solid #1D1D22; 
-                border-radius: 6px;
-                font-size: 12px; 
-            }
-            QTableWidget::item:alternate { background-color: #16161A; }
-            QTableWidget::item:selected { background-color: rgba(62, 168, 191, 0.18); color: white; }
-            QHeaderView::section { 
-                background-color: #16161A; 
-                color: #87857F; 
-                border: none;
-                border-bottom: 2px solid #1D1D22; 
-                border-right: 1px solid rgba(255, 255, 255, 0.04);
-                padding: 8px 10px; 
-                font-weight: 700;
-                font-size: 11px;
-                text-transform: uppercase;
-            }
-        """)
+        """The shared table setup: the milestone name takes the spare width,
+        codes, dates and status are as wide as their content, no row numbers."""
+        style_table(table, {
+            "Project Code": "contents",
+            "Milestone": "stretch",
+            "Depends On": ("interactive", 200),
+            "Start Date": "contents",
+            "End Date": "contents",
+            "Status": "contents",
+        }, multi_select=True)

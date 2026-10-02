@@ -26,6 +26,7 @@ from slate.core.domain import leave_policy as lp
 from ..core.controls import make_button, page_title
 from ..core.offline_notice import on_database_error
 from ..core.empty_state import EmptyState
+from ..core.table_style import style_table
 from .my_leave_view import Figure, status_tone
 
 
@@ -105,15 +106,12 @@ class LeaveApprovalsView(QWidget):
         self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels(
             ["Person", "From", "To", "Type", "Days", "Status", "Waiting on", "Reason"])
-        self.table.verticalHeader().setVisible(False)
-        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
-        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table.setAlternatingRowColors(True)
-        head = self.table.horizontalHeader()
-        for i in range(7):
-            head.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
-        head.setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
+        # Body-size rows (they were ~11 px). The reason takes what is left,
+        # after Status and Waiting on have the room their words need.
+        style_table(self.table, {
+            "Person": "contents", "From": "contents", "To": "contents", "Type": "contents",
+            "Days": "numeric", "Status": "contents", "Waiting on": "contents", "Reason": "stretch",
+        }, multi_select=True)
         self.table.itemSelectionChanged.connect(self._sync_buttons)
         root.addWidget(self.table, 1)
 

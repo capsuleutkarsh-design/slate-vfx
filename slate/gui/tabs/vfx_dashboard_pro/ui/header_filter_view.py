@@ -1,6 +1,7 @@
 from PySide6.QtWidgets import QHeaderView, QMenu
 from PySide6.QtCore import Qt, Signal, QPoint
 from PySide6.QtGui import QPainter, QColor, QPolygon, QAction
+from slate.core.infra.gate import Gate
 
 class FilterHeaderView(QHeaderView):
     filter_changed = Signal(int, str)  # col_idx, filter_value
@@ -74,7 +75,7 @@ class FilterHeaderView(QHeaderView):
             
             painter.save()
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            painter.setBrush(QColor("#3EA8BF"))
+            painter.setBrush(QColor(Gate.ACCENT))
             painter.setPen(Qt.PenStyle.NoPen)
             
             # Funnel polygon

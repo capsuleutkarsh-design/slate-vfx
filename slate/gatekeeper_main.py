@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 import asyncio
 import logging
+from slate.core.infra.gate import Gate
 
 current_file = Path(__file__).resolve()
 package_dir = current_file.parent
@@ -69,24 +70,24 @@ class BroadcastWindow(QDialog):
         
         # Frame
         frame = QFrame()
-        frame.setStyleSheet("""
-            QFrame {
+        frame.setStyleSheet(f"""
+            QFrame {{
                 background-color: rgba(20, 20, 20, 240);
-                border: 2px solid #D9635F;
+                border: 2px solid {Gate.BAD};
                 border-radius: 10px;
-            }
+            }}
         """)
         frame_layout = QVBoxLayout(frame)
         
         # Icon
         title = QLabel("[WARN] ADMIN MESSAGE")
-        title.setStyleSheet("color: #D9635F; font-weight: bold; font-size: 16px;")
+        title.setStyleSheet(f"color: {Gate.BAD}; font-weight: bold; font-size: 16px;")
         title.setAlignment(Qt.AlignCenter)
         frame_layout.addWidget(title)
         
         # Message
         msg_label = QLabel(message)
-        msg_label.setStyleSheet("color: white; font-size: 14px;")
+        msg_label.setStyleSheet(f"color: {Gate.TEXT}; font-size: 14px;")
         msg_label.setAlignment(Qt.AlignCenter)
         msg_label.setWordWrap(True)
         msg_label.setTextFormat(Qt.PlainText) # SECURITY: Prevent HTML Injection
@@ -95,7 +96,7 @@ class BroadcastWindow(QDialog):
         # Close Button
         btn_close = QLabel("Running command...")
         btn_close.setAlignment(Qt.AlignCenter)
-        btn_close.setStyleSheet("color: #87857F; font-size: 10px; margin-top: 10px;")
+        btn_close.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: 10px; margin-top: 10px;")
         frame_layout.addWidget(btn_close) # Actually just informational
         
         layout.addWidget(frame)
@@ -124,18 +125,18 @@ class StartupLoadingDialog(QDialog):
 
         frame = QFrame()
         frame.setStyleSheet(
-            """
-            QFrame {
+            f"""
+            QFrame {{
                 background-color: rgba(18, 24, 36, 235);
-                border: 1px solid #2C2C34;
+                border: 1px solid {Gate.LINE};
                 border-radius: 10px;
-            }
-            QLabel {
-                color: #E8E6E1;
+            }}
+            QLabel {{
+                color: {Gate.TEXT};
                 font-size: 13px;
                 background: transparent;
                 border: none;
-            }
+            }}
             """
         )
         layout = QVBoxLayout(frame)
@@ -151,23 +152,23 @@ class StartupLoadingDialog(QDialog):
         progress.setTextVisible(False)
         progress.setFixedHeight(10)
         progress.setStyleSheet(
-            """
-            QProgressBar {
-                background: #16323A;
-                border: 1px solid #16323A;
+            f"""
+            QProgressBar {{
+                background: {Gate.ACCENT_SURFACE};
+                border: 1px solid {Gate.ACCENT_SURFACE};
                 border-radius: 5px;
-            }
-            QProgressBar::chunk {
-                background: #3EA8BF;
+            }}
+            QProgressBar::chunk {{
+                background: {Gate.ACCENT};
                 border-radius: 5px;
-            }
+            }}
             """
         )
         layout.addWidget(progress)
 
         hint = QLabel("Loading workspace and services")
         hint.setAlignment(Qt.AlignCenter)
-        hint.setStyleSheet("color: #6BA4C9; font-size: 11px;")
+        hint.setStyleSheet(f"color: {Gate.INFO}; font-size: 11px;")
         layout.addWidget(hint)
 
         root.addWidget(frame)

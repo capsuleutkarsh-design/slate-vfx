@@ -16,6 +16,7 @@ from PySide6.QtGui import QPainter, QColor
 
 # Import design tokens for theming
 from ...core.infra.design_tokens import ColorTokens as C
+from slate.core.infra.gate import Gate
 
 
 class PyToggle(QCheckBox):
@@ -40,7 +41,7 @@ class PyToggle(QCheckBox):
         
         # Colors - now using design tokens for theme consistency
         self._bg_color = C.BG_ELEVATED      # "#26262D" → token
-        self._circle_color = "#E8E6E1"       # Circle color (light gray)
+        self._circle_color = Gate.TEXT       # Circle color (light gray)
         self._active_color = C.ACCENT_PRIMARY  # "#3EA8BF" → token
         
         # Animation setup

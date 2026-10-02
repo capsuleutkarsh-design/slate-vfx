@@ -3,6 +3,8 @@ from PySide6.QtWidgets import (
     QLineEdit, QPushButton, QCompleter, QListWidget
 )
 from PySide6.QtCore import Qt
+from slate.core.infra.gate import Gate
+from slate.gui.core.controls import plain
 
 class TagEditDialog(QDialog):
     def __init__(self, parent=None, current_tags=[], available_tags=[]):
@@ -57,9 +59,9 @@ class TagEditDialog(QDialog):
         
         # Save/Cancel
         btn_box = QHBoxLayout()
-        btn_save = QPushButton("Save & Close")
+        btn_save = QPushButton(plain("Save & Close"))
         btn_save.clicked.connect(self.accept)
-        btn_save.setStyleSheet("background-color: #3EA8BF; color: white; font-weight: bold;")
+        btn_save.setStyleSheet(f"background-color: {Gate.ACCENT}; color: {Gate.TEXT_ON_ACCENT}; font-weight: bold;")
         
         btn_cancel = QPushButton("Cancel")
         btn_cancel.clicked.connect(self.reject)

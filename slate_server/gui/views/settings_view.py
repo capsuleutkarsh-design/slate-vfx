@@ -10,6 +10,20 @@ class SettingsView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setup_ui()
+        self._pin_field_heights()
+
+    def _pin_field_heights(self):
+        """
+        Nothing here may be shrunk below the height its own text needs. A
+        QLineEdit's minimum is smaller than that, so a window a little too
+        short took the difference out of every field on the screen - which
+        looks like a broken theme rather than a window that wants scrolling.
+        """
+        for field in (self.input_db_path, self.input_port, self.input_pooler_port,
+                      self.input_db_name, self.input_db_password,
+                      self.input_max_conn):
+            field.ensurePolished()
+            field.setMinimumHeight(field.sizeHint().height())
 
     def setup_ui(self):
         main_layout = QVBoxLayout(self)
@@ -134,10 +148,8 @@ class SettingsView(QWidget):
         # QLineEdit's minimum is smaller than that, so a window a little too
         # short took the difference out of every field on the screen - which
         # looks like a broken theme rather than a window that wants scrolling.
-        for field in (self.input_db_path, self.input_port, self.input_pooler_port,
-                      self.input_db_name, self.input_db_password,
-                      self.input_max_conn):
-            field.setMinimumHeight(field.sizeHint().height())
+        # (Done at the end of setup_ui, once every stylesheet that applies to
+        # these fields is in place - measured earlier, the size was a pixel short.)
 
         main_layout.addWidget(form_panel)
 

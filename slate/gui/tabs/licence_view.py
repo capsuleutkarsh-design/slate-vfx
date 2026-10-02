@@ -24,7 +24,8 @@ from PySide6.QtWidgets import (
 from slate.core.infra.gate import Gate
 from slate.core.infra.licence_repository import LicenceRepository
 from slate.core.domain import licence_compliance as lc
-from ..core.controls import make_button, page_title
+from ..core.controls import make_button, page_title, tidy_form
+from ..core.table_style import style_table
 from ..core.offline_notice import on_database_error
 from ..core.empty_state import EmptyState
 from .my_leave_view import Figure
@@ -47,8 +48,7 @@ class LicenceDialog(QDialog):
         root.setContentsMargins(Gate.SPACE_4, Gate.SPACE_4, Gate.SPACE_4, Gate.SPACE_4)
         root.setSpacing(Gate.SPACE_3)
 
-        form = QFormLayout()
-        form.setSpacing(Gate.SPACE_2)
+        form = tidy_form(QFormLayout())
 
         self.name = QLineEdit(str(self.row.get("software_name") or ""))
         self.name.setPlaceholderText("Nuke, Houdini, Maya...")
@@ -105,8 +105,7 @@ class ReadingDialog(QDialog):
         root.setContentsMargins(Gate.SPACE_4, Gate.SPACE_4, Gate.SPACE_4, Gate.SPACE_4)
         root.setSpacing(Gate.SPACE_3)
 
-        form = QFormLayout()
-        form.setSpacing(Gate.SPACE_2)
+        form = tidy_form(QFormLayout())
 
         self.software = QComboBox()
         for row in licences:
@@ -195,15 +194,11 @@ class LicenceView(QWidget):
         self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(
             ["Software", "State", "Seats", "Peak", "Used", "Renews", "What this means"])
-        self.table.verticalHeader().setVisible(False)
-        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
-        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table.setAlternatingRowColors(True)
-        head = self.table.horizontalHeader()
-        for i in range(6):
-            head.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
-        head.setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
+        style_table(self.table, {
+            "Software": "contents", "State": "contents", "Seats": "numeric",
+            "Peak": "numeric", "Used": "numeric", "Renews": "contents",
+            "What this means": "stretch",
+        }, multi_select=False)
         self.table.itemSelectionChanged.connect(self._sync_buttons)
         root.addWidget(self.table, 1)
 

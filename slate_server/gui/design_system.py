@@ -34,6 +34,57 @@ class T:
     WEIGHT_SEMI = "600"
     WEIGHT_BOLD = "700"
 
+def _arrow_icons() -> str:
+    """
+    Write the spin-box chevrons the stylesheet below uses, and return their
+    folder ("" if they cannot be written).
+
+    A spin box given its own background loses Qt's native arrows, and the
+    border-triangle trick used for them before does not render in Qt - so the
+    Keep fields showed two grey bars. The chevrons are the same paths as the
+    client's icon set (slate/gui/core/icons.py); they are written here rather
+    than imported because importing the client's GUI package pulls in its
+    whole main window.
+    """
+    import os
+    import tempfile
+    paths = {"chevron-up": "M6 14.5 12 8.5 18 14.5", "chevron-down": "M6 9.5 12 15.5 18 9.5"}
+    base = os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()
+    folder = os.path.join(base, "Slate", "cache", "server_theme")
+    try:
+        os.makedirs(folder, exist_ok=True)
+        for name, path in paths.items():
+            with open(os.path.join(folder, name + ".svg"), "w", encoding="utf-8") as handle:
+                handle.write(
+                    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" '
+                    'fill="none" stroke="%s" stroke-width="2.2" stroke-linecap="round" '
+                    'stroke-linejoin="round"><path d="%s"/></svg>' % (C.TEXT_SECONDARY, path))
+        return folder.replace(os.sep, "/")
+    except OSError:
+        return ""
+
+
+_ICONS = _arrow_icons()
+_SPIN_ARROWS = f"""
+    QAbstractSpinBox {{{{
+        padding-right: 22px;
+    }}}}
+    QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{{{
+        subcontrol-origin: border;
+        width: 18px;
+        border: none;
+        border-left: 1px solid {C.BORDER_DEFAULT};
+        background: transparent;
+    }}}}
+    QAbstractSpinBox::up-button {{{{ subcontrol-position: top right; }}}}
+    QAbstractSpinBox::down-button {{{{ subcontrol-position: bottom right; }}}}
+    QAbstractSpinBox::up-button:hover, QAbstractSpinBox::down-button:hover {{{{
+        background: {C.BG_SURFACE_HOVER};
+    }}}}
+    QAbstractSpinBox::up-arrow {{{{ image: url({_ICONS}/chevron-up.svg); width: 9px; height: 9px; }}}}
+    QAbstractSpinBox::down-arrow {{{{ image: url({_ICONS}/chevron-down.svg); width: 9px; height: 9px; }}}}
+""" if _ICONS else ""
+
 # Global Stylesheet
 GLOBAL_STYLESHEET = f"""
     QWidget {{
@@ -117,4 +168,4 @@ GLOBAL_STYLESHEET = f"""
     QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
         background: none;
     }}
-"""
+""" + _SPIN_ARROWS.replace("{{", "{").replace("}}", "}")

@@ -4,6 +4,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QIntValidator
+from slate.core.infra.gate import Gate
 
 class NukeSlider(QWidget):
     """
@@ -30,7 +31,7 @@ class NukeSlider(QWidget):
         
         # Start Frame Label
         self.lbl_start = QLabel("1")
-        self.lbl_start.setStyleSheet("color: #87857F; font-weight: bold;")
+        self.lbl_start.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-weight: bold;")
         layout.addWidget(self.lbl_start)
         
         # The Slider
@@ -41,30 +42,30 @@ class NukeSlider(QWidget):
         self.slider.setPageStep(1)
         self.slider.setTickInterval(1)
         
-        self.slider.setStyleSheet("""
-            QSlider::groove:horizontal {
-                border: 1px solid #26262D;
+        self.slider.setStyleSheet(f"""
+            QSlider::groove:horizontal {{
+                border: 1px solid {Gate.RAISED_HI};
                 height: 6px;
-                background: #26262D;
+                background: {Gate.RAISED_HI};
                 margin: 2px 0;
                 border-radius: 3px;
-            }
-            QSlider::handle:horizontal {
-                background: #B4B1AA;
-                border: 1px solid #87857F;
+            }}
+            QSlider::handle:horizontal {{
+                background: {Gate.TEXT_2};
+                border: 1px solid {Gate.TEXT_DIM};
                 width: 14px;
                 height: 14px;
                 margin: -5px 0;
                 border-radius: 7px;
-            }
-            QSlider::handle:horizontal:hover {
-                background: #E8E6E1;
-                border: 1px solid #B4B1AA;
-            }
-            QSlider::sub-page:horizontal {
-                background: #D9635F; /* UT Red/Orange accent */
+            }}
+            QSlider::handle:horizontal:hover {{
+                background: {Gate.TEXT};
+                border: 1px solid {Gate.TEXT_2};
+            }}
+            QSlider::sub-page:horizontal {{
+                background: {Gate.BAD}; /* UT Red/Orange accent */
                 border-radius: 3px;
-            }
+            }}
         """)
         self.slider.valueChanged.connect(self.on_slider_changed)
 
@@ -72,24 +73,24 @@ class NukeSlider(QWidget):
         
         # End Frame Label
         self.lbl_end = QLabel("100")
-        self.lbl_end.setStyleSheet("color: #87857F; font-weight: bold;")
+        self.lbl_end.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-weight: bold;")
         layout.addWidget(self.lbl_end)
         
         # Current Frame Input
         self.input_current = QLineEdit("1")
         self.input_current.setFixedWidth(50)
         self.input_current.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.input_current.setStyleSheet("""
-            QLineEdit {
-                background-color: #1D1D22;
-                color: #E8E6E1;
-                border: 1px solid #2C2C34;
+        self.input_current.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {Gate.RAISED};
+                color: {Gate.TEXT};
+                border: 1px solid {Gate.LINE};
                 border-radius: 3px;
                 font-weight: bold;
-            }
-            QLineEdit:focus {
-                border: 1px solid #D9635F;
-            }
+            }}
+            QLineEdit:focus {{
+                border: 1px solid {Gate.BAD};
+            }}
         """)
         self.input_current.setValidator(QIntValidator())
         self.input_current.returnPressed.connect(self.on_input_changed)

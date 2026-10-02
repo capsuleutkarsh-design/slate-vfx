@@ -9,6 +9,7 @@ Extracted from main_window.py for better maintainability.
 from PySide6.QtWidgets import QListWidgetItem, QWidget, QHBoxLayout, QLabel, QFrame, QSizePolicy
 from PySide6.QtCore import Qt, QSize, Signal, QObject
 import logging
+from slate.core.infra.gate import Gate
 
 # A navigation entry and a category rule. They used to be the same height, 50px
 # each, so twenty entries and five headers wanted 1250px of a window that is
@@ -41,24 +42,24 @@ class CategoryHeaderWidget(QWidget):
         self.left_line = QFrame()
         self.left_line.setFixedHeight(1)
         self.left_line.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.left_line.setStyleSheet("background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 rgba(62, 168, 191, 0), stop:1 rgba(62, 168, 191, 0.4));")
+        self.left_line.setStyleSheet(f"background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {Gate.tint(Gate.ACCENT, 0)}, stop:1 {Gate.tint(Gate.ACCENT, 0.4)});")
         
         # Tells you the group can be folded away, and which way it is now.
         self.chevron = QLabel("▾")
         self.chevron.setStyleSheet(
-            "color: #3EA8BF; font-size: 9px; background: transparent;")
+            f"color: {Gate.ACCENT}; font-size: 9px; background: transparent;")
 
         # Text label
         self.lbl = QLabel(label_text.upper())
         # Use a slightly bigger font and no margins
-        self.lbl.setStyleSheet("color: #3EA8BF; font-size: 11px; font-weight: 900; letter-spacing: 2px; background: transparent; padding: 0px; margin: 0px;")
+        self.lbl.setStyleSheet(f"color: {Gate.ACCENT}; font-size: 11px; font-weight: 900; letter-spacing: 2px; background: transparent; padding: 0px; margin: 0px;")
         self.lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         # Right line
         self.right_line = QFrame()
         self.right_line.setFixedHeight(1)
         self.right_line.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.right_line.setStyleSheet("background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 rgba(62, 168, 191, 0.4), stop:1 rgba(62, 168, 191, 0));")
+        self.right_line.setStyleSheet(f"background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {Gate.tint(Gate.ACCENT, 0.4)}, stop:1 {Gate.tint(Gate.ACCENT, 0)});")
         
         layout.addWidget(self.left_line)
         layout.addWidget(self.lbl)
@@ -72,12 +73,12 @@ class CategoryHeaderWidget(QWidget):
         if collapsed:
             self.chevron.hide()
             self.lbl.hide()
-            self.left_line.setStyleSheet("background-color: rgba(62, 168, 191, 0.5);")
+            self.left_line.setStyleSheet(f"background-color: {Gate.tint(Gate.ACCENT, 0.5)};")
             self.right_line.hide()
         else:
             self.chevron.show()
             self.lbl.show()
-            self.left_line.setStyleSheet("background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 rgba(62, 168, 191, 0), stop:1 rgba(62, 168, 191, 0.4));")
+            self.left_line.setStyleSheet(f"background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {Gate.tint(Gate.ACCENT, 0)}, stop:1 {Gate.tint(Gate.ACCENT, 0.4)});")
             self.right_line.show()
 
 

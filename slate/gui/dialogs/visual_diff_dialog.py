@@ -3,6 +3,8 @@ from PySide6.QtWidgets import (
     QPushButton, QLabel, QHeaderView
 )
 from PySide6.QtGui import QColor, QBrush, QIcon
+from slate.core.infra.gate import Gate
+from slate.gui.core.controls import plain
 
 class VisualDiffDialog(QDialog):
     """
@@ -19,7 +21,7 @@ class VisualDiffDialog(QDialog):
         
         # Header
         lbl_info = QLabel(f"Reviewing {len(operations)} operations:")
-        lbl_info.setStyleSheet("font-weight: bold; font-size: 14px; color: #3EA8BF;")
+        lbl_info.setStyleSheet(f"font-weight: bold; font-size: 14px; color: {Gate.ACCENT};")
         self.main_layout.addWidget(lbl_info)
         
         # Tree
@@ -37,8 +39,8 @@ class VisualDiffDialog(QDialog):
         btn_cancel = QPushButton("Cancel")
         btn_cancel.clicked.connect(self.reject)
         
-        btn_confirm = QPushButton("Confirm & Execute")
-        btn_confirm.setStyleSheet("background-color: #5FBF8F; color: white; font-weight: bold; padding: 5px 15px;")
+        btn_confirm = QPushButton(plain("Confirm & Execute"))
+        btn_confirm.setStyleSheet(f"background-color: {Gate.OK}; color: {Gate.TEXT_ON_BAD}; font-weight: bold; padding: 5px 15px;")
         btn_confirm.clicked.connect(self.accept)
         
         btn_layout.addStretch()
@@ -57,20 +59,20 @@ class VisualDiffDialog(QDialog):
             
             # Color Coding
             if op_type in ['COPY', 'CREATE']:
-                QColor("#5FBF8F") # Greenish
-                text_color = QColor("#1B3A2C")
+                QColor(Gate.OK) # Greenish
+                text_color = QColor(Gate.OK_SURFACE)
                 item.setIcon(0, QIcon.fromTheme("list-add"))
             elif op_type in ['MOVE', 'RENAME']:
-                QColor("#D9A441") # Yellowish
-                text_color = QColor("#D9A441")
+                QColor(Gate.WARN) # Yellowish
+                text_color = QColor(Gate.WARN)
                 item.setIcon(0, QIcon.fromTheme("go-next"))
             elif op_type in ['DELETE', 'REMOVE']:
-                QColor("#D9635F") # Reddish
-                text_color = QColor("#D9635F")
+                QColor(Gate.BAD) # Reddish
+                text_color = QColor(Gate.BAD)
                 item.setIcon(0, QIcon.fromTheme("process-stop"))
             else:
-                QColor("#E8E6E1")
-                text_color = QColor("#2C2C34")
+                QColor(Gate.TEXT)
+                text_color = QColor(Gate.LINE)
             
             # Apply Colors (Background requires brush)
             for i in range(3):

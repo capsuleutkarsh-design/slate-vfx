@@ -10,6 +10,7 @@ from .....core.infra.design_tokens import ColorTokens as C, TypographyTokens as 
 from ....widgets.styled_buttons import (
     PrimaryButton, SecondaryButton, DangerButton, GhostButton
 )
+from slate.core.infra.gate import Gate
 
 class StockSidebar(QWidget):
     """
@@ -43,8 +44,9 @@ class StockSidebar(QWidget):
         header_row = QHBoxLayout()
         header_lbl = QLabel("Asset Filters")
         header_lbl.setStyleSheet(f"font-size: 12px; font-weight: {T.WEIGHT_STYLE_BOLD}; color: {C.TEXT_SECONDARY};")
-        self.btn_collapse = GhostButton("\u25C2")
-        self.btn_collapse.setFixedWidth(28)
+        self.btn_collapse = GhostButton("")
+        self.btn_collapse.setIcon(draw_icon("chevron-left", Gate.TEXT_2, 14))
+        self.btn_collapse.setFixedWidth(32)
         self.btn_collapse.setToolTip("Collapse sidebar")
         self.btn_collapse.clicked.connect(self.sidebar_toggle_requested.emit)
         header_row.addWidget(header_lbl)
@@ -64,7 +66,7 @@ class StockSidebar(QWidget):
         self.category_list.setStyleSheet(f"""
             QListWidget {{ background-color: {C.BG_HOVER}; border: 1px solid {C.BORDER_DEFAULT}; border-radius: {R.SM}px; }}
             QListWidget::item {{ padding: 6px 8px; border-radius: 4px; color: {C.TEXT_PRIMARY}; }}
-            QListWidget::item:selected {{ background-color: {C.ACCENT_PRIMARY}; color: white; font-weight: bold; }}
+            QListWidget::item:selected {{ background-color: {C.ACCENT_PRIMARY}; color: {Gate.TEXT_ON_ACCENT}; font-weight: bold; }}
             QListWidget::item:hover {{ background-color: {C.BORDER_DEFAULT}; }}
         """)
         self.category_list.itemClicked.connect(self._on_category_clicked)
@@ -115,10 +117,12 @@ class StockSidebar(QWidget):
             ipa_layout.addWidget(self.progress_bar_ingest)
             
             btn_row = QHBoxLayout()
-            self.btn_pause = SecondaryButton("\u23F8 Pause")
+            self.btn_pause = SecondaryButton("Pause")
+            self.btn_pause.setIcon(draw_icon("pause", Gate.TEXT, 14))
             self.btn_pause.clicked.connect(self.pause_requested.emit)
             
-            self.btn_stop = DangerButton("\u23F9 Stop")
+            self.btn_stop = DangerButton("Stop")
+            self.btn_stop.setIcon(draw_icon("stop", Gate.BAD, 14))
             self.btn_stop.clicked.connect(self.stop_requested.emit)
             
             btn_row.addWidget(self.btn_pause)
@@ -213,6 +217,7 @@ from .....core.infra.design_tokens import ColorTokens as C, TypographyTokens as 
 from ....widgets.styled_buttons import (
     PrimaryButton, SecondaryButton, DangerButton, GhostButton
 )
+from ....core.icons import icon as draw_icon
 
 class StockSidebar(QWidget):
     """
@@ -246,8 +251,9 @@ class StockSidebar(QWidget):
         header_row = QHBoxLayout()
         header_lbl = QLabel("Asset Filters")
         header_lbl.setStyleSheet(f"font-size: 12px; font-weight: {T.WEIGHT_STYLE_BOLD}; color: {C.TEXT_SECONDARY};")
-        self.btn_collapse = GhostButton("\u25C2")
-        self.btn_collapse.setFixedWidth(28)
+        self.btn_collapse = GhostButton("")
+        self.btn_collapse.setIcon(draw_icon("chevron-left", Gate.TEXT_2, 14))
+        self.btn_collapse.setFixedWidth(32)
         self.btn_collapse.setToolTip("Collapse sidebar")
         self.btn_collapse.clicked.connect(self.sidebar_toggle_requested.emit)
         header_row.addWidget(header_lbl)
@@ -267,8 +273,8 @@ class StockSidebar(QWidget):
         self.category_list.setStyleSheet(f"""
             QListWidget {{ background-color: transparent; border: none; outline: none; }}
             QListWidget::item {{ padding: 8px 12px; border-radius: 12px; color: {C.TEXT_PRIMARY}; margin-bottom: 4px; }}
-            QListWidget::item:selected {{ background-color: {C.ACCENT_PRIMARY}; color: white; font-weight: bold; }}
-            QListWidget::item:hover:!selected {{ background-color: rgba(255, 255, 255, 0.05); }}
+            QListWidget::item:selected {{ background-color: {C.ACCENT_PRIMARY}; color: {Gate.TEXT_ON_ACCENT}; font-weight: bold; }}
+            QListWidget::item:hover:!selected {{ background-color: {Gate.overlay(0.05)}; }}
         """)
         self.category_list.itemClicked.connect(self._on_category_clicked)
         
@@ -318,10 +324,12 @@ class StockSidebar(QWidget):
             ipa_layout.addWidget(self.progress_bar_ingest)
             
             btn_row = QHBoxLayout()
-            self.btn_pause = SecondaryButton("\u23F8 Pause")
+            self.btn_pause = SecondaryButton("Pause")
+            self.btn_pause.setIcon(draw_icon("pause", Gate.TEXT, 14))
             self.btn_pause.clicked.connect(self.pause_requested.emit)
             
-            self.btn_stop = DangerButton("\u23F9 Stop")
+            self.btn_stop = DangerButton("Stop")
+            self.btn_stop.setIcon(draw_icon("stop", Gate.BAD, 14))
             self.btn_stop.clicked.connect(self.stop_requested.emit)
             
             btn_row.addWidget(self.btn_pause)
@@ -433,7 +441,11 @@ class StockSidebar(QWidget):
             self.lbl_ingest_status.setText(status_text)
 
     def set_pause_btn_text(self, text):
+        # Text plus the drawn pause/play icon, never a colour emoji.
+        text = str(text or "").replace("\u25b6", "").replace("\u23f8", "").strip()
         self.btn_pause.setText(text)
+        self.btn_pause.setIcon(draw_icon("play" if text.lower().startswith("resume") else "pause",
+                                         Gate.TEXT, 14))
 
     def set_controls_enabled(self, enabled):
         if hasattr(self, 'ingest_controls'):

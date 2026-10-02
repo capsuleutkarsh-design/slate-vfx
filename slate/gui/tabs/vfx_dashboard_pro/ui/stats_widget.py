@@ -3,6 +3,7 @@ from PySide6.QtCore import Qt
 from typing import List, Dict
 import logging
 from ..models.shot_model import Shot
+from slate.core.infra.gate import Gate
 
 class StatsWidget(QWidget):
     def __init__(self):
@@ -15,17 +16,17 @@ class StatsWidget(QWidget):
         
         # Sleek neon-style colors based on the reference
         self.status_colors = {
-            'APPROVED': '#5FBF8F', # Neon Green
-            'DONE': '#5FBF8F',
-            'WIP': '#D9A441',      # Neon Yellow
-            'YTS': '#3EA8BF',      # Light Blue
-            'REVIEW': '#3EA8BF',   # Cyan
-            'SENT FOR REVIEW': '#3EA8BF',
-            'RETAKE': '#D9635F',   # Neon Red
-            'SI': '#D9635F',
-            'OMIT': '#B4B1AA',     # Gray
-            'OMITTED': '#B4B1AA',
-            'DEFAULT': '#5FC6DA'
+            'APPROVED': Gate.OK, # Neon Green
+            'DONE': Gate.OK,
+            'WIP': Gate.WARN,      # Neon Yellow
+            'YTS': Gate.ACCENT,      # Light Blue
+            'REVIEW': Gate.ACCENT,   # Cyan
+            'SENT FOR REVIEW': Gate.ACCENT,
+            'RETAKE': Gate.BAD,   # Neon Red
+            'SI': Gate.BAD,
+            'OMIT': Gate.TEXT_2,     # Gray
+            'OMITTED': Gate.TEXT_2,
+            'DEFAULT': Gate.ACCENT_HI
         }
         
     def create_pill(self, label_text, count, color_hex):
@@ -33,8 +34,8 @@ class StatsWidget(QWidget):
         # Pill styling: transparent background, subtle border, fully rounded
         container.setStyleSheet(f"""
             QFrame {{
-                background-color: rgba(255, 255, 255, 0.03);
-                border: 1px solid rgba(255, 255, 255, 0.1);
+                background-color: {Gate.overlay(0.03)};
+                border: 1px solid {Gate.overlay(0.1)};
                 border-radius: 12px;
                 padding-left: 4px;
                 padding-right: 4px;
@@ -60,7 +61,7 @@ class StatsWidget(QWidget):
         # If it's TOTAL, we don't need the dot, just grey text
         if label_text == "SHOTS":
             dot.hide()
-            text_label.setStyleSheet("color: #B4B1AA; font-size: 10px; font-weight: 700; background: transparent; border: none;")
+            text_label.setStyleSheet(f"color: {Gate.TEXT_2}; font-size: 10px; font-weight: 700; background: transparent; border: none;")
         
         layout.addWidget(dot)
         layout.addWidget(text_label)
@@ -95,7 +96,7 @@ class StatsWidget(QWidget):
         
         # 1. Add Total Shots Pill
         total_count = len(shots)
-        total_pill = self.create_pill("SHOTS", total_count, "#B4B1AA")
+        total_pill = self.create_pill("SHOTS", total_count, Gate.TEXT_2)
         self.main_layout.addWidget(total_pill)
         self.stat_containers["TOTAL"] = total_pill
 

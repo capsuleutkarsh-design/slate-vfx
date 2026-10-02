@@ -8,6 +8,7 @@ Displayed during long-running operations.
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QProgressBar, QPushButton, QLabel
 from PySide6.QtCore import Signal, Qt
 from PySide6.QtGui import QPalette, QColor
+from slate.core.infra.gate import Gate
 
 
 class ProgressOverlay(QWidget):
@@ -43,12 +44,12 @@ class ProgressOverlay(QWidget):
         
         # Container widget with solid background
         container = QWidget()
-        container.setStyleSheet("""
-            QWidget {
-                background-color: #26262D;
+        container.setStyleSheet(f"""
+            QWidget {{
+                background-color: {Gate.RAISED_HI};
                 border-radius: 10px;
                 padding: 30px;
-            }
+            }}
         """)
         
         container_layout = QVBoxLayout(container)
@@ -56,10 +57,10 @@ class ProgressOverlay(QWidget):
         
         # Title label
         title_label = QLabel(title)
-        title_label.setStyleSheet("""
+        title_label.setStyleSheet(f"""
             font-size: 16pt;
             font-weight: bold;
-            color: #3EA8BF;
+            color: {Gate.ACCENT};
         """)
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         container_layout.addWidget(title_label)
@@ -73,24 +74,24 @@ class ProgressOverlay(QWidget):
         self.progress_bar.setFormat("%p% (%v/%m)")
         self.progress_bar.setMinimumWidth(400)
         self.progress_bar.setMinimumHeight(30)
-        self.progress_bar.setStyleSheet("""
-            QProgressBar {
-                border: 2px solid #2C2C34;
+        self.progress_bar.setStyleSheet(f"""
+            QProgressBar {{
+                border: 2px solid {Gate.LINE};
                 border-radius: 5px;
                 text-align: center;
                 font-size: 12pt;
-                background-color: #16161A;
-            }
-            QProgressBar::chunk {
-                background-color: #3EA8BF;
+                background-color: {Gate.PANEL};
+            }}
+            QProgressBar::chunk {{
+                background-color: {Gate.ACCENT};
                 border-radius: 3px;
-            }
+            }}
         """)
         container_layout.addWidget(self.progress_bar)
         
         # Status label
         self.status_label = QLabel("Processing...")
-        self.status_label.setStyleSheet("font-size: 11pt; color: #87857F;")
+        self.status_label.setStyleSheet(f"font-size: 11pt; color: {Gate.TEXT_DIM};")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         container_layout.addWidget(self.status_label)
         
@@ -98,18 +99,18 @@ class ProgressOverlay(QWidget):
         if cancelable:
             cancel_btn = QPushButton("Cancel")
             cancel_btn.setMinimumHeight(35)
-            cancel_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #D9635F;
-                    color: white;
+            cancel_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {Gate.BAD};
+                    color: {Gate.TEXT_ON_BAD};
                     font-size: 12pt;
                     font-weight: bold;
                     border-radius: 5px;
                     padding: 8px 20px;
-                }
-                QPushButton:hover {
-                    background-color: #D9635F;
-                }
+                }}
+                QPushButton:hover {{
+                    background-color: {Gate.BAD};
+                }}
             """)
             cancel_btn.clicked.connect(self._on_cancel)
             container_layout.addWidget(cancel_btn)

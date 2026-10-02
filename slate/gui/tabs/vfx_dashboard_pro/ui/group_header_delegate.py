@@ -1,6 +1,7 @@
 from PySide6.QtWidgets import QStyledItemDelegate, QStyle
 from PySide6.QtCore import Qt, QRect
 from PySide6.QtGui import QPainter, QColor, QFontMetrics, QFont
+from slate.core.infra.gate import Gate
 
 GROUP_HEADER_ROLE = Qt.ItemDataRole.UserRole + 200
 
@@ -27,22 +28,22 @@ class GroupHeaderDelegate(QStyledItemDelegate):
 
         # 1. Background
         is_hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
-        bg_color = QColor("#16323A") if is_hovered else QColor("#16323A")
+        bg_color = QColor(Gate.ACCENT_SURFACE) if is_hovered else QColor(Gate.ACCENT_SURFACE)
         painter.fillRect(rect, bg_color)
 
         # 2. Bottom separator & left accent bar
-        painter.setPen(QColor("#16323A"))
+        painter.setPen(QColor(Gate.ACCENT_SURFACE))
         painter.drawLine(rect.bottomLeft(), rect.bottomRight())
 
         accent_bar = QRect(rect.left(), rect.top(), 4, rect.height())
-        painter.fillRect(accent_bar, QColor("#3EA8BF"))
+        painter.fillRect(accent_bar, QColor(Gate.ACCENT))
 
         # 3. Disclosure triangle
         is_collapsed = bool(group_data.get("is_collapsed", False))
         arrow = "▶" if is_collapsed else "▼"
         arrow_font = QFont("Segoe UI", 9)
         painter.setFont(arrow_font)
-        painter.setPen(QColor("#6BA4C9"))
+        painter.setPen(QColor(Gate.INFO))
         arrow_rect = QRect(rect.left() + 12, rect.top(), 16, rect.height())
         painter.drawText(arrow_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, arrow)
 
@@ -50,7 +51,7 @@ class GroupHeaderDelegate(QStyledItemDelegate):
         title_text = str(group_data.get("title", "Group")).upper()
         title_font = QFont("Segoe UI", 10, QFont.Weight.Bold)
         painter.setFont(title_font)
-        painter.setPen(QColor("#E8E6E1"))
+        painter.setPen(QColor(Gate.TEXT))
         fm = QFontMetrics(title_font)
         title_width = fm.horizontalAdvance(title_text) + 8
         title_rect = QRect(rect.left() + 32, rect.top(), title_width, rect.height())
@@ -69,10 +70,10 @@ class GroupHeaderDelegate(QStyledItemDelegate):
 
         badge_rect = QRect(b_x, b_y, b_width, b_height)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor("rgba(255, 255, 255, 0.08)"))
+        painter.setBrush(QColor(Gate.overlay(0.08)))
         painter.drawRoundedRect(badge_rect, 10, 10)
 
-        painter.setPen(QColor("#B4B1AA"))
+        painter.setPen(QColor(Gate.TEXT_2))
         painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, count_text)
 
         # 6. Progress Pill (% Approved)
@@ -87,17 +88,17 @@ class GroupHeaderDelegate(QStyledItemDelegate):
         pct_rect = QRect(pct_x, b_y, pct_width, b_height)
 
         # Pill background
-        painter.setBrush(QColor("rgba(95, 191, 143, 0.25)"))
+        painter.setBrush(QColor(Gate.tint(Gate.OK, 0.25)))
         painter.drawRoundedRect(pct_rect, 10, 10)
 
         # Mini fill indicator
         fill_w = max(0, int((pct_rect.width() - 4) * (pct / 100.0)))
         if fill_w > 0:
             fill_rect = QRect(pct_rect.left() + 2, pct_rect.top() + 2, fill_w, b_height - 4)
-            painter.setBrush(QColor("rgba(95, 191, 143, 0.35)"))
+            painter.setBrush(QColor(Gate.tint(Gate.OK, 0.35)))
             painter.drawRoundedRect(fill_rect, 8, 8)
 
-        painter.setPen(QColor("#5FBF8F"))
+        painter.setPen(QColor(Gate.OK))
         painter.drawText(pct_rect, Qt.AlignmentFlag.AlignCenter, pct_text)
 
         # 7. Total frames and bid days on the right side
@@ -106,7 +107,7 @@ class GroupHeaderDelegate(QStyledItemDelegate):
         metrics_text = f"{frames} frames  •  {bids:.1f} bid days"
         m_font = QFont("Segoe UI", 9)
         painter.setFont(m_font)
-        painter.setPen(QColor("#6BA4C9"))
+        painter.setPen(QColor(Gate.INFO))
         fm_m = QFontMetrics(m_font)
         m_width = fm_m.horizontalAdvance(metrics_text) + 16
         m_rect = QRect(rect.right() - m_width - 12, rect.top(), m_width, rect.height())

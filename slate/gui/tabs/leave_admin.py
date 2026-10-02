@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from slate.core.infra.gate import Gate
+from ..core.table_style import style_table
 from slate.core.infra.leave_repository import LeaveRepository
 from slate.core.domain import leave_policy as lp
 from ..core.controls import make_button
@@ -168,14 +169,8 @@ class HolidayCalendarDialog(QDialog):
 
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["Date", "Day", "Holiday", "Applies to"])
-        self.table.verticalHeader().setVisible(False)
-        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table.setAlternatingRowColors(True)
-        head = self.table.horizontalHeader()
-        for i in range(3):
-            head.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
-        head.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        style_table(self.table, {"Date": "contents", "Day": "contents",
+                                 "Holiday": "contents", "Applies to": "stretch"})
         self.table.itemSelectionChanged.connect(self._sync)
         self.table.cellDoubleClicked.connect(lambda *_: self.edit())
         root.addWidget(self.table, 1)
@@ -352,13 +347,8 @@ class CompOffReviewDialog(QDialog):
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(
             ["Person", "Day", "Hours", "Earns", "Why"])
-        self.table.verticalHeader().setVisible(False)
-        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table.setAlternatingRowColors(True)
-        head = self.table.horizontalHeader()
-        for i in range(4):
-            head.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
-        head.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        style_table(self.table, {"Person": "contents", "Day": "contents", "Hours": "numeric",
+                                 "Earns": "numeric", "Why": "stretch"})
         root.addWidget(self.table, 1)
 
         buttons = QHBoxLayout()
@@ -493,13 +483,8 @@ class YearEndDialog(QDialog):
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(
             ["Person", "Balance at year end", "Carries over", "Lapses"])
-        self.table.verticalHeader().setVisible(False)
-        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table.setAlternatingRowColors(True)
-        head = self.table.horizontalHeader()
-        head.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for i in (1, 2, 3):
-            head.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
+        style_table(self.table, {"Person": "stretch", "Balance at year end": "numeric",
+                                 "Carries over": "numeric", "Lapses": "numeric"})
         root.addWidget(self.table, 1)
 
         buttons = QHBoxLayout()

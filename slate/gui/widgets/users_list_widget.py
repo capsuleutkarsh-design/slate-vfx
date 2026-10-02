@@ -2,6 +2,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QListWidget, QListWidgetIte
                                QLabel, QHBoxLayout)
 from PySide6.QtCore import Qt, QMimeData, QSize, QPoint
 from PySide6.QtGui import QDrag, QPixmap
+from slate.core.infra.gate import Gate
 
 class UserItemWidget(QWidget):
     """Visual representation of a User in the list."""
@@ -26,7 +27,7 @@ class UserItemWidget(QWidget):
         self.avatar.setStyleSheet(f"""
             QLabel {{
                 background-color: hsla({hue}, 60%, 40%, 1.0);
-                color: white;
+                color: {Gate.TEXT};
                 border-radius: 14px;
                 font-weight: bold;
                 font-size: 10px;
@@ -37,7 +38,7 @@ class UserItemWidget(QWidget):
         
         # Name
         lbl_name = QLabel(self.display_name.split(" ")[0]) # First name to keep it clean
-        lbl_name.setStyleSheet("color: rgba(255, 255, 255, 0.8); font-size: 11px; font-weight: 600;")
+        lbl_name.setStyleSheet(f"color: {Gate.overlay(0.8)}; font-size: 11px; font-weight: 600;")
         layout.addWidget(lbl_name)
         
         layout.addStretch()
@@ -56,48 +57,48 @@ class UsersListWidget(QWidget):
         
         # Header
         header = QLabel("Active Artists")
-        header.setStyleSheet("font-weight: 900; font-size: 14px; color: rgba(255,255,255,0.9); padding: 12px 12px 6px 12px; letter-spacing: 0.5px;")
+        header.setStyleSheet(f"font-weight: 900; font-size: 14px; color: {Gate.overlay(0.9)}; padding: 12px 12px 6px 12px; letter-spacing: 0.5px;")
         layout.addWidget(header)
         
         # List
         self.list_widget = QListWidget()
-        self.list_widget.setStyleSheet("""
-            QListWidget {
+        self.list_widget.setStyleSheet(f"""
+            QListWidget {{
                 background-color: transparent;
                 border: none;
-                border-left: 1px solid rgba(255, 255, 255, 0.05);
+                border-left: 1px solid {Gate.overlay(0.05)};
                 outline: none;
-            }
-            QListWidget::item {
-                border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+            }}
+            QListWidget::item {{
+                border-bottom: 1px solid {Gate.overlay(0.03)};
                 padding: 4px 8px;
-            }
-            QListWidget::item:hover {
-                background-color: rgba(255, 255, 255, 0.03);
-            }
-            QListWidget::item:selected {
-                background-color: rgba(255, 255, 255, 0.06);
-            }
-            QScrollBar:vertical {
+            }}
+            QListWidget::item:hover {{
+                background-color: {Gate.overlay(0.03)};
+            }}
+            QListWidget::item:selected {{
+                background-color: {Gate.overlay(0.06)};
+            }}
+            QScrollBar:vertical {{
                 border: none;
-                background: rgba(255, 255, 255, 0.02);
+                background: {Gate.overlay(0.02)};
                 width: 6px;
                 border-radius: 3px;
-            }
-            QScrollBar::handle:vertical {
-                background: rgba(255, 255, 255, 0.1);
+            }}
+            QScrollBar::handle:vertical {{
+                background: {Gate.overlay(0.1)};
                 min-height: 20px;
                 border-radius: 3px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: rgba(255, 255, 255, 0.2);
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: {Gate.overlay(0.2)};
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
                 border: none; background: none; height: 0px;
-            }
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+            }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
                 background: none;
-            }
+            }}
         """)
         self.list_widget.setDragEnabled(True)
         self.list_widget.setSelectionMode(QListWidget.SingleSelection)

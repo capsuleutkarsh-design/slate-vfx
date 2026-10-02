@@ -14,6 +14,8 @@ from PySide6.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
     QLineEdit, QPlainTextEdit, QSpinBox, QVBoxLayout,
 )
+from slate.core.infra.gate import Gate
+from slate.gui.core.controls import style_button
 
 
 STATUS_CHOICES = ["YTS", "WIP", "SENT FOR REVIEW", "RETAKE", "APPROVED"]
@@ -63,7 +65,7 @@ class AddShotsDialog(QDialog):
         hint = QLabel("One shot name per line. Names already in the project "
                       "are ignored.")
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: #B4B1AA; font-style: italic;")
+        hint.setStyleSheet(f"color: {Gate.TEXT_2}; font-style: italic;")
         layout.addWidget(hint)
 
         self.preview_label = QLabel("")
@@ -76,6 +78,11 @@ class AddShotsDialog(QDialog):
         )
         self.ok_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
         self.ok_button.setText("Add Shots")
+        # The primary action, and what Enter presses - still recognisably the
+        # primary action while it is waiting for names (it used to look
+        # exactly like Cancel when disabled).
+        style_button(self.ok_button, "primary")
+        style_button(buttons.button(QDialogButtonBox.StandardButton.Cancel), "secondary")
         self.ok_button.setEnabled(False)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -131,6 +138,6 @@ class AddShotsDialog(QDialog):
 
         self.preview_label.setText("  ".join(parts))
         self.preview_label.setStyleSheet(
-            "color: #3EA8BF;" if new_names else "color: #B4B1AA;"
+            f"color: {Gate.ACCENT};" if new_names else f"color: {Gate.TEXT_2};"
         )
         self.ok_button.setEnabled(bool(new_names))

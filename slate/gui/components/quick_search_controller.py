@@ -6,6 +6,7 @@ from typing import Optional, Dict, Any, List, Callable, Tuple
 from pathlib import Path
 from PySide6.QtCore import Qt, QTimer, Property
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QLineEdit, QListWidget, QListWidgetItem, QLabel
+from slate.core.infra.gate import Gate
 
 class QuickSearchControllerMixin:
     """
@@ -279,15 +280,15 @@ class QuickSearchControllerMixin:
                     self._anim.start()
     
                 # Base background
-                bg_color = QColor("#16323A") # Matching omnibarResults bg
+                bg_color = QColor(Gate.ACCENT_SURFACE) # Matching omnibarResults bg
                 
                 if is_selected:
-                    bg_color = QColor("#16323A")
+                    bg_color = QColor(Gate.ACCENT_SURFACE)
                 elif self._hover_index == index.row() or (not is_hovered and self._hover_alpha > 0 and self._hover_index == -1):
                     # Blend hover color
                     alpha = self._hover_alpha if self._hover_index == index.row() else 0.0
                     if alpha > 0:
-                        hover_base = QColor("#16323A")
+                        hover_base = QColor(Gate.ACCENT_SURFACE)
                         r = bg_color.red() + (hover_base.red() - bg_color.red()) * alpha
                         g = bg_color.green() + (hover_base.green() - bg_color.green()) * alpha
                         b = bg_color.blue() + (hover_base.blue() - bg_color.blue()) * alpha
@@ -301,14 +302,14 @@ class QuickSearchControllerMixin:
                 text = index.data(Qt.ItemDataRole.DisplayRole)
                 payload = index.data(Qt.ItemDataRole.UserRole)
                 if not payload: # Section header
-                    painter.setPen(QColor("#6BA4C9"))
+                    painter.setPen(QColor(Gate.INFO))
                     font = painter.font()
                     font.setBold(True)
                     font.setPointSize(9)
                     painter.setFont(font)
                     painter.drawText(option.rect.adjusted(10, 0, -10, 0), Qt.AlignmentFlag.AlignVCenter, text)
                 else:
-                    painter.setPen(QColor("#3EA8BF") if is_selected else QColor("#6BA4C9"))
+                    painter.setPen(QColor(Gate.ACCENT) if is_selected else QColor(Gate.INFO))
                     painter.drawText(option.rect.adjusted(12, 0, -12, 0), Qt.AlignmentFlag.AlignVCenter, text)
                 
                 painter.restore()
@@ -358,47 +359,47 @@ class QuickSearchControllerMixin:
         panel_layout.addWidget(results_list)
     
         dialog.setStyleSheet(
-            """
-            QDialog {
+            f"""
+            QDialog {{
                 background: rgba(0, 0, 0, 0);
-            }
-            QFrame#omnibarPanel {
-                background-color: #16323A;
-                border: 1px solid #16323A;
+            }}
+            QFrame#omnibarPanel {{
+                background-color: {Gate.ACCENT_SURFACE};
+                border: 1px solid {Gate.ACCENT_SURFACE};
                 border-radius: 12px;
-            }
-            QLabel#omnibarHeader {
-                color: #6BA4C9;
+            }}
+            QLabel#omnibarHeader {{
+                color: {Gate.INFO};
                 font-size: 12pt;
                 font-weight: 600;
-            }
-            QLineEdit#omnibarInput {
-                background-color: #16323A;
-                color: #6BA4C9;
-                border: 1px solid #2C2C34;
+            }}
+            QLineEdit#omnibarInput {{
+                background-color: {Gate.ACCENT_SURFACE};
+                color: {Gate.INFO};
+                border: 1px solid {Gate.LINE};
                 border-radius: 8px;
                 padding: 8px 10px;
                 font-size: 11pt;
-            }
-            QLineEdit#omnibarInput:focus {
-                border: 1px solid #3EA8BF;
-            }
-            QListWidget#omnibarResults {
-                background-color: #16323A;
-                color: #6BA4C9;
-                border: 1px solid #16323A;
+            }}
+            QLineEdit#omnibarInput:focus {{
+                border: 1px solid {Gate.ACCENT};
+            }}
+            QListWidget#omnibarResults {{
+                background-color: {Gate.ACCENT_SURFACE};
+                color: {Gate.INFO};
+                border: 1px solid {Gate.ACCENT_SURFACE};
                 border-radius: 8px;
                 padding: 4px;
                 font-size: 10.5pt;
-            }
-            QListWidget#omnibarResults::item {
+            }}
+            QListWidget#omnibarResults::item {{
                 padding: 8px 10px;
                 border-radius: 6px;
-            }
-            QListWidget#omnibarResults::item:selected {
-                background-color: #16323A;
-                color: #3EA8BF;
-            }
+            }}
+            QListWidget#omnibarResults::item:selected {{
+                background-color: {Gate.ACCENT_SURFACE};
+                color: {Gate.ACCENT};
+            }}
             """
         )
     
@@ -448,8 +449,8 @@ class QuickSearchControllerMixin:
             section_item = QListWidgetItem(title)
             section_item.setFlags(Qt.NoItemFlags)
             section_item.setData(Qt.ItemDataRole.UserRole, None)
-            section_item.setForeground(QColor("#6BA4C9"))
-            section_item.setBackground(QColor("#16323A"))
+            section_item.setForeground(QColor(Gate.INFO))
+            section_item.setBackground(QColor(Gate.ACCENT_SURFACE))
             results_list.addItem(section_item)
     
         def accept_current_item():

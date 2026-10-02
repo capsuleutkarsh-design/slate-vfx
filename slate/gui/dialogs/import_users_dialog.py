@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
 )
 
 from slate.core.domain import user_import
+from slate.core.infra.gate import Gate
 
 _STATUS_TEXT = {
     "new": "Will be created",
@@ -17,8 +18,8 @@ _STATUS_TEXT = {
     "failed": "Failed",
 }
 _STATUS_COLOUR = {
-    "new": "#5FBF8F", "created": "#5FBF8F", "exists": "#D9A441",
-    "duplicate": "#D9A441", "invalid": "#D9635F", "failed": "#D9635F",
+    "new": Gate.OK, "created": Gate.OK, "exists": Gate.WARN,
+    "duplicate": Gate.WARN, "invalid": Gate.BAD, "failed": Gate.BAD,
 }
 
 
@@ -31,7 +32,7 @@ class ImportUsersDialog(QDialog):
 
         self.setWindowTitle("Import people from Excel or CSV")
         self.setMinimumSize(820, 560)
-        self.setStyleSheet("background-color: #1D1D22; color: white;")
+        self.setStyleSheet(f"QDialog {{ background-color: {Gate.RAISED}; }}")  # the dialog only: without a selector every field in it took this background
         layout = QVBoxLayout(self)
 
         intro = QLabel(
@@ -40,12 +41,12 @@ class ImportUsersDialog(QDialog):
             "time they sign in. People already in Slate are skipped, never changed. Fill in department, "
             "joining date and the rest afterwards on the Users list.")
         intro.setWordWrap(True)
-        intro.setStyleSheet("color: #B4B1AA;")
+        intro.setStyleSheet(f"color: {Gate.TEXT_2};")
         layout.addWidget(intro)
 
         pick = QHBoxLayout()
         self.path_label = QLabel("No file chosen")
-        self.path_label.setStyleSheet("color: #87857F;")
+        self.path_label.setStyleSheet(f"color: {Gate.TEXT_DIM};")
         choose = QPushButton("Choose file…")
         choose.clicked.connect(self.choose_file)
         template = QPushButton("Download template")
@@ -57,7 +58,7 @@ class ImportUsersDialog(QDialog):
 
         form = QFormLayout()
         self.role_input = QComboBox()
-        self.role_input.setStyleSheet("background: #26262D; padding: 4px;")
+        self.role_input.setStyleSheet(f"background: {Gate.RAISED_HI}; padding: 4px;")
         roles = sorted(self.user_manager.get_available_roles(), key=lambda r: str(r).lower())
         self.role_input.addItems(roles)
         form.addRow("Give everyone the role:", self.role_input)
@@ -67,7 +68,7 @@ class ImportUsersDialog(QDialog):
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.password_input.setPlaceholderText(
             f"At least {self.user_manager.MIN_PASSWORD_LENGTH} characters, e.g. Welcome@2026")
-        self.password_input.setStyleSheet("background: #26262D; padding: 4px;")
+        self.password_input.setStyleSheet(f"background: {Gate.RAISED_HI}; padding: 4px;")
         show = QCheckBox("Show")
         show.toggled.connect(lambda on: self.password_input.setEchoMode(
             QLineEdit.EchoMode.Normal if on else QLineEdit.EchoMode.Password))
@@ -98,7 +99,7 @@ class ImportUsersDialog(QDialog):
         close.clicked.connect(self.accept)
         self.import_btn = QPushButton("Import")
         self.import_btn.setEnabled(False)
-        self.import_btn.setStyleSheet("background-color: #3EA8BF; color: black; font-weight: bold; padding: 5px 14px;")
+        self.import_btn.setStyleSheet(f"background-color: {Gate.ACCENT}; color: {Gate.TEXT_ON_ACCENT}; font-weight: bold; padding: 5px 14px;")
         self.import_btn.clicked.connect(self.run_import)
         buttons.addWidget(close)
         buttons.addWidget(self.import_btn)
@@ -117,7 +118,7 @@ class ImportUsersDialog(QDialog):
             QMessageBox.warning(self, "Cannot read the file", f"This file could not be read:\n\n{exc}")
             return
         self.path_label.setText(path)
-        self.path_label.setStyleSheet("color: white;")
+        self.path_label.setStyleSheet(f"color: {Gate.TEXT};")
         self._show_plan()
 
     def save_template(self):

@@ -26,6 +26,7 @@ from slate.core.domain.service_desk import (
     sla_tone, status_tone, waiting_hours as sd_waiting_hours,
 )
 from ..core.controls import make_button, page_title
+from ..core.table_style import style_table
 from ..core.empty_state import EmptyState
 from .my_tickets_view import TicketThreadDialog
 from slate.gui.core.offline_notice import on_database_error
@@ -135,14 +136,13 @@ class ServiceDeskView(QWidget):
         self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels(
             ["#", "Summary", "Raised by", "Category", "Priority", "Status", "Owner", "SLA"])
-        self.table.verticalHeader().setVisible(False)
-        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table.setAlternatingRowColors(True)
-        head = self.table.horizontalHeader()
-        head.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        for i in (0, 2, 3, 4, 5, 6, 7):
-            head.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
+        # The shared table style: readable text with cell padding (it was ~10 px
+        # and touched the grid lines), one selection colour.
+        style_table(self.table, {
+            "#": "numeric", "Summary": "stretch", "Raised by": "contents",
+            "Category": "contents", "Priority": "contents", "Status": "contents",
+            "Owner": "contents", "SLA": "contents",
+        })
         self.table.doubleClicked.connect(self.open_selected)
         self.table.itemSelectionChanged.connect(self._sync_buttons)
         root.addWidget(self.table, 1)
@@ -221,8 +221,24 @@ class ServiceDeskView(QWidget):
         self._paint_rows(rows)
         self._reselect(keep)
         self.table.verticalScrollBar().setValue(scroll)
+        # A search that matches nothing is not an empty desk: say so, and offer
+        # to clear it, rather than "Nothing in the queue".
+        narrowed = bool(needle) or bool(owner) or wanted not in ("open", "all", None)
+        self.empty.set_filtered(narrowed and bool(everything), on_clear=self.clear_filters,
+                                noun="tickets")
         self.empty.refresh()
         self._sync_buttons()
+
+    def clear_filters(self):
+        """Back to the default view: open tickets, anyone's, no search."""
+        for widget in (self.filter_status, self.filter_mine, self.search):
+            widget.blockSignals(True)
+        self.filter_status.setCurrentIndex(0)
+        self.filter_mine.setCurrentIndex(0)
+        self.search.clear()
+        for widget in (self.filter_status, self.filter_mine, self.search):
+            widget.blockSignals(False)
+        self.refresh()
 
     def _reselect(self, ids):
         if not ids:
