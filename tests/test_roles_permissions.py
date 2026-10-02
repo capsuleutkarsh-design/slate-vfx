@@ -174,7 +174,9 @@ def test_saving_keeps_what_the_screen_does_not_show(users, qapp_like):
     users.update_role_permissions("Artist", ["Dashboard", "Image Editor", "can:dashboard_write"])
     editor = RoleEditor(users)
     editor.refresh_roles(select="Artist")
-    editor.tab_boxes["Settings"].setChecked(True)          # saves
+    editor.tab_boxes["Settings"].setChecked(True)
+    assert "Settings" not in users.role_permissions("Artist"), "nothing saved until Save"
+    assert editor.save_changes()
     stored = users.role_permissions("Artist")
     assert "Image Editor" in stored and "Settings" in stored and "Dashboard" in stored
     assert "can:dashboard_write" in stored

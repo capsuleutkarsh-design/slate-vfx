@@ -40,7 +40,8 @@ TABS = (
     Tab("Bidding", "Bidding", "VFX", "Bidding"),
     Tab("IT", "IT & Infra", "Operations",
         "Hardware, Licences, Deployment, the IT desk and the IT side of Joining & Leaving"),
-    Tab("HRMS", "Users & Roles (HR)", "Operations",
+    # Label only - the key "HRMS" is what every role has stored.
+    Tab("HRMS", "HR (people, leave, joining)", "Operations",
         "Users & Roles, the HR leave queue and the HR side of Joining & Leaving"),
     Tab("Admin Panel", "Admin Panel", "System",
         "Live Ops, Audit Logs and Data Center"),
