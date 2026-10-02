@@ -27,6 +27,41 @@ logger = logging.getLogger(__name__)
 PREVIEW_ROWS = 40
 
 
+def count(n: int, one: str, many: str = None) -> str:
+    """'1 punch', '11 punches', '1 person', '3 people' - not 'punch(es)'."""
+    return "%d %s" % (n, one if n == 1 else (many or one + "s"))
+
+
+class ElidedPath(QLabel):
+    """A path cut in the middle with '...', the whole of it in the tooltip."""
+
+    def __init__(self, placeholder="", parent=None):
+        super().__init__(parent)
+        self._full = ""
+        self._placeholder = placeholder
+        self.setMinimumWidth(80)
+        self.setText(placeholder)
+
+    def set_path(self, text: str):
+        self._full = str(text or "")
+        self.setToolTip(self._full)
+        self._paint()
+
+    def path(self) -> str:
+        return self._full
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._paint()
+
+    def _paint(self):
+        if not self._full:
+            QLabel.setText(self, self._placeholder)
+            return
+        QLabel.setText(self, self.fontMetrics().elidedText(
+            self._full, Qt.TextElideMode.ElideMiddle, max(40, self.width() - 4)))
+
+
 class BiometricImportDialog(QDialog):
     """Three steps on one screen: the file, the columns, the unknown codes."""
 
@@ -61,9 +96,7 @@ class BiometricImportDialog(QDialog):
 
         # 1. File
         file_row = QHBoxLayout()
-        self.path_edit = QLineEdit()
-        self.path_edit.setPlaceholderText("No file chosen")
-        self.path_edit.setReadOnly(True)
+        self.path_edit = ElidedPath("No file chosen")
         browse = QPushButton("Choose file...")
         browse.clicked.connect(self.choose_file)
         file_row.addWidget(QLabel("1. File"))
@@ -83,15 +116,46 @@ class BiometricImportDialog(QDialog):
         col_row.addWidget(self.dayfirst)
         root.addLayout(col_row)
 
+        # The role pickers sit in their own row above the preview, so they
+        # stay in sight while the preview scrolls (they were cell widgets in
+        # row 0 and scrolled away). Same columns, scrolled together.
+        self.roles_row = QTableWidget(1, 0)
+        self.roles_row.horizontalHeader().setVisible(False)
+        self.roles_row.verticalHeader().setVisible(False)
+        self.roles_row.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.roles_row.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.roles_row.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.roles_row.setFixedHeight(44)
+        self.roles_row.setShowGrid(False)
+        root.addWidget(self.roles_row)
+
         self.table = QTableWidget()
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.verticalHeader().setVisible(False)
+        self.table.horizontalScrollBar().valueChanged.connect(
+            self.roles_row.horizontalScrollBar().setValue)
         root.addWidget(self.table, 2)
 
         self.mapping_status = QLabel("")
         self.mapping_status.setWordWrap(True)
         root.addWidget(self.mapping_status)
+
+        # Lines that could not be read, and why (they were counted and the
+        # reasons thrown away).
+        self.btn_skipped = QPushButton("Show skipped lines")
+        self.btn_skipped.setCheckable(True)
+        self.btn_skipped.setVisible(False)
+        self.btn_skipped.toggled.connect(lambda on: self.skipped_table.setVisible(on))
+        root.addWidget(self.btn_skipped, 0, Qt.AlignmentFlag.AlignLeft)
+        self.skipped_table = QTableWidget(0, 3)
+        self.skipped_table.setHorizontalHeaderLabels(["Line", "Text", "Why it was skipped"])
+        self.skipped_table.verticalHeader().setVisible(False)
+        self.skipped_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.skipped_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.skipped_table.setMaximumHeight(140)
+        self.skipped_table.setVisible(False)
+        root.addWidget(self.skipped_table)
 
         # 3. Unknown codes
         unk_row = QHBoxLayout()
@@ -112,6 +176,17 @@ class BiometricImportDialog(QDialog):
         self.summary.setWordWrap(True)
         self.summary.setStyleSheet("font-weight: 600;")
         root.addWidget(self.summary)
+
+        # Every day that could not be written, with the reason - not just the
+        # first one.
+        self.failures_table = QTableWidget(0, 3)
+        self.failures_table.setHorizontalHeaderLabels(["Person", "Day", "Reason"])
+        self.failures_table.verticalHeader().setVisible(False)
+        self.failures_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.failures_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.failures_table.setMaximumHeight(160)
+        self.failures_table.setVisible(False)
+        root.addWidget(self.failures_table)
 
         buttons = QDialogButtonBox()
         self.import_btn = buttons.addButton("Import", QDialogButtonBox.ButtonRole.AcceptRole)
@@ -136,7 +211,7 @@ class BiometricImportDialog(QDialog):
             QMessageBox.warning(self, "Cannot read this file", str(exc))
             return
         self.file_path = path
-        self.path_edit.setText(str(path))
+        self.path_edit.set_path(str(path))
 
         profile = bio.find_profile(self.header)
         if profile:
@@ -170,8 +245,10 @@ class BiometricImportDialog(QDialog):
         shown = self.rows[:PREVIEW_ROWS]
         self.table.clear()
         self.table.setColumnCount(columns)
-        self.table.setRowCount(len(shown) + 1)
+        self.table.setRowCount(len(shown))
         self.table.setHorizontalHeaderLabels(self.header)
+        self.roles_row.clear()
+        self.roles_row.setColumnCount(columns)
 
         self.role_boxes: list[QComboBox] = []
         for col in range(columns):
@@ -180,10 +257,11 @@ class BiometricImportDialog(QDialog):
                 box.addItem(bio.ROLE_LABELS[role], role)
             box.setCurrentIndex(bio.ROLES.index(self.mapping.role_of(col)))
             box.currentIndexChanged.connect(lambda _i, c=col: self._on_role_changed(c))
-            self.table.setCellWidget(0, col, box)
+            self.roles_row.setCellWidget(0, col, box)
             self.role_boxes.append(box)
+        self.roles_row.setRowHeight(0, 40)
 
-        for r, row in enumerate(shown, start=1):
+        for r, row in enumerate(shown):
             for col in range(columns):
                 text = row[col] if col < len(row) else ""
                 item = QTableWidgetItem(text)
@@ -218,13 +296,16 @@ class BiometricImportDialog(QDialog):
         punches, skipped = bio.extract_punches(self.header, self.rows, self.mapping)
         self.days, self.unknown = bio.reduce_to_days(punches, self.known_ids, self.code_map)
         self._fill_unknown()
+        self._fill_skipped(skipped)
 
         people = len({d.user_id for d in self.days})
-        text = ("%d punch(es) read, %d skipped. %d day(s) for %d person/people."
-                % (len(punches), len(skipped), len(self.days), people))
+        text = ("%s read, %d skipped. %s for %s."
+                % (count(len(punches), "punch", "punches"), len(skipped),
+                   count(len(self.days), "day"), count(people, "person", "people")))
         if self.unknown:
-            text += " %d code(s) match nobody in Slate (%d punch(es))." % (
-                len(self.unknown), sum(self.unknown.values()))
+            text += " %s match nobody in Slate (%s)." % (
+                count(len(self.unknown), "code"),
+                count(sum(self.unknown.values()), "punch", "punches"))
         if self.days:
             first = min(d.day for d in self.days)
             last = max(d.day for d in self.days)
@@ -233,6 +314,21 @@ class BiometricImportDialog(QDialog):
         self.mapping_status.setStyleSheet("")
         self.summary.setText("")
         self.import_btn.setEnabled(bool(self.days))
+
+    def _fill_skipped(self, skipped):
+        self.skipped_table.setRowCount(len(skipped))
+        offset = 2 if self.header else 1
+        for r, (line, why) in enumerate(skipped):
+            index = line - offset
+            raw = ", ".join(self.rows[index]) if 0 <= index < len(self.rows) else ""
+            for c, text in enumerate((str(line), raw, why)):
+                item = QTableWidgetItem(text)
+                item.setToolTip(text)
+                self.skipped_table.setItem(r, c, item)
+        self.btn_skipped.setVisible(bool(skipped))
+        self.btn_skipped.setText("Show %s" % count(len(skipped), "skipped line"))
+        if not skipped:
+            self.btn_skipped.setChecked(False)
 
     def _people_snapshot(self):
         """
@@ -297,8 +393,9 @@ class BiometricImportDialog(QDialog):
         # Re-reduce with the new match; the unknown list shrinks accordingly.
         punches, _ = bio.extract_punches(self.header, self.rows, self.mapping)
         self.days, self.unknown = bio.reduce_to_days(punches, self.known_ids, self.code_map)
-        self.mapping_status.setText("%d day(s) for %d person/people; %d code(s) still unmatched."
-                                    % (len(self.days), len({d.user_id for d in self.days}), len(self.unknown)))
+        self.mapping_status.setText("%s for %s; %s still unmatched." % (
+            count(len(self.days), "day"), count(len({d.user_id for d in self.days}), "person", "people"),
+            count(len(self.unknown), "code")))
         self.import_btn.setEnabled(bool(self.days))
 
     # ------------------------------------------------------------ import
@@ -308,9 +405,10 @@ class BiometricImportDialog(QDialog):
         people = len({d.user_id for d in self.days})
         if QMessageBox.question(
             self, "Import attendance",
-            "Write %d day(s) of attendance for %d person/people?\n\nA day a workstation "
+            "Write %s of attendance for %s?\n\nA day a workstation "
             "also recorded keeps the earlier in and the later out. Importing the same "
-            "file again changes nothing." % (len(self.days), people),
+            "file again changes nothing." % (count(len(self.days), "day"),
+                                              count(people, "person", "people")),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
         ) != QMessageBox.StandardButton.Yes:
             return
@@ -321,15 +419,29 @@ class BiometricImportDialog(QDialog):
         bio.save_profile(self.header, self.mapping, self.code_map,
                          label=source or "biometric export")
 
-        text = "%d day(s) written, %d already correct, %d failed." % (
-            result["written"], result["unchanged"], result["failed"])
+        text = "%s written, %d already correct, %d failed." % (
+            count(result["written"], "day"), result["unchanged"], result["failed"])
         if self.unknown:
-            text += " %d code(s) were skipped as unknown." % len(self.unknown)
-        if result["failures"]:
-            text += "\nFirst failure: %s on %s: %s" % result["failures"][0]
+            text += " %s skipped as unknown." % count(len(self.unknown), "code")
         self.summary.setText(text)
-        if result["failed"] and not result["written"]:
-            QMessageBox.warning(self, "Nothing was imported", text)
+        self.show_failures(result["failures"])
+        if result["failed"]:
+            # Stay open with the list, so HR can see every day that needs
+            # fixing. Importing again is harmless only for days that worked.
+            text += (" The days below were not written; fix them (or the file) and "
+                     "import again - days already written are left alone.")
+            self.summary.setText(text)
+            QMessageBox.warning(self, "Import attendance", text)
             return
-        QMessageBox.information(self, "Imported", text)
+        QMessageBox.information(self, "Import attendance", text)
         self.accept()
+
+    def show_failures(self, failures):
+        """Every day that failed: person, day, reason."""
+        self.failures_table.setRowCount(len(failures))
+        for r, (user_id, day, reason) in enumerate(failures):
+            for c, text in enumerate((str(user_id), str(day), str(reason))):
+                item = QTableWidgetItem(text)
+                item.setToolTip(text)
+                self.failures_table.setItem(r, c, item)
+        self.failures_table.setVisible(bool(failures))

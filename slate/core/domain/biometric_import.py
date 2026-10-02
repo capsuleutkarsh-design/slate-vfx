@@ -448,6 +448,8 @@ class DayRecord:
     punch_out: Optional[str]
     punches: int
     name: str = ""
+    # The out time is on the next calendar day (a night shift).
+    overnight: bool = False
 
 
 def reduce_to_days(punches: Iterable[Punch], known_ids: Iterable[str],
@@ -489,10 +491,70 @@ def reduce_to_days(punches: Iterable[Punch], known_ids: Iterable[str],
         days.append(DayRecord(code=hits[0].code, user_id=user_id, day=day,
                               punch_in=punch_in, punch_out=punch_out,
                               punches=len(hits), name=names.get(hits[0].code, "")))
-    return days, unknown
+    return _join_night_shifts(days, grouped), unknown
+
+
+# A night shift is at most this long; an OUT further away than this belongs
+# to a different day.
+NIGHT_SHIFT_HOURS = 16
+
+
+def _join_night_shifts(days: list, grouped: dict) -> list:
+    """
+    Pair a late IN with the next morning's OUT.
+
+    23:30 C/In on the 13th and 06:30 C/Out on the 14th became a 13th with no
+    out and a 14th with an extra punch, and the night's hours were lost. When
+    the machine says which punches are IN and which OUT, a day whose last
+    punch is an IN takes the next day's leading OUT (within 16 hours) as its
+    out time, and is marked overnight. Without directions nothing is moved -
+    there is no telling a night shift from an early start.
+    """
+    by_key = {(d.user_id, d.day): d for d in days}
+    drop = set()
+    for record in sorted(days, key=lambda d: (d.user_id, d.day)):
+        hits = sorted(grouped.get((record.user_id, record.day), []), key=lambda p: p.when)
+        if not hits or hits[-1].direction != "in":
+            continue
+        nxt_day = record.day + dt.timedelta(days=1)
+        following = sorted(grouped.get((record.user_id, nxt_day), []), key=lambda p: p.when)
+        if not following or following[0].direction != "out":
+            continue
+        out_punch = following[0]
+        if (out_punch.when - hits[-1].when).total_seconds() > NIGHT_SHIFT_HOURS * 3600:
+            continue
+        record.punch_out = out_punch.when.strftime("%H:%M:%S")
+        record.overnight = True
+        record.punches += 1
+        rest = following[1:]
+        grouped[(record.user_id, nxt_day)] = rest
+        nxt = by_key.get((record.user_id, nxt_day))
+        if nxt is None:
+            continue
+        if not rest:
+            drop.add((record.user_id, nxt_day))
+            continue
+        ins = [p for p in rest if p.direction == "in"]
+        outs = [p for p in rest if p.direction == "out"]
+        first = (ins[0] if ins else rest[0]).when
+        last = (outs[-1] if outs else rest[-1]).when
+        nxt.punch_in = first.strftime("%H:%M:%S")
+        nxt.punch_out = last.strftime("%H:%M:%S") if last > first else None
+        nxt.punches = len(rest)
+    return [d for d in days if (d.user_id, d.day) not in drop]
 
 
 # ----------------------------------------------------------------- applying
+
+def _clock(value) -> Optional[str]:
+    """'HH:MM:SS' text from whatever the database handed back (PostgreSQL: a time)."""
+    if value is None or value == "":
+        return None
+    if hasattr(value, "strftime"):
+        return value.strftime("%H:%M:%S")
+    text = str(value).strip()
+    return text if len(text) >= 8 else (text[:5] + ":00" if text else None)
+
 
 def _earlier(a: Optional[str], b: Optional[str]) -> Optional[str]:
     if not a:
@@ -523,16 +585,22 @@ def apply_days(days: Iterable[DayRecord], attendance, source: str = "") -> dict:
     for record in days:
         try:
             existing = attendance.get_day(record.user_id, record.day)
-            p_in = _earlier(existing.get("punch_in"), record.punch_in) if existing else record.punch_in
-            p_out = _later(existing.get("punch_out"), record.punch_out) if existing else record.punch_out
-            if existing and (existing.get("punch_in") or None) == p_in and (existing.get("punch_out") or None) == p_out:
+            old_in = _clock(existing.get("punch_in")) if existing else None
+            old_out = _clock(existing.get("punch_out")) if existing else None
+            p_in = _earlier(old_in, record.punch_in) if existing else record.punch_in
+            if record.overnight:
+                # A next-morning out is "earlier" as a clock time; it is the out.
+                p_out = record.punch_out
+            else:
+                p_out = _later(old_out, record.punch_out) if existing else record.punch_out
+            if existing and old_in == p_in and old_out == p_out:
                 unchanged += 1
                 continue
             ok, message = attendance.write_day(
                 record.user_id, record.day, p_in, p_out, pc_name="BIOMETRIC",
                 metadata={"source": "biometric", "file": source,
                           "imported_at": dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                          "punches": record.punches})
+                          "punches": record.punches, "overnight": bool(record.overnight)})
             if ok:
                 written += 1
             else:
