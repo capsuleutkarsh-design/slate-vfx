@@ -479,3 +479,62 @@ class TestProjects:
         assert config.folder_base == str(tmp_path)
         assert config.folder_template["roto"].endswith("04_Roto")
         assert "output" in config.folder_template
+
+
+# ------------------------------------------------------------------ more
+class TestMore:
+
+    def test_actual_days_are_edited_in_the_panel_and_stored(self, qtbot, mock_db):
+        """Production: tracking_tasks.actual_days, editable per department."""
+        mock_db.execute_update("ALTER TABLE tracking_tasks ADD COLUMN actual_days REAL")
+        shot = _shot("SH010")
+        shot.dept("comp").bid_days = 3.0
+        _project(mock_db, [shot])
+        widget = _open(_widget(qtbot))
+        loaded = widget.all_shots[0]
+        widget.open_detail_dock(loaded)
+        widget.detail_widget.depts["comp"]["actual_spin"].setValue(4.5)
+        widget.detail_widget.apply_changes()
+        assert widget.save_changes() is True
+        row = mock_db.execute_query(
+            "SELECT actual_days FROM tracking_tasks WHERE shot_id=%s AND department='comp'",
+            (loaded.id,), fetch="one")
+        assert float(row["actual_days"]) == 4.5
+        assert widget.data_handler.read_shots()[0].dept("comp").actual_days == 4.5
+
+    def test_the_passbook_keeps_one_row_per_reel_and_numbers_it(self, tmp_path):
+        """DSH-101."""
+        from openpyxl import load_workbook
+        from slate.gui.tabs.vfx_dashboard_pro.core.excel_handler import ExcelHandler
+        from slate.gui.tabs.vfx_dashboard_pro.core.project_manager import ProjectConfig, default_column_mapping
+        path = tmp_path / "book.xlsx"
+        config = ProjectConfig(code="P", name="P", excel_path=str(path), column_mapping=default_column_mapping())
+        handler = ExcelHandler(str(path), config)
+        assert handler.create_workbook()
+        a, b = _shot("SH010", "R01"), _shot("SH010", "R02")
+        a.thumbnail_path = r"C:\Users\x\AppData\Local\Slate\cache\placeholder_red.png"
+        assert ExcelHandler(str(path), config).write_shots([a, b])
+        ws = load_workbook(path)[config.sheet_name] if config.sheet_name in load_workbook(path).sheetnames \
+            else load_workbook(path).active
+        rows = [r for r in ws.iter_rows(min_row=3, values_only=True) if r[3]]
+        assert len(rows) == 2
+        assert [r[0] for r in rows] == [1, 2]
+        assert all(not r[1] for r in rows)
+
+    def test_smart_search_is_gone(self):
+        """DSH-082 / FIX_PLAN: no hidden '?' search, no model download."""
+        import importlib.util
+        assert importlib.util.find_spec("slate.core.domain.vector_service") is None
+        assert not hasattr(Shot(), "_semantic_embedding")
+
+    def test_batch_edit_uses_the_studio_lists(self, qtbot):
+        """DSH-111/120."""
+        from slate.core.domain import shot_status
+        from slate.gui.tabs.vfx_dashboard_pro.ui.batch_edit_dialog import BatchEditDialog
+        dialog = BatchEditDialog(3, all_users=["Rahul"])
+        qtbot.addWidget(dialog)
+        types = [dialog.type_combo.itemText(i) for i in range(dialog.type_combo.count())]
+        assert types == shot_status.shot_types()
+        dialog.priority_cb.setChecked(True)
+        dialog.priority_combo.setCurrentIndex(dialog.priority_combo.findData(0))
+        assert dialog.get_updates() == {"priority": 0}

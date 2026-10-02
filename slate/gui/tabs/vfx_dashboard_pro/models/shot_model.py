@@ -11,6 +11,8 @@ class DepartmentInfo:
     status: str = ""
     wip_date: Optional[str] = None
     target: Optional[str] = None
+    # Days actually spent, against bid_days (Bidding's tracking reads it).
+    actual_days: float = 0.0
     
     def to_dict(self):
         return asdict(self)
@@ -19,7 +21,7 @@ class DepartmentInfo:
     def from_dict(cls, data: dict):
         if not data:
             return cls()
-        valid_fields = {"artist", "bid_days", "eta", "status", "wip_date", "target"}
+        valid_fields = {"artist", "bid_days", "eta", "status", "wip_date", "target", "actual_days"}
         filtered = {k: v for k, v in data.items() if k in valid_fields}
         return cls(**filtered)
 
@@ -101,7 +103,6 @@ class Shot:
     _modified: bool = field(default=False, repr=False)
     # Somebody else saved this shot while it had unsaved edits here.
     _remote_changed: bool = field(default=False, repr=False)
-    _semantic_embedding: Optional[List[float]] = field(default=None, repr=False)
     version: int = 1 # Optimistic Locking
     
     def __post_init__(self):

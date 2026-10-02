@@ -172,7 +172,39 @@ class SQLiteHandler:
         if not tasks_payload:
             return True
         result = self.db_manager.save_tracking_tasks(self.project_code, tasks_payload)
-        return bool(result is None or result)
+        ok = bool(result is None or result)
+        if ok:
+            self._save_actual_days([(shot_id, shot)])
+        return ok
+
+    def _has_actual_days(self) -> bool:
+        """Whether tracking_tasks has the actual_days column (the production migration adds it)."""
+        known = getattr(self, "_actual_days_column", None)
+        if known is None:
+            try:
+                from slate.core.infra.migrations.workplace_schema import _column_exists
+                known = _column_exists(self.db_manager, "tracking_tasks", "actual_days")
+            except Exception:
+                known = False
+            self._actual_days_column = known
+        return known
+
+    def _save_actual_days(self, shots_by_id) -> None:
+        """
+        Days actually spent per department, into tracking_tasks.actual_days
+        (it also travels in the shot's data, so nothing is lost before the
+        column exists).
+        """
+        if not self._has_actual_days():
+            return
+        for shot_id, shot in shots_by_id:
+            if not shot_id or int(shot_id) <= 0:
+                continue
+            for dept_key in department_keys():
+                days = float(getattr(shot.dept(dept_key), "actual_days", 0.0) or 0.0)
+                self.db_manager.execute_update(
+                    "UPDATE tracking_tasks SET actual_days = %s WHERE shot_id = %s AND department = %s",
+                    (days, int(shot_id), dept_key))
 
     def _apply_task_overrides(self, shot: Shot, task_map: Dict[str, Dict[str, Any]]):
         # Departments present in the database but not in departments.json are
@@ -186,6 +218,11 @@ class SQLiteHandler:
             dept.artist = task.get("artist") or task.get("artist_name") or dept.artist or ""
             dept.bid_days = float(task.get("bid_days") or 0.0)
             dept.target = task.get("target_date") or task.get("target") or dept.target or ""
+            if task.get("actual_days") is not None:
+                try:
+                    dept.actual_days = float(task.get("actual_days") or 0.0)
+                except (TypeError, ValueError):
+                    pass
 
         if not shot.assigned_artist and shot.dept("comp").artist:
             shot.assigned_artist = shot.dept("comp").artist
@@ -566,6 +603,8 @@ class SQLiteHandler:
         if tasks_payload:
             result = self.db_manager.save_tracking_tasks(self.project_code, tasks_payload)
             tasks_ok = bool(result is None or result)
+            if tasks_ok:
+                self._save_actual_days([(shot.id, shot) for shot in unique.values()])
 
         # History and notifications, exactly as for one shot: what changed
         # against what was stored before this save.

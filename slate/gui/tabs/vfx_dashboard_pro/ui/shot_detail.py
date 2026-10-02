@@ -362,7 +362,7 @@ class ShotDetailWidget(QWidget):
         layout.setVerticalSpacing(self._sp(4))
         layout.setColumnStretch(1, 4)
         layout.setColumnStretch(2, 3)
-        for col, text in enumerate(["Department", "Artist", "Status", "Bid", "Target"]):
+        for col, text in enumerate(["Department", "Artist", "Status", "Bid", "Actual", "Target"]):
             lbl = QLabel(text)
             lbl.setObjectName("gridHeader")
             lbl.setStyleSheet(f"color: {Gate.TEXT_2}; font-size: {Gate.SIZE_XS}px; font-weight: 600;")
@@ -404,15 +404,29 @@ class ShotDetailWidget(QWidget):
         bid_spin.valueChanged.connect(self._changed)
         layout.addWidget(bid_spin, row, 3)
 
+        # Days actually spent, for comparing with the bid (Bidding tracking).
+        actual_spin = QDoubleSpinBox()
+        actual_spin.setRange(0.0, 9999.9)
+        actual_spin.setDecimals(1)
+        actual_spin.setSingleStep(0.5)
+        actual_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        actual_spin.setAlignment(Qt.AlignmentFlag.AlignRight)
+        actual_spin.setSpecialValueText("-")
+        actual_spin.setToolTip("Days actually spent")
+        actual_spin.setMaximumWidth(self._sp(64, minimum=56))
+        actual_spin.valueChanged.connect(self._changed)
+        layout.addWidget(actual_spin, row, 4)
+
         target_edit = OptionalDateField()
         target_edit.value_changed.connect(self._changed)
-        layout.addWidget(target_edit, row, 4)
+        layout.addWidget(target_edit, row, 5)
 
         self.depts[key] = {
             "label": label,
             "artist_combo": artist_combo,
             "status_combo": status_combo,
             "bid_spin": bid_spin,
+            "actual_spin": actual_spin,
             "target_edit": target_edit,
         }
 
@@ -543,6 +557,10 @@ class ShotDetailWidget(QWidget):
                     widgets["bid_spin"].setValue(float(dept.bid_days or 0.0))
                 except (TypeError, ValueError):
                     widgets["bid_spin"].setValue(0.0)
+                try:
+                    widgets["actual_spin"].setValue(float(getattr(dept, "actual_days", 0.0) or 0.0))
+                except (TypeError, ValueError):
+                    widgets["actual_spin"].setValue(0.0)
                 widgets["target_edit"].set_value(dept.target or dept.eta)
 
             self.mov_date_label.setText(format_date(shot.mov_submission) or "-")
@@ -588,6 +606,7 @@ class ShotDetailWidget(QWidget):
             values[f"departments.{key}.status"] = (status_combo.currentData()
                                                    if status_combo.currentIndex() >= 0 else "")
             values[f"departments.{key}.bid_days"] = float(w["bid_spin"].value())
+            values[f"departments.{key}.actual_days"] = float(w["actual_spin"].value())
             values[f"departments.{key}.target"] = w["target_edit"].value()
         return values
 
@@ -694,6 +713,8 @@ class ShotDetailWidget(QWidget):
             w["artist_combo"].setEnabled(full)
             w["bid_spin"].setReadOnly(not full)
             w["bid_spin"].setEnabled(full)
+            w["actual_spin"].setReadOnly(not full)
+            w["actual_spin"].setEnabled(full)
             w["target_edit"].setReadOnly(not full)
             w["target_edit"].setEnabled(full)
             w["status_combo"].setEnabled(full or own)
