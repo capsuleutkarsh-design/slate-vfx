@@ -81,8 +81,11 @@ class SmartMetadataManager:
         if file_path.suffix.lower() in ['.wav', '.mp3', '.ogg', '.flac']:
              return "Sound FX"
 
-        # Fallback to Parent Folder Name (Capitalized)
-        return file_path.parent.name.capitalize()
+        # Fallback to the folder's own name, as it is written ("LibB" stays
+        # "LibB"; underscores read as spaces) - capitalize() made it "Libb"
+        # (NEW-media-1).
+        name = " ".join(file_path.parent.name.replace("_", " ").split())
+        return (name[:1].upper() + name[1:]) if name else 'Uncategorized'
 
     @staticmethod
     def get_smart_tags(file_path: Path):

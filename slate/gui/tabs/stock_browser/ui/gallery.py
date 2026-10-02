@@ -264,6 +264,11 @@ class StockGallery(QWidget):
         self.asset_view.setResizeMode(QListView.ResizeMode.Adjust)
         self.asset_view.setSpacing(8)
         self.asset_view.setModel(self.proxy_model)
+        self._refit = QTimer(self)
+        self._refit.setSingleShot(True)
+        self._refit.setInterval(0)
+        self._refit.timeout.connect(lambda: self._fit_cards())
+        self.asset_view.viewport().installEventFilter(self)
         self.delegate = StockDelegate(self.asset_view)
         self.asset_view.setItemDelegate(self.delegate)
         self.asset_view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -421,6 +426,12 @@ class StockGallery(QWidget):
             if event.key() == Qt.Key.Key_Escape and self.search_bar.text():
                 self.search_bar.clear()
                 return True
+        if (obj is getattr(getattr(self, "asset_view", None), "viewport", lambda: None)()
+                and event.type() == QEvent.Type.Resize):
+            # The viewport narrows when the scroll bar appears, after the
+            # first layout - the cards are fitted again then (MED-046).
+            if event.size().width() != getattr(self, "_fitted_width", -1):
+                self._refit.start()
         if obj is getattr(self, "zoom_slider", None) and event.type() == QEvent.Type.MouseButtonDblClick:
             self.zoom_slider.setValue(ZOOM_DEFAULT)
             return True
@@ -742,7 +753,8 @@ class StockGallery(QWidget):
         delegate = self.delegate
         spacing = self.asset_view.spacing()
         # A little is kept back so the last column never wraps by a pixel.
-        viewport = max(1, self.asset_view.viewport().width() - 4)
+        self._fitted_width = self.asset_view.viewport().width()
+        viewport = max(1, self._fitted_width - 4)
         minimum_cell = self._zoom + delegate.padding * 2 + 4 + spacing
         columns = max(1, viewport // minimum_cell)
         cell = viewport // columns
@@ -757,6 +769,10 @@ class StockGallery(QWidget):
         safe_single_shot(30, self.asset_view,
                          lambda: scrollbar.setValue(int(ratio * scrollbar.maximum())),
                          skip_when_closing_attr=None)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._refit.start()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

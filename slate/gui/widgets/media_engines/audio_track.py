@@ -20,6 +20,23 @@ from PySide6.QtCore import QObject, QUrl, Signal
 DRIFT = 0.12
 
 
+_QUIET_RULE = "qt.multimedia.ffmpeg*=false"
+
+
+def _quiet_ffmpeg_backend():
+    """
+    Qt Multimedia's FFmpeg backend printed an "Input #0, mov,mp4..." banner to
+    the console for every clip opened (NEW-media-9). Its log category is
+    switched off, once.
+    """
+    if getattr(_quiet_ffmpeg_backend, "done", False):
+        return
+    from PySide6.QtCore import QLoggingCategory
+    if _QUIET_RULE not in os.environ.get("QT_LOGGING_RULES", ""):
+        QLoggingCategory.setFilterRules(_QUIET_RULE)
+    _quiet_ffmpeg_backend.done = True
+
+
 class AudioTrack(QObject):
     """One clip's audio. has_audio is known once the file has been opened."""
 
@@ -42,6 +59,7 @@ class AudioTrack(QObject):
         if os.environ.get("SLATE_NO_AUDIO"):
             return False
         try:
+            _quiet_ffmpeg_backend()
             from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
             self.player = QMediaPlayer(self)
             self.output = QAudioOutput(self)

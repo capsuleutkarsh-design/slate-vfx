@@ -309,11 +309,15 @@ class AdvancedPlayer(QWidget):
         self.combo_input = QComboBox()
         self.combo_input.setToolTip("Input colourspace of this EXR (read from the file when it says)")
         self.combo_input.setMinimumWidth(130)
+        # Sized to the longest name ("Linear Rec.709 (sRGB)"), never clipped (MED-112).
+        self.combo_input.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self.combo_input.currentTextChanged.connect(self.combo_input.setToolTip)
         self.combo_input.currentIndexChanged.connect(self.change_input_space)
         self.combo_view = QComboBox()
         self.combo_view.addItem("Standard")
         self.combo_view.setToolTip("Colour view for EXRs. Other files are shown as they are.")
         self.combo_view.setMinimumWidth(120)
+        self.combo_view.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self.combo_view.currentIndexChanged.connect(self.change_view_transform)
         self.combo_speed = QComboBox()
         self.combo_speed.addItems(self.SPEEDS)
@@ -562,6 +566,15 @@ class AdvancedPlayer(QWidget):
         self.stop_media()
         self.screen.set_text(f"This file could not be played.\n{message}")
 
+    def show_message(self, text):
+        """
+        Stop and show only a sentence: no transport or colour controls left
+        over from the clip before (NEW-media-3).
+        """
+        self.stop_media()
+        self._configure_for(None)
+        self.screen.set_text(text)
+
     def stop_media(self):
         if self.active_engine:
             self.active_engine.stop()
@@ -719,8 +732,23 @@ class AdvancedPlayer(QWidget):
         if path:
             self.take_snapshot(path)
 
+    def _snapshot_source(self):
+        """
+        The original file when the player shows a proxy of it.
+
+        The Stock Viewer plays the cache proxy (1920 px at most, named by a
+        hash) and passes the original as the sound source; a snapshot is taken
+        from, and named after, the original (NEW-media-4).
+        """
+        original = self._pending_audio_path
+        if original and original != self.current_path:
+            from slate.core.domain.proxy_manager import ProxyManager
+            if ProxyManager.exists(original):
+                return original
+        return None
+
     def _snapshot_name(self) -> str:
-        stem = Path(self.current_path or "frame").stem or "frame"
+        stem = Path(self._snapshot_source() or self.current_path or "frame").stem or "frame"
         return f"{stem}_f{self.slider.value() + max(self.frame_offset, 1)}_{datetime.now():%Y%m%d_%H%M%S}.png"
 
     def take_snapshot(self, path: str = None):
@@ -738,20 +766,25 @@ class AdvancedPlayer(QWidget):
         except OSError as exc:
             self._snapshot_done.emit("", str(exc))
             return None
-        if self.media_kind == "image":
+        engine = self.active_engine
+        original = self._snapshot_source()
+        if self.media_kind == "image" and not original:
             image = self.active_engine.full_frame()
             ok = bool(image is not None and not image.isNull() and image.save(str(target)))
             self._snapshot_done.emit(str(target) if ok else "", "" if ok else "The picture could not be written.")
             return str(target) if ok else None
 
-        engine = self.active_engine
         frame = int(getattr(engine, "current_frame", 0) or 0)
         fps = float(getattr(engine, "fps", 24.0) or 24.0)
-        ffmpeg = getattr(engine, "ff_path", None)
+        ffmpeg = getattr(engine, "ff_path", None) or getattr(self.engines['stream'], "ff_path", None)
         if not ffmpeg:
             self._snapshot_done.emit("", "ffmpeg was not found.")
             return None
-        if self.media_kind == "sequence":
+        if original:
+            seek = [] if self.media_kind == "image" else ["-ss", f"{frame / fps:.3f}"]
+            cmd = [ffmpeg, "-y", "-loglevel", "error"] + seek + [
+                   "-i", original, "-frames:v", "1", str(target)]
+        elif self.media_kind == "sequence":
             cmd = [ffmpeg, "-y", "-loglevel", "error", "-start_number",
                    str(engine.start_frame_idx + frame), "-i", engine.source, "-frames:v", "1",
                    str(target)]

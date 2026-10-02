@@ -373,14 +373,25 @@ class LibraryManager:
                 cached = row.get(key)
                 if not cached:
                     continue
-                try:
-                    p = Path(ProxyManager.long_path(str(cached)))
-                    if p.is_file():
-                        p.unlink()
-                        removed += 1
-                except OSError as exc:
-                    failed += 1
-                    logging.warning("Could not remove cached file %s: %s", cached, exc)
+                import time
+                p = Path(ProxyManager.long_path(str(cached)))
+                for attempt in range(5):
+                    try:
+                        if p.is_file():
+                            p.unlink()
+                            removed += 1
+                        break
+                    except PermissionError as exc:
+                        # Held a moment by a scanner or a reader: try again.
+                        if attempt == 4:
+                            failed += 1
+                            logging.warning("Could not remove cached file %s: %s", cached, exc)
+                        else:
+                            time.sleep(0.2 * (attempt + 1))
+                    except OSError as exc:
+                        failed += 1
+                        logging.warning("Could not remove cached file %s: %s", cached, exc)
+                        break
         return removed, failed
 
     def delete_assets(self, assets) -> list:

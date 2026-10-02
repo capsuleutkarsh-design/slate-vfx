@@ -317,6 +317,10 @@ class StockSidebar(QWidget):
         self.btn_delete_selected.setEnabled(not running and self._selection > 0)
         self.btn_pause.setEnabled(running)
         self.btn_stop.setEnabled(running)
+        # When it ends only the last sentence stays: no full bar, no greyed
+        # Pause/Stop (NEW-media-6).
+        for widget in (self.progress_bar_ingest, self.btn_pause, self.btn_stop):
+            widget.setVisible(bool(running))
         if running:
             self.set_pause_btn_text("Pause")
             self.ingest_progress_area.setVisible(True)

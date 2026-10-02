@@ -178,3 +178,51 @@ def test_exr_colourspace_comes_from_the_file():
     assert detect_input_space({"chromaticities": rec709}) == "Linear Rec.709 (sRGB)"   # MED-124
     assert detect_input_space({"oiio:ColorSpace": "ACEScg"}) == "ACEScg"
     assert detect_input_space({}, default="ACEScg") == "ACEScg"
+
+
+# ------------------------------------------------- verification round (merged build)
+
+def test_qt_multimedia_banner_is_silenced():
+    """NEW-media-9: the FFmpeg backend printed 'Input #0...' for every clip."""
+    from PySide6.QtCore import QLoggingCategory
+    from slate.gui.widgets.media_engines import audio_track
+    audio_track._quiet_ffmpeg_backend()
+    category = QLoggingCategory("qt.multimedia.ffmpeg")
+    assert not category.isInfoEnabled() and not category.isDebugEnabled()
+
+
+def test_a_message_takes_the_controls_away(qtbot, player, tmp_path):
+    """NEW-media-3: camera raw after a sequence kept the sequence's transport."""
+    for f in range(1001, 1004):
+        _picture(tmp_path / f"plate.{f}.png")
+    _load(qtbot, player, tmp_path / "plate.1001.png")
+    assert player.slider.isVisible()
+    player.show_message("No preview for camera raw files")
+    assert not player.slider.isVisible() and not player.btn_play.isVisible()
+    assert not player.combo_input.isVisible() and not player.lbl_no_audio.isVisible()
+    assert player.screen.text() == "No preview for camera raw files"
+
+
+def test_the_input_space_combo_is_never_clipped(player):
+    from PySide6.QtWidgets import QComboBox
+    assert player.combo_input.sizeAdjustPolicy() == QComboBox.SizeAdjustPolicy.AdjustToContents  # MED-112
+    player.combo_input.addItem("Linear Rec.709 (sRGB)")
+    assert player.combo_input.sizeHint().width() >= \
+        player.combo_input.fontMetrics().horizontalAdvance("Linear Rec.709 (sRGB)")
+
+
+def test_a_snapshot_of_a_proxy_comes_from_the_original(qtbot, player, tmp_path, monkeypatch):
+    """NEW-media-4: snapshots were named after the cache proxy and at its size."""
+    original = _picture(tmp_path / "plate_4k.png", 3840, 2160)
+    proxy = _picture(tmp_path / "abc123_proxy.jpg", 1920, 1080)
+    from slate.gui.components import feedback
+    monkeypatch.setattr(feedback, "toast", lambda *a, **k: None)
+    _load(qtbot, player, proxy, audio_source=str(original))
+    saved = []
+    player.snapshot_saved.connect(saved.append)
+    player.take_snapshot()
+    qtbot.waitUntil(lambda: bool(saved), timeout=10000)
+    assert Path(saved[0]).name.startswith("plate_4k_")
+    image = QImage(saved[0])
+    assert (image.width(), image.height()) == (3840, 2160)
+    Path(saved[0]).unlink()

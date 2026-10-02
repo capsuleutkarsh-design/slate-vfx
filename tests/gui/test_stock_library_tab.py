@@ -576,3 +576,85 @@ def test_dropping_a_card_back_on_the_grid_is_ignored(qtbot):
     event = Event(view)
     view.dropEvent(event)
     assert event.ignored and dropped == []                                          # MED-043
+
+
+# ------------------------------------------------- verification round (merged build)
+
+def test_folder_categories_keep_their_casing():
+    """NEW-media-1: 'LibB' became 'Libb'."""
+    from slate.core.domain.metadata_engine import SmartMetadataManager as M
+    assert M.classify_category(Path("X/LibB/file.dat")) == "LibB"
+    assert M.classify_category(Path("X/LibC_bulk/file.dat")) == "LibC bulk"
+
+
+def test_a_finished_ingest_keeps_only_its_sentence(qtbot, library):
+    """NEW-media-6"""
+    tab = _tab(qtbot, library, load=False)
+    tab.show()
+    sb = tab.sidebar
+    sb.set_ingest_running(True)
+    assert sb.progress_bar_ingest.isVisible() and sb.btn_pause.isVisible()
+    sb.set_ingest_state("Added 3.", True)
+    sb.set_ingest_running(False)
+    assert sb.lbl_ingest_status.isVisible() and sb.lbl_ingest_status.text() == "Added 3."
+    assert not sb.progress_bar_ingest.isVisible() and not sb.btn_pause.isVisible()
+    assert not sb.btn_stop.isVisible()
+
+
+def test_a_held_cache_file_is_retried_and_counted_right(tmp_path, monkeypatch):
+    """NEW-media-7"""
+    from slate.core.domain.library_manager import LibraryManager
+    thumb = tmp_path / "t.jpg"
+    thumb.write_bytes(b"x")
+    real_unlink = Path.unlink
+    calls = []
+
+    def flaky(self, *a, **k):
+        calls.append(1)
+        if len(calls) == 1:
+            raise PermissionError(32, "being used by another process")
+        return real_unlink(self, *a, **k)
+    monkeypatch.setattr(Path, "unlink", flaky)
+    assert LibraryManager.remove_cached_files([{"thumb_path": str(thumb)}]) == (1, 0)
+    assert not thumb.exists()
+    import inspect
+    from slate.gui.tabs.stock_browser.controllers import library_action_mixin
+    assert "cached files could not" not in inspect.getsource(library_action_mixin).replace(
+        "cached file{'s' if failed != 1 else ''} could not", "")
+
+
+def test_a_thumbnail_gone_from_the_cache_is_asked_for_again(qtbot):
+    """NEW-media-8"""
+    from slate.gui.stock_model import StockModel
+    model = StockModel()
+    try:
+        asked = []
+        model.thumbnail_needed.connect(asked.append)
+        model.load_data([{"id": "1", "file_path": "C:/s/a.jpg", "thumb_path": "C:/cache/gone.jpg"}])
+        model.on_image_missing("C:/cache/gone.jpg")
+        model.on_image_missing("C:/cache/gone.jpg")
+        assert [a["file_path"] for a in asked] == ["C:/s/a.jpg"]
+    finally:
+        model.cleanup()
+
+
+def test_cards_are_fitted_again_when_the_viewport_settles(qtbot, library, tmp_path):
+    """MED-046: a 50-65 px band stayed on the right on first open."""
+    _seed(library, tmp_path, count=40)
+    tab = _tab(qtbot, library)
+    g = tab.gallery
+    qtbot.waitUntil(lambda: g.asset_view.viewport().width() == getattr(g, "_fitted_width", -1),
+                    timeout=3000)
+    tab.resize(1500, 900)
+    qtbot.waitUntil(lambda: g.asset_view.viewport().width() == g._fitted_width, timeout=3000)
+    cell = g.asset_view.gridSize().width()
+    width = g.asset_view.viewport().width()
+    assert width - (width // cell) * cell <= 4 + (width // cell)
+
+
+def test_the_inspector_never_scrolls_sideways(qtbot, library):
+    """NEW-media-2"""
+    from PySide6.QtWidgets import QScrollArea
+    tab = _tab(qtbot, library, load=False)
+    area = tab.inspector.findChild(QScrollArea)
+    assert area.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff

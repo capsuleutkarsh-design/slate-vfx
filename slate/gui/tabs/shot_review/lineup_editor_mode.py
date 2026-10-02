@@ -383,10 +383,12 @@ class LineupEditorMode(QWidget):
         self.table = QTableWidget(0, len(HEADERS))
         self.table.setHorizontalHeaderLabels(HEADERS)
         from ...core.table_style import style_table
-        style_table(self.table, {0: ("fixed", 34), "Reel": ("interactive", 80),
-                                 "Shot": "stretch", "Frames": ("interactive", 150),
-                                 "FPS": ("interactive", 60), "Layers": ("interactive", 170),
-                                 "Scan": ("interactive", 60)}, sortable=False)
+        # The shot name always shows whole; Layers takes what is left and
+        # elides (NEW-media-5: at 1280 every row read "SEQ01...").
+        style_table(self.table, {0: ("fixed", 34), "Reel": "contents", "Shot": "contents",
+                                 "Frames": "contents", "FPS": "contents", "Layers": "stretch",
+                                 "Scan": "contents"}, sortable=False)
+        self.table.horizontalHeader().setMinimumSectionSize(40)
         self.table.itemChanged.connect(self._on_item_changed)
         self.table.currentCellChanged.connect(lambda row, *_: self._preview_row(row))
         # Back-compat name: the list of shots.
@@ -395,8 +397,9 @@ class LineupEditorMode(QWidget):
         self.preview = LineupPreview()
         self.preview.shot_changed.connect(self._select_entry)
         splitter.addWidget(self.preview)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 2)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([560, 520])
         layout.addWidget(splitter, 1)
 
     def setup_compact_toolbar(self, parent):

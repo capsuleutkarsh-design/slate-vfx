@@ -139,6 +139,8 @@ class StockInspectorPanel(QWidget):
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        # The facts wrap to the panel; they never scroll sideways (NEW-media-2).
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.meta_group = QWidget()
         self.meta_group.setObjectName("StockInspectorFacts")
@@ -271,10 +273,9 @@ class StockInspectorPanel(QWidget):
         """Nothing selected: stop the player and say so (MED-019)."""
         self.current_asset = None
         try:
-            self.player.stop_media()
+            self.player.show_message("Select an asset")
         except Exception:
-            pass
-        self.player.screen.set_text("Select an asset")
+            self.player.screen.set_text("Select an asset")
         self.lbl_name.setText("Nothing selected")
         self.lbl_name.setToolTip("")
         for label in self.values.values():
@@ -384,25 +385,22 @@ class StockInspectorPanel(QWidget):
         kind = asset_kind(asset)
         self.notice_row.hide()
         if not path:
-            self.player.stop_media()
-            self.player.screen.set_text("No file is recorded for this asset.")
+            self.player.show_message("No file is recorded for this asset.")
             return
         missing = asset.get('_missing')
         if missing is None:
             missing = not os.path.exists(path)
             asset['_missing'] = missing
         if missing:
-            self.player.stop_media()
-            self.player.screen.set_text("File not found\nThe source may have moved or been renamed.")
+            self.player.show_message("File not found\nThe source may have moved or been renamed.")
             self._set(self.lbl_path, wrappable(path), "bad")
             self.btn_open_external.hide()
             self.btn_copy_missing.show()
             self.notice_row.show()
             return
         if kind == "RAW" or not can_preview(asset):
-            self.player.stop_media()
-            self.player.screen.set_text("No preview for camera raw files" if kind == "RAW"
-                                        else "No preview for this kind of file")
+            self.player.show_message("No preview for camera raw files" if kind == "RAW"
+                                     else "No preview for this kind of file")
             self.btn_open_external.show()
             self.btn_copy_missing.hide()
             self.notice_row.show()
