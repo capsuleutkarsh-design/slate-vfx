@@ -761,8 +761,10 @@ class ShotDetailWidget(QWidget):
         original_style = self.save_btn.styleSheet()
         self.save_btn.setText("Saved!")
         self.save_btn.setStyleSheet(f"background-color: {Gate.OK}; color: {Gate.TEXT_ON_BAD}; border: none; border-radius: 4px; padding: 0 24px; font-weight: bold; font-size: 11pt;")
-        QTimer.singleShot(1500, lambda: self.save_btn.setText(original_text))
-        QTimer.singleShot(1500, lambda: self.save_btn.setStyleSheet(original_style))
+        # The button is the timer's context: closed with the panel, the timer
+        # is dropped instead of touching a deleted button.
+        QTimer.singleShot(1500, self.save_btn, lambda: self.save_btn.setText(original_text))
+        QTimer.singleShot(1500, self.save_btn, lambda: self.save_btn.setStyleSheet(original_style))
         
     def apply_permissions(self):
         # Multi-role check: restrict if user ONLY has artist role (case-insensitive)

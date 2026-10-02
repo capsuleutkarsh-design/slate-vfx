@@ -191,9 +191,12 @@ def test_ghosts_compare_normalised_paths(tmp_path):
 
 
 def test_analysis_survives_a_database_outage(monkeypatch, tmp_path):
-    def down(*a, **k):
-        raise tp.DatabaseUnavailableError("down")
-    monkeypatch.setattr(tp.database_manager, "execute_query", down)
+    class Down:
+        def execute_query(self, *a, **k):
+            raise tp.DatabaseUnavailableError("down")
+    # The module's name, not the shared proxy: patching an attribute on the
+    # proxy leaves the old backend's bound method behind after the test.
+    monkeypatch.setattr(tp, "database_manager", Down())
     worker = tp.ValidationWorker(tmp_path, tmp_path, mode="smart")
     messages = []
     worker.finished_signal.connect(messages.append)
