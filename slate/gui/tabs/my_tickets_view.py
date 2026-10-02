@@ -32,7 +32,7 @@ from slate.core.domain.service_desk import (
     normalise_status, priority_for, priority_tone, status_tone,
 )
 from slate.core.infra.ticket_repository import TicketError, TicketRepository, SUMMARY_MAX
-from ..core.controls import make_button, page_title, tidy_form
+from ..core.controls import prose, make_button, page_title, tidy_form
 from ..core.table_style import style_table
 from ..core.empty_state import EmptyState
 from slate.gui.core.offline_notice import on_database_error
@@ -139,7 +139,7 @@ class RaiseTicketDialog(QDialog):
         summary_row.addWidget(self.summary, 1)
         summary_row.addWidget(self.counter)
 
-        self.detail = QPlainTextEdit()
+        self.detail = prose(QPlainTextEdit())
         self.detail.setPlaceholderText(
             "What were you doing, what happened, and what you expected instead. "
             "Shot or project name helps.")
@@ -363,7 +363,7 @@ class TicketThreadDialog(QDialog):
         self.thread_area.setWidget(self.thread_holder)
         outer.addWidget(self.thread_area, 1)
 
-        self.reply = QPlainTextEdit()
+        self.reply = prose(QPlainTextEdit())
         self.reply.setFixedHeight(72)
         outer.addWidget(self.reply)
 
@@ -720,7 +720,9 @@ class MyTicketsView(QWidget):
         # doubleClicked as well would open the ticket twice).
         self.table.activated.connect(self.open_selected)
         self.table.itemSelectionChanged.connect(self._sync_buttons)
-        root.addWidget(self.table)
+        # The table takes the page's height (its body is the page colour, so
+        # a few tickets leave no black block); capping it left a gap below.
+        root.addWidget(self.table, 1)
 
         self.empty = EmptyState(
             "No tickets raised",
@@ -731,10 +733,6 @@ class MyTicketsView(QWidget):
         )
         root.addWidget(self.empty, 1)
         self.empty.attach_to(self.table)
-        # The table is as tall as its rows (no big black body under three
-        # tickets); the space left over belongs to the page.
-        self._spacer = QWidget()
-        root.addWidget(self._spacer, 1)
 
         self.refresh()
         # IT picking the ticket up, replying or closing it shows without a restart.
@@ -815,19 +813,8 @@ class MyTicketsView(QWidget):
         # Nothing ever raised: no toggle and no Open button over an empty page.
         self.include_closed.setVisible(bool(self._all))
         self.btn_open.setVisible(bool(self._all))
-        self._fit_table()
         self._show_waiting()
         self._sync_buttons()
-
-    def _fit_table(self):
-        if not self._rows:
-            self.table.setMaximumHeight(16777215)
-            self._spacer.hide()
-            return
-        header = self.table.horizontalHeader().height() or 32
-        rows = sum(self.table.rowHeight(r) for r in range(self.table.rowCount()))
-        self.table.setMaximumHeight(header + rows + 2 * self.table.frameWidth() + 4)
-        self._spacer.show()
 
     def _show_waiting(self):
         waiting = [r for r in self._all if normalise_status(r.get("status")) == sd.WAITING]

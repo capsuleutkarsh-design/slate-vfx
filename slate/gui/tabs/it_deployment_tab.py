@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.empty_state import EmptyState
-from ..core.controls import enable_with_selection, make_button, page_title, tidy_form
+from ..core.controls import prose, enable_with_selection, make_button, page_title, tidy_form
 from ..core.stat_card import StatStrip
 from ..core.table_style import dim_cell, set_cell_status, style_table
 from slate.gui.core.offline_notice import on_database_error
@@ -80,7 +80,7 @@ class AddDeploymentDialog(QDialog):
         completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         completer.setFilterMode(Qt.MatchFlag.MatchContains)
         self.target_input.setCompleter(completer)
-        self.notes_input = QPlainTextEdit(str(self.record.get("notes") or ""))
+        self.notes_input = prose(QPlainTextEdit(str(self.record.get("notes") or "")))
         self.notes_input.setFixedHeight(64)
         self.notes_input.setPlaceholderText("Anything worth knowing - why it failed, what was changed")
 

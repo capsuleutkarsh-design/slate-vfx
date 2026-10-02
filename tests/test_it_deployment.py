@@ -62,7 +62,7 @@ def test_outcome_records_who_and_when_and_edit_delete_work(repo):
     repo.set_outcome(dep_id, "Failed", "it.joe", "disk full")
     row = repo.all()[0]
     assert row["status"] == "Failed" and row["completed_by"] == "it.joe"
-    assert row["completed_at"] is not None and row["notes"] == "disk full"
+    assert row["completed_at"] is not None and row["notes"].endswith(": disk full")
     repo.update(dep_id, "OCIO config", "WS-09", "2.1", "moved")
     assert repo.all()[0]["target_machine"] == "WS-09"
     repo.delete(dep_id)
@@ -171,3 +171,12 @@ def test_no_old_button_styles_or_hex_left():
                        "setObjectName(\"dangerButton\")", "#0D0D0F", "#16161A", "#D9A441",
                        "QPushButton("):
             assert banned not in text, (rel, banned)
+
+
+def test_a_failure_reason_is_added_to_the_notes_not_written_over_them(repo):
+    """NEW-it-5."""
+    dep_id = repo.record("Nuke", ["WS-01"], "it.sana", notes="installed from the share")[0]
+    repo.set_outcome(dep_id, "Failed", "it.joe", "licence server unreachable")
+    notes = repo.all()[0]["notes"]
+    assert notes.startswith("installed from the share")
+    assert "licence server unreachable" in notes and "it.joe" in notes

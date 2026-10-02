@@ -200,3 +200,24 @@ def test_the_one_time_repair_normalises_stored_values(repo):
     it_schema.normalise_hardware(db)
     row = _row(repo, "render-node-02")
     assert row["status"] == "Active" and row["location"] is None
+
+
+def test_one_issuable_rule_for_hardware_and_joining(repo):
+    """IT-016 regression, NEW-it-1: Repair (any case) and end of life are never offered."""
+    assert not hw.can_be_issued("repair") and not hw.can_be_issued("Retired")
+    assert hw.can_be_issued("Available") and hw.can_be_issued(None)
+    for name, status in (("OK-1", "Available"), ("R-1", "repair"), ("D-1", "Disposed"), ("L-1", "Lost")):
+        repo.db.execute_update("INSERT INTO hardware_inventory (machine_name, status) VALUES (%s, %s)",
+                               (name, status))
+    detail = [r["machine_name"] for r in repo.service.available_machines_detail()]
+    assert detail == ["OK-1"] and repo.service.available_machines() == ["OK-1"]
+
+
+def test_old_none_gb_values_read_and_store_as_nothing(repo):
+    """IT-010: 'None GB' / ' GB' written by the old sync."""
+    from slate.core.infra.migrations import it_schema
+    assert hw.cell("None GB") == hw.MISSING and hw.cell(" GB") == hw.MISSING
+    repo.db.execute_update("INSERT INTO hardware_inventory (machine_name, status, ram) VALUES (%s, %s, %s)",
+                           ("OLD-RAM", "Available", "None GB"))
+    it_schema.blank_junk_hardware_values(repo.db)
+    assert _row(repo, "OLD-RAM")["ram"] is None

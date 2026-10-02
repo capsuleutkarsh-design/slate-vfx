@@ -400,3 +400,18 @@ def gate_selection_buttons(parent, table):
             enable_with_selection(button, table)
             gated.append(button.text())
     return gated
+
+
+def prose(widget):
+    """
+    Mark a QPlainTextEdit as prose (a note, a reply, a description), so the
+    stylesheet sets it in the interface face rather than the monospace one it
+    gives every QPlainTextEdit (logs and consoles). Returns the widget.
+    """
+    widget.setProperty("prose", True)
+    try:
+        widget.style().unpolish(widget)
+        widget.style().polish(widget)
+    except Exception:
+        pass
+    return widget

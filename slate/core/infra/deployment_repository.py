@@ -139,8 +139,15 @@ class DeploymentRepository:
             finished = status in ("Success", "Failed")
             sets["completed_at"] = datetime.now().replace(microsecond=0) if finished else None
             sets["completed_by"] = (by or "unknown") if finished else None
-        if note is not None and "notes" in self.columns():
-            sets["notes"] = note.strip() or None
+        if note and note.strip() and "notes" in self.columns():
+            # Added to what the record already says - it used to replace it,
+            # losing the notes typed when the install was recorded.
+            row = self.db.execute_query("SELECT notes FROM it_deployments WHERE id = %s",
+                                        (int(dep_id),), fetch="one")
+            existing = str((dict(row).get("notes") if row else "") or "").strip()
+            stamp = datetime.now().strftime("%d %b %Y")
+            line = "%s (%s, %s): %s" % (status, by or "unknown", stamp, note.strip())
+            sets["notes"] = (existing + chr(10) + line) if existing else line
         names = sorted(sets)
         result = self.db.execute_update(
             "UPDATE it_deployments SET %s WHERE id = %%s" % ", ".join("%s = %%s" % n for n in names),

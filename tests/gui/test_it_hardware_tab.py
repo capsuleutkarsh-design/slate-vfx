@@ -210,3 +210,12 @@ def test_margins_match_the_other_it_screens(db, app):
     lic = LicenceView("it.sana", db_manager=db)
     _KEEP.append(lic)
     assert tab.layout().contentsMargins() == lic.layout().contentsMargins()
+
+
+def test_issue_is_off_for_a_machine_in_repair(db, app):
+    """NEW-it-1."""
+    tab = _tab(db)
+    _seed(tab)
+    row_c = next(r for r in range(tab.grid.rowCount()) if tab.grid.item(r, 0).text() == "WS-C")
+    tab.grid.selectRow(row_c)
+    assert not tab.issue_btn.isEnabled()

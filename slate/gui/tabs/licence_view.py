@@ -36,7 +36,7 @@ from slate.core.infra.licence_repository import LicenceRepository
 from slate.core.domain import licence_compliance as lc
 from slate.core.domain import money
 from slate.core.domain import licence_server_report as server_report
-from ..core.controls import make_button, page_title, tidy_form
+from ..core.controls import prose, make_button, page_title, tidy_form
 from ..core.stat_card import StatStrip
 from ..core.table_style import style_table
 from ..core.offline_notice import on_database_error
@@ -133,7 +133,7 @@ class LicenceDialog(QDialog):
         self.vendor.setMaxLength(120)
         form.addRow("Vendor", self.vendor)
 
-        self.notes = QPlainTextEdit(str(self.row.get("notes") or ""))
+        self.notes = prose(QPlainTextEdit(str(self.row.get("notes") or "")))
         self.notes.setFixedHeight(64)
         self.notes.setPlaceholderText("Anything the next renewal needs to know")
         form.addRow("Notes", self.notes)
@@ -641,9 +641,12 @@ class LicenceView(QWidget):
             on_click=lambda: export_table_dialog(self, self.table, "licences")))
         root.addLayout(controls)
 
-        self.table = QTableWidget(0, 8)
+        # Vendor is a hidden column: the search box finds it, the export and
+        # the screen leave it out (it is on the Software tooltip).
+        self.table = QTableWidget(0, 9)
         self.table.setHorizontalHeaderLabels(
-            ["Software", "State", "Seats", "Peak", "Used", "Renews", "Annual cost", "What this means"])
+            ["Software", "State", "Seats", "Peak", "Used", "Renews", "Annual cost", "What this means",
+             "Vendor"])
         style_table(self.table, {
             "Software": ("interactive", 220), "State": "contents", "Seats": "numeric",
             "Peak": "numeric", "Used": "numeric", "Renews": "contents",
@@ -656,11 +659,19 @@ class LicenceView(QWidget):
         from slate.gui.components.table_tools import TableToolbar, setup_table
         setup_table(self.table, multi_select=False)
         self.table.setWordWrap(True)
-        self.table.horizontalHeader().sectionResized.connect(lambda *_: self._fit_rows())
+        self.table.hideColumn(8)
+        # Never "..." - a row is as tall as its wrapped text (see _fit_rows).
+        self.table.setTextElideMode(Qt.TextElideMode.ElideNone)
+        from PySide6.QtCore import QTimer
+        self._fit_timer = QTimer(self)
+        self._fit_timer.setSingleShot(True)
+        self._fit_timer.setInterval(30)
+        self._fit_timer.timeout.connect(self._fit_rows)
+        self.table.horizontalHeader().sectionResized.connect(lambda *_: self._fit_timer.start())
         self.table.doubleClicked.connect(
             lambda _index: self.show_readings() if self.read_only else self.edit_licence())
         self.toolbar = TableToolbar(self.table, placeholder="Search software, vendor or finding…",
-                                    columns=(0, 1, 7), on_refresh=self.refresh)
+                                    columns=(0, 1, 7, 8), on_refresh=self.refresh)
         root.addWidget(self.toolbar)
         root.addWidget(self.table, 1)
 
@@ -738,6 +749,9 @@ class LicenceView(QWidget):
         with KeepSelection(self.table):
             self._fill_rows(rows)
         self._fit_rows()
+        # Again once the columns have their final widths (the stretch column
+        # settles after the layout runs) - fitting only now cut rows short.
+        self._fit_timer.start()
 
     def _fit_rows(self, *_):
         """
@@ -747,18 +761,38 @@ class LicenceView(QWidget):
         """
         self.table.resizeRowsToContents()
         standard = self.table.verticalHeader().defaultSectionSize()
+        # The delegate's own estimate ignores the cell padding from the
+        # stylesheet, so a third line of a finding was cut. Measure the
+        # wrapping columns at the width the text really gets.
+        from PySide6.QtCore import QRect
+        from PySide6.QtGui import QFontMetrics
+        metrics = QFontMetrics(self.table.font())
+        pad = 2 * (getattr(Gate, "CELL_PADDING", 8) + 4)
         for r in range(self.table.rowCount()):
-            self.table.setRowHeight(r, max(standard, self.table.rowHeight(r) + 8))
+            needed = self.table.rowHeight(r)
+            for c in (0, 7):
+                item = self.table.item(r, c)
+                width = self.table.columnWidth(c) - pad
+                if item is None or width <= 20:
+                    continue
+                box = metrics.boundingRect(QRect(0, 0, width, 100000),
+                                           int(Qt.TextFlag.TextWordWrap), item.text())
+                needed = max(needed, box.height() + 12)
+            self.table.setRowHeight(r, max(standard, needed + 8))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        from PySide6.QtCore import QTimer
-        QTimer.singleShot(0, self._fit_rows)
+        self._fit_timer.start()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._fit_timer.start()
 
     def _fill_rows(self, rows):
         from slate.gui.components.table_tools import make_item
         self.table.setRowCount(len(rows))
         for r, row in enumerate(rows):
+            self.table.setItem(r, 8, make_item(str(row.get("vendor") or "")))
             peak = row.get("peak")
             use = row.get("utilisation")
             left = row.get("days_left")

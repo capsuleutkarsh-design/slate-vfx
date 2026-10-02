@@ -360,6 +360,12 @@ QPlainTextEdit {
     font-family: @FONT_MONO;
 }
 
+/* Plain-text fields people write sentences in (ticket detail, replies, notes)
+   are prose, not code: controls.prose(widget) sets prose="true". */
+QPlainTextEdit[prose="true"] {
+    font-family: @FONT_UI;
+}
+
 QTextEdit:focus, QPlainTextEdit:focus {
     border: 1px solid @ACCENT;
 }

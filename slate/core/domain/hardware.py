@@ -42,6 +42,10 @@ TONE = {ACTIVE: "ok", AVAILABLE: "info", REPAIR: "warn",
 
 MISSING = "—"          # an em dash: one way to show "nothing recorded"
 
+# Values older code wrote for "nothing": 'N/A', 'None', and the RAM text the
+# Live Ops sync built from a missing number ('None GB', ' GB').
+JUNK = ("n/a", "none", "null", "gb", "none gb", "null gb", "n/a gb")
+
 # A computer name: a DNS label is at most 63 characters (Windows itself
 # stops at 15), letters, digits, '-', '_' and '.'.
 NAME_MAX = 63
@@ -61,6 +65,21 @@ def is_end_of_life(status) -> bool:
     return normalise_status(status) in END_OF_LIFE
 
 
+# What can never be handed to anybody: in for repair, or at the end of its life.
+NOT_ISSUABLE = (REPAIR,) + END_OF_LIFE
+
+
+def can_be_issued(status) -> bool:
+    """The one rule for "can this machine be issued?" (Hardware, Joining & Leaving)."""
+    return normalise_status(status) not in NOT_ISSUABLE
+
+
+def issuable_sql(column: str = "status") -> str:
+    """The same rule as a WHERE fragment (case-insensitive, NULL counts as issuable)."""
+    words = ", ".join("'%s'" % s.lower() for s in NOT_ISSUABLE)
+    return "LOWER(TRIM(COALESCE(%s, ''))) NOT IN (%s)" % (column, words)
+
+
 def status_for_service(held: bool) -> str:
     """In service: Active when somebody holds it on the ledger, else Available."""
     return ACTIVE if held else AVAILABLE
@@ -71,7 +90,7 @@ def cell(value) -> str:
     if value is None:
         return MISSING
     text = str(value).strip()
-    if not text or text.lower() in ("n/a", "none", "null"):
+    if not text or text.lower() in JUNK:
         return MISSING
     return text
 
@@ -79,7 +98,7 @@ def cell(value) -> str:
 def blank_to_none(value) -> Optional[str]:
     """What to store for an optional text field: None rather than '' or 'N/A'."""
     text = str(value or "").strip()
-    if not text or text.lower() in ("n/a", "none", "null"):
+    if not text or text.lower() in JUNK:
         return None
     return text
 
