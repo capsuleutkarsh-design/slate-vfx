@@ -105,6 +105,13 @@ PRODUCTION = (
 
 # ---- people (Attendance, Leave, HR) ----
 PEOPLE = (
+    # Stage notes, half-day part, withdrawals of approved leave, who ticked a
+    # joining/leaving line. See people_schema.py.
+    step("people_schema", "slate.core.infra.migrations.people_schema:apply_migration"),
+    step("people_split_decision_notes",
+         "slate.core.infra.migrations.people_schema:split_decision_notes", once=True),
+    step("people_normalise_employment",
+         "slate.core.infra.migrations.people_schema:normalise_employment", once=True),
 )
 
 # ---- it (Hardware, Licences, Service desk, Deployment) ----

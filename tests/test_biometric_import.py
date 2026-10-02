@@ -212,3 +212,38 @@ class TestProfiles:
         store = tmp_path / "profiles.json"
         bio.save_profile(header_a, bio.guess_mapping(header_a, rows_a), {}, path=store)
         assert bio.find_profile(header_b, bio.load_profiles(store)) is None
+
+
+# ------------------------------------------------------------ HR-038 / HR-002
+
+NIGHT = """AC-No.,Name,Time,State
+EMP0001,Priya,2026-09-13 23:30:00,C/In
+EMP0001,Priya,2026-09-14 06:30:00,C/Out
+EMP0002,Rahul,2026-09-13 09:00:00,C/In
+EMP0002,Rahul,2026-09-13 18:00:00,C/Out
+"""
+
+
+def test_a_night_shift_is_one_day_with_its_morning_out(tmp_path):
+    header, rows = bio.read_table(write(tmp_path, "n.csv", NIGHT))
+    punches, _ = bio.extract_punches(header, rows, bio.guess_mapping(header, rows))
+    days, _ = bio.reduce_to_days(punches, KNOWN)
+    priya = [d for d in days if d.user_id == "EMP0001"]
+    assert len(priya) == 1
+    assert priya[0].day == dt.date(2026, 9, 13)
+    assert (priya[0].punch_in, priya[0].punch_out, priya[0].overnight) == ("23:30:00", "06:30:00", True)
+
+
+@pytest.mark.parametrize("backend", ["sqlite", "postgres"])
+def test_days_a_workstation_already_recorded_are_merged_on_both_databases(request, tmp_path, backend):
+    from slate.core.domain.central_attendance import CentralAttendance
+    db = request.getfixturevalue("mock_db" if backend == "sqlite" else "pg_db")
+    attendance = CentralAttendance(db=db)
+    attendance.write_day("EMP0001", dt.date(2026, 9, 1), "09:30:00", "18:00:00", pc_name="WS-07")
+    header, rows = bio.read_table(write(tmp_path, "a.csv", SHAPE_A))
+    punches, _ = bio.extract_punches(header, rows, bio.guess_mapping(header, rows))
+    days, _ = bio.reduce_to_days(punches, KNOWN)
+    first = bio.apply_days(days, attendance, source="a.csv")
+    assert first["failed"] == 0 and first["written"] == 2
+    again = bio.apply_days(days, attendance, source="a.csv")
+    assert again["failed"] == 0 and again["written"] == 0 and again["unchanged"] == 2

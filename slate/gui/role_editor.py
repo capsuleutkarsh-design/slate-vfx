@@ -8,6 +8,7 @@ from PySide6.QtCore import Qt
 from slate.core.domain import permissions_catalog as catalog
 from slate.core.domain.user_manager import UserManager
 from slate.core.infra.gate import Gate
+from slate.gui.core.controls import make_button
 
 ROLE_NAME_ROLE = Qt.ItemDataRole.UserRole
 
@@ -28,6 +29,9 @@ class RoleEditor(QWidget):
         self.current_role = None
         self._stored = []          # the selected role's permissions exactly as stored
         self._role_refusal = ""    # why the selected role is read-only for this editor
+        # Ticks wait for Save. Every tick used to be saved at once, so one
+        # mis-click took a tab away from everybody with the role.
+        self._dirty = False
         self.can_edit = self._editor_may_edit()
         # Every save is checked in UserManager against what this editor may
         # grant, not only by the boxes on this screen.
@@ -94,16 +98,8 @@ class RoleEditor(QWidget):
                 color: {Gate.TEXT};
                 spacing: 8px;
             }}
-            QCheckBox::indicator {{
-                width: 18px;
-                height: 18px;
-                border-radius: 4px;
-                border: 1px solid {Gate.LINE};
-                background: {Gate.RAISED};
-            }}
-            QCheckBox::indicator:checked {{
-                background: {Gate.ACCENT};
-                border: 1px solid {Gate.ACCENT};
+            QCheckBox:disabled {{
+                color: {Gate.TEXT_DIM};
             }}
             QScrollArea {{ background: transparent; border: none; }}
         """)
@@ -125,26 +121,24 @@ class RoleEditor(QWidget):
         self.role_list.setFixedWidth(240)  # Fixed width for sidebar feel
         self.role_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.role_list.setTextElideMode(Qt.TextElideMode.ElideRight)
-        self.role_list.itemClicked.connect(self.on_role_selected)
+        # The current item, not a click: arrow keys moved the highlight while
+        # the boxes kept editing the previous role.
+        self.role_list.currentItemChanged.connect(self._on_current_changed)
         left_layout.addWidget(self.role_list)
 
         # Action Buttons
         btn_layout = QHBoxLayout()
-        self.btn_add = QPushButton("New Role")
-        self.btn_add.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_add.setStyleSheet(f"background-color: {Gate.RAISED}; color: {Gate.TEXT}; border: 1px solid {Gate.LINE}; border-radius: 4px; padding: 6px;")
-        self.btn_add.clicked.connect(self.add_role)
-
-        self.btn_delete = QPushButton("Delete")
-        self.btn_delete.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_delete.setStyleSheet(f"background-color: {Gate.BAD_SURFACE}; color: {Gate.BAD}; border: 1px solid {Gate.BAD}; border-radius: 4px; padding: 6px;")
-        self.btn_delete.clicked.connect(self.delete_role)
-
+        self.btn_add = make_button("New role", "secondary", on_click=self.add_role)
+        self.btn_rename = make_button("Rename", "secondary", on_click=self.rename_role)
+        self.btn_delete = make_button("Delete", "danger", on_click=self.delete_role)
         btn_layout.addWidget(self.btn_add)
+        btn_layout.addWidget(self.btn_rename)
         btn_layout.addWidget(self.btn_delete)
         left_layout.addLayout(btn_layout)
         self.btn_add.setEnabled(self.can_edit)
-        self.btn_delete.setEnabled(self.can_edit)
+        # Nothing selected yet: Rename and Delete wait for a role.
+        self.btn_rename.setEnabled(False)
+        self.btn_delete.setEnabled(False)
 
         # --- RIGHT PANEL: PERMISSIONS ---
         right_panel = QWidget()
@@ -165,7 +159,7 @@ class RoleEditor(QWidget):
             read_only = QLabel("You can look, but only Admin, IT, HR and Developer "
                                "(or a role with \"Edit roles and permissions\") can change roles.")
             read_only.setWordWrap(True)
-            read_only.setStyleSheet("color: #D9A55F; margin-bottom: 8px;")
+            read_only.setStyleSheet(f"color: {Gate.WARN}; margin-bottom: 8px;")
             right_layout.addWidget(read_only)
 
         scroll = QScrollArea()
@@ -224,6 +218,17 @@ class RoleEditor(QWidget):
         scroll.setWidget(perm_container)
         right_layout.addWidget(scroll, 1)
 
+        save_row = QHBoxLayout()
+        self.lbl_pending = QLabel("")
+        self.lbl_pending.setStyleSheet(f"color: {Gate.WARN};")
+        save_row.addWidget(self.lbl_pending, 1)
+        self.btn_revert = make_button("Revert", "ghost", on_click=self.revert)
+        self.btn_save = make_button("Save changes", "primary", on_click=self.save_changes)
+        save_row.addWidget(self.btn_revert)
+        save_row.addWidget(self.btn_save)
+        right_layout.addLayout(save_row)
+        self._set_dirty(False)
+
         # Add panels to Card Layout
         card_layout.addWidget(left_panel)
         card_layout.addWidget(right_panel, stretch=1)  # Right side expands
@@ -261,7 +266,7 @@ class RoleEditor(QWidget):
                 counts[str(r).strip().lower()] = counts.get(str(r).strip().lower(), 0) + 1
         for role in sorted(self.user_manager.get_available_roles(), key=lambda r: str(r).lower()):
             n = counts.get(str(role).strip().lower(), 0)
-            item = QListWidgetItem(f"{role}   ({n})" if n else role)
+            item = QListWidgetItem(f"{role} ({n})" if n else role)
             item.setData(ROLE_NAME_ROLE, role)
             item.setToolTip(f"{n} user(s) have this role" if n else "Nobody has this role yet")
             self.role_list.addItem(item)
@@ -269,20 +274,25 @@ class RoleEditor(QWidget):
         # Reset Interaction State
         self.current_role = None
         self._stored = []
+        self._set_dirty(False)
+        self.btn_rename.setEnabled(False)
+        self.btn_delete.setEnabled(False)
         self.lbl_editing.setText("Select a role to edit")
         self.lbl_status.setText("")
         self.block_signals_checkboxes(True)
         for cb in self._all_boxes():
             cb.setChecked(False)
             cb.setEnabled(False)
-            cb.setStyleSheet(f"color: {Gate.LINE};")  # Dim disabled
+            cb.setStyleSheet("")      # the theme's readable disabled colour
         self.block_signals_checkboxes(False)
 
         if select:
             for row in range(self.role_list.count()):
                 item = self.role_list.item(row)
                 if str(item.data(ROLE_NAME_ROLE)).lower() == str(select).lower():
+                    self.role_list.blockSignals(True)
                     self.role_list.setCurrentItem(item)
+                    self.role_list.blockSignals(False)
                     self.on_role_selected(item)
                     break
 
@@ -311,8 +321,51 @@ class RoleEditor(QWidget):
         from slate.core.domain.access import can_grant
         return can_grant(self._editor_roles(), [permission], self.user_manager.roles_config)
 
+    def _on_current_changed(self, current, previous):
+        if current is None:
+            return
+        if self._dirty and previous is not None:
+            if not self._ask_about_pending():
+                self.role_list.blockSignals(True)
+                self.role_list.setCurrentItem(previous)
+                self.role_list.blockSignals(False)
+                return
+        self.on_role_selected(current)
+
+    def _ask_about_pending(self) -> bool:
+        """Save / Discard / Cancel for unsaved ticks. True when it is fine to move on."""
+        answer = QMessageBox.question(
+            self, "Unsaved changes",
+            "Save the changes to %s first?" % self.current_role,
+            QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Save)
+        if answer == QMessageBox.StandardButton.Cancel:
+            return False
+        if answer == QMessageBox.StandardButton.Save:
+            return self.save_changes()
+        self._set_dirty(False)
+        return True
+
+    # Asked by the main window before closing or signing out (work_guard).
+    def has_unsaved_changes(self) -> bool:
+        return bool(self._dirty)
+
+    def unsaved_summary(self) -> str:
+        return "Unsaved changes to the %s role" % self.current_role
+
+    def _set_dirty(self, dirty: bool):
+        self._dirty = bool(dirty)
+        if hasattr(self, "btn_save"):
+            self.btn_save.setEnabled(self._dirty)
+            self.btn_revert.setEnabled(self._dirty)
+            self.lbl_pending.setText("Changes not saved" if self._dirty else "")
+
     def on_role_selected(self, item):
+        self._set_dirty(False)
         self.current_role = item.data(ROLE_NAME_ROLE) or item.text()
+        locked = self._is_locked(self.current_role)
+        self.btn_rename.setEnabled(self.can_edit and not locked)
+        self.btn_delete.setEnabled(self.can_edit and not locked)
         self.lbl_editing.setText(f"Permissions: <span style='color:{Gate.ACCENT};'>{self.current_role.upper()}</span>")
         self._stored = self.user_manager.role_permissions(self.current_role)
         holders = self.user_manager.users_with_role(self.current_role)
@@ -325,15 +378,15 @@ class RoleEditor(QWidget):
             if self._role_refusal:
                 status += " " + self._role_refusal
         if self.can_edit and not self._role_refusal and not self._is_locked(self.current_role):
-            status += " Changes save immediately."
+            status += " Tick what it needs, then Save changes."
             if not self._is_superuser():
                 status += (" You can give only what you hold yourself; Full access and "
                            "the sensitive abilities are for Admin and Developer.")
         self.lbl_status.setText(status)
         self._show_stored()
 
-    def _show_stored(self):
-        stored = self._stored
+    def _show_stored(self, perms=None):
+        stored = self._stored if perms is None else perms
         full = catalog.has_all(stored)
         abilities = catalog.abilities_in(stored)
         editable = (self.can_edit and not self._is_locked(self.current_role)
@@ -413,23 +466,37 @@ class RoleEditor(QWidget):
             QMessageBox.StandardButton.No)
         return answer == QMessageBox.StandardButton.Yes
 
-    def _save(self):
+    def save_changes(self) -> bool:
+        """Write the ticks on screen. True when saved (or nothing to save)."""
         if not self.current_role or not self.can_edit or self._is_locked(self.current_role):
-            return
+            return True
+        if not self._dirty:
+            return True
         new_perms = self._permissions_from_boxes()
         if not self._warn_if_locking_self_out(new_perms):
-            self._show_stored()                 # put the boxes back as they were
-            return
+            return False
         from slate.core.domain.access import GrantRefused
         try:
-            if self.user_manager.update_role_permissions(self.current_role, new_perms):
-                self._stored = self.user_manager.role_permissions(self.current_role)
+            saved = self.user_manager.update_role_permissions(self.current_role, new_perms)
         except GrantRefused as refused:
             QMessageBox.warning(self, "Change role", str(refused))
+            return False
+        if not saved:
+            QMessageBox.warning(self, "Change role", "The changes could not be saved. Try again.")
+            return False
+        self._stored = self.user_manager.role_permissions(self.current_role)
+        self._set_dirty(False)
+        self._show_stored()
+        return True
+
+    def revert(self):
+        self._set_dirty(False)
         self._show_stored()
 
     def on_perm_changed(self):
-        self._save()
+        self._set_dirty(True)
+        for cb in self._all_boxes():
+            cb.setStyleSheet(f"color: {Gate.TEXT}; font-weight: bold;" if cb.isChecked() else "")
 
     def on_all_changed(self):
         if not self.current_role:
@@ -437,28 +504,33 @@ class RoleEditor(QWidget):
         if not self.cb_all.isChecked():
             answer = QMessageBox.question(
                 self, "Remove full access",
-                f"{self.current_role} will keep only the boxes ticked below, and will not get "
-                "tabs added to Slate later. Continue?",
+                f"{self.current_role} will keep only what it was given on its own (shown "
+                "below), and will not get tabs added to Slate later. Continue?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No)
             if answer != QMessageBox.StandardButton.Yes:
                 self._show_stored()
                 return
-        self._save()
+            # The boxes that were only ticked because of Full access are not
+            # the role's own: show (and save) what it holds without ALL.
+            # Reading the boxes saved every tab and ability as a real tick.
+            explicit = [p for p in self._stored if str(p).strip().upper() != catalog.ALL]
+            self._show_stored(explicit)
+        self._set_dirty(True)
 
     # ------------------------------------------------------------ add / delete
     def add_role(self):
         if not self.can_edit:
             return
-        name, ok = QInputDialog.getText(self, "New Role", "Role Name:")
+        name, ok = QInputDialog.getText(self, "New role", "Role name:")
         if not (ok and name):
             return
         name = " ".join(name.split())
         if not name or len(name) > 40:
-            QMessageBox.warning(self, "Error", "Give the role a name of up to 40 characters.")
+            QMessageBox.warning(self, "New role", "Give the role a name of up to 40 characters.")
             return
         if self.user_manager.role_exists(name):   # case-insensitive: "hr" is "HR"
-            QMessageBox.warning(self, "Error", "Role already exists!")
+            QMessageBox.warning(self, "New role", "A role called %s already exists." % name)
             return
 
         # Create with the basics everybody needs; tick the rest.
@@ -474,7 +546,7 @@ class RoleEditor(QWidget):
         if not (self.current_role and self.can_edit):
             return
         if self._is_locked(self.current_role):
-            QMessageBox.critical(self, "Error", "Cannot delete Developer role!")
+            QMessageBox.warning(self, "Delete role", "The Developer role cannot be deleted.")
             return
         holders = self.user_manager.users_with_role(self.current_role)
         if holders:
@@ -482,10 +554,10 @@ class RoleEditor(QWidget):
             QMessageBox.warning(
                 self, "Role in use",
                 f"{len(holders)} user(s) still have the {self.current_role} role:\n\n{shown}\n\n"
-                "Give them another role in User Mgmt first, then delete it.")
+                "Give them another role on the Users tab first, then delete it.")
             return
 
-        confirm = QMessageBox.question(self, "Confirm", f"Delete role '{self.current_role}'?",
+        confirm = QMessageBox.question(self, "Delete role", f"Delete the {self.current_role} role?",
                                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if confirm == QMessageBox.StandardButton.Yes:
             from slate.core.domain.access import GrantRefused
@@ -495,3 +567,25 @@ class RoleEditor(QWidget):
                 QMessageBox.warning(self, "Delete role", str(refused))
                 return
             self.refresh_roles()
+
+    def rename_role(self):
+        """Rename the selected role; the people who hold it keep it."""
+        if not (self.current_role and self.can_edit) or self._is_locked(self.current_role):
+            return
+        if self._dirty and not self._ask_about_pending():
+            return
+        name, ok = QInputDialog.getText(self, "Rename role", "New name for %s:" % self.current_role,
+                                        text=self.current_role)
+        if not ok:
+            return
+        name = " ".join(str(name).split())
+        if not name or name == self.current_role:
+            return
+        if len(name) > 40:
+            QMessageBox.warning(self, "Rename role", "Give the role a name of up to 40 characters.")
+            return
+        done, message = self.user_manager.rename_role(self.current_role, name)
+        if not done:
+            QMessageBox.warning(self, "Rename role", message)
+            return
+        self.refresh_roles(select=name)

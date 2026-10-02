@@ -53,10 +53,16 @@ def repo(tmp_path, monkeypatch):
         lp.set_overrides({})
 
 
-def _person(repo, username, **fields):
+def _person(repo, username, roles=("Artist",), **fields):
     from slate.core.domain.user_manager import UserManager
-    UserManager(db=repo.db).add_user(username, "pw", ["Artist"], username, "Comp",
+    UserManager(db=repo.db).add_user(username, "pw", list(roles), username, "Comp",
                                      **fields)
+
+
+def _team(repo):
+    """jo reports to sam, a supervisor - so jo's requests start with sam."""
+    _person(repo, "sam", roles=("Supervisor",))
+    _person(repo, "jo", reports_to="sam")
 
 
 # ------------------------------------------------------------------ overlaps
@@ -117,10 +123,12 @@ def test_only_the_person_who_asked_can_withdraw_it(repo):
     day = date(2026, 9, 14)
     repo.submit("jo", "Casual", day, day, False, "a")
     request_id = repo.for_user("jo")[0]["id"]
+    before = repo.for_user("jo")[0]["status"]
 
     assert not repo.cancel(request_id, "someone_else")
-    assert lp.normalise_status(repo.for_user("jo")[0]["status"]) == \
-        lp.STATUS_PENDING_SUPERVISOR
+    # Unchanged - wherever it was waiting (jo has no manager, so with HR).
+    assert repo.for_user("jo")[0]["status"] == before
+    assert lp.normalise_status(before) in lp.PENDING_STATUSES
 
 
 def test_an_approved_request_cannot_be_withdrawn(repo):
@@ -274,6 +282,7 @@ def test_a_supervisor_sees_only_their_own_team(repo):
 
 
 def test_a_rejection_stops_the_chain(repo):
+    _team(repo)
     day = date(2026, 9, 14)
     repo.submit("jo", "Casual", day, day, False, "a")
     request_id = repo.for_user("jo")[0]["id"]

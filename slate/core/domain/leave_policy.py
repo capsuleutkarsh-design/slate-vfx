@@ -93,7 +93,46 @@ def overrides() -> dict:
 LEAVE_TYPES = ("Casual", "Sick", "Earned", "Comp Off", "Project Rest", "Unpaid")
 
 # Which types draw down the accrued balance. The rest are granted or unpaid.
+# They share ONE balance - the studio accrues two days a month, not two days
+# of each - so the type is a label for reporting (sick days taken this year),
+# not a separate entitlement. Screens say so rather than imply otherwise.
 ACCRUED_TYPES = ("Casual", "Sick", "Earned")
+POOL_NAME = "Paid leave"
+POOL_NOTE = "Casual, Sick and Earned share one balance"
+
+# Granted by HR, never asked for: "Project Rest" is a decision HR make at the
+# end of a project, not an entitlement anybody can request.
+GRANTED_TYPES = ("Project Rest",)
+
+# Which half of a single day a half day is.
+HALF_DAY_PARTS = (("first", "First half"), ("second", "Second half"))
+
+
+def half_day_label(part) -> str:
+    """'First half' / 'Second half', or '' for a full day."""
+    for key, label in HALF_DAY_PARTS:
+        if str(part or "").strip().lower() == key:
+            return label
+    return ""
+
+
+def requestable_types(rules=None) -> tuple:
+    """
+    The types a person may ask for themselves.
+
+    Comp Off only when the studio operates comp-off (the card said "not
+    operated here" while the request list offered it), and never Project
+    Rest, which HR grant (see LeaveRepository.grant_project_rest).
+    """
+    rules = policy(rules)
+    out = []
+    for kind in LEAVE_TYPES:
+        if kind in GRANTED_TYPES:
+            continue
+        if kind == "Comp Off" and not rules.get("comp_off_enabled"):
+            continue
+        out.append(kind)
+    return tuple(out)
 
 
 def policy(rules=None) -> dict:
@@ -161,17 +200,30 @@ def sandwich_days(start: date, end: date, holidays=None, rules=None) -> list:
     another holiday - and the artist does not come in on that working day. All
     three are deducted, not one.
 
-    It only bites when the request is bracketed on *both* sides. Taking a Friday
-    off when Thursday was worked does not cost you the weekend.
+    It only bites when the working days taken are bracketed on *both* sides.
+    Taking a Friday off when Thursday was worked does not cost you the weekend.
+
+    The brackets are judged around the first and last *working* day inside the
+    request, not around the dates typed. Judged on the typed dates, asking for
+    more days cost less: with a holiday on Friday, Saturday working and Sunday
+    off, Saturday alone cost three days while Saturday and Sunday together
+    cost one, because the request then "ended" on a Sunday and the Monday
+    after it was a working day. Non-working days at either end of a request
+    are exactly the ones a sandwich absorbs, so they are counted the same
+    whether or not they were typed.
     """
     rules = policy(rules)
     if not rules["sandwich_rule"]:
         return []
 
     holidays = set(holidays or ())
+    working = working_days_between(start, end, holidays, rules)
+    if not working:
+        return []
+    first, last = working[0], working[-1]
 
-    before = start - timedelta(days=1)
-    after = end + timedelta(days=1)
+    before = first - timedelta(days=1)
+    after = last + timedelta(days=1)
     if is_working_day(before, holidays, rules) or is_working_day(after, holidays, rules):
         return []
 
@@ -332,11 +384,23 @@ STATUS_PENDING_HR = "Pending HR"
 STATUS_APPROVED = "Approved"
 STATUS_REJECTED = "Rejected"
 STATUS_CANCELLED = "Cancelled"
+# Approved leave the person has asked to withdraw. Still approved - the days
+# stay deducted - until HR agree, and then it is Cancelled and they go back.
+STATUS_CANCEL_REQUESTED = "Cancellation requested"
 
 LEAVE_STATUSES = (
     STATUS_PENDING_SUPERVISOR, STATUS_PENDING_HR,
-    STATUS_APPROVED, STATUS_REJECTED, STATUS_CANCELLED,
+    STATUS_APPROVED, STATUS_CANCEL_REQUESTED, STATUS_REJECTED, STATUS_CANCELLED,
 )
+
+PENDING_STATUSES = (STATUS_PENDING_SUPERVISOR, STATUS_PENDING_HR)
+
+# Statuses that hold days: waiting for a decision, granted, or granted and
+# waiting on a withdrawal. Cancelled and rejected requests free their days.
+LIVE_STATUSES = PENDING_STATUSES + (STATUS_APPROVED, STATUS_CANCEL_REQUESTED)
+
+# Granted, and so spent from the balance.
+GRANTED_STATUSES = (STATUS_APPROVED, STATUS_CANCEL_REQUESTED)
 
 
 def normalise_status(status: str) -> str:
@@ -370,4 +434,5 @@ def awaiting(status: str) -> str:
     return {
         STATUS_PENDING_SUPERVISOR: "Supervisor",
         STATUS_PENDING_HR: "HR",
-    }.get(status, "")
+        STATUS_CANCEL_REQUESTED: "HR",
+    }.get(normalise_status(status), "")

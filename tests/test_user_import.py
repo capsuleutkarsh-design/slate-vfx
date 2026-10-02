@@ -201,3 +201,92 @@ def test_roles_dropdown_keeps_every_role(users):
     assert new.selected_roles() == []           # nothing ticked - never Developer by default
     new.roles_input.set_checked(["roto artist"])
     assert new.selected_roles() == ["Roto Artist"]
+
+
+# ------------------------------------------------------------ audit 2026-09
+
+def test_the_optional_columns_are_read_checked_and_applied(tmp_path, users):
+    """HR-131: everything leave and attendance need, not only two columns."""
+    users.add_user("sup.vikram", "pw1234", ["Supervisor"], "Vikram", "Comp")
+    path = _csv(tmp_path / "people.csv", [
+        ["Username", "Display Name", "Department", "Joined", "Reports To", "Location", "Employment", "Role"],
+        ["asha", "Asha Rao", "Comp", "2026-04-06", "sup.vikram", "Mumbai", "staff", "Compositor"],
+        ["devm", "Dev M", "Roto", "not a date", "", "", "", ""],
+        ["kiran", "Kiran", "", "", "nobody.here", "", "", ""],
+        ["lead1", "Lead One", "", "", "", "", "", "Developer"],
+    ])
+    allowed = ["Compositor", "Roto Artist"]
+    plan = user_import.plan_import(path, list(users.get_all_users()), user_manager=users,
+                                   allowed_roles=allowed)
+    status = {r.username: r for r in plan.rows}
+    assert status["asha"].status == "new"
+    assert status["devm"].status == "invalid" and "not a date" in status["devm"].reason
+    assert status["kiran"].status == "invalid" and "nobody" in status["kiran"].reason
+    assert status["lead1"].status == "invalid" and "Developer" in status["lead1"].reason
+
+    user_import.apply_import(users, plan, "", "Welcome@2026")
+    record = users.get_all_users()["asha"]
+    assert record["roles"] == ["Compositor"]
+    assert (record["job_title"], str(record["joined_on"])[:10], record["reports_to"],
+            record["location"], record["employment"]) == (
+        "Comp", "2026-04-06", "sup.vikram", "Mumbai", "Staff")
+    assert "Joined" in status["asha"].reason
+
+
+def test_a_header_without_a_username_column_asks_instead_of_importing_it(tmp_path):
+    """HR-134."""
+    path = _csv(tmp_path / "people.csv", [["Name", "Email"], ["Asha Rao", "asha@x.com"]])
+    plan = user_import.plan_import(path, [])
+    assert plan.needs_column == ["Name", "Email"] and plan.rows == []
+    chosen = user_import.plan_import(path, [], username_column=1)
+    assert [(r.username, r.display_name) for r in chosen.rows] == [("asha@x.com", "Asha Rao")]
+
+
+def test_exports_and_reports_cannot_carry_a_formula(tmp_path, users):
+    """HR-135."""
+    users.add_user("asha", "OwnPass1", ["Compositor"], '=HYPERLINK("http://x","click")', "Comp")
+    text = user_import.export_users_csv(users, tmp_path / "u.csv").read_text(encoding="utf-8-sig")
+    assert "'=HYPERLINK" in text
+
+
+def test_updating_existing_people_is_opt_in_and_profile_only(tmp_path, users):
+    """HR-146: export, edit a department, import back in update mode."""
+    users.add_user("asha", "OwnPass1", ["Compositor"], "Asha Rao", "Comp")
+    out = user_import.export_users_csv(users, tmp_path / "u.csv")
+    rows = list(csv.reader(out.read_text(encoding="utf-8-sig").splitlines()))
+    for row in rows[1:]:
+        if row[0] == "asha":
+            row[2] = "Roto"
+            row[3] = "Developer"                      # roles are never changed by an import
+    path = _csv(tmp_path / "edited.csv", rows)
+
+    skipped = user_import.plan_import(path, list(users.get_all_users()), user_manager=users)
+    assert {r.username: r.status for r in skipped.rows}["asha"] == "exists"
+
+    plan = user_import.plan_import(path, list(users.get_all_users()), user_manager=users,
+                                   update_existing=True, allowed_roles=None)
+    asha = {r.username: r for r in plan.rows}["asha"]
+    assert asha.status == "update" and set(asha.changes) == {"job_title"}
+    user_import.apply_import(users, plan, "", "")
+    record = users.get_all_users()["asha"]
+    assert record["job_title"] == "Roto" and record["roles"] == ["Compositor"]
+    assert users.authenticate("asha", "OwnPass1")
+
+
+def test_the_dialog_offers_no_admin_role_and_no_default(tmp_path, users):
+    """HR-129 / HR-130: no preselected role, admin-level roles not offered, import off the UI thread."""
+    _qapp()
+    from slate.gui.dialogs.import_users_dialog import ImportUsersDialog
+    dialog = ImportUsersDialog(users)
+    offered = [dialog.role_input.itemData(i) for i in range(1, dialog.role_input.count())]
+    assert dialog.role_input.currentData() == ""
+    assert "Developer" not in offered and "Admin" not in offered
+    path = _csv(tmp_path / "people.csv", [["Username", "Display Name"], ["asha", "Asha"]])
+    dialog.load(str(path))
+    assert not dialog.import_btn.isEnabled(), "a role must be chosen first"
+    dialog.role_input.setCurrentIndex(dialog.role_input.findData("Compositor"))
+    assert dialog.import_btn.isEnabled()
+    dialog.password_input.setText("Welcome@2026")
+    dialog.run_import()
+    dialog.wait_for_import()
+    assert dialog.imported and "asha" in users.get_all_users()

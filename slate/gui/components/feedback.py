@@ -314,7 +314,9 @@ class ToastHost(QObject):
             pass
 
     def eventFilter(self, obj, event):
-        if obj is self.window and event.type() in (QEvent.Type.Resize, QEvent.Type.Show):
+        # getattr: Qt can deliver an event while the Python side of this
+        # object is being built or torn down, before/after .window exists.
+        if obj is getattr(self, "window", None) and                 event.type() in (QEvent.Type.Resize, QEvent.Type.Show):
             QTimer.singleShot(0, self.layout)
         return False
 

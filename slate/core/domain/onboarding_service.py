@@ -79,6 +79,31 @@ OFFBOARD_TASKS = [
 # Freelancers skip the parts that only apply to staff.
 FREELANCE_SKIP = {"Added to payroll", "Final settlement processed"}
 
+# One spelling for employment, shared by Users & Roles and the joining
+# dialog. The joining dialog wrote 'staff' and Users & Roles 'Staff', so the
+# table showed both and the edit dialog grew a second 'staff' option. Old
+# values are normalised once (people_schema.normalise_employment).
+EMPLOYMENT_TYPES = ("Staff", "Freelance", "Contract")
+
+
+def employment_value(text) -> str:
+    """The stored spelling for whatever was typed: 'staff' -> 'Staff'."""
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+    lowered = raw.lower()
+    if lowered == "freelancer":
+        lowered = "freelance"
+    for value in EMPLOYMENT_TYPES:
+        if value.lower() == lowered:
+            return value
+    return raw
+
+
+def return_line(machine_name: str) -> str:
+    """The leaving checklist line for one machine."""
+    return "Return %s" % machine_name
+
 
 class UnknownPerson(ValueError):
     """A checklist for a username that has no account."""
@@ -120,8 +145,7 @@ class OnboardingService:
             # SELECT *: the deactivation columns are added by UserManager and
             # may not be there yet on a database it has not opened.
             rows = self.db.execute_query(
-                "SELECT * FROM ut_users ORDER BY COALESCE(joined_on, CURRENT_DATE) DESC",
-                fetch="all") or []
+                "SELECT * FROM ut_users ORDER BY username", fetch="all") or []
         except DatabaseUnavailableError:
             raise
         except Exception:
@@ -132,7 +156,7 @@ class OnboardingService:
             row = dict(row)
             person = {key: row.get(key) for key in (
                 "username", "display_name", "job_title", "joined_on", "employment",
-                "reports_to", "last_day")}
+                "reports_to", "last_day", "location")}
             person["active"] = _is_active(row)
             if active_only and not person["active"]:
                 continue
@@ -158,15 +182,13 @@ class OnboardingService:
         try:
             if direction:
                 rows = self.db.execute_query(
-                    "SELECT id, user_id, task_name, department, is_completed, "
-                    "       direction, owner_team, asset_name "
+                    "SELECT * "
                     "FROM onboarding_workflows "
                     "WHERE LOWER(user_id) = LOWER(%s) AND direction = %s ORDER BY id",
                     (username, direction), fetch="all") or []
             else:
                 rows = self.db.execute_query(
-                    "SELECT id, user_id, task_name, department, is_completed, "
-                    "       direction, owner_team, asset_name "
+                    "SELECT * "
                     "FROM onboarding_workflows "
                     "WHERE LOWER(user_id) = LOWER(%s) ORDER BY id",
                     (username,), fetch="all") or []
@@ -181,9 +203,7 @@ class OnboardingService:
         """Everything outstanding, optionally just one team's half."""
         try:
             rows = self.db.execute_query(
-                "SELECT id, user_id, task_name, department, is_completed, "
-                "       direction, owner_team, asset_name "
-                "FROM onboarding_workflows ORDER BY user_id, id",
+                "SELECT * FROM onboarding_workflows ORDER BY user_id, id",
                 fetch="all") or []
             # Outstanding is decided here rather than in SQL: is_completed is a
             # boolean on Postgres and an integer on SQLite, and there is no one
@@ -202,8 +222,8 @@ class OnboardingService:
         return out
 
     def start(self, username: str, direction: str = JOINING,
-              employment: str = "staff", department: str = "",
-              effective_date=None) -> int:
+              employment: str = "Staff", department: str = "",
+              effective_date=None, overwrite_joined: bool = False) -> int:
         """
         Lay down the checklist for somebody joining or leaving.
 
@@ -247,8 +267,14 @@ class OnboardingService:
                 "the old last day there), then start joining." % username)
 
         already = {t["task_name"] for t in self.tasks_for(username, direction)}
-        self._record_employment(username, direction, employment, effective_date)
-        template = ONBOARD_TASKS if direction == JOINING else OFFBOARD_TASKS
+        employment = employment_value(employment)
+        self._record_employment(username, direction, employment, effective_date,
+                                overwrite_joined)
+        template = list(ONBOARD_TASKS if direction == JOINING else OFFBOARD_TASKS)
+        if direction == LEAVING:
+            # One line per machine still out, so "Workstation returned" is
+            # not ticked while two of three machines are still at home.
+            template += [(IT, return_line(h["machine_name"])) for h in self.held_by(username)]
         freelance = str(employment or "").strip().lower() in ("freelance", "freelancer", "contract")
 
         made = 0
@@ -273,13 +299,15 @@ class OnboardingService:
                 continue
         return made
 
-    def _record_employment(self, username, direction, employment, effective_date):
+    def _record_employment(self, username, direction, employment, effective_date,
+                           overwrite_joined: bool = False):
         """
         Put the dialog's answers on the person's record.
 
         Joining sets the joining date only if there is not one already: the
         checklist can be re-laid months later, and moving somebody's joining
-        date would silently change the leave they have accrued.
+        date would silently change the leave they have accrued. The dialog
+        shows the existing date and asks; overwrite_joined is the answer.
         """
         try:
             if employment:
@@ -291,7 +319,8 @@ class OnboardingService:
             if direction == JOINING:
                 self.db.execute_update(
                     "UPDATE ut_users SET joined_on = %s "
-                    "WHERE LOWER(username) = LOWER(%s) AND joined_on IS NULL",
+                    "WHERE LOWER(username) = LOWER(%s)"
+                    + ("" if overwrite_joined else " AND joined_on IS NULL"),
                     (effective_date or date.today(), username))
             else:
                 self.db.execute_update(
@@ -302,6 +331,72 @@ class OnboardingService:
             raise
         except Exception:
             logger.exception("_record_employment failed")
+
+    def joined_on(self, username: str):
+        """The joining date on record, if any (shown in the Start joining dialog)."""
+        try:
+            row = self.db.execute_query(
+                "SELECT joined_on FROM ut_users WHERE LOWER(username) = LOWER(%s)",
+                (username,), fetch="one")
+        except DatabaseUnavailableError:
+            raise
+        except Exception:
+            logger.exception("joined_on failed")
+            return None
+        value = (dict(row) or {}).get("joined_on") if row else None
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date) or not value:
+            return value or None
+        try:
+            return datetime.fromisoformat(str(value)[:10]).date()
+        except (TypeError, ValueError):
+            return None
+
+    def cancel_checklist(self, username: str, direction: str, by_whom: str,
+                         clear_last_day: bool = False) -> int:
+        """
+        Take back a checklist started by mistake. Returns how many lines went.
+
+        Open lines are removed; lines already ticked stay as the record of what
+        was done. Written to the audit log. A mistaken leaving list can also
+        clear the last day it recorded.
+        """
+        removed = 0
+        for task in self.tasks_for(username, direction):
+            if task.get("is_completed"):
+                continue
+            result = self.db.execute_update(
+                "DELETE FROM onboarding_workflows WHERE id = %s", (task["id"],))
+            if getattr(result, "changed", result):
+                removed += 1
+        if direction == LEAVING and clear_last_day:
+            self.db.execute_update(
+                "UPDATE ut_users SET last_day = NULL WHERE LOWER(username) = LOWER(%s)",
+                (username,))
+        try:
+            from ..infra.audit_logger import AuditLogger
+            AuditLogger().log_event(
+                "ONBOARDING", str(by_whom or "System"),
+                "Cancelled the %s checklist for %s (%d open line(s) removed%s)" % (
+                    "joining" if direction == JOINING else "leaving", username, removed,
+                    ", last day cleared" if clear_last_day else ""))
+        except Exception as exc:
+            logger.warning("Checklist cancel not audited: %s", exc)
+        return removed
+
+    def issue_refusal(self, username: str) -> str:
+        """
+        Why a machine should not go to this person, or "".
+
+        Diya's last day had passed and Issue machine gave her three more.
+        """
+        last = self.last_day(username)
+        if last is not None and last < date.today():
+            return "%s's last working day (%s) has passed." % (username, last.isoformat())
+        if any(not t.get("is_completed") for t in self.tasks_for(username, LEAVING)):
+            return "%s is on the leaving list." % username
+        return ""
 
     def last_day(self, username: str):
         """The last working day recorded for somebody, if any."""
@@ -328,13 +423,19 @@ class OnboardingService:
         except (TypeError, ValueError):
             return None
 
-    def complete(self, task_id, done: bool = True) -> bool:
+    def complete(self, task_id, done: bool = True, by: str = None) -> bool:
+        """
+        Tick (or reopen) a line, recording who ticked it and when - who
+        processed the final settlement is the first question afterwards.
+        """
         try:
             # True only when a checklist line was actually changed - a refused
             # write, or an id that no longer exists, is not "done".
             result = self.db.execute_update(
-                "UPDATE onboarding_workflows SET is_completed = %s WHERE id = %s",
-                (bool(done), task_id))
+                "UPDATE onboarding_workflows SET is_completed = %s, completed_by = %s, "
+                "completed_at = %s WHERE id = %s",
+                (bool(done), (by or None) if done else None,
+                 datetime.now().replace(microsecond=0) if done else None, task_id))
             return bool(getattr(result, "changed", result))
         except DatabaseUnavailableError:
             raise
@@ -351,7 +452,7 @@ class OnboardingService:
 
     # ------------------------------------------------------------------ assets
     def issue_machine(self, machine_name: str, username: str, by_whom: str,
-                      note: str = "") -> bool:
+                      note: str = "", override: bool = False) -> bool:
         """
         Put a machine in somebody's hands, and record that it happened.
 
@@ -365,6 +466,9 @@ class OnboardingService:
         still said "issued", the tab said "Issued", and offboarding - which
         reads the ledger - would never ask for the machine back.
         """
+        if not override and self.issue_refusal(username):
+            logger.warning("Issue machine refused: %s", self.issue_refusal(username))
+            return False
         try:
             with atomic(self.db) as tx:
                 tx.write(
@@ -376,7 +480,15 @@ class OnboardingService:
                     "UPDATE hardware_inventory SET assigned_to = %s, status = 'Active' "
                     "WHERE machine_name = %s", (username, machine_name),
                     expect_rows=True)
-                self._mark_asset_task(username, JOINING, "Workstation issued", machine_name, tx)
+                self._mark_asset_task(username, JOINING, "Workstation issued", machine_name,
+                                      tx, by_whom)
+            # Somebody already on the leaving list gets a line to return it.
+            if self.tasks_for(username, LEAVING):
+                self.db.execute_update(
+                    "INSERT INTO onboarding_workflows "
+                    "(user_id, task_name, department, is_completed, direction, owner_team) "
+                    "VALUES (%s, %s, %s, FALSE, %s, %s)",
+                    (username, return_line(machine_name), "", LEAVING, IT))
             return True
         except DatabaseUnavailableError:
             raise
@@ -384,7 +496,7 @@ class OnboardingService:
             logger.exception("issue_machine failed")
             return False
 
-    def return_machine(self, machine_name: str, username: str) -> bool:
+    def return_machine(self, machine_name: str, username: str, by_whom: str = None) -> bool:
         """
         Take it back, and free it in the inventory - together, or not at all.
 
@@ -406,7 +518,12 @@ class OnboardingService:
                 tx.write(
                     "UPDATE hardware_inventory SET assigned_to = NULL "
                     "WHERE machine_name = %s", (machine_name,))
-                self._mark_asset_task(username, LEAVING, "Workstation returned", machine_name, tx)
+                self._mark_asset_task(username, LEAVING, return_line(machine_name),
+                                      machine_name, tx, by_whom)
+            # "Workstation returned" only once nothing is out any more.
+            if not self.held_by(username):
+                self._mark_asset_task(username, LEAVING, "Workstation returned",
+                                      machine_name, None, by_whom)
             return True
         except DatabaseUnavailableError:
             raise
@@ -414,16 +531,18 @@ class OnboardingService:
             logger.exception("return_machine failed")
             return False
 
-    def _mark_asset_task(self, username, direction, task_name, machine_name, tx=None):
+    def _mark_asset_task(self, username, direction, task_name, machine_name, tx=None, by=None):
         """
         Tick the matching checklist line, and record which machine it was.
 
         Inside issue/return this runs in their transaction (tx). A person with
         no checklist simply matches no row, which is fine.
         """
-        sql = ("UPDATE onboarding_workflows SET is_completed = TRUE, asset_name = %s "
+        sql = ("UPDATE onboarding_workflows SET is_completed = TRUE, asset_name = %s, "
+               "completed_by = %s, completed_at = %s "
                "WHERE LOWER(user_id) = LOWER(%s) AND direction = %s AND task_name = %s")
-        params = (machine_name, username, direction, task_name)
+        params = (machine_name, by, datetime.now().replace(microsecond=0),
+                  username, direction, task_name)
         if tx is not None:
             tx.write(sql, params)
             return
@@ -524,6 +643,22 @@ class OnboardingService:
             if gone:
                 out.append(row)
         return out
+
+    def available_machines_detail(self) -> list:
+        """Free machines with what tells them apart: type, GPU, CPU, RAM, location, status."""
+        try:
+            rows = self.db.execute_query(
+                "SELECT * FROM hardware_inventory "
+                "WHERE (assigned_to IS NULL OR assigned_to = '') "
+                "AND COALESCE(status, '') <> 'Repair' "
+                "ORDER BY machine_name", fetch="all") or []
+        except DatabaseUnavailableError:
+            raise
+        except Exception:
+            logger.exception("available_machines_detail failed")
+            return []
+        keys = ("machine_name", "type", "gpu", "cpu", "ram", "location", "status")
+        return [{k: (dict(r).get(k) or "") for k in keys} for r in rows]
 
     def available_machines(self) -> list:
         try:

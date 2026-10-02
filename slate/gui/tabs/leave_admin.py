@@ -16,7 +16,7 @@ from datetime import date
 from PySide6.QtCore import Qt, QDate
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QComboBox, QDateEdit, QDialog, QFormLayout, QHBoxLayout, QHeaderView,
+    QCheckBox, QComboBox, QDateEdit, QDialog, QFormLayout, QHBoxLayout, QHeaderView,
     QLabel, QLineEdit, QMessageBox, QTableWidget, QTableWidgetItem,
     QVBoxLayout,
 )
@@ -29,6 +29,7 @@ from ..core.controls import make_button
 from slate.gui.core.offline_notice import on_database_error
 from slate.gui.core.data_display import date_item, setup_date_edit
 from slate.core.domain.dates import format_date
+from slate.core.domain import people
 
 
 class HolidayEditDialog(QDialog):
@@ -113,7 +114,9 @@ class HolidayCalendarDialog(QDialog):
     def __init__(self, repo: LeaveRepository = None, parent=None, year=None):
         super().__init__(parent)
         self.repo = repo or LeaveRepository()
-        self.setWindowTitle("Holiday calendar")
+        # "Holidays" everywhere: the Attendance button said HOLIDAYS, the
+        # Leave button "Calendar" and this title "Holiday calendar".
+        self.setWindowTitle("Holidays")
         self.resize(660, 560)
         self._rows = []
         self._locations = []
@@ -287,9 +290,44 @@ class HolidayCalendarDialog(QDialog):
                 QMessageBox.warning(self, "Not saved", "That holiday could not be added.")
             return
         self.name.clear()
+        # Show it: a holiday added for another year used to vanish from a
+        # list filtered to this one, which read as "it did not save".
         self._wanted_year = day.year
         self._load_years()
         self.refresh()
+        self._select_day(day, place)
+        self._recharge(day, day)
+
+    def _select_day(self, day, place):
+        for r, row in enumerate(self._rows):
+            if str(row.get("holiday_date"))[:10] == day.isoformat() and                     str(row.get("location") or "All").lower() == place.lower():
+                self.table.selectRow(r)
+                self.table.scrollToItem(self.table.item(r, 0))
+                return
+
+    def _recharge(self, first, last):
+        """
+        Requests still waiting for a decision keep the day count worked out
+        when they were sent. A holiday added or removed changes what those
+        days cost, so offer to work them out again.
+        """
+        affected = [r for r in self.repo.all_requests()
+                    if lp.normalise_status(r.get("status")) in lp.PENDING_STATUSES
+                    and str(r.get("start_date"))[:10] <= last.isoformat()
+                    and str(r.get("end_date"))[:10] >= first.isoformat()]
+        if not affected:
+            return 0
+        if QMessageBox.question(
+            self, "Re-cost waiting requests",
+            "%d leave request%s still waiting for a decision cover%s that date. "
+            "Work out what %s cost%s again with the new holiday list?"
+            % (len(affected), "" if len(affected) == 1 else "s",
+               "s" if len(affected) == 1 else "", "it" if len(affected) == 1 else "they",
+               "s" if len(affected) == 1 else ""),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        ) != QMessageBox.StandardButton.Yes:
+            return 0
+        return self.repo.recharge_pending(first, last)
 
     def edit(self):
         picked = self._selected()
@@ -307,11 +345,19 @@ class HolidayCalendarDialog(QDialog):
         if not self.repo.update_holiday(row.get("id"), values["holiday_date"],
                                         values["name"], values["location"]):
             QMessageBox.warning(
-                self, "Not saved",
+                self, "Holiday not saved",
                 "That change could not be saved. If another holiday is already "
                 "on that date for the same place, this one cannot move onto it.")
+            self._load_years()
+            self.refresh()
+            return
         self._load_years()
         self.refresh()
+        old = row.get("holiday_date")
+        old = old.date() if hasattr(old, "date") else old
+        for day in {values["holiday_date"], old}:
+            if isinstance(day, date):
+                self._recharge(day, day)
 
     def remove(self):
         picked = self._selected()
@@ -319,15 +365,36 @@ class HolidayCalendarDialog(QDialog):
             return
         if QMessageBox.question(
             self, "Remove holiday",
-            "Remove %d holiday(s)? Leave already taken keeps the day count it was "
-            "charged at - only future requests change." % len(picked),
+            "Remove %d holiday%s? Approved leave keeps the day count it was "
+            "charged at. Requests still waiting for a decision can be worked out "
+            "again afterwards." % (len(picked), "" if len(picked) == 1 else "s"),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
         ) != QMessageBox.StandardButton.Yes:
             return
+        failed = []
+        removed = []
         for row in picked:
-            self.repo.remove_holiday(row.get("id"))
+            if self.repo.remove_holiday(row.get("id")):
+                removed.append(row)
+            else:
+                failed.append(row)
         self._load_years()
         self.refresh()
+        if failed:
+            QMessageBox.warning(
+                self, "Holidays not removed",
+                "%d of %d could not be removed: %s. Somebody may have changed the "
+                "list meanwhile." % (len(failed), len(picked), ", ".join(
+                    "%s (%s)" % (r.get("name") or "unnamed", format_date(r.get("holiday_date")))
+                    for r in failed)))
+        days = []
+        for row in removed:
+            day = row.get("holiday_date")
+            day = day.date() if hasattr(day, "date") else day
+            if isinstance(day, date):
+                days.append(day)
+        if days:
+            self._recharge(min(days), max(days))
 
 
 class CompOffReviewDialog(QDialog):
@@ -426,8 +493,8 @@ class CompOffReviewDialog(QDialog):
         self.table.setRowCount(len(self._entries))
         for r, entry in enumerate(self._entries):
             cells = [
-                str(entry.get("user_id") or ""),
-                str(entry.get("day") or ""),
+                people.display_name(entry.get("user_id")),
+                format_date(entry.get("day"), weekday=True),
                 "%.1f" % float(entry.get("hours") or 0),
                 "%g" % float(entry.get("days") or 0),
                 str(entry.get("reason") or ""),
@@ -463,15 +530,27 @@ class CompOffReviewDialog(QDialog):
 
 
 class YearEndDialog(QDialog):
-    """Close a leave year: carry what the cap allows, lapse the rest."""
+    """
+    Close a leave year: carry what the cap allows, lapse the rest.
+
+    Only finished years are offered, and they close in order - closing the
+    year in progress, or 2026 before 2025, wrote a line every later balance
+    was measured from (LeaveRepository.close_refusal says why a year cannot
+    be closed). People are listed by name with their own status, and those
+    with no joining date are flagged rather than closed on an invented
+    balance.
+    """
+
+    COLUMNS = ["Person", "Status", "Balance at year end", "Carries over", "Lapses"]
 
     def __init__(self, username: str, repo: LeaveRepository = None, parent=None):
         super().__init__(parent)
         self.username = username
         self.repo = repo or LeaveRepository()
         self.setWindowTitle("Close a leave year")
-        self.resize(640, 520)
+        self.resize(720, 560)
         self._preview = []
+        self._closed = set()
 
         root = QVBoxLayout(self)
         root.setContentsMargins(Gate.SPACE_4, Gate.SPACE_4, Gate.SPACE_4, Gate.SPACE_4)
@@ -479,10 +558,9 @@ class YearEndDialog(QDialog):
 
         cap = lp.policy(None)["carry_forward_cap"]
         note = QLabel(
-            "Closing a year draws a line under it. Up to %g day(s) carry into the "
+            "Closing a year draws a line under it. Up to %g days carry into the "
             "next year and anything above that is lost. Nothing is written until "
-            "you confirm, and a year already closed is never closed twice."
-            % cap)
+            "you confirm, and a year already closed is never closed twice." % cap)
         note.setWordWrap(True)
         note.setStyleSheet(f"color: {Gate.TEXT_2}; font-size: 12px;")
         root.addWidget(note)
@@ -492,27 +570,45 @@ class YearEndDialog(QDialog):
         picker.addWidget(QLabel("Leave year"))
         self.year = QComboBox()
         this_year = date.today().year
-        for y in range(this_year, this_year - 5, -1):
+        # Finished years only; the one to close next is chosen.
+        for y in range(this_year - 1, this_year - 6, -1):
             self.year.addItem(str(y), y)
-        # Default to the year just gone: closing the year you are still in
-        # lapses leave people have not had a chance to take.
-        self.year.setCurrentIndex(1 if self.year.count() > 1 else 0)
+        wanted = None
+        try:
+            wanted = self.repo.unclosed_year()
+        except Exception:
+            wanted = None
+        index = self.year.findData(wanted) if wanted is not None else 0
+        self.year.setCurrentIndex(index if index >= 0 else 0)
         self.year.currentIndexChanged.connect(self.refresh)
         picker.addWidget(self.year)
-        picker.addStretch(1)
+
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Search people...")
+        self.search.textChanged.connect(self._filter)
+        picker.addWidget(self.search, 1)
         root.addLayout(picker)
 
         self.state = QLabel("")
         self.state.setWordWrap(True)
-        self.state.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: 12px;")
+        self.state.setStyleSheet(f"color: {Gate.TEXT_2}; font-size: 12px;")
         root.addWidget(self.state)
 
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(
-            ["Person", "Balance at year end", "Carries over", "Lapses"])
-        style_table(self.table, {"Person": "stretch", "Balance at year end": "numeric",
+        self.table = QTableWidget(0, len(self.COLUMNS))
+        self.table.setHorizontalHeaderLabels(self.COLUMNS)
+        style_table(self.table, {"Person": "stretch", "Status": "contents",
+                                 "Balance at year end": "numeric",
                                  "Carries over": "numeric", "Lapses": "numeric"})
+        from slate.gui.components.table_tools import setup_table
+        setup_table(self.table)
+        # Biggest loss first: that is who HR will be asked about.
+        self.table.horizontalHeader().setSortIndicator(4, Qt.SortOrder.DescendingOrder)
         root.addWidget(self.table, 1)
+
+        self.include_no_date = QCheckBox("Also close people with no joining date "
+                                         "(their balance is counted from 1 January)")
+        self.include_no_date.toggled.connect(lambda *_: self._update_state())
+        root.addWidget(self.include_no_date)
 
         buttons = QHBoxLayout()
         buttons.addStretch(1)
@@ -523,61 +619,158 @@ class YearEndDialog(QDialog):
 
         self.refresh()
 
+    def _to_close(self) -> list:
+        include = self.include_no_date.isChecked()
+        return [r for r in self._preview
+                if r["user_id"].lower() not in self._closed
+                and (include or r.get("status") != "no_joining_date")]
+
     @on_database_error
     def refresh(self, *_):
+        from slate.gui.components.table_tools import KeepSelection, make_item
         year = self.year.currentData()
-        done = self.repo.closes(year)
+        self._closed = {str(r["user_id"]).lower() for r in self.repo.closes(year)}
         self._preview = self.repo.preview_close(year)
 
-        closed = {str(r["user_id"]).lower() for r in done}
-        lapsing = sum(1 for r in self._preview
-                      if r["user_id"].lower() not in closed and r["lapsed"] > 0)
+        with KeepSelection(self.table):
+            self.table.setRowCount(len(self._preview))
+            for r, row in enumerate(self._preview):
+                already = row["user_id"].lower() in self._closed
+                no_date = row.get("status") == "no_joining_date"
+                status = "Closed" if already else (
+                    "No joining date - set it first" if no_date else "To close")
+                dim = Gate.TEXT_DIM if already else None
+                cells = [
+                    make_item(row.get("display_name") or row["user_id"], key=row["user_id"],
+                              tooltip=row["user_id"], foreground=dim),
+                    make_item(status, foreground=Gate.WARN if (no_date and not already) else dim),
+                    make_item("%g" % row["closing_balance"], sort_value=row["closing_balance"],
+                              foreground=dim),
+                    make_item("%g" % row["carried"], sort_value=row["carried"],
+                              foreground=dim or Gate.OK),
+                    make_item("%g" % row["lapsed"], sort_value=row["lapsed"],
+                              foreground=dim or (Gate.BAD if row["lapsed"] > 0 else None)),
+                ]
+                for c, item in enumerate(cells):
+                    self.table.setItem(r, c, item)
+        self._filter()
+        self._update_state()
 
-        if closed and len(closed) >= len(self._preview):
-            self.state.setText("%d already closed. There is nothing left to do for %d."
-                               % (len(closed), year))
+    def _filter(self, *_):
+        needle = self.search.text().strip().lower()
+        for r in range(self.table.rowCount()):
+            item = self.table.item(r, 0)
+            text = (item.text() + " " + (item.toolTip() or "")).lower() if item else ""
+            self.table.setRowHidden(r, bool(needle) and needle not in text)
+
+    def _update_state(self):
+        year = self.year.currentData()
+        refusal = self.repo.close_refusal(year)
+        todo = self._to_close()
+        lapsing = sum(1 for r in todo if r["lapsed"] > 0)
+        no_date = sum(1 for r in self._preview
+                      if r["user_id"].lower() not in self._closed
+                      and r.get("status") == "no_joining_date")
+        if refusal:
+            self.state.setText(refusal)
+            self.btn_close.setEnabled(False)
+        elif not todo:
+            self.state.setText("Nothing left to close for %d." % year
+                               + (" %d people have no joining date." % no_date if no_date else ""))
             self.btn_close.setEnabled(False)
         else:
-            self.state.setText(
-                "%d person(s) to close for %d. %d of them will lose leave."
-                % (len(self._preview) - len(closed), year, lapsing))
+            text = "%d %s to close for %d. %d of them will lose leave." % (
+                len(todo), "person" if len(todo) == 1 else "people", year, lapsing)
+            if no_date and not self.include_no_date.isChecked():
+                text += (" %d with no joining date are left out - set their joining date on "
+                         "Users & Roles, or tick the box below." % no_date)
+            self.state.setText(text)
             self.btn_close.setEnabled(True)
-
-        self.table.setRowCount(len(self._preview))
-        for r, row in enumerate(self._preview):
-            already = row["user_id"].lower() in closed
-            cells = [
-                row["user_id"] + ("  (already closed)" if already else ""),
-                "%g" % row["closing_balance"],
-                "%g" % row["carried"],
-                "%g" % row["lapsed"],
-            ]
-            for c, text in enumerate(cells):
-                item = QTableWidgetItem(text)
-                if c:
-                    item.setTextAlignment(
-                        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                if already:
-                    item.setForeground(QColor(Gate.TEXT_DIM))
-                elif c == 3 and row["lapsed"] > 0:
-                    item.setForeground(QColor(Gate.BAD))
-                elif c == 2:
-                    item.setForeground(QColor(Gate.OK))
-                self.table.setItem(r, c, item)
 
     def close_year(self):
         year = self.year.currentData()
-        lapsing = sum(r["lapsed"] for r in self._preview)
+        # Only the people this will actually write - not the ones already closed.
+        todo = self._to_close()
+        lapsing = sum(r["lapsed"] for r in todo)
         if QMessageBox.question(
             self, "Close %d" % year,
-            "This writes the year end for %d person(s) and lapses %g day(s) in "
+            "This writes the year end for %d %s and lapses %g day%s in "
             "total.\n\nIt cannot be undone from this screen. Go ahead?"
-            % (len(self._preview), lapsing),
+            % (len(todo), "person" if len(todo) == 1 else "people", lapsing,
+               "" if lapsing == 1 else "s"),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
         ) != QMessageBox.StandardButton.Yes:
             return
-        result = self.repo.close_year(year, self.username)
-        QMessageBox.information(
-            self, "Year closed",
-            "%d closed, %d were already done." % (result["closed"], result["skipped"]))
+        result = self.repo.close_year(year, self.username,
+                                      include_no_joining=self.include_no_date.isChecked())
+        if result.get("refused"):
+            QMessageBox.warning(self, "Close %d" % year, result["refused"])
+        else:
+            QMessageBox.information(
+                self, "Year closed",
+                "%d closed, %d were already done." % (result["closed"], result["skipped"]))
         self.refresh()
+
+
+class GrantProjectRestDialog(QDialog):
+    """
+    HR grant project rest: days off after a project, decided by HR. It was in
+    everybody's request list as if it were an entitlement.
+    """
+
+    def __init__(self, username: str, repo: LeaveRepository = None, parent=None):
+        super().__init__(parent)
+        self.username = username
+        self.repo = repo or LeaveRepository()
+        self.outcome = None
+        self.setWindowTitle("Grant project rest")
+        self.setMinimumWidth(440)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(Gate.SPACE_4, Gate.SPACE_4, Gate.SPACE_4, Gate.SPACE_4)
+        root.setSpacing(Gate.SPACE_3)
+
+        form = QFormLayout()
+        form.setSpacing(Gate.SPACE_2)
+        from slate.gui.components.person_picker import PersonPicker
+        self.person = PersonPicker(placeholder="Who gets the rest?", allow_empty=False)
+        form.addRow("Person", self.person)
+        self.start = setup_date_edit(QDateEdit(QDate.currentDate()), weekday=True)
+        self.end = setup_date_edit(QDateEdit(QDate.currentDate()), weekday=True)
+        self.start.dateChanged.connect(lambda d: (self.end.setMinimumDate(d),
+                                                  self.end.setDate(max(self.end.date(), d))))
+        form.addRow("From", self.start)
+        form.addRow("To", self.end)
+        self.reason = QLineEdit()
+        self.reason.setPlaceholderText("After the KLC delivery...")
+        form.addRow("Reason", self.reason)
+        root.addLayout(form)
+
+        self.note = QLabel("")
+        self.note.setWordWrap(True)
+        self.note.setStyleSheet(f"color: {Gate.WARN}; font-size: 12.5px;")
+        self.note.hide()
+        root.addWidget(self.note)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        buttons.addWidget(make_button("Cancel", "ghost", on_click=self.reject))
+        buttons.addWidget(make_button("Grant", "primary", on_click=self._grant))
+        root.addLayout(buttons)
+
+    def _grant(self):
+        who = self.person.username()
+        if not who:
+            self.note.setText("Choose the person.")
+            self.note.show()
+            return
+        start = self.start.date().toPython()
+        end = self.end.date().toPython()
+        outcome = self.repo.grant_project_rest(who, start, end, self.username,
+                                               self.reason.text().strip())
+        if not outcome:
+            self.note.setText(outcome.reason)
+            self.note.show()
+            return
+        self.outcome = outcome
+        self.accept()
