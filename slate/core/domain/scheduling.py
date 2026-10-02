@@ -33,7 +33,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from .dates import format_date, parse_date
+from .dates import format_date, format_range, parse_date
 
 
 # ------------------------------------------------------------------ statuses
@@ -455,40 +455,41 @@ class ShiftPlan:
     def changes(self) -> List[Tuple[int, date, date]]:
         return [(m.id, m.new_start, m.new_end) for m in self.moved]
 
-    def message(self, root_name: str = "") -> str:
+    def message(self, root_name: str = "", preview: bool = False) -> str:
         """
-        'Moved "Weekend delivery" and 1 dependent milestone by 1 working day.'
+        'Moved "Weekend delivery" and 1 dependent milestone 1 working day later.'
         Built from what will really happen; 'Success' was shown when nothing
-        had moved.
+        had moved. preview=True says it in the future tense, for the dialog.
         """
         moved = self.moved
+        verb = "Moves" if preview else "Moved"
         unit_word = "working day" if self.unit == WORKING_DAYS else "day"
         amount = plural(abs(self.delta), unit_word)
         direction = "later" if self.delta > 0 else "earlier"
         if not moved:
-            text = "Nothing moved"
+            text = "Nothing would move" if preview else "Nothing moved"
         else:
             root_moved = any(m.id == self.root_id for m in moved)
             dependents = len(moved) - (1 if root_moved else 0)
             followers = plural(dependents, "dependent milestone")
             if self.mode == SAME:
                 if root_moved:
-                    text = f"Moved \"{root_name or moved[0].name}\""
+                    text = f"{verb} \"{root_name or moved[0].name}\""
                     if dependents:
                         text += f" and {followers}"
                 else:
-                    text = f"Moved {followers}"
+                    text = f"{verb} {followers}"
                 text += f" {amount} {direction}"
             elif root_moved:
-                text = f"Moved \"{root_name or moved[0].name}\" {amount} {direction}"
+                text = f"{verb} \"{root_name or moved[0].name}\" {amount} {direction}"
                 if dependents:
-                    text += f"; {followers} moved to follow it"
+                    text += f"; {followers} {'move' if preview else 'moved'} to follow it"
             else:
-                text = f"Moved {followers} to follow it"
+                text = f"{verb} {followers} to follow it"
         if self.skipped:
             reasons = "; ".join(f"\"{name}\" ({why})" for _id, name, why in self.skipped[:5])
             more = f" and {len(self.skipped) - 5} more" if len(self.skipped) > 5 else ""
-            text += f". Not moved: {reasons}{more}"
+            text += f". {'Staying' if preview else 'Not moved'}: {reasons}{more}"
         return text + "."
 
 
@@ -505,7 +506,8 @@ def _children_map(milestones: Iterable[Milestone]) -> Dict[int, List[Milestone]]
 def plan_shift(milestones: Sequence[Milestone], root_id: int, delta: int, *,
                unit: str = WORKING_DAYS, mode: str = PUSH,
                include_completed: bool = False,
-               calendar: Optional[WorkCalendar] = None) -> ShiftPlan:
+               calendar: Optional[WorkCalendar] = None,
+               root_to: Optional[Tuple[date, date]] = None) -> ShiftPlan:
     """
     What shifting root_id by delta would do, without doing it.
 
@@ -520,7 +522,9 @@ def plan_shift(milestones: Sequence[Milestone], root_id: int, delta: int, *,
            SAME: the milestone and everything after it move by delta
     Completed and cancelled milestones stay where they are unless
     include_completed. Milestones without readable dates are skipped and
-    reported. Conflicts (something starting on or before the end of what it
+    reported. root_to gives the milestone exact new dates instead (a bar
+    dragged or stretched on the timeline); what follows is then pushed as
+    above. Conflicts (something starting on or before the end of what it
     waits on) are reported, not silently written.
     """
     calendar = calendar or WorkCalendar()
@@ -561,7 +565,11 @@ def plan_shift(milestones: Sequence[Milestone], root_id: int, delta: int, *,
         if not m.is_open and not include_completed:
             plan.skipped.append((m.id, m.name, f"{m.status.lower()} - kept where it is"))
             continue
-        if current_id == root_id or mode == SAME:
+        if current_id == root_id and root_to is not None:
+            new_start, new_end = root_to
+            if (new_start, new_end) == (m.start, m.end):
+                continue
+        elif current_id == root_id or mode == SAME:
             if not plan.delta:
                 continue
             new_start, new_end = shift_date(m.start, plan.delta), shift_date(m.end, plan.delta)
@@ -912,8 +920,7 @@ def people_plan(items: Iterable[WorkItem], away: Iterable[Away],
             for start, end in _ranges(clash):
                 plan.conflicts.append(PeopleConflict(
                     person, "leave", start, end,
-                    f"{item.label} is planned while they are away "
-                    f"({format_date(start)}{'' if start == end else ' - ' + format_date(end)})"))
+                    f"{item.label} is planned while they are away ({format_range(start, end)})"))
 
         # More than a day of work booked on one working day.
         load: Dict[date, Decimal] = defaultdict(Decimal)
@@ -929,7 +936,7 @@ def people_plan(items: Iterable[WorkItem], away: Iterable[Away],
             plan.conflicts.append(PeopleConflict(
                 person, "overload", start, end,
                 f"{peak.quantize(Decimal('0.1'))} days of work booked per day "
-                f"({format_date(start)}{'' if start == end else ' - ' + format_date(end)})"))
+                f"({format_range(start, end)})"))
     plan.conflicts.sort(key=lambda c: (c.person.casefold(), c.start, c.kind))
     return plan
 

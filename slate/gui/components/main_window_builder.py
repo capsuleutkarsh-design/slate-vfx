@@ -353,7 +353,7 @@ class MainWindowBuilderMixin:
                     permission_key="Scheduling",
                     user_role=self.user_role,
                     allowed_tabs=self.allowed_tabs,
-                    tooltip="Production Scheduling & Gantt Charts"
+                    tooltip="Milestones, dependencies and a Gantt timeline"
                 )
 
                 # Production Bidding
