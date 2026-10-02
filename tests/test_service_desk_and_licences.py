@@ -67,7 +67,8 @@ def _ticket(**fields):
     base = {
         "status": "Open",
         "priority": "P3",
-        "created_at": datetime(2026, 9, 14, 9, 0),
+        # Monday 14 Sep 2026, 10:00 - the start of the studio's working day.
+        "created_at": datetime(2026, 9, 14, 10, 0),
         "first_response_at": None,
     }
     base.update(fields)
@@ -75,7 +76,7 @@ def _ticket(**fields):
 
 
 def test_an_unanswered_ticket_is_measured_against_the_response_promise():
-    now = datetime(2026, 9, 14, 10, 0)          # an hour later, P3 promises two
+    now = datetime(2026, 9, 14, 11, 0)          # an hour later, P3 promises two
     state = sd.sla_state(_ticket(), now)
     assert state["against"] == "response"
     assert 0.9 < state["hours_left"] < 1.1
@@ -83,8 +84,8 @@ def test_an_unanswered_ticket_is_measured_against_the_response_promise():
 
 def test_an_answered_ticket_is_measured_against_the_fix_promise():
     state = sd.sla_state(
-        _ticket(first_response_at=datetime(2026, 9, 14, 9, 30)),
-        datetime(2026, 9, 14, 10, 0))
+        _ticket(first_response_at=datetime(2026, 9, 14, 10, 30)),
+        datetime(2026, 9, 14, 11, 0))
     assert state["against"] == "resolution"
 
 
@@ -94,8 +95,8 @@ def test_time_spent_waiting_on_the_requester_does_not_count():
     "Waiting on You", so a ticket waiting a week for an answer breached while
     the queue was doing exactly the right thing.
     """
-    created = datetime(2026, 9, 14, 9, 0)
-    now = created + timedelta(hours=10)          # P2 promises a fix in eight
+    created = datetime(2026, 9, 14, 10, 0)
+    now = datetime(2026, 9, 15, 11, 0)           # 10 working hours; P2 promises a fix in eight
 
     running = _ticket(priority="P2", status="In Progress", created_at=created,
                       first_response_at=created)
@@ -110,11 +111,11 @@ def test_time_spent_waiting_on_the_requester_does_not_count():
 
 
 def test_a_ticket_parked_right_now_keeps_banking_waiting_time():
-    created = datetime(2026, 9, 14, 9, 0)
-    now = created + timedelta(hours=10)
+    created = datetime(2026, 9, 14, 10, 0)
+    now = datetime(2026, 9, 15, 11, 0)
     parked = _ticket(priority="P2", status="Waiting on You", created_at=created,
                      first_response_at=created,
-                     waiting_since=created + timedelta(hours=6))
+                     waiting_since=datetime(2026, 9, 14, 16, 0))   # 3 h Monday + 1 h Tuesday
     assert sd.waiting_hours(parked, now) == pytest.approx(4.0, abs=0.1)
 
 

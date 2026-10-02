@@ -75,9 +75,22 @@ class MainWindowBuilderMixin:
         from ..tabs.my_tickets_view import MyTicketsView
         from ...core.domain.workplace_access import manages_it
 
-        if manages_it(getattr(self, "user_roles", None), self.allowed_tabs):
-            return ServiceDeskView(self._current_username())
-        return MyTicketsView(self._current_username())
+        username = self._current_username()
+        if not manages_it(getattr(self, "user_roles", None), self.allowed_tabs):
+            return MyTicketsView(username)
+        # IT get both, like Leave: the queue, and their own tickets. They used
+        # to get the queue only, so IT staff could not report a problem of
+        # their own (the queue's New ticket logs one for somebody else).
+        from PySide6.QtWidgets import QTabWidget
+        queue = ServiceDeskView(username)
+        mine = MyTicketsView(username)
+        mine.show_badge = False          # the sidebar count is the queue's
+        queue.changed.connect(mine.refresh)
+        mine.changed.connect(queue.refresh)
+        both = QTabWidget()
+        both.addTab(queue, "Queue")
+        both.addTab(mine, "My tickets")
+        return both
 
     def _attendance_tooltip(self) -> str:
         """
