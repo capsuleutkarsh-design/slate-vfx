@@ -24,6 +24,22 @@ def app():
     return QApplication.instance() or QApplication(sys.argv)
 
 
+@pytest.fixture(scope="module", autouse=True)
+def forget_database_probes():
+    """
+    Some of these dialogs look things up in the database as they open. With no
+    pooler on the test host that records "PgBouncer did not answer" on the
+    manager's class for two minutes, which later tests of the pooler would
+    then see. Leave that state as it was found.
+    """
+    yield
+    try:
+        from slate.core.infra.postgres_manager import PostgresManager
+        PostgresManager._pooler_failed_at.clear()
+    except Exception:
+        pass
+
+
 def default_buttons(dialog):
     return [b.text() for b in dialog.findChildren(QPushButton) if b.isDefault()]
 
