@@ -25,6 +25,24 @@ from slate.core.workers.structure import COPY, MOVE, FolderCreationWorker
 TEMPLATE = (["01_Frm Client", "05_Reels"], [], [], ["01_Scan", "07_Comp", "08_Output"])
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _keep_the_shared_database_manager():
+    """
+    mock_db leaves the shared manager unset when it finishes. The next test
+    file (test_ingest_playback_crash) patches GlobalConfig.get to return a
+    folder for every key, and a manager created lazily there is built on that
+    folder - which then broke an attendance test much later. Put back what
+    was there before this module.
+    """
+    import slate.core.infra.database_manager as db_module
+    from slate.core.infra.sqlite_manager import SQLiteManager
+    saved = (db_module._manager_instance, SQLiteManager._instance)
+    yield
+    with db_module._manager_lock:
+        db_module._manager_instance = saved[0]
+    SQLiteManager._instance = saved[1]
+
+
 @pytest.fixture
 def db(mock_db, monkeypatch):
     monkeypatch.setattr(structure, "database_manager", mock_db)
