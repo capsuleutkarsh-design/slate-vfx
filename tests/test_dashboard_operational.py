@@ -8,6 +8,39 @@ from PySide6.QtCore import Qt
 
 from slate.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
 from slate.gui.tabs.vfx_dashboard_pro.ui.shot_table_model import ShotTableModel
+from slate.gui.tabs.vfx_dashboard_pro.ui.shot_proxy_models import ShotFilterProxy
+
+
+@pytest.fixture(autouse=True)
+def online(monkeypatch):
+    import slate.core.domain.access as access
+    monkeypatch.setattr(access, "is_offline_fallback", lambda: False)
+
+
+class _Sorted:
+    """Sorting is the filter proxy's job now; this reads the grid through it."""
+
+    def __init__(self, shots):
+        self.source = ShotTableModel(shots=shots)
+        self.proxy = ShotFilterProxy()
+        self.proxy.setSourceModel(self.source)
+        self.COLUMNS = self.source.COLUMNS
+
+    def sort(self, column, order):
+        if 0 <= column < len(self.COLUMNS):
+            self.proxy.sort(column, order)
+
+    def update_data(self, shots):
+        self.source.set_shots(shots)
+
+    def rowCount(self):
+        return self.proxy.rowCount()
+
+    def index(self, row, column):
+        return self.proxy.index(row, column)
+
+    def data(self, index, role):
+        return self.proxy.data(index, role)
 
 
 def _shots():
@@ -34,7 +67,7 @@ class TestSorting:
     """The table had no sorting at all - clicking a heading did nothing."""
 
     def test_sort_by_text_column(self, qtbot):
-        model = ShotTableModel(shots=_shots())
+        model = _Sorted(_shots())
 
         model.sort(_column(model, "shot_name"), Qt.SortOrder.AscendingOrder)
         assert _values(model, "shot_name") == ["SH010", "SH020", "SH030"]
@@ -44,16 +77,16 @@ class TestSorting:
 
     def test_numeric_columns_sort_as_numbers(self, qtbot):
         """85 must come before 120, not after it as a string would."""
-        model = ShotTableModel(shots=_shots())
+        model = _Sorted(_shots())
 
         model.sort(_column(model, "frames"), Qt.SortOrder.AscendingOrder)
         assert _values(model, "frames") == ["85", "120", "200"]
 
     def test_priority_sorts_numerically(self, qtbot):
-        model = ShotTableModel(shots=_shots())
+        model = _Sorted(_shots())
 
         model.sort(_column(model, "priority"), Qt.SortOrder.AscendingOrder)
-        assert _values(model, "priority") == ["1", "2", "3"]
+        assert _values(model, "priority") == ["High", "Normal", "Low"]
 
     def test_blank_cells_sort_last_in_both_directions(self, qtbot):
         """An unscheduled shot is not 'the earliest target date'."""
@@ -62,7 +95,7 @@ class TestSorting:
         shots[1].target = "2026-09-15"
         # shots[2] deliberately has no target
 
-        model = ShotTableModel(shots=shots)
+        model = _Sorted(shots)
 
         model.sort(_column(model, "target"), Qt.SortOrder.AscendingOrder)
         assert _values(model, "target")[-1] == "-"
@@ -71,7 +104,7 @@ class TestSorting:
         assert _values(model, "target")[-1] == "-"
 
     def test_sort_survives_a_data_refresh(self, qtbot):
-        model = ShotTableModel(shots=_shots())
+        model = _Sorted(_shots())
         model.sort(_column(model, "shot_name"), Qt.SortOrder.DescendingOrder)
 
         model.update_data(_shots())   # e.g. after a poll or a save
@@ -82,15 +115,17 @@ class TestSorting:
         shots[0].dept("matchmove").status = "WIP"
         shots[1].dept("matchmove").status = "APPROVED"
 
-        model = ShotTableModel(shots=shots)
+        model = _Sorted(shots)
         model.sort(_column(model, "matchmove"), Qt.SortOrder.AscendingOrder)
 
         values = _values(model, "matchmove")
-        assert values[0] == "APPROVED"
-        assert values[-1] == "-"      # the shot with no matchmove work
+        # Statuses sort in workflow order (WIP comes before APPROVED).
+        assert values[0] == "WIP"
+        assert values[1] == "APPROVED"
+        assert values[-1] == ""       # the shot with no matchmove work
 
     def test_sorting_an_out_of_range_column_is_ignored(self, qtbot):
-        model = ShotTableModel(shots=_shots())
+        model = _Sorted(_shots())
         model.sort(999, Qt.SortOrder.AscendingOrder)   # must not raise
         assert model.rowCount() == 3
 
@@ -131,6 +166,7 @@ class TestAddShotsDialog:
 
         dialog = AddShotsDialog(existing_shots=["SH010"])
         qtbot.addWidget(dialog)
+        dialog.reel_input.setCurrentText("ReelA")
 
         assert dialog.ok_button.isEnabled() is False
 
@@ -148,7 +184,7 @@ class TestAddShotsDialog:
         dialog.reel_input.setCurrentText("ReelA")
         dialog.shots_input.setPlainText("SH010")
         dialog.status_input.setCurrentText("WIP")
-        dialog.priority_input.setValue(1)
+        dialog.priority_input.setCurrentIndex(dialog.priority_input.findData(1))
 
         values = dialog.get_values()
         assert values == {"reel": "ReelA", "shots": ["SH010"],
@@ -247,7 +283,7 @@ class TestUndo:
         undone = model.undo()
         assert shot.status == "YTS"
         assert undone["shot"] == "SH010"
-        assert undone["column"] == "status"
+        assert "Status" in undone["description"]
 
     def test_a_department_cell_can_be_taken_back(self, qtbot):
         model, shot = self._model()

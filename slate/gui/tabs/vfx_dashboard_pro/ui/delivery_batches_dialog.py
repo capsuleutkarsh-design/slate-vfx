@@ -23,6 +23,9 @@ from slate.core.domain.deliveries import DeliveryStore, Delivery
 from slate.core.domain.versions import VersionStore
 from slate.gui.core.offline_notice import on_database_error
 from slate.core.infra.gate import Gate
+from slate.gui.core.controls import make_button
+from slate.gui.core.empty_state import EmptyState
+from slate.gui.core.table_style import style_table
 
 # Let an outage reach the @on_database_error decorator rather than becoming an
 # empty grid here. Everything else keeps the fallback it already had.
@@ -31,6 +34,11 @@ try:
 except ImportError:                                  # pragma: no cover
     class DatabaseUnavailableError(ConnectionError):
         """Fallback when the manager cannot be imported."""
+
+
+def _date_text(value) -> str:
+    from slate.core.domain.dates import format_date
+    return format_date(value) or str(value or "")
 
 
 class CreateDeliveryDialog(QDialog):
@@ -47,10 +55,8 @@ class CreateDeliveryDialog(QDialog):
         self.preselected_version_ids = set(preselected_version_ids or [])
         self.created_delivery = None
 
-        self.setWindowTitle(f"Create Delivery Batch - {project_code}")
+        self.setWindowTitle(f"New delivery - {project_code}")
         self.resize(700, 520)
-        self.setStyleSheet(f"QDialog {{ background-color: {Gate.GROUND}; color: {Gate.TEXT}; }} QLabel {{ background: transparent; border: none; }}")
-
         self._setup_ui()
 
     def _setup_ui(self):
@@ -59,21 +65,23 @@ class CreateDeliveryDialog(QDialog):
 
         # Form fields
         form_frame = QFrame()
-        form_frame.setStyleSheet(f"background: {Gate.PANEL}; border: 1px solid {Gate.RAISED}; border-radius: 6px; padding: 10px;")
+        form_frame.setObjectName("deliveryForm")
+        form_frame.setStyleSheet(f"QFrame#deliveryForm {{ background: {Gate.PANEL}; border: 1px solid {Gate.LINE};"
+                                 f" border-radius: {Gate.RADIUS_LG}px; }}")
         form_l = QVBoxLayout(form_frame)
         form_l.setSpacing(8)
 
         # Name
         today_str = date.today().strftime("%Y%m%d")
         name_l = QHBoxLayout()
-        name_l.addWidget(QLabel("Package Name:"))
+        name_l.addWidget(QLabel("Package name"))
         self.name_input = QLineEdit(f"DEL_{today_str}_01")
         name_l.addWidget(self.name_input)
         form_l.addLayout(name_l)
 
         # Recipient
         recip_l = QHBoxLayout()
-        recip_l.addWidget(QLabel("Recipient:"))
+        recip_l.addWidget(QLabel("Recipient"))
         self.recipient_input = QLineEdit()
         self.recipient_input.setPlaceholderText("e.g. Client VFX Editor / Editorial")
         recip_l.addWidget(self.recipient_input)
@@ -81,9 +89,9 @@ class CreateDeliveryDialog(QDialog):
 
         # Notes
         notes_l = QVBoxLayout()
-        notes_l.addWidget(QLabel("Delivery Notes / Instructions:"))
+        notes_l.addWidget(QLabel("Notes for the recipient"))
         self.notes_input = QTextEdit()
-        self.notes_input.setPlaceholderText("Notes describing the purpose of this package...")
+        self.notes_input.setPlaceholderText("What this package is for…")
         self.notes_input.setMaximumHeight(70)
         notes_l.addWidget(self.notes_input)
         form_l.addLayout(notes_l)
@@ -91,35 +99,10 @@ class CreateDeliveryDialog(QDialog):
         layout.addWidget(form_frame)
 
         # Versions Table Selection
-        layout.addWidget(QLabel("Select Versions to Include in Delivery:"))
+        layout.addWidget(QLabel("Versions in this delivery"))
         self.versions_table = QTableWidget(0, 5)
         self.versions_table.setHorizontalHeaderLabels(["Select", "Shot", "Version", "Dept", "Status"])
-        self.versions_table.verticalHeader().setVisible(False)
-        self.versions_table.setAlternatingRowColors(True)
-        self.versions_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        self.versions_table.horizontalHeader().setStretchLastSection(True)
-        self.versions_table.setStyleSheet(f"""
-            QTableWidget {{
-                background-color: {Gate.GROUND};
-                color: {Gate.TEXT};
-                gridline-color: {Gate.RAISED};
-                border: 1px solid {Gate.RAISED};
-                border-radius: 6px;
-            }}
-            QTableWidget::item:alternate {{ background-color: {Gate.PANEL}; }}
-            QTableWidget::item:selected {{ background-color: {Gate.tint(Gate.ACCENT, 0.18)}; }}
-            QHeaderView::section {{
-                background-color: {Gate.PANEL};
-                color: {Gate.TEXT_DIM};
-                border: none;
-                border-bottom: 2px solid {Gate.RAISED};
-                border-right: 1px solid {Gate.overlay(0.04)};
-                padding: 6px 10px;
-                font-weight: 700;
-                font-size: 11px;
-                text-transform: uppercase;
-            }}
-        """)
+        style_table(self.versions_table, {"Status": "stretch"}, multi_select=False)
         layout.addWidget(self.versions_table)
 
         self._populate_versions()
@@ -128,14 +111,10 @@ class CreateDeliveryDialog(QDialog):
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
 
-        self.cancel_btn = QPushButton("Cancel")
-        self.cancel_btn.setObjectName("secondaryButton")
-        self.cancel_btn.clicked.connect(self.reject)
+        self.cancel_btn = make_button("Cancel", "secondary", on_click=self.reject)
         btn_layout.addWidget(self.cancel_btn)
 
-        self.submit_btn = QPushButton("Create Delivery")
-        self.submit_btn.setObjectName("primaryButton")
-        self.submit_btn.clicked.connect(self._on_submit)
+        self.submit_btn = make_button("Create delivery", "primary", on_click=self._on_submit)
         btn_layout.addWidget(self.submit_btn)
 
         layout.addLayout(btn_layout)
@@ -177,7 +156,7 @@ class CreateDeliveryDialog(QDialog):
     def _on_submit(self):
         name = self.name_input.text().strip()
         if not name:
-            QMessageBox.warning(self, "Validation Error", "Package name cannot be empty.")
+            QMessageBox.warning(self, "New delivery", "Give the package a name.")
             return
 
         selected_ids = []
@@ -187,27 +166,27 @@ class CreateDeliveryDialog(QDialog):
                 selected_ids.append(int(item.data(Qt.ItemDataRole.UserRole)))
 
         if not selected_ids:
-            QMessageBox.warning(self, "Validation Error", "Please select at least one version to include.")
+            QMessageBox.warning(self, "New delivery", "Tick at least one version to include.")
             return
 
-        delivery = self.store.create_delivery(
-            project_code=self.project_code,
-            name=name,
-            version_ids=selected_ids,
-            recipient=self.recipient_input.text().strip(),
-            notes=self.notes_input.toPlainText().strip(),
-            created_by=self.created_by,
-        )
+        try:
+            delivery = self.store.create_delivery(
+                project_code=self.project_code,
+                name=name,
+                version_ids=selected_ids,
+                recipient=self.recipient_input.text().strip(),
+                notes=self.notes_input.toPlainText().strip(),
+                created_by=self.created_by,
+            )
+        except PermissionError as exc:
+            QMessageBox.warning(self, "New delivery", str(exc))
+            return
 
         if not delivery:
-            QMessageBox.critical(self, "Error", "Failed to create delivery record in database.")
+            QMessageBox.critical(self, "New delivery", "The delivery could not be saved to the database.")
             return
 
         self.created_delivery = delivery
-        QMessageBox.information(
-            self, "Delivery Created",
-            f"Delivery '{name}' created with {len(selected_ids)} version(s)."
-        )
         self.accept()
 
 
@@ -224,8 +203,6 @@ class DeliveryBatchesDialog(QDialog):
 
         self.setWindowTitle(f"Delivery Batches - {project_code}")
         self.resize(1000, 600)
-        self.setStyleSheet(f"QDialog {{ background-color: {Gate.GROUND}; color: {Gate.TEXT}; }} QLabel {{ background: transparent; border: none; }}")
-
         self._setup_ui()
         self.refresh()
 
@@ -242,43 +219,24 @@ class DeliveryBatchesDialog(QDialog):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(8)
 
-        lbl_hdr = QLabel("Delivery Packages:")
+        lbl_hdr = QLabel("Delivery packages")
         lbl_hdr.setStyleSheet(f"font-weight: 700; color: {Gate.TEXT}; font-size: 13px;")
         left_layout.addWidget(lbl_hdr)
 
         self.delivery_list = QListWidget()
-        self.delivery_list.setStyleSheet(f"""
-            QListWidget {{
-                background-color: {Gate.PANEL};
-                border: 1px solid {Gate.RAISED};
-                border-radius: 6px;
-                padding: 4px;
-            }}
-            QListWidget::item {{
-                padding: 8px 12px;
-                border-radius: 4px;
-                color: {Gate.TEXT};
-            }}
-            QListWidget::item:selected {{
-                background-color: {Gate.tint(Gate.ACCENT, 0.18)};
-                color: {Gate.ACCENT};
-                font-weight: bold;
-            }}
-        """)
         self.delivery_list.currentRowChanged.connect(self._on_delivery_selected)
         left_layout.addWidget(self.delivery_list)
 
         left_actions = QHBoxLayout()
         left_actions.setSpacing(8)
-        self.create_btn = QPushButton("+ New Delivery")
-        self.create_btn.setObjectName("primaryButton")
-        self.create_btn.clicked.connect(self._on_create_clicked)
+        self.create_btn = make_button("New delivery", "primary", icon="plus", on_click=self._on_create_clicked)
         left_actions.addWidget(self.create_btn)
 
-        self.delete_btn = QPushButton("Delete")
-        self.delete_btn.setObjectName("dangerButton")
-        self.delete_btn.clicked.connect(self._on_delete_clicked)
+        self.delete_btn = make_button("Delete", "danger", on_click=self._on_delete_clicked)
         left_actions.addWidget(self.delete_btn)
+        # Making and deleting packages is production's job.
+        self.create_btn.setVisible(self.can_manage)
+        self.delete_btn.setVisible(self.can_manage)
 
         left_layout.addLayout(left_actions)
         splitter.addWidget(left_widget)
@@ -291,7 +249,9 @@ class DeliveryBatchesDialog(QDialog):
 
         # Meta info card
         self.meta_frame = QFrame()
-        self.meta_frame.setStyleSheet(f"background: {Gate.PANEL}; border: 1px solid {Gate.RAISED}; border-radius: 6px; padding: 12px;")
+        self.meta_frame.setObjectName("deliveryMeta")
+        self.meta_frame.setStyleSheet(f"QFrame#deliveryMeta {{ background: {Gate.PANEL}; border: 1px solid {Gate.LINE};"
+                                      f" border-radius: {Gate.RADIUS_LG}px; }}")
         meta_l = QVBoxLayout(self.meta_frame)
         meta_l.setSpacing(4)
 
@@ -311,46 +271,22 @@ class DeliveryBatchesDialog(QDialog):
         right_layout.addWidget(self.meta_frame)
 
         # Items Table
-        lbl_tbl = QLabel("Versions Included in Delivery:")
+        lbl_tbl = QLabel("Versions in this delivery")
+        self.items_heading = lbl_tbl
         lbl_tbl.setStyleSheet(f"font-weight: 700; color: {Gate.TEXT}; font-size: 13px; margin-top: 4px;")
         right_layout.addWidget(lbl_tbl)
         self.items_table = QTableWidget(0, 5)
-        self.items_table.setHorizontalHeaderLabels(["Shot", "Version", "Dept", "Status at Send", "Media Path"])
-        self.items_table.verticalHeader().setVisible(False)
-        self.items_table.setAlternatingRowColors(True)
-        self.items_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        self.items_table.horizontalHeader().setStretchLastSection(True)
-        self.items_table.setStyleSheet(f"""
-            QTableWidget {{
-                background-color: {Gate.GROUND};
-                color: {Gate.TEXT};
-                gridline-color: {Gate.RAISED};
-                border: 1px solid {Gate.RAISED};
-                border-radius: 6px;
-            }}
-            QTableWidget::item:alternate {{ background-color: {Gate.PANEL}; }}
-            QTableWidget::item:selected {{ background-color: {Gate.tint(Gate.ACCENT, 0.18)}; }}
-            QHeaderView::section {{
-                background-color: {Gate.PANEL};
-                color: {Gate.TEXT_DIM};
-                border: none;
-                border-bottom: 2px solid {Gate.RAISED};
-                border-right: 1px solid {Gate.overlay(0.04)};
-                padding: 6px 10px;
-                font-weight: 700;
-                font-size: 11px;
-                text-transform: uppercase;
-            }}
-        """)
+        self.items_table.setHorizontalHeaderLabels(["Shot", "Version", "Dept", "Status when sent", "Media path"])
+        style_table(self.items_table, {"Media path": "stretch"}, multi_select=False)
         right_layout.addWidget(self.items_table)
 
         # Right Actions
         right_actions = QHBoxLayout()
         right_actions.addStretch()
 
-        self.copy_note_btn = QPushButton("Copy Delivery Note to Clipboard")
-        self.copy_note_btn.setObjectName("secondaryButton")
-        self.copy_note_btn.clicked.connect(self._on_copy_note_clicked)
+        self.copy_note_btn = make_button("Copy delivery note", "secondary", icon="copy",
+                                         tooltip="Copy the note for this package to the clipboard",
+                                         on_click=self._on_copy_note_clicked)
         right_actions.addWidget(self.copy_note_btn)
 
         right_layout.addLayout(right_actions)
@@ -359,13 +295,18 @@ class DeliveryBatchesDialog(QDialog):
         splitter.setStretchFactor(0, 3)  # 30% List
         splitter.setStretchFactor(1, 7)  # 70% Details
         main_layout.addWidget(splitter)
+        self.right_widget = right_widget
+        self.list_empty = EmptyState.over(
+            self.delivery_list, "No deliveries yet",
+            "Create one to package versions for the client." if self.can_manage
+            else "Production creates delivery packages here.", glyph="package")
 
     def refresh(self):
         self.deliveries = self.store.list_deliveries(self.project_code)
         self.delivery_list.clear()
 
         for d in self.deliveries:
-            item = QListWidgetItem(f"{d.name} ({d.delivery_date})")
+            item = QListWidgetItem(f"{d.name} ({_date_text(d.delivery_date)})")
             item.setData(Qt.ItemDataRole.UserRole, d.id)
             self.delivery_list.addItem(item)
 
@@ -373,16 +314,18 @@ class DeliveryBatchesDialog(QDialog):
             self.delivery_list.setCurrentRow(0)
         else:
             self._on_delivery_selected(-1)
+        if hasattr(self, "list_empty"):
+            self.list_empty.refresh()
 
     def _on_delivery_selected(self, row: int):
         if row < 0 or row >= len(self.deliveries):
-            self.title_lbl.setText("No delivery selected.")
-            self.info_lbl.setText("")
-            self.notes_lbl.setText("")
+            # Nothing chosen: no empty cards, just the list (and its empty state).
+            self.right_widget.setVisible(False)
             self.items_table.setRowCount(0)
             self.delete_btn.setEnabled(False)
             self.copy_note_btn.setEnabled(False)
             return
+        self.right_widget.setVisible(True)
 
         d_summary = self.deliveries[row]
         delivery = self.store.get_delivery(d_summary.id)
@@ -394,10 +337,10 @@ class DeliveryBatchesDialog(QDialog):
 
         self.title_lbl.setText(f"{delivery.name}")
         self.info_lbl.setText(
-            f"Date: {delivery.delivery_date} | Recipient: {delivery.recipient or 'Client VFX'} | "
-            f"Sent by: {delivery.created_by or 'Production'}"
+            f"{_date_text(delivery.delivery_date)} · to {delivery.recipient or 'the client'} · "
+            f"sent by {delivery.created_by or 'production'}"
         )
-        self.notes_lbl.setText(f"Notes: {delivery.notes}" if delivery.notes else "No notes provided.")
+        self.notes_lbl.setText(delivery.notes if delivery.notes else "No notes.")
 
         self.items_table.setRowCount(len(delivery.items))
         for r_idx, item in enumerate(delivery.items):
@@ -424,13 +367,19 @@ class DeliveryBatchesDialog(QDialog):
 
         d = self.deliveries[row]
         ans = QMessageBox.question(
-            self, "Confirm Delete",
+            self, "Delete delivery",
             f"Delete delivery package '{d.name}'? This will not delete the versions themselves.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if ans == QMessageBox.StandardButton.Yes:
-            self.store.delete_delivery(d.id)
+            try:
+                ok = self.store.delete_delivery(d.id)
+            except PermissionError as exc:
+                QMessageBox.warning(self, "Delete delivery", str(exc))
+                return
+            if not ok:
+                QMessageBox.warning(self, "Delete delivery", f"'{d.name}' could not be deleted.")
             self.refresh()
 
     def _on_copy_note_clicked(self):
@@ -442,4 +391,6 @@ class DeliveryBatchesDialog(QDialog):
         note = self.store.generate_delivery_note(d.id)
         clipboard = QApplication.clipboard()
         clipboard.setText(note)
-        QMessageBox.information(self, "Copied", "Delivery note copied to clipboard.")
+        self.copy_note_btn.setText("Copied")
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(1500, lambda: self.copy_note_btn.setText("Copy delivery note"))
