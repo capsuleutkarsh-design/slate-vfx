@@ -496,12 +496,33 @@ class HomeLoaderWorker(QThread):
             % placeholders, tuple(sorted(REVIEW_STATUSES)), fetch="one"))
 
     def _figure_open_tickets(self):
-        # Through the service desk's own idea of "open", whatever the casing a
-        # status was stored in ('open' was not counted).
-        from slate.core.domain.service_desk import is_open
-        rows = self._db().execute_query(
-            "SELECT status, COUNT(*) AS c FROM it_tickets GROUP BY status", fetch="all") or []
-        return sum(_count(r, 1) for r in rows if is_open(_value(r, "status", 0)))
+        # The IT desk's own count (TicketRepository), so Home and the queue
+        # agree on "open" whatever the casing a status was stored in.
+        from slate.core.infra.ticket_repository import TicketRepository
+        return TicketRepository(self._db()).open_count()
+
+    def _figure_licence_renewals(self):
+        """
+        Licences expired or renewing inside the studio's renewal window, so a
+        renewal is not missed because nobody opened the Licences screen.
+        The names go in the tooltip.
+        """
+        from slate.core.domain import licence_compliance as lc
+        from slate.core.infra.licence_repository import LicenceRepository
+        db = self._db()
+        window = lc.renewal_window(db)
+        today = db_today(db)
+        due = []
+        for row in LicenceRepository(db).licences():
+            left = lc.days_until(row.get("expiration_date"), today)
+            if lc.is_renewal_due(left, window):
+                due.append((left, str(row.get("software_name") or "A licence")))
+        due.sort()
+        lines = ["%s - %s" % (name, lc.renewal_phrase(left)) for left, name in due[:6]]
+        if len(due) > 6:
+            lines.append("… and %d more on the Licences screen" % (len(due) - 6))
+        tip = "\n".join(lines)
+        return {"value": len(due), "tip": tip, "warn": bool(due)}
 
     def _figure_upcoming_leave(self):
         # Starting after today and within two weeks - not leave already
@@ -537,6 +558,7 @@ FIGURE_LABELS = {
     "people_online": "People online",
     "pending_leave": "Leave to decide",
     "open_tickets": "Open IT tickets",
+    "licence_renewals": "Licences to renew",
     "upcoming_leave": "Leave in the next 2 weeks",
 }
 
@@ -639,6 +661,16 @@ class HomeTab(QWidget):
                     figures.append("open_tickets")
             except Exception as exc:
                 logging.debug("Home: IT check skipped: %s", exc)
+        # Licence renewals coming up, for whoever can see Licences (IT, or a
+        # Production Head with view_licences) - in any app that has the screen.
+        try:
+            from slate.core.domain.workplace_access import can_view_licences
+            sees = "Licences" in tabs if not no_window else can_view_licences(roles, [])
+        except Exception as exc:
+            logging.debug("Home: licence check skipped: %s", exc)
+            sees = False
+        if sees:
+            figures.append("licence_renewals")
         return figures
 
     def stat_figures(self):
@@ -671,9 +703,17 @@ class HomeTab(QWidget):
             if value is None:
                 label.setText("n/a")
                 label.setToolTip("This figure could not be read just now.")
-            else:
-                label.setText(str(value))
-                label.setToolTip("")
+                continue
+            # A figure may come with a tooltip and a warning tone.
+            tip, warn = "", False
+            if isinstance(value, dict):
+                tip, warn = value.get("tip") or "", bool(value.get("warn"))
+                value = value.get("value")
+            label.setText(str(value))
+            label.setToolTip(tip)
+            label.setStyleSheet(
+                f"background: transparent; border: none; color: {Gate.WARN if warn else Gate.OK}; "
+                "font-size: 26px; font-weight: 800;")
 
     # ------------------------------------------------------------ build
     def init_ui(self):

@@ -223,3 +223,51 @@ def test_the_real_queries_run_on_postgresql(pg_db):
     assert figures["open_tickets"] == 0
     assert worker.todays_punch() == {}
     assert worker.leave_pulse() == []
+
+
+def test_open_tickets_come_from_the_it_desk(monkeypatch):
+    """SHL-095: Home counts through TicketRepository.open_count, the desk's own rule."""
+    from slate.core.infra.ticket_repository import TicketRepository
+    db = FakeDB({"FROM it_tickets": [("open", 2), ("Waiting on You", 1), ("closed", 5)]})
+    assert TicketRepository(db).open_count() == 3
+    calls = []
+    monkeypatch.setattr(TicketRepository, "open_count", lambda self: calls.append(self.db) or 7)
+    worker = HomeLoaderWorker("x", None, figures=("open_tickets",), db=db)
+    assert worker.telemetry() == {"open_tickets": 7} and calls == [db]
+
+
+def test_licence_renewals_on_home(monkeypatch, qtbot):
+    """IT-067: licences expired or renewing in the window, names in the tooltip."""
+    from slate.core.domain import licence_compliance as lc
+    monkeypatch.setattr(home_tab, "db_today", lambda db=None: date(2026, 10, 2))
+    monkeypatch.setattr(lc, "renewal_window", lambda db=None: 30)
+    db = FakeDB({"FROM software_licenses": [
+        {"id": 1, "software_name": "Nuke", "expiration_date": "2026-10-12"},
+        {"id": 2, "software_name": "Maya", "expiration_date": "2026-09-30"},
+        {"id": 3, "software_name": "Houdini", "expiration_date": "2027-06-01"},
+        {"id": 4, "software_name": "Resolve", "expiration_date": None}]})
+    worker = HomeLoaderWorker("x", None, figures=("licence_renewals",), db=db)
+    value = worker.telemetry()["licence_renewals"]
+    assert value["value"] == 2 and value["warn"]
+    assert value["tip"].splitlines() == ["Maya - Expired 2 days ago", "Nuke - Renews in 10 days"]
+
+    tab = HomeTab(user_data={"username": "it1", "roles": ["IT"]}, mode="ops")
+    qtbot.addWidget(tab)
+    assert "licence_renewals" in tab.stat_labels
+    tab._update_telemetry_ui({"licence_renewals": value})
+    label = tab.stat_labels["licence_renewals"]
+    assert label.text() == "2" and "Nuke" in label.toolTip()
+
+
+def test_licence_figure_only_for_people_who_see_licences(qtbot, mock_db):
+    from slate.gui.studio_ops_window import StudioOpsWindow
+    win = StudioOpsWindow(dict(OPS))
+    qtbot.addWidget(win)
+    home = HomeTab(user_data=OPS, main_window=win, mode="ops")
+    qtbot.addWidget(home)
+    assert ("Licences" in home._available_tabs()) == ("licence_renewals" in home.figures)
+    assert "licence_renewals" in home.figures                    # a developer sees Licences
+    artist = dict(ARTIST)
+    home2 = HomeTab(user_data=artist, mode="ops")                 # no window: by the role
+    qtbot.addWidget(home2)
+    assert "licence_renewals" not in home2.figures
