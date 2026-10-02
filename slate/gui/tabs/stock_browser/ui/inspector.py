@@ -366,12 +366,17 @@ class StockInspectorPanel(QWidget):
     def set_favorite(self, on: bool):
         self.btn_favorite.setChecked(bool(on))
         self.btn_favorite.setText("Favourite" if not on else "In favourites")
+        if self.width() < 400:
+            self.btn_favorite.setText("")
+            self.btn_favorite.setToolTip(self._favorite_label())
         self.btn_favorite.setIcon(draw_icon("star-filled" if on else "star",
                                             Gate.WARN if on else Gate.TEXT, 16))
 
     def set_pick(self, on: bool):
         self.btn_pick.setChecked(bool(on))
         self.btn_pick.setText("Studio pick" if not on else "Picked")
+        if self.width() < 400:
+            self.btn_pick.setText("")
 
     def _show_preview(self, asset, autoplay):
         path = asset_path(asset)
@@ -444,6 +449,20 @@ class StockInspectorPanel(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.set_compact_mode(self.width() < 320)
+        self._fit_action_row()
+
+    def _fit_action_row(self):
+        """Narrow panel: the three action buttons keep their icons and tooltips only."""
+        narrow = self.width() < 400
+        for button, label in ((self.btn_favorite, self._favorite_label()),
+                              (self.btn_pick, "Picked" if self.btn_pick.isChecked() else "Studio pick"),
+                              (self.btn_tags, "Edit tags…")):
+            button.setText("" if narrow else label)
+            if narrow:
+                button.setToolTip(label)
+
+    def _favorite_label(self):
+        return "In favourites" if self.btn_favorite.isChecked() else "Favourite"
 
     def set_compact_mode(self, compact: bool):
         """Reduce vertical pressure for narrow inspector widths."""
