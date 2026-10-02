@@ -5,9 +5,7 @@ from copy import deepcopy
 from typing import List, Optional, Dict
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from slate.core.infra.consistency_protocol import CrossStoreConsistencyProtocol, StoreAction
 from slate.utils.security import SecurityValidator
-from slate.utils.safe_json import SafeJsonIO
 
 @dataclass
 class ProjectConfig:
@@ -35,6 +33,9 @@ def _default_folder_template() -> Dict[str, str]:
     template = {
         "scan": "05_Reels/{reel}/{shot}/01_Scan",
         "deliver": "05_Reels/{reel}/{shot}/08_Deliver",
+        # Open Output, Quick Look and auto-publish ask for "output"; new
+        # projects used to have only "deliver", so they found nothing.
+        "output": "05_Reels/{reel}/{shot}/08_Deliver",
     }
     for dept in load_departments():
         if dept.folder:
@@ -133,121 +134,84 @@ def _extend_mapping_with_departments(mapping: Dict[str, str]) -> Dict[str, str]:
 
 
 class ProjectManager:
+    """
+    The dashboard's projects - in the database (tracking_projects), only.
+
+    Adding, editing, archiving or deleting a project used to write
+    projects.json inside the install folder as well: on an installed build
+    that folder is read-only, and each machine kept its own copy that nobody
+    else saw. The studio-wide lists (shot types, priorities) are studio
+    settings now (shot_status); the packaged projects.json is only read for the
+    Excel template's auxiliary sheets, and never written.
+
+    There is no built-in sample project any more (it pointed at a 42 MB client
+    sheet shipped inside the package).
+    """
+
     def __init__(self):
         self.config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config")
         self.config_path = os.path.join(self.config_dir, "projects.json")
-        self.consistency = CrossStoreConsistencyProtocol(scope="project_manager")
         self.projects: Dict[str, ProjectConfig] = {}
         self.extended_sheets = {}
         self.shot_types = []
         self.priority_levels = []
         self.departments = []
         self.feedback_sources = []
-        self.default_project = None
+        # Why the last change was refused, for the person who asked for it.
+        self.last_error = ""
         self.load_config()
-        
+
+    @property
+    def default_project(self):
+        """No sample project is opened by default any more (the dashboard remembers yours)."""
+        return None
+
     def load_config(self):
-        # HYBRID LOAD: Try DB first, fall back to JSON
-        # This allows seamless transition.
         from slate.core.infra.database_manager import database_manager
-        
-        db_projects = database_manager.get_all_tracking_projects()
-        if db_projects:
-            logging.info(f"ProjectManager: Loaded {len(db_projects)} projects from DB.")
-            for p_data in db_projects:
-                try:
-                    # Convert dict to ProjectConfig
-                    # p_data is the dict from JSON
-                    # We can use dacite or just simple constructor
-                    
-                    # Ensure defaults for missing fields
-                    p_code = p_data.get('code')
-                    if p_code:
-                         # Filter out unknown fields if config changed
-                        valid_fields = ProjectConfig.__dataclass_fields__.keys()
-                        filtered = {k: v for k, v in p_data.items() if k in valid_fields}
-                        self.projects[p_code] = ProjectConfig(**filtered)
-                except Exception as e:
-                    logging.exception(f"Error loading project from DB: {e}")
 
-            # Also load global settings if stored in DB (Not yet, still in JSON for now)
-            # For now, we still read the JSON for the "shared" lists (departments, etc)
-            # In "Config Consolidation" phase we will move these too.
-            self._load_json_aux_data()
-            return
+        db_projects = database_manager.get_all_tracking_projects() or []
+        valid_fields = ProjectConfig.__dataclass_fields__.keys()
+        for p_data in db_projects:
+            try:
+                p_code = p_data.get('code')
+                if p_code:
+                    filtered = {k: v for k, v in p_data.items() if k in valid_fields}
+                    self.projects[p_code] = ProjectConfig(**filtered)
+            except Exception as e:
+                logging.exception(f"Error loading project from DB: {e}")
+        logging.info("ProjectManager: %d projects from the database.", len(self.projects))
+        self._load_aux_data()
 
-        # Fallback to JSON
-        if not os.path.exists(self.config_path):
-            self._create_default_config()
-            return
-            
-        try:
-            with open(self.config_path, "r") as f:
-                data = json.load(f)
-                
-            # Load projects
-            for code, proj_data in data.get("projects", {}).items():
-                self.projects[code] = ProjectConfig(
-                    code=code,
-                    name=proj_data.get("name", code),
-                    project_number=proj_data.get("project_number", 0),
-                    excel_path=proj_data.get("excel_path", ""),
-                    local_excel_path=proj_data.get("local_excel_path", ""),
-                    sheet_name=proj_data.get("sheet_name", "MASTER"),
-                    header_row=proj_data.get("header_row", 2),
-                    data_start_row=proj_data.get("data_start_row", 3),
-                    folder_base=proj_data.get("folder_base", ""),
-                    folder_template=proj_data.get("folder_template", {}),
-                    column_mapping=proj_data.get("column_mapping", {}),
-                    status=proj_data.get("status", "active")
-                )
-            
-            self._populate_aux_data(data)
-            
-        except Exception as e:
-            logging.exception(f"Error loading config: {e}")
-            self._create_default_config()
-
-    def _load_json_aux_data(self):
-        """Helper to load shared lists from JSON even if projects came from DB."""
+    def _load_aux_data(self):
+        """Shared lists: the studio's settings, and the packaged sheet layout."""
+        from slate.core.domain import shot_status
+        from slate.core.domain.departments import load_departments
+        data = {}
         if os.path.exists(self.config_path):
             try:
-                with open(self.config_path, "r") as f:
-                    data = json.load(f)
-                self._populate_aux_data(data)
+                with open(self.config_path, "r", encoding="utf-8") as f:
+                    data = json.load(f) or {}
             except (OSError, json.JSONDecodeError, TypeError) as e:
-                logging.error(f"ProjectManager: Failed to load auxiliary JSON config: {e}")
+                logging.error(f"ProjectManager: could not read the packaged sheet layout: {e}")
+        self.extended_sheets = data.get("extended_sheets", {})
+        self.shot_types = shot_status.shot_types()
+        self.priority_levels = [value for value, _label in shot_status.priorities()]
+        self.departments = [d.name for d in load_departments()]
+        self.feedback_sources = data.get("feedback_sources", ["Client", "Director", "Internal", "Slate"])
+
+    # Kept for older callers.
+    def _load_json_aux_data(self):
+        self._load_aux_data()
 
     def _populate_aux_data(self, data):
-        self.extended_sheets = data.get("extended_sheets", {})
-        self.shot_types = data.get("shot_types", ["Prep", "2D Comp", "2.5D Comp", "CG Comp", "AI Shot"])
-        self.priority_levels = data.get("priority_levels", [0, 1, 2, 3])
-        self.departments = data.get("departments", ["Comp", "Roto", "Prep", "DMP", "CG", "MGFX"])
-        self.feedback_sources = data.get("feedback_sources", ["Client", "Director", "Internal", "Slate"])
-        self.default_project = data.get("default_project", "AK74")
-    
-    def _create_default_config(self):
-        base_dir = os.path.dirname(os.path.dirname(__file__))
-        ak74_path = os.path.join(base_dir, "AK74_DELIVERY_SHEET.xlsx")
-        
-        self.projects["AK74"] = ProjectConfig(
-            code="AK74",
-            name="P038_AK74",
-            project_number=38,
-            excel_path=ak74_path,
-            local_excel_path="AK74_DELIVERY_SHEET.xlsx",
-            sheet_name="MASTER",
-            header_row=2,
-            data_start_row=3
-        )
-        self.default_project = "AK74"
-    
+        self._load_aux_data()
+
     def get_all_projects(self) -> List[ProjectConfig]:
-        return sorted(self.projects.values(), key=lambda p: p.project_number)
-    
+        return sorted(self.projects.values(), key=lambda p: (p.project_number, p.code))
+
     def get_project(self, code: str) -> Optional[ProjectConfig]:
         return self.projects.get(code)
-    
+
     def ensure_excel_path(self, code: str) -> str:
         """
         Make sure a project has somewhere for its passbook, and return it.
@@ -279,219 +243,236 @@ class ProjectManager:
         project = self.get_project(code)
         if not project:
             return ""
-        
-        # Try server path first
         if project.excel_path and os.path.exists(project.excel_path):
             return project.excel_path
-        
-        # Fall back to local path
         if project.local_excel_path:
             base_dir = os.path.dirname(os.path.dirname(__file__))
             local_path = os.path.join(base_dir, project.local_excel_path)
             if os.path.exists(local_path):
                 return local_path
-
         return project.excel_path
 
     @staticmethod
     def _save_project_to_db(project: ProjectConfig) -> None:
         from slate.core.infra.database_manager import database_manager
 
-        config_json = json.dumps(asdict(project))
-        save_ok = database_manager.save_tracking_project(project.code, project.name, config_json)
-        if save_ok is False:
-            raise RuntimeError(f"Failed to save project {project.code} to DB")
+        existing = database_manager.get_tracking_project(project.code) or {}
+        config = dict(existing) if isinstance(existing, dict) else {}
+        # Keep what other screens store with the project (the default column
+        # layout) - only the project's own fields are replaced.
+        config.update(asdict(project))
+        save_ok = database_manager.save_tracking_project(project.code, project.name, json.dumps(config))
+        if not save_ok:
+            raise RuntimeError(getattr(save_ok, "error", "") or f"Failed to save project {project.code}")
 
-    @staticmethod
-    def _delete_project_from_db(code: str) -> None:
-        from slate.core.infra.database_manager import database_manager
+    def add_project(self, code: str, name: str, excel_path: str, folder_base: str,
+                    sheet_name: str = "MASTER", header_row: int = 2, data_start_row: int = 3,
+                    column_mapping: dict = None):
+        """Creates a new project in the database. Returns it, or None (see last_error)."""
+        self.last_error = ""
+        code = str(code or "").strip()
+        if not code:
+            self.last_error = "A project needs a code."
+            return None
+        if code in self.projects:
+            self.last_error = f"There is already a project {code}."
+            return None
+        next_num = max((p.project_number for p in self.projects.values()), default=0) + 1
 
-        deleted = database_manager.delete_tracking_project(code)
-        if deleted is False:
-            raise RuntimeError(f"Failed to delete project {code} from DB")
-    
-    def add_project(self, code: str, name: str, excel_path: str, folder_base: str, 
-                   sheet_name: str = "MASTER", header_row: int = 2, data_start_row: int = 3,
-                   column_mapping: dict = None):
-        """Creates a new project configuration and saves it."""
-        # Determine next project number
-        next_num = 1
-        if self.projects:
-            next_num = max(p.project_number for p in self.projects.values()) + 1
-            
-        default_mapping = default_column_mapping()
-
-        if column_mapping is None:
-            column_mapping = default_mapping
-
-        # SECURITY VALIDATION
-        excel_valid, _, excel_err = SecurityValidator.validate_file_path(excel_path)
-        if not excel_valid:
-            logging.warning(f"Security Warning: Invalid Excel Path: {excel_err}")
-            # We might still proceed if it's a new file to be created, but basic safety needed
-        
-        folder_valid, folder_err = SecurityValidator.validate_directory_path(Path(folder_base), must_exist=False)
-        if not folder_valid:
-             logging.warning(f"Security Warning: Invalid Folder Base: {folder_err}")
+        if excel_path:
+            excel_valid, _, excel_err = SecurityValidator.validate_file_path(excel_path)
+            if not excel_valid:
+                logging.warning(f"Security Warning: Invalid Excel Path: {excel_err}")
+        if folder_base:
+            folder_valid, folder_err = SecurityValidator.validate_directory_path(
+                Path(folder_base), must_exist=False)
+            if not folder_valid:
+                logging.warning(f"Security Warning: Invalid Folder Base: {folder_err}")
 
         new_project = ProjectConfig(
             code=code,
-            name=name,
+            name=name or code,
             project_number=next_num,
-            excel_path=str(excel_path), # Normalize
-            folder_base=str(folder_base),
+            excel_path=str(excel_path or ""),
+            folder_base=str(folder_base or ""),
             sheet_name=sheet_name,
             header_row=header_row,
             data_start_row=data_start_row,
-            column_mapping=column_mapping or default_mapping,
+            column_mapping=column_mapping or default_column_mapping(),
             # Folder paths come from the department registry, so they always
             # match the folders Build & Ingest actually creates.
-            folder_template=_default_folder_template()
+            folder_template=_default_folder_template(),
         )
-        projects_before = deepcopy(self.projects)
-        existing_project = deepcopy(self.projects.get(code)) if code in self.projects else None
-        self.projects[code] = new_project
-
-        def apply_db() -> None:
+        try:
             self._save_project_to_db(new_project)
-
-        def rollback_db() -> None:
-            if existing_project is not None:
-                self._save_project_to_db(existing_project)
-            else:
-                self._delete_project_from_db(code)
-
-        def apply_json() -> None:
-            if not self.save_config():
-                raise RuntimeError("Failed writing projects.json")
-
-        def rollback_json() -> None:
-            self.projects = deepcopy(projects_before)
-            if not self.save_config():
-                raise RuntimeError("Failed rolling back projects.json")
-
-        result = self.consistency.execute(
-            operation="project.add",
-            actions=[
-                StoreAction("tracking_projects_db", apply_db, rollback_db),
-                StoreAction("projects_json", apply_json, rollback_json),
-            ],
-            metadata={"code": code, "name": name},
-        )
-        if not result.success:
-            self.projects = deepcopy(projects_before)
-            self.save_config()
-            logging.info(
-                f"ProjectManager: Cross-store add failed ({result.failed_store}): {result.error}"
-            )
+        except Exception as exc:
+            self.last_error = str(exc)
+            logging.error("ProjectManager: add %s failed: %s", code, exc)
             return None
-
+        self.projects[code] = new_project
         return new_project
-        
-    def update_project(self, code: str, name: str, excel_path: str, folder_base: str, 
-                      sheet_name: str = None, header_row: int = None, data_start_row: int = None):
-        """Updates an existing project configuration."""
-        if code not in self.projects:
-            return False
 
-        projects_before = deepcopy(self.projects)
-        previous_project = deepcopy(self.projects[code])
+    def update_project(self, code: str, name: str, excel_path: str, folder_base: str,
+                       sheet_name: str = None, header_row: int = None, data_start_row: int = None):
+        """Updates an existing project in the database."""
+        self.last_error = ""
+        if code not in self.projects:
+            self.last_error = f"There is no project {code}."
+            return False
+        previous = deepcopy(self.projects[code])
         project = self.projects[code]
         project.name = name
-        project.excel_path = str(excel_path)
-        project.folder_base = str(folder_base)
-        
-        # New Feature: Optional Sheet/Row Updates
+        project.excel_path = str(excel_path or "")
+        project.folder_base = str(folder_base or "")
         if sheet_name:
             project.sheet_name = sheet_name
         if header_row is not None:
             project.header_row = int(header_row)
         if data_start_row is not None:
             project.data_start_row = int(data_start_row)
-
-        def apply_db() -> None:
+        if not project.folder_template:
+            project.folder_template = _default_folder_template()
+        try:
             self._save_project_to_db(project)
-
-        def rollback_db() -> None:
-            self._save_project_to_db(previous_project)
-
-        def apply_json() -> None:
-            if not self.save_config():
-                raise RuntimeError("Failed writing projects.json")
-
-        def rollback_json() -> None:
-            self.projects = deepcopy(projects_before)
-            if not self.save_config():
-                raise RuntimeError("Failed rolling back projects.json")
-
-        result = self.consistency.execute(
-            operation="project.update",
-            actions=[
-                StoreAction("tracking_projects_db", apply_db, rollback_db),
-                StoreAction("projects_json", apply_json, rollback_json),
-            ],
-            metadata={"code": code, "name": name},
-        )
-        if not result.success:
-            self.projects = deepcopy(projects_before)
-            self.save_config()
-            logging.info(
-                f"ProjectManager: Cross-store update failed ({result.failed_store}): {result.error}"
-            )
+        except Exception as exc:
+            self.projects[code] = previous
+            self.last_error = str(exc)
+            logging.error("ProjectManager: update %s failed: %s", code, exc)
             return False
-
         return True
 
-    def delete_project(self, code: str, roles=None) -> bool:
+    def set_project_folder_base(self, code: str, path: str) -> bool:
         """
-        Deletes a project from config and database.
+        Point a project at its root folder, in the database.
 
-        `roles` are the acting person's: when given, the delete_project ability
-        is checked here too, not only by the menu that offers it.
+        This used to be written only to projects.json in the install folder,
+        so it was lost on the next start, and it filled an empty folder template
+        with names (02_Roto, 04_Comp, 09_Output) the studio template does not
+        use - the Open folder actions then pointed at folders that do not exist.
         """
+        self.last_error = ""
+        project = self.get_project(code)
+        if not project:
+            self.last_error = f"There is no project {code}."
+            return False
+        previous = deepcopy(project)
+        project.folder_base = str(path)
+        if not project.folder_template:
+            project.folder_template = _default_folder_template()
+        else:
+            for key, value in _default_folder_template().items():
+                project.folder_template.setdefault(key, value)
+        try:
+            self._save_project_to_db(project)
+        except Exception as exc:
+            self.projects[code] = previous
+            self.last_error = str(exc)
+            return False
+        return True
+
+    # ------------------------------------------------------------ archive / delete
+    def _check_delete_right(self, code, roles) -> bool:
         if roles is not None:
             from slate.core.domain.access import can_delete_project
             if not can_delete_project(roles):
-                logging.warning("ProjectManager: delete of %s refused for roles %s", code, roles)
+                logging.warning("ProjectManager: archive/delete of %s refused for roles %s", code, roles)
+                self.last_error = "You don't have permission to archive or delete a project."
                 return False
+        return True
+
+    @staticmethod
+    def _audit(code, by, action, old, new):
+        try:
+            from slate.core.infra.database_manager import database_manager
+            database_manager.log_change_event(code, "project", code, by or "", action,
+                                              "project", old, new)
+        except Exception as exc:
+            logging.debug("Project %s not written to history: %s", action, exc)
+
+    def archive_project(self, code: str, roles=None, by: str = "") -> bool:
+        """
+        Hide a project from every list. Its shots, tasks and history stay where
+        they are, and restore_project brings it back. This is what Delete was
+        used for - and Delete removed the change history with it.
+        """
+        self.last_error = ""
+        if not self._check_delete_right(code, roles):
+            return False
         if code not in self.projects:
+            self.last_error = f"There is no project {code}."
             return False
-        
-        projects_before = deepcopy(self.projects)
-        deleted_project = deepcopy(self.projects[code])
-        del self.projects[code]
-
-        def apply_db() -> None:
-            self._delete_project_from_db(code)
-
-        def rollback_db() -> None:
-            self._save_project_to_db(deleted_project)
-
-        def apply_json() -> None:
-            if not self.save_config():
-                raise RuntimeError("Failed writing projects.json")
-
-        def rollback_json() -> None:
-            self.projects = deepcopy(projects_before)
-            if not self.save_config():
-                raise RuntimeError("Failed rolling back projects.json")
-
-        result = self.consistency.execute(
-            operation="project.delete",
-            actions=[
-                StoreAction("tracking_projects_db", apply_db, rollback_db),
-                StoreAction("projects_json", apply_json, rollback_json),
-            ],
-            metadata={"code": code},
-        )
-        if not result.success:
-            self.projects = deepcopy(projects_before)
-            self.save_config()
-            logging.info(
-                f"ProjectManager: Cross-store delete failed ({result.failed_store}): {result.error}"
-            )
+        from slate.core.infra.database_manager import database_manager
+        result = database_manager.execute_update(
+            "UPDATE tracking_projects SET active = 0 WHERE code = %s", (code,))
+        if not getattr(result, "changed", result):
+            self.last_error = getattr(result, "error", "") or "The database did not archive it."
             return False
+        self.projects.pop(code, None)
+        self._audit(code, by, "ARCHIVE", "active", "archived")
+        return True
 
+    def restore_project(self, code: str, roles=None, by: str = "") -> bool:
+        self.last_error = ""
+        if not self._check_delete_right(code, roles):
+            return False
+        from slate.core.infra.database_manager import database_manager
+        result = database_manager.execute_update(
+            "UPDATE tracking_projects SET active = 1 WHERE code = %s", (code,))
+        if not getattr(result, "changed", result):
+            self.last_error = getattr(result, "error", "") or "There is no archived project by that code."
+            return False
+        data = database_manager.get_tracking_project(code) or {}
+        valid_fields = ProjectConfig.__dataclass_fields__.keys()
+        try:
+            self.projects[code] = ProjectConfig(**{k: v for k, v in data.items() if k in valid_fields})
+        except Exception:
+            self.projects[code] = ProjectConfig(code=code, name=data.get("name", code))
+        self._audit(code, by, "RESTORE", "archived", "active")
+        return True
+
+    @staticmethod
+    def archived_projects() -> List[dict]:
+        """[{'code', 'name'}] of archived projects."""
+        from slate.core.infra.database_manager import database_manager
+        rows = database_manager.execute_query(
+            "SELECT code, name, active FROM tracking_projects ORDER BY code") or []
+        out = []
+        for row in rows:
+            row = dict(row)
+            active = str(row.get("active")).strip().lower()
+            if active not in ("1", "t", "true", "y", "yes"):
+                out.append({"code": row.get("code"), "name": row.get("name")})
+        return out
+
+    def delete_project(self, code: str, roles=None, by: str = "") -> bool:
+        """
+        Remove a project, its shots and their department rows for good.
+
+        `roles` are the acting person's: when given, the delete_project ability
+        is checked here too, not only by the menu that offers it. The change
+        history is kept - it is the audit trail of who did what, and it now
+        records the deletion itself.
+        """
+        self.last_error = ""
+        if not self._check_delete_right(code, roles):
+            return False
+        if code not in self.projects:
+            self.last_error = f"There is no project {code}."
+            return False
+        from slate.core.infra.database_manager import database_manager
+        from slate.core.infra.transaction import atomic
+        try:
+            with atomic(database_manager) as tx:
+                tx.write("DELETE FROM tracking_tasks WHERE shot_id IN "
+                         "(SELECT id FROM tracking_shots WHERE project_code = %s)", (code,))
+                tx.write("DELETE FROM tracking_shots WHERE project_code = %s", (code,))
+                tx.write("DELETE FROM tracking_projects WHERE code = %s", (code,), expect_rows=True)
+        except Exception as exc:
+            self.last_error = str(exc)
+            logging.error("ProjectManager: delete of %s failed: %s", code, exc)
+            return False
+        self.projects.pop(code, None)
+        self._audit(code, by, "DELETE", "project", "deleted permanently")
         return True
 
     def get_folder_path(self, code: str, department: str, reel: str, shot: str) -> str:
@@ -601,50 +582,8 @@ class ProjectManager:
             return False
     
     def save_config(self) -> bool:
-        data = {
-            "projects": {
-                code: {
-                    "name": p.name,
-                    "project_number": p.project_number,
-                    "excel_path": p.excel_path,
-                    "local_excel_path": p.local_excel_path,
-                    "sheet_name": p.sheet_name,
-                    "header_row": p.header_row,
-                    "data_start_row": p.data_start_row,
-                    "folder_base": p.folder_base,
-                    "folder_template": p.folder_template,
-                    "column_mapping": p.column_mapping,
-                    "status": p.status
-                } for code, p in self.projects.items()
-            },
-            "extended_sheets": self.extended_sheets,
-            "shot_types": self.shot_types,
-            "priority_levels": self.priority_levels,
-            "departments": self.departments,
-            "feedback_sources": self.feedback_sources,
-            "default_project": self.default_project
-        }
-        try:
-            return SafeJsonIO.save_json(Path(self.config_path), data, indent=4)
-        except Exception as e:
-            logging.exception(f"Error saving config: {e}")
-            return False
-
-    def set_project_folder_base(self, code: str, path: str):
-        project = self.get_project(code)
-        if project:
-            project.folder_base = str(path)
-            # Ensure templates exist if empty
-            if not project.folder_template:
-                project.folder_template = {
-                    "scan": "05_Reels/{reel}/{shot}/01_Scan",
-                    "roto": "05_Reels/{reel}/{shot}/02_Roto",
-                    "prep": "05_Reels/{reel}/{shot}/03_Prep",
-                    "comp": "05_Reels/{reel}/{shot}/04_Comp",
-                    "dmp":  "05_Reels/{reel}/{shot}/05_DMP",
-                    "output": "05_Reels/{reel}/{shot}/09_Output"
-                }
-            self.save_config()
+        """Projects live in the database only; nothing is written to the install folder."""
+        return True
 
     def get_column_index(self, code: str, field_name: str) -> int:
         project = self.get_project(code)

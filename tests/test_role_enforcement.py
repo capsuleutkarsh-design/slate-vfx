@@ -153,7 +153,7 @@ class TestALeadIsConfinedToTheirDepartment:
 
         editable = set()
         for col, (key, _label, _getter) in enumerate(model.COLUMNS):
-            row = next(i for i, it in enumerate(model.display_items) if it.get("shot"))
+            row = 0
             if model.flags(model.index(row, col)) & Qt.ItemIsEditable:
                 editable.add(key)
 
@@ -182,8 +182,7 @@ class TestWhatIsNotStoredAndNotEditable:
         shot = Shot(shot_name="SH010", first_frame=1001, last_frame=1048)
         model.update_data([shot])
         col = next(i for i, c in enumerate(model.COLUMNS) if c[0] == "plate_range")
-        row = next(i for i, it in enumerate(model.display_items) if it.get("shot"))
-        index = model.index(row, col)
+        index = model.index(0, col)
 
         assert not (model.flags(index) & Qt.ItemIsEditable)
         assert model.setData(index, "5", Qt.ItemDataRole.EditRole) is False

@@ -17,7 +17,24 @@ def _shot_key(reel, shot_name) -> Tuple[str, str]:
 
 
 class StaleDataError(Exception):
-    """Raised when trying to save a shot that has been modified by another user."""
+    """
+    Raised when a save would overwrite somebody else's newer save.
+
+    ``conflicts`` says which shots, so the dashboard can show them - reel
+    included - and re-apply only the person's own edits:
+    [{"shot_id", "shot_name", "reel", "local_version", "db_version"}].
+    """
+
+    def __init__(self, message: str = "", conflicts=None):
+        super().__init__(message or "Someone else saved these shots after you opened them.")
+        self.conflicts = list(conflicts or [])
+
+
+def _conflict_message(conflicts) -> str:
+    names = [f"{c['shot_name']} ({c['reel']})" if c.get("reel") else c["shot_name"]
+             for c in conflicts]
+    shown = ", ".join(names[:5]) + (f" and {len(names) - 5} more" if len(names) > 5 else "")
+    return f"Someone else saved {shown} after you opened {'it' if len(names) == 1 else 'them'}."
 
 
 class SQLiteHandler:
@@ -34,14 +51,24 @@ class SQLiteHandler:
         user_role: str = "artist",
         department_family: str = "",
         username: str = "",
+        actor_identities=None,
     ):
         self.project_code = project_code
+        # Why the last write was refused, for the person who asked for it.
+        self.last_error = ""
         # The numeric id is kept for callers that still pass it, but history
         # is written under the username - the identity the rest of the app
         # uses. It used to be "get_user_id(display name) or 1", so any
         # mismatch recorded the admin as the author of the change.
         self.user_id = int(user_id) if str(user_id or "").strip().isdigit() else None
         self.username = str(username or "").strip()
+        # Every name the person making the change answers to: nobody is
+        # notified about their own change.
+        self.actor_identities = {
+            str(i).strip().lower() for i in (actor_identities or []) if str(i).strip()
+        }
+        if self.username:
+            self.actor_identities.add(self.username.lower())
         # The department a scoped role (a lead) is confined to. Empty means
         # the person's job title named no department, so a scoped role can
         # edit nothing until an admin sets one.
@@ -168,17 +195,18 @@ class SQLiteHandler:
         if not field_name:
             return None, False
 
+        # A shot's status and artist are its own. They used to be copied into
+        # the Comp department here (and only here - the grid left Comp alone),
+        # so what Comp showed depended on which screen made the change.
         if field_name in {"status", "overall_status"}:
             old_val = payload.get("status")
             payload["status"] = value
-            self._payload_department(payload, "comp")["status"] = value
             return old_val, old_val != value
 
         if field_name in {"assigned_artist", "artist"}:
             old_val = payload.get("assigned_artist")
             new_value = value or ""
             payload["assigned_artist"] = new_value
-            self._payload_department(payload, "comp")["artist"] = new_value
             return old_val, old_val != new_value
 
         if field_name in {"curr_version", "version"}:
@@ -268,23 +296,41 @@ class SQLiteHandler:
             return None
         return key, leaf
 
-    def _notify_assignment(self, shot_name: str, old_artist: str, new_artist: str, dept_key: str = "comp"):
-        if not self.notifier:
-            return
-        if new_artist and new_artist != old_artist:
-            try:
-                msg = f"You have been assigned to: {shot_name} ({dept_key.upper()})"
-                self.notifier.add_notification(new_artist, msg, "assignment")
-            except Exception as e:
-                logging.debug(f"Notification failed for assignment: {e}")
+    def _is_actor(self, name) -> bool:
+        return str(name or "").strip().lower() in self.actor_identities
 
-    def _notify_status(self, shot_name: str, artist: str, old_status: str, new_status: str):
+    def _department_name(self, dept_key: str) -> str:
+        from slate.core.domain.departments import load_departments
+        for dept in load_departments():
+            if dept.key == dept_key:
+                return dept.name
+        return str(dept_key or "").title()
+
+    def _notify_assignment(self, shot_name: str, old_artist: str, new_artist: str, dept_key: str = ""):
         if not self.notifier:
             return
-        if not artist or old_status == new_status:
+        if not new_artist or new_artist == old_artist or self._is_actor(new_artist):
             return
         try:
-            msg = f"Shot update: {shot_name} is now {new_status}"
+            where = f" ({self._department_name(dept_key)})" if dept_key else ""
+            msg = f"You have been assigned to {shot_name}{where}."
+            self.notifier.add_notification(new_artist, msg, "assignment")
+        except Exception as e:
+            logging.debug(f"Notification failed for assignment: {e}")
+
+    def _notify_status(self, shot_name: str, artist: str, old_status: str, new_status: str,
+                       dept_key: str = ""):
+        if not self.notifier:
+            return
+        # Nobody needs telling about a status that went blank, an unchanged
+        # one, or their own change.
+        if not artist or not str(new_status or "").strip() or old_status == new_status:
+            return
+        if self._is_actor(artist):
+            return
+        try:
+            where = f" ({self._department_name(dept_key)})" if dept_key else ""
+            msg = f"{shot_name}{where} is now {new_status}."
             self.notifier.add_notification(artist, msg, "update")
         except Exception as e:
             logging.debug(f"Notification failed for status update: {e}")
@@ -332,7 +378,7 @@ class SQLiteHandler:
         old_assigned = old_data.get("assigned_artist")
         if old_assigned != shot.assigned_artist:
             self._log_change("shot", shot.shot_name, "ASSIGN", "assigned_artist", old_assigned, shot.assigned_artist, shot)
-            self._notify_assignment(shot.shot_name, old_assigned or "", shot.assigned_artist or "", "comp")
+            self._notify_assignment(shot.shot_name, old_assigned or "", shot.assigned_artist or "")
 
         old_departments = old_data.get("departments")
         if not isinstance(old_departments, dict):
@@ -361,7 +407,8 @@ class SQLiteHandler:
                     shot,
                     dept_key,
                 )
-                self._notify_status(shot.shot_name, new_dept.artist or "", old_dept_status, new_dept.status or "")
+                self._notify_status(shot.shot_name, new_dept.artist or "", old_dept_status,
+                                    new_dept.status or "", dept_key)
 
             if old_dept_artist != new_dept.artist:
                 self._log_change(
@@ -380,7 +427,35 @@ class SQLiteHandler:
         shot_tuple = (shot.shot_name, shot.status, shot.priority, self._serialize_shot(shot))
         return bool(self.db_manager.save_tracking_shots(self.project_code, [shot_tuple]))
 
-    def _write_single_shot(self, shot: Shot) -> bool:
+    def _stored_rows(self) -> Dict[Tuple[str, str], Dict[str, Any]]:
+        """Every stored shot of the project, keyed by (reel, name), as saved."""
+        rows = self.db_manager.get_tracking_shots(self.project_code) or []
+        return {
+            _shot_key(r.get("reel") or r.get("reel_episode"), r.get("shot_name")): r
+            for r in rows if r.get("shot_name")
+        }
+
+    @staticmethod
+    def find_conflicts(shots, stored) -> List[Dict[str, Any]]:
+        """Shots whose stored version moved on since they were loaded here."""
+        conflicts = []
+        for shot in shots:
+            row = stored.get(_shot_key(getattr(shot, "reel_episode", ""), shot.shot_name))
+            if not row:
+                continue
+            current_v = int(getattr(shot, "version", 0) or 0)
+            db_v = int(row.get("version") or 0)
+            if current_v != 0 and db_v != 0 and current_v != db_v:
+                conflicts.append({
+                    "shot_id": int(row.get("id") or getattr(shot, "id", -1) or -1),
+                    "shot_name": shot.shot_name,
+                    "reel": str(getattr(shot, "reel_episode", "") or ""),
+                    "local_version": current_v,
+                    "db_version": db_v,
+                })
+        return conflicts
+
+    def _write_single_shot(self, shot: Shot, stored=None, force: bool = False) -> bool:
         if not shot.shot_name:
             return False
 
@@ -388,6 +463,7 @@ class SQLiteHandler:
         if not db_row:
             created = self._insert_new_shot(shot)
             if not created:
+                self.last_error = f"{shot.shot_name} could not be added to the database."
                 return False
             db_row = self._get_db_shot_row(shot.shot_name, shot.reel_episode)
             if not db_row:
@@ -395,8 +471,10 @@ class SQLiteHandler:
             shot_id = int(db_row.get("id") or 0)
             shot.id = shot_id
             shot.version = int(db_row.get("version") or 1)
-            if shot_id:
-                self._save_tasks_for_shot(shot_id, shot)
+            if shot_id and not self._save_tasks_for_shot(shot_id, shot):
+                self.last_error = (f"{shot.shot_name} was saved, but its department assignments "
+                                   "could not be.")
+                return False
             self._log_shot_and_task_changes(shot, {})
             return True
 
@@ -405,11 +483,14 @@ class SQLiteHandler:
         db_version = int(db_row.get("version") or 0)
         current_version = int(getattr(shot, "version", 0) or 0)
 
-        if current_version != 0 and db_version != 0 and current_version != db_version:
-            raise StaleDataError(
-                f"Shot '{shot.shot_name}' has been modified by another user. Please refresh."
-            )
+        conflict = {"shot_id": shot_id, "shot_name": shot.shot_name,
+                    "reel": str(shot.reel_episode or ""),
+                    "local_version": current_version, "db_version": db_version}
+        if not force and current_version != 0 and db_version != 0 and current_version != db_version:
+            raise StaleDataError(_conflict_message([conflict]), [conflict])
 
+        # Forcing writes over whatever is stored now, but still only if nobody
+        # saves in between this read and the write.
         lock_version = db_version
         shot.version = lock_version
         json_str = self._serialize_shot(shot)
@@ -419,78 +500,82 @@ class SQLiteHandler:
             reel=shot.reel_episode,
         )
         if not success:
-            raise StaleDataError(
-                f"Shot '{shot.shot_name}' has been modified by another user. Please refresh."
-            )
+            shot.version = current_version
+            raise StaleDataError(_conflict_message([conflict]), [conflict])
 
         shot.version = lock_version + 1
-        if shot_id:
-            self._save_tasks_for_shot(shot_id, shot)
+        if shot_id and not self._save_tasks_for_shot(shot_id, shot):
+            self.last_error = (f"{shot.shot_name} was saved, but its department assignments "
+                               "could not be.")
+            self._log_shot_and_task_changes(shot, old_data)
+            return False
         self._log_shot_and_task_changes(shot, old_data)
         return True
 
-    def _write_batch_shots(self, shots: List[Shot], force: bool = False) -> bool:
+    def _write_batch_shots(self, shots: List[Shot], stored=None, force: bool = False) -> bool:
         if not shots:
             return False
+        stored = stored if stored is not None else self._stored_rows()
 
-        # Concurrency safety: detect stale shots before bulk updating
-        if not force:
-            existing_rows = self.db_manager.get_tracking_shots(self.project_code) or []
-            # Keyed by (reel, name): the reel is part of a shot's identity.
-            # There is no ('', name) fallback - that is what made SH010 in
-            # R01 and SH010 in R02 one key, and every save a "conflict".
-            db_version_map = {
-                _shot_key(r.get("reel"), r.get("shot_name")): int(r.get("version") or 0)
-                for r in existing_rows if r.get("shot_name")
-            }
-
-            stale_shots = []
-            for shot in shots:
-                current_v = int(getattr(shot, "version", 0) or 0)
-                shot_key = _shot_key(getattr(shot, "reel_episode", ""), shot.shot_name)
-                db_v = db_version_map.get(shot_key, 0)
-                if current_v != 0 and db_v != 0 and current_v != db_v:
-                    stale_shots.append(f"'{shot.shot_name}' (local v{current_v} vs db v{db_v})")
-            
-            if stale_shots:
-                conflicts_str = ", ".join(stale_shots[:5])
-                if len(stale_shots) > 5:
-                    conflicts_str += f" and {len(stale_shots) - 5} more"
-                raise StaleDataError(
-                    f"Conflict detected for {conflicts_str}. "
-                    "Another user has updated these shots in the database. Please refresh to load the latest data."
-                )
-
-        batch_data = []
+        # One row per shot: a name repeated in the payload (the same reel and
+        # name twice) would make PostgreSQL refuse the whole statement.
+        unique: Dict[Tuple[str, str], Shot] = {}
         for shot in shots:
             if not shot.shot_name:
                 continue
-            batch_data.append((shot.shot_name, shot.status, shot.priority, self._serialize_shot(shot)))
-
-        if not batch_data:
+            key = _shot_key(getattr(shot, "reel_episode", ""), shot.shot_name)
+            if key in unique:
+                logging.warning("Shot %s (%s) was in the save twice; the last copy is kept.",
+                                shot.shot_name, shot.reel_episode)
+            unique[key] = shot
+        if not unique:
             return False
 
+        batch_data = [(shot.shot_name, shot.status, shot.priority, self._serialize_shot(shot))
+                      for shot in unique.values()]
         if not self.db_manager.save_tracking_shots(self.project_code, batch_data):
+            reason = ""
+            if hasattr(self.db_manager, "last_error"):
+                try:
+                    reason = self.db_manager.last_error() or ""
+                except Exception:
+                    reason = ""
+            self.last_error = reason or "The database refused the save."
             return False
 
         # Keep relational task table in sync for board/assignment features.
-        rows = self.db_manager.get_tracking_shots(self.project_code) or []
-        row_by_key = {
-            _shot_key(r.get("reel"), r.get("shot_name")): r
-            for r in rows if r.get("shot_name")
-        }
-
+        after = self._stored_rows()
         tasks_payload = []
-        for shot in shots:
-            row = row_by_key.get(_shot_key(getattr(shot, "reel_episode", ""), shot.shot_name))
+        seen_tasks = set()
+        for key, shot in unique.items():
+            row = after.get(key)
             if not row:
                 continue
             shot.id = int(row.get("id") or -1)
             shot.version = int(row.get("version") or shot.version or 1)
-            tasks_payload.extend(self._build_tasks_payload(shot.id, shot))
+            for task in self._build_tasks_payload(shot.id, shot):
+                task_key = (task["shot_id"], task["department"])
+                if task_key in seen_tasks:
+                    logging.warning("Department %s of shot id %s twice in one save; kept once.",
+                                    task["department"], task["shot_id"])
+                    continue
+                seen_tasks.add(task_key)
+                tasks_payload.append(task)
 
+        tasks_ok = True
         if tasks_payload:
-            self.db_manager.save_tracking_tasks(self.project_code, tasks_payload)
+            result = self.db_manager.save_tracking_tasks(self.project_code, tasks_payload)
+            tasks_ok = bool(result is None or result)
+
+        # History and notifications, exactly as for one shot: what changed
+        # against what was stored before this save.
+        for key, shot in unique.items():
+            self._log_shot_and_task_changes(shot, dict(stored.get(key) or {}))
+
+        if not tasks_ok:
+            self.last_error = ("The shots were saved, but their department assignments "
+                               "could not be. Try saving again.")
+            return False
         return True
 
     def read_shots(self) -> List[Shot]:
@@ -578,7 +663,15 @@ class SQLiteHandler:
         return shots
 
     def write_shots(self, shots: List[Shot], force: bool = False) -> bool:
-        """Serialize and save shots to DB."""
+        """
+        Save these shots (only these - the dashboard passes the ones with
+        pending edits). Returns whether everything was written; when it was
+        not, ``last_error`` says why.
+
+        A shot somebody else saved since it was loaded here is refused with
+        StaleDataError (naming each shot), unless ``force``.
+        """
+        self.last_error = ""
         if not self.project_code:
             return False
         if not shots:
@@ -587,9 +680,15 @@ class SQLiteHandler:
         self._check_permission()
         self._assert_within_department(shots)
 
+        stored = self._stored_rows()
+        if not force:
+            conflicts = self.find_conflicts(shots, stored)
+            if conflicts:
+                raise StaleDataError(_conflict_message(conflicts), conflicts)
+
         if len(shots) == 1:
-            return self._write_single_shot(shots[0])
-        return self._write_batch_shots(shots, force=force)
+            return self._write_single_shot(shots[0], stored, force=force)
+        return self._write_batch_shots(shots, stored, force=force)
 
     # ------------------------------------------------------------------
     # Department scoping
@@ -673,6 +772,29 @@ class SQLiteHandler:
                         f"only {family_label}."
                     )
 
+    def _assert_field_within_department(self, field) -> None:
+        """One field, the department scope: shot-level fields are refused for a lead."""
+        allowed = self._scoped_department_keys()
+        if allowed is None:
+            return
+        if not allowed:
+            raise PermissionError(
+                "Your user record does not say which department you lead, so "
+                "nothing can be edited. Ask an admin to set your job title."
+            )
+        family_label = self.department_family.title()
+        target = self._resolve_department_field(field)
+        if not target:
+            raise PermissionError(
+                f"As {family_label} lead you can change only the {family_label} "
+                "columns, not the shot itself."
+            )
+        if target[0] not in allowed:
+            raise PermissionError(
+                f"{target[0]} belongs to another department. As {family_label} lead "
+                f"you can change only {family_label}."
+            )
+
     def update_department_status(self, shot_name: str, reel: str, dept_key: str,
                                  status: str, current_version: int,
                                  actor_identities=None) -> bool:
@@ -702,7 +824,8 @@ class SQLiteHandler:
         # An artist may say "working" or "done, look at it". Approved, Retake
         # and Omit are verdicts - somebody else's to give - so they are refused
         # here, where a caller that skips the dropdown still meets them.
-        if not can_set_status(self.user_roles, status):
+        # Clearing your own status (an Undo back to blank) is allowed too.
+        if str(status or "").strip() and not can_set_status(self.user_roles, status):
             raise PermissionError(
                 f"'{status}' is a review verdict. You can set "
                 f"{', '.join(sorted(artist_statuses()))}; a supervisor or "
@@ -754,18 +877,25 @@ class SQLiteHandler:
             shot.dept(dept_key).status = status
             self._save_tasks_for_shot(shot_id, shot)
 
+        shot.id = shot_id or -1
+        shot.reel_episode = shot.reel_episode or str(reel or "")
         self._log_change("task", f"{shot_name}_{dept_key}", "UPDATE",
-                         f"{dept_key}_status", old_status, status)
+                         f"{dept_key}_status", old_status, status, shot, dept_key)
         self._notify_status(shot_name, shot.dept(dept_key).artist or "",
-                            old_status or "", status or "")
+                            old_status or "", status or "", dept_key)
         return True
 
     def update_shot_field(self, shot_name: str, field: str, value, current_version: int,
                           reel: Optional[str] = None) -> bool:
         """
         Updates a specific field of a shot using optimistic locking.
+
+        The same department scope as write_shots applies: a lead may change
+        their own department's fields here and nothing else (the board used to
+        let a Roto lead move a shot to Final through this door).
         """
         self._check_permission()
+        self._assert_field_within_department(field)
 
         try:
             row = self._get_db_shot_row(shot_name, reel)
@@ -791,15 +921,18 @@ class SQLiteHandler:
             if not success:
                 raise StaleDataError(f"Shot '{shot_name}' has been modified. Update rejected.")
 
-            self._log_change("shot", shot_name, "UPDATE", field, old_val, value)
+            shot_obj = Shot.from_dict(payload)
+            shot_obj.shot_name = shot_name
+            shot_obj.id = shot_id or -1
+            dept_target = self._resolve_department_field(field)
+            self._log_change("shot", shot_name, "UPDATE", field, old_val, value, shot_obj,
+                             dept_target[0] if dept_target else "")
 
             if shot_id:
-                shot_obj = Shot.from_dict(payload)
-                shot_obj.shot_name = shot_name
                 self._save_tasks_for_shot(shot_id, shot_obj)
 
             if field in {"assigned_artist", "artist"}:
-                self._notify_assignment(shot_name, old_val or "", str(value or ""), "comp")
+                self._notify_assignment(shot_name, old_val or "", str(value or ""))
             elif field in {"status", "overall_status"}:
                 target_artist = payload.get("assigned_artist") or ""
                 self._notify_status(shot_name, target_artist, str(old_val or ""), str(value or ""))

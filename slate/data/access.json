@@ -15,7 +15,8 @@
     "developer",
     "supervisor",
     "coordinator",
-    "lead"
+    "lead",
+    "producer"
   ],
   "_force_save": "May overwrite another user's concurrent edit when a conflict is reported.",
   "force_save": [
@@ -23,14 +24,24 @@
     "developer",
     "supervisor"
   ],
-  "_artist_own_status": "May set the status of a department row they are personally assigned to, and nothing else.",
+  "_artist_own_status": "May set the status of a department row they are personally assigned to, and nothing else. Every artist-type role (the assignable ones) has it.",
   "artist_own_status": [
     "artist",
     "lead",
     "coordinator",
     "supervisor",
     "developer",
-    "admin"
+    "admin",
+    "team lead",
+    "generalist",
+    "compositor",
+    "roto artist",
+    "paint artist",
+    "deage artist",
+    "ai artist",
+    "dmp",
+    "cg",
+    "producer"
   ],
   "_artist_statuses": "Statuses somebody with only artist_own_status may set. Everything else (Approved, Retake, Omit) is a verdict and stays with the roles in dashboard_write.",
   "artist_statuses": [
