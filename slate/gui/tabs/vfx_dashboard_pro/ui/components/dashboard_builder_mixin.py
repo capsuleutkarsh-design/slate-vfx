@@ -135,6 +135,8 @@ class DashboardBuilderMixin:
             self.view_toggle_btn = None
 
             self.init_ui()
+            # Scope names that fit this person before any project is open.
+            self.populate_scope_selector(apply=False)
             self.refresh_timer = QTimer(self)
             self.refresh_timer.timeout.connect(self.check_for_updates)
             self.refresh_timer.start(300000)
