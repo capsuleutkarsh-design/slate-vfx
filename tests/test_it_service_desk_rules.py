@@ -199,3 +199,18 @@ def test_monthly_report_counts_kept_promises():
     report = sd.sla_report(tickets, 2026, 9)
     assert report == [{"priority": "P2", "count": 2, "response_pct": 100,
                        "resolution_pct": 50, "median_hours": 8.0}]
+
+
+def test_the_help_pages_describe_what_the_screens_do():
+    """Help for the IT screens matches the features (IT-070, IT-073, IT-094, IT-104, IT-139)."""
+    import json, os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    pages = json.load(open(os.path.join(root, "slate", "core", "help_content.json"), encoding="utf-8"))
+    support = pages["it_support"]["content"]
+    assert "Monday to Saturday" in support and "around the clock" in support
+    assert "Mark responded" not in support and "Unresolved" in support
+    licences = pages["licences"]["content"]
+    assert "Short of seats" not in licences and "Never used at once" not in licences
+    assert "Spare seats" in licences and "rlmstat" in licences
+    assert "Retired" in pages["hardware"]["content"]
+    assert "does not install" in pages["deployment"]["content"]
