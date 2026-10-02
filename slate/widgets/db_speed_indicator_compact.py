@@ -1,13 +1,14 @@
 """
-ULTRA-COMPACT Database Speed Indicator
-Even more minimal version - just color dot + number
+The database latency dot in the header: [●] 12 ms
+
+It shows what the main window's DatabaseMonitor measures on its own thread
+(set_status). It used to run its own "SELECT 1" from a timer on the UI thread
+every five seconds, so a slow or unreachable server froze the whole window for
+the connection timeout, every five seconds.
 """
 
 from PySide6.QtWidgets import QWidget, QLabel, QHBoxLayout
-from PySide6.QtCore import QTimer
 from PySide6.QtGui import QColor
-import time
-from slate.core.infra.database_manager import database_manager
 import logging
 from slate.core.infra.gate import Gate
 
@@ -16,119 +17,100 @@ logger = logging.getLogger(__name__)
 
 class DBSpeedIndicatorCompact(QWidget):
     """
-    Ultra-compact version: [●] 12ms
-    Dot color indicates speed, number shows latency
+    Ultra-compact version: [●] 12 ms
+    Dot colour and a word in the tooltip say how quick the database is.
     """
-    
+
     EXCELLENT = 10
     GOOD = 50
     FAIR = 100
     SLOW = 200
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.baseline_ms = None
-        self.current_ms = 0
+        self.current_ms = 0.0
+        self.connected = None
         self.current_color = QColor(Gate.TEXT_DIM)
-        
         self.setup_ui()
-        self.start_monitoring()
-    
+        self.setToolTip("Database speed: checking…")
+
     def setup_ui(self):
-        """Ultra-minimal UI"""
         layout = QHBoxLayout(self)
         layout.setContentsMargins(6, 2, 6, 2)
         layout.setSpacing(4)
-        
-        # Colored dot indicator
+
         self.dot_label = QLabel("●")
         self.dot_label.setStyleSheet(f"font-size: 14px; color: {Gate.TEXT_DIM};")
-        
-        # Speed number
+
         self.speed_label = QLabel("--")
         self.speed_label.setStyleSheet(f"font-size: 11px; color: {Gate.TEXT_2};")
-        
+
         layout.addWidget(self.dot_label)
         layout.addWidget(self.speed_label)
-        
+
         self.setMaximumHeight(20)
-        self.setMaximumWidth(70)
-    
-    def start_monitoring(self):
-        """Start speed monitoring"""
-        self.measure_speed()
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.measure_speed)
-        self.timer.start(5000)
-    
-    def measure_speed(self):
-        """Measure DB speed"""
-        try:
-            db = database_manager
-            start = time.perf_counter()
-            db.execute_query("SELECT 1")
-            end = time.perf_counter()
-            
-            ms = (end - start) * 1000
-            self.current_ms = ms
-            
-            if self.baseline_ms is None:
-                self.baseline_ms = ms
-            
-            self.update_display(ms)
-            self.update_tooltip()
-            
-        except Exception as e:
-            logger.error(f"DB check failed: {e}")
+        self.setMaximumWidth(80)
+
+    # ------------------------------------------------------------ levels
+    @classmethod
+    def level(cls, ms: float):
+        """(word, colour) for a latency. Each band has its own colour."""
+        if ms < cls.EXCELLENT:
+            return "Excellent", Gate.OK
+        if ms < cls.GOOD:
+            return "Good", Gate.mix(Gate.OK, Gate.WARN, 0.35)
+        if ms < cls.FAIR:
+            return "Fair", Gate.WARN
+        if ms < cls.SLOW:
+            return "Slow", Gate.mix(Gate.WARN, Gate.BAD, 0.5)
+        return "Very slow", Gate.BAD
+
+    @staticmethod
+    def format_ms(ms: float) -> str:
+        return "<1 ms" if ms < 1 else f"{ms:.0f} ms"
+
+    # ------------------------------------------------------------ input
+    def set_status(self, is_connected: bool, latency_ms: float = 0.0):
+        """What the DatabaseMonitor found (connected, round trip in ms)."""
+        self.connected = bool(is_connected)
+        if not is_connected:
             self.show_error()
-    
+            return
+        ms = max(0.0, float(latency_ms or 0.0))
+        self.current_ms = ms
+        if self.baseline_ms is None:
+            self.baseline_ms = ms
+        self.update_display(ms)
+        self.update_tooltip()
+
     def update_display(self, ms):
-        """Update dot color and number"""
-        # Determine color
-        if ms < self.EXCELLENT:
-            color = Gate.OK  # Green
-        elif ms < self.GOOD:
-            color = Gate.ACCENT  # Cyan
-        elif ms < self.FAIR:
-            color = Gate.WARN  # Yellow
-        elif ms < self.SLOW:
-            color = Gate.WARN  # Orange
-        else:
-            color = Gate.BAD  # Red
-        
+        _word, color = self.level(ms)
         self.current_color = QColor(color)
-        
-        # Update UI
         self.dot_label.setStyleSheet(f"font-size: 14px; color: {color};")
-        self.speed_label.setText(f"{ms:.0f}ms")
+        self.speed_label.setText(self.format_ms(ms))
         self.speed_label.setStyleSheet(f"font-size: 11px; color: {color};")
-    
+
     def show_error(self):
-        """Error state"""
         self.dot_label.setStyleSheet(f"font-size: 14px; color: {Gate.BAD};")
-        self.speed_label.setText("ERR")
+        self.speed_label.setText("Offline")
         self.speed_label.setStyleSheet(f"font-size: 11px; color: {Gate.BAD};")
-    
+        # The tooltip used to keep the last good reading.
+        self.setToolTip("Cannot reach the studio database.\n"
+                        "Slate keeps trying every few seconds.")
+
     def update_tooltip(self):
-        """Tooltip with details"""
+        word, _colour = self.level(self.current_ms)
+        lines = [f"Database speed: {word}",
+                 f"Last check: {self.format_ms(self.current_ms)}"]
         if self.baseline_ms:
             ratio = self.current_ms / self.baseline_ms
-            trend = "↑ Faster" if ratio < 0.9 else "↓ Slower" if ratio > 1.1 else "→ Stable"
-            
-            tooltip = (
-                f"Database Speed\n"
-                f"━━━━━━━━━━━━━━\n"
-                f"Current: {self.current_ms:.1f}ms\n"
-                f"Baseline: {self.baseline_ms:.1f}ms\n"
-                f"Status: {trend} ({ratio:.1f}x)\n\n"
-                f"Color Guide:\n"
-                f"● Green   < 10ms  (Excellent)\n"
-                f"● Cyan    < 50ms  (Good)\n"
-                f"● Yellow  < 100ms (Fair)\n"
-                f"● Orange  < 200ms (Slow)\n"
-                f"● Red     > 200ms (Critical)"
-            )
-        else:
-            tooltip = f"Database Speed: {self.current_ms:.1f}ms"
-        
-        self.setToolTip(tooltip)
+            trend = "faster" if ratio < 0.9 else "slower" if ratio > 1.1 else "about the same"
+            lines.append(f"Since start-up: {trend} (first check {self.format_ms(self.baseline_ms)})")
+        lines += ["",
+                  "Excellent  under 10 ms",
+                  "Good       under 50 ms",
+                  "Fair       under 100 ms",
+                  "Slow       under 200 ms",
+                  "Very slow  200 ms or more"]
+        self.setToolTip("\n".join(lines))
