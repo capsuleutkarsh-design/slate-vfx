@@ -58,7 +58,7 @@ def test_summary_adds_up_and_reads_as_a_sentence(reports):
 def test_null_drive_root_does_not_crash(reports):
     folder, now = reports
     record = svc.record_for(json.loads((folder / "COMP-02.json").read_text()), "COMP-02", now)
-    assert record["drive_x_root"] == "?"
+    assert record["drive_noletter1_root"] == "?"
 
 
 def test_json_keeps_ut_user(reports, tmp_path):
@@ -134,3 +134,13 @@ def test_live_reporter_refreshes_disk_figures(monkeypatch, tmp_path):
 def test_volume_label_falls_back():
     from slate.core.system.hardware_info import HardwareInfo
     assert HardwareInfo.volume_label("?:") == "Local disk"
+
+
+def test_a_drive_without_a_letter_does_not_overwrite_x():
+    record = svc.record_for({"pc_name": "PC", "last_seen": 1, "Drives": [
+        {"Root": "X:\\", "Label": "Archive", "Usage": "10%"},
+        {"Root": None, "Label": "Mystery", "Usage": "20%"},
+        {"Root": "", "Label": "Other", "Usage": "30%"}]}, "PC", 2)
+    assert record["drive_x_label"] == "Archive"
+    assert record["drive_noletter1_label"] == "Mystery" and record["drive_noletter2_label"] == "Other"
+    assert svc.header_for("drive_noletter1_usage_pct") == "Drive without a letter 1: used %"

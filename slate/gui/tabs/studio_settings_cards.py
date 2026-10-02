@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 
 from PySide6.QtCore import QTime, Signal
+from PySide6.QtWidgets import QAbstractSpinBox, QLineEdit, QTimeEdit
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGridLayout, QHBoxLayout, QLabel,
     QMessageBox, QSpinBox, QTimeEdit, QVBoxLayout, QWidget,
@@ -69,10 +70,15 @@ def _fixed(widget):
 class _StudioEditor(QWidget):
     """Common parts: who may edit, the note line, the last-changed line."""
 
+    # Any field was edited - Settings shows "Unsaved changes" from this.
+    changed = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._checked_roles = False
         self._editable = True
+        self._baseline = None
+        self._watching = False
         self.root = QVBoxLayout(self)
         self.root.setContentsMargins(0, 0, 0, 0)
         self.root.setSpacing(10)
@@ -92,6 +98,43 @@ class _StudioEditor(QWidget):
             # editable; a signed-in person without the right sees it read-only.
             self.set_editable(True if roles is None else self.may_edit(roles))
             self.load()
+            self._watch_inputs()
+
+    def _watch_inputs(self):
+        """Every field reports an edit, so the page can say something is unsaved."""
+        if self._watching:
+            return
+        self._watching = True
+        for child in self.findChildren(QWidget):
+            if isinstance(child, QTimeEdit):
+                child.timeChanged.connect(self._on_input)
+            elif isinstance(child, QAbstractSpinBox) and hasattr(child, "valueChanged"):
+                child.valueChanged.connect(self._on_input)
+            elif isinstance(child, QCheckBox):
+                child.toggled.connect(self._on_input)
+            elif isinstance(child, QComboBox):
+                child.currentIndexChanged.connect(self._on_input)
+            elif isinstance(child, QLineEdit) and not isinstance(child.parent(), QAbstractSpinBox):
+                child.textChanged.connect(self._on_input)
+
+    def _on_input(self, *_):
+        self.changed.emit()
+
+    def _mark_clean(self):
+        """The values on screen are the saved ones."""
+        try:
+            self._baseline = self.values()
+        except Exception:
+            self._baseline = None
+        self.changed.emit()
+
+    def is_dirty(self) -> bool:
+        if self._baseline is None or not self._editable:
+            return False
+        try:
+            return self.values() != self._baseline
+        except Exception:
+            return False
 
     def set_editable(self, editable: bool) -> None:
         self._editable = bool(editable)
@@ -282,6 +325,7 @@ class StudioPolicyEditor(_StudioEditor):
         self._comp_sync()
         if store is not None and self._editable:
             self._show_meta(store, "attendance_policy")
+        self._mark_clean()
 
     def values(self) -> dict:
         return {
@@ -445,6 +489,7 @@ class StudioMoneyEditor(_StudioEditor):
             box.setChecked(box.property("weekday") in working)
         if self._editable:
             self._show_meta(store, "day_rates")
+        self._mark_clean()
 
     def values(self) -> dict:
         return {

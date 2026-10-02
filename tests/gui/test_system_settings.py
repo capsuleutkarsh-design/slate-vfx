@@ -200,3 +200,22 @@ def test_unusual_late_cutoff_is_asked(make_tab, monkeypatch, qtbot):
     monkeypatch.setattr(QMessageBox, "question",
                         lambda *a, **k: asked.append(a[2]) or QMessageBox.StandardButton.Cancel)
     assert editor.save() is False and "23:59" in asked[0]
+
+
+def test_studio_policy_edits_are_tracked_and_saved_by_the_bar(make_tab, qtbot, monkeypatch):
+    from slate.gui.components import work_guard
+    tab = make_tab(["Admin"])
+    tab.show()
+    QApplication.processEvents()
+    editor = tab.studio_policy_editor
+    assert editor.btn_save.isHidden() and not tab.has_unsaved_changes()
+    editor.accrual.setValue(editor.accrual.value() + 0.25)
+    assert tab.has_unsaved_changes() and tab.lbl_dirty.text() == "Unsaved changes"
+    unsaved, _busy = work_guard.pending_work({"Settings": tab})
+    assert unsaved and "studio policy" in tab.unsaved_summary()
+    tab.discard_changes()
+    assert not tab.has_unsaved_changes()
+    saved = []
+    monkeypatch.setattr(type(editor), "save", lambda self: saved.append(1) or (self._mark_clean() or True))
+    editor.accrual.setValue(editor.accrual.value() + 0.25)
+    assert tab.save_all() and saved == [1] and not tab.has_unsaved_changes()

@@ -441,6 +441,9 @@ class SettingsTab(QWidget):
         card_policy.layout().setSpacing(10)
         self.studio_policy_editor = StudioPolicyEditor()
         self.studio_policy_editor.saved.connect(self._on_policy_saved)
+        # Saved with the page's Save bar, like every other field here.
+        self.studio_policy_editor.btn_save.hide()
+        self.studio_policy_editor.changed.connect(self._mark_dirty)
         card_policy.layout().addWidget(self.studio_policy_editor)
         main_layout.addWidget(card_policy)
 
@@ -448,6 +451,8 @@ class SettingsTab(QWidget):
         self.card_money = SettingsCard("Studio currency, rates and hours")
         self.card_money.layout().setSpacing(10)
         self.studio_money_editor = StudioMoneyEditor()
+        self.studio_money_editor.btn_save.hide()
+        self.studio_money_editor.changed.connect(self._mark_dirty)
         self.card_money.layout().addWidget(self.studio_money_editor)
         main_layout.addWidget(self.card_money)
 
@@ -639,8 +644,15 @@ class SettingsTab(QWidget):
         if not self._loading:
             self._update_dirty()
 
+    def studio_editors(self):
+        return [e for e in (getattr(self, "studio_policy_editor", None),
+                            getattr(self, "studio_money_editor", None)) if e is not None]
+
+    def dirty_editors(self):
+        return [e for e in self.studio_editors() if e.is_dirty()]
+
     def _update_dirty(self):
-        self._dirty = self.current_values() != self._snapshot
+        self._dirty = self.current_values() != self._snapshot or bool(self.dirty_editors())
         self.lbl_dirty.setText("Unsaved changes" if self._dirty else "")
         self.btn_save.setEnabled(self._dirty)
         self.btn_discard.setEnabled(self._dirty)
@@ -649,9 +661,18 @@ class SettingsTab(QWidget):
         return bool(self._dirty)
 
     def unsaved_summary(self) -> str:
-        return "Settings has unsaved changes"
+        parts = []
+        if self.current_values() != self._snapshot:
+            parts.append("your preferences")
+        if self.studio_policy_editor.is_dirty():
+            parts.append("the studio policy")
+        if self.studio_money_editor.is_dirty():
+            parts.append("the studio currency and rates")
+        return "unsaved changes to " + " and ".join(parts) if parts else "unsaved changes"
 
     def discard_changes(self):
+        for editor in self.dirty_editors():
+            editor.load()
         self.set_values(self._snapshot)
 
     def reset_to_defaults(self):
@@ -693,6 +714,12 @@ class SettingsTab(QWidget):
         values = self.current_values()
         if self.can_studio and not self._check_studio_fields(values):
             return False
+        # The studio policy and money cards save to the studio database first;
+        # a refusal there stops the save with the reason and keeps the edits.
+        for editor in self.dirty_editors():
+            if not editor.save():
+                self._update_dirty()
+                return False
         try:
             self.global_settings["restore_last_paths"] = values["restore_last_paths"]
             self.global_settings["dry_run_enabled"] = values["dry_run_enabled"]

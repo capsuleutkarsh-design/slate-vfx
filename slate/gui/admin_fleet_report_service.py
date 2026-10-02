@@ -59,8 +59,10 @@ def header_for(key: str) -> str:
         rest = key[len("drive_"):]
         for suffix, words in _DRIVE_PARTS:
             if rest.endswith("_" + suffix):
-                letter = rest[: -len(suffix) - 1].upper() or "?"
-                return f"{letter}: {words}"
+                letter = rest[: -len(suffix) - 1]
+                if letter.startswith("noletter"):
+                    return f"Drive without a letter {letter[len('noletter'):]}: {words}"
+                return f"{letter.upper() or '?'}: {words}"
     return key.replace("_", " ").capitalize()
 
 
@@ -110,12 +112,18 @@ def record_for(data: dict, fallback_name: str, now: float) -> dict:
         "client_version": data.get("client_version", "") or "",
     }
 
+    unlettered = 0
     for drive in data.get("Drives") or []:
         if not isinstance(drive, dict):
             continue
         # A drive written as {"Root": null} used to crash the whole export.
         root_raw = str(drive.get("Root") or "?")
-        root_key = "".join(ch for ch in root_raw.lower() if ch.isalnum()) or "x"
+        root_key = "".join(ch for ch in root_raw.lower() if ch.isalnum())
+        if not root_key:
+            # A drive reported without a letter gets its own key - 'x' used to
+            # overwrite a real X: drive.
+            unlettered += 1
+            root_key = f"noletter{unlettered}"
         prefix = f"drive_{root_key}"
         usage_pct = fs.disk_percent(drive.get("Usage"))
         level = fs.disk_level(usage_pct)

@@ -247,3 +247,18 @@ def test_unified_viewer_names_its_tabs(qtbot, tmp_path):
     names = [viewer.tabs.tabText(i) for i in range(viewer.tabs.count())]
     assert names == ["Workstation logs", "Change history", "Audit trail"]
     viewer.cleanup_resources()
+
+
+def test_change_history_count_wording(qtbot, monkeypatch):
+    db = FakeHistoryDb(2128)
+    monkeypatch.setattr(alv.DatabaseAuditViewer, "_count", lambda self: len(db.rows))
+    viewer = alv.DatabaseAuditViewer(db)
+    qtbot.addWidget(viewer)
+    assert viewer.lbl_count.text() == "Showing the newest 2,000 of 2,128 changes. Load more for older ones."
+    viewer.search.setText("SH2127")
+    viewer.populate_table()
+    assert viewer.lbl_count.text().startswith("Showing 1 of the newest 2,000 changes (2,128 in all).")
+    viewer.load_more()
+    viewer.search.setText("")
+    viewer.populate_table()
+    assert viewer.lbl_count.text() == "Showing all 2,128 changes."
