@@ -364,7 +364,7 @@ class MainWindowBuilderMixin:
                     permission_key="Bidding",
                     user_role=self.user_role,
                     allowed_tabs=self.allowed_tabs,
-                    tooltip="Project Bidding & Cost Tracking"
+                    tooltip="Bids, their revisions and cost tracking"
                 )
 
             if show_ops:
