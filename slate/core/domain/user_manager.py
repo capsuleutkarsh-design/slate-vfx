@@ -952,10 +952,11 @@ class UserManager:
         if not tabs:
             tabs = ["Settings"]
         editor_roles = self._acting_roles()
+        before = self.role_permissions(role)
         if editor_roles is not None:
             from slate.core.domain import access
             why = access.role_change_refusal(
-                editor_roles, role, self.role_permissions(role), tabs, self.roles_config)
+                editor_roles, role, before, tabs, self.roles_config)
             if why:
                 self._refuse(why)
         tabs_str = json.dumps(tabs)
@@ -966,6 +967,16 @@ class UserManager:
         else:
             ok = db.execute_update("INSERT INTO ut_roles (role_name, permissions) VALUES (%s, %s)", (role, tabs_str))
         self._forget_cached_abilities()
+        if ok:
+            # Who gave a role what is the first question after a surprise.
+            added = sorted(set(tabs) - set(before))
+            removed = sorted(set(before) - set(tabs))
+            if added or removed or not existing:
+                self.audit.log_event(
+                    "ROLE_MGMT", self._actor(),
+                    "%s role %s: added %s; removed %s" % (
+                        "Changed" if existing else "Created", role,
+                        ", ".join(added) or "nothing", ", ".join(removed) or "nothing"))
         return ok
 
     def create_role(self, role: str, tabs: List[str]) -> bool:
@@ -1017,6 +1028,8 @@ class UserManager:
         db = self._get_db()
         ok = db.execute_update("DELETE FROM ut_roles WHERE role_name=%s", (role,))
         self._forget_cached_abilities()
+        if ok:
+            self.audit.log_event("ROLE_MGMT", self._actor(), "Deleted role %s" % role)
         return ok
 
     @staticmethod

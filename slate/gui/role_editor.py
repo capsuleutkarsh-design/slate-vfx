@@ -354,7 +354,7 @@ class RoleEditor(QWidget):
             if not grantable:
                 cb.setToolTip(not_yours)
         for key, cb in self.ability_boxes.items():
-            granted_by_all = full and key not in catalog.RESTRICTIONS
+            granted_by_all = full and key not in catalog.NOT_IMPLIED_BY_ALL
             checked = granted_by_all or key in abilities
             cb.setChecked(checked)
             grantable = checked or self._may_grant(catalog.ability_key(key))

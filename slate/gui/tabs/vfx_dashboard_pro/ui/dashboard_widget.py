@@ -1469,7 +1469,7 @@ class DashboardWidget(
                                         f"WARNING: This will delete ALL data for '{code}'.\n\nType 'DELETE' to confirm:",
                                         QLineEdit.EchoMode.Normal, "")
         if ok and text == "DELETE":
-            if self.project_manager.delete_project(code):
+            if self.project_manager.delete_project(code, roles=self.user_roles):
                 self._notify(f"Project {code} deleted.", "success")
                 self.load_projects()
                 # Clear selection or select another

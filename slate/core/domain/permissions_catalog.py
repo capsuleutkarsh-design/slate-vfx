@@ -137,6 +137,11 @@ ADMIN_ABILITIES = SENSITIVE_ABILITIES | frozenset({
 # Restrictions rather than rights: "ALL" does not switch these on.
 RESTRICTIONS = frozenset({"department_scoped"})
 
+# What "ALL" does not switch on: the restrictions, and "assignable" - being
+# given shots is part of somebody's job, not a right that Full access implies.
+# Through ALL every Developer and the admin account were offered as artists.
+NOT_IMPLIED_BY_ALL = RESTRICTIONS | frozenset({"assignable"})
+
 TAB_KEYS = frozenset(t.key for t in TABS)
 ABILITY_KEYS = frozenset(a.key for a in ABILITIES)
 

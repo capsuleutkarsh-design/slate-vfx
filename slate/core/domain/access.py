@@ -210,7 +210,7 @@ def _role_abilities() -> dict:
     now = time.monotonic()
     if _db_cache is not None and now - _db_cache_at < _DB_TTL_SECONDS:
         return _db_cache
-    from .permissions_catalog import ABILITY_KEYS, RESTRICTIONS, abilities_in, has_all
+    from .permissions_catalog import ABILITY_KEYS, NOT_IMPLIED_BY_ALL, abilities_in, has_all
     result = {}
     try:
         from slate.core.infra.database_manager import database_manager
@@ -223,7 +223,7 @@ def _role_abilities() -> dict:
                 continue
             found = abilities_in(perms)
             if has_all(perms):
-                found |= set(ABILITY_KEYS) - RESTRICTIONS
+                found |= set(ABILITY_KEYS) - NOT_IMPLIED_BY_ALL
             result[str(row["role_name"]).strip().lower()] = found
     except Exception as exc:
         logging.debug("Role abilities not read from the database: %s", exc)

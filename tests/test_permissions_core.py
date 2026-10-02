@@ -300,6 +300,57 @@ def test_year_end_leaves_out_people_who_left_before_the_year(users, db):
     assert "it.sam" in names and "hr.meera" in names
 
 
+def test_full_access_does_not_make_somebody_an_artist(users, db):
+    """Through ALL every Developer was offered in the dashboard's Artist list."""
+    users.update_role_permissions("Studio Owner", ["ALL"])
+    access.reset_cache()
+    assert access.can(["Studio Owner"], "schedule_write")
+    assert not access.can_be_assigned(["Studio Owner"])
+    assert not access.can_be_assigned(["Developer"])
+    assert access.can_be_assigned(["Compositor"])
+
+
+def test_role_changes_are_written_to_the_audit_log(users, monkeypatch):
+    logged = []
+    monkeypatch.setattr(users.audit, "log_event",
+                        lambda kind, who, details, status="SUCCESS": logged.append((kind, who, details)))
+    users.set_acting_user("admin")
+    users.update_role_permissions("Roto Lead", ["Dashboard"])
+    users.update_role_permissions("Roto Lead", ["Dashboard", "can:assignable"])
+    users.delete_role("Roto Lead")
+    kinds = [entry for entry in logged if entry[0] == "ROLE_MGMT"]
+    assert len(kinds) == 3
+    assert "added can:assignable" in kinds[1][2] and kinds[1][1] == "admin"
+    assert kinds[2][2] == "Deleted role Roto Lead"
+
+
+def test_deleting_a_project_checks_the_ability_too():
+    """The menu hid Delete; the manager itself let anybody call it."""
+    from slate.gui.tabs.vfx_dashboard_pro.core.project_manager import ProjectManager
+    manager = ProjectManager.__new__(ProjectManager)
+    manager.projects = {"KLC": object()}
+    assert manager.delete_project("KLC", roles=["Production Coordinator"]) is False
+    assert "KLC" in manager.projects
+
+
+def test_joining_list_puts_new_people_first():
+    from slate.gui.tabs.joining_leaving_view import StartPersonDialog
+
+    class Service:
+        def joining_finished(self):
+            return {"old.hand"}
+
+    key = StartPersonDialog._joining_order(Service())
+    entries = [
+        ("old.hand", "Old Hand", {"joined_on": "2019-04-01"}),
+        ("set.date", "Zara New", {"joined_on": "2026-09-28"}),
+        ("no.date", "Yusuf", {"joined_on": None}),
+        ("earlier", "Anil", {"joined_on": "2026-01-05"}),
+    ]
+    order = [e[0] for e in sorted(entries, key=key)]
+    assert order == ["no.date", "set.date", "earlier", "old.hand"]
+
+
 @pytest.fixture
 def qapp():
     from PySide6.QtWidgets import QApplication
