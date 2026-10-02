@@ -191,17 +191,31 @@ def normalise_hardware(db) -> bool:
     from slate.core.domain import hardware as hw
     if not _table_exists(db, "hardware_inventory"):
         return True
-    for column in ("location", "cpu", "gpu", "ram", "storage"):
-        if _column_exists(db, "hardware_inventory", column):
-            db.execute_update(
-                "UPDATE hardware_inventory SET %s = NULL "
-                "WHERE TRIM(%s) = '' OR LOWER(TRIM(%s)) IN ('n/a', 'none', 'null', 'gb')"
-                % (column, column, column))
+    blank_junk_hardware_values(db)
     for status in hw.STATUSES:
         db.execute_update(
             "UPDATE hardware_inventory SET status = %s "
             "WHERE LOWER(TRIM(status)) = %s AND status <> %s",
             (status, status.lower(), status))
+    return True
+
+
+def blank_junk_hardware_values(db) -> bool:
+    """
+    Specs that say nothing - 'N/A', 'None', '', and the 'None GB' / ' GB' the
+    old Live Ops sync wrote for a missing RAM figure - stored as NULL. Its own
+    once-step so databases that already ran it_normalise_hardware get it too.
+    """
+    from slate.core.domain import hardware as hw
+    if not _table_exists(db, "hardware_inventory"):
+        return True
+    junk = ", ".join("'%s'" % j for j in hw.JUNK)
+    for column in ("location", "cpu", "gpu", "ram", "storage"):
+        if _column_exists(db, "hardware_inventory", column):
+            db.execute_update(
+                "UPDATE hardware_inventory SET %s = NULL "
+                "WHERE TRIM(%s) = '' OR LOWER(TRIM(%s)) IN (%s)"
+                % (column, column, column, junk))
     return True
 
 

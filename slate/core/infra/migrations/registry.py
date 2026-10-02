@@ -121,6 +121,8 @@ IT = (
          "slate.core.infra.migrations.it_schema:normalise_ticket_values", once=True),
     step("it_normalise_hardware",
          "slate.core.infra.migrations.it_schema:normalise_hardware", once=True),
+    step("it_blank_junk_hardware_values",
+         "slate.core.infra.migrations.it_schema:blank_junk_hardware_values", once=True),
     step("it_adopt_legacy_licences",
          "slate.core.infra.migrations.it_schema:adopt_legacy_licences", once=True),
 )

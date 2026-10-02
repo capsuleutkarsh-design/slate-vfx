@@ -125,6 +125,11 @@ def _is_active(record: dict) -> bool:
     return UserManager._flag_active(record or {})
 
 
+def _issuable_sql() -> str:
+    from .hardware import issuable_sql
+    return issuable_sql("status")
+
+
 class OnboardingService:
     def __init__(self, db=None):
         if db is None:
@@ -650,7 +655,8 @@ class OnboardingService:
             rows = self.db.execute_query(
                 "SELECT * FROM hardware_inventory "
                 "WHERE (assigned_to IS NULL OR assigned_to = '') "
-                "AND COALESCE(status, '') <> 'Repair' "
+                # The hardware domain's one rule: not in repair, not end of life.
+                "AND " + _issuable_sql() + " "
                 "ORDER BY machine_name", fetch="all") or []
         except DatabaseUnavailableError:
             raise
@@ -665,9 +671,9 @@ class OnboardingService:
             rows = self.db.execute_query(
                 "SELECT machine_name FROM hardware_inventory "
                 "WHERE (assigned_to IS NULL OR assigned_to = '') "
-                # In for repair, or at the end of its life (IT area: Retired,
-                # Lost, Disposed): not something to hand to anybody.
-                "AND LOWER(COALESCE(status, '')) NOT IN ('repair', 'retired', 'lost', 'disposed') "
+                # In for repair, or at the end of its life: the hardware
+                # domain's one rule (IT area).
+                "AND " + _issuable_sql() + " "
                 "ORDER BY machine_name", fetch="all") or []
             return [(r["machine_name"] if isinstance(r, dict) else r[0]) for r in rows]
         except DatabaseUnavailableError:

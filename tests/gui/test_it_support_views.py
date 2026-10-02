@@ -408,3 +408,20 @@ def test_it_staff_get_the_queue_and_their_own_tickets(db, app):
     artist = SimpleNamespace(user_roles=["Artist"], allowed_tabs=["IT"], _current_username=lambda: "ravi")
     from slate.gui.tabs.my_tickets_view import MyTicketsView
     assert isinstance(_keep(MainWindowBuilderMixin._build_ticketing_tab(artist)), MyTicketsView)
+
+
+def test_clearing_filters_leaves_a_plain_empty_search(db, app):
+    """NEW-it-3, IT-131, NEW-it-4."""
+    _ticket(db)
+    view = _desk(db)
+    view.search.setText("zzz")
+    view._apply_filters()
+    view.clear_filters()
+    assert view.search.text() == "" and len(view._rows) == 1
+    assert not view.search.signalsBlocked()
+    mine = _mine(db)
+    assert mine.table.maximumHeight() == 16777215
+    assert mine.layout().stretch(mine.layout().indexOf(mine.table)) == 1
+    from slate.gui.tabs.my_tickets_view import RaiseTicketDialog
+    dialog = _keep(RaiseTicketDialog(username="ravi", machines_of=lambda u: []))
+    assert dialog.detail.property("prose") is True

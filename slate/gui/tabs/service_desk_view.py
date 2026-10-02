@@ -32,7 +32,7 @@ from slate.core.domain.service_desk import (
     priority_tone, sla_state, sla_tone, status_tone,
 )
 from slate.core.infra.ticket_repository import TicketError, TicketRepository
-from ..core.controls import make_button, page_title, style_button, tidy_form
+from ..core.controls import prose, make_button, page_title, style_button, tidy_form
 from ..core.stat_card import StatStrip
 from ..core.table_style import style_table
 from ..core.empty_state import EmptyState
@@ -104,7 +104,7 @@ class SetStatusDialog(_Form):
         current = normalise_status(tickets[0].get("status")) if tickets else "Open"
         self.status.setCurrentIndex(max(0, self.status.findData(current)))
         self.form.addRow("Status", self.status)
-        self.note = QPlainTextEdit()
+        self.note = prose(QPlainTextEdit())
         self.note.setFixedHeight(90)
         self.form.addRow("Note", self.note)
         if len(tickets) > 1:
@@ -507,15 +507,15 @@ class ServiceDeskView(QWidget):
     def clear_filters(self):
         """Back to the default view: open tickets, anyone's, no search."""
         self._card_filter = ""
-        for widget in (self.filter_status, self.filter_mine, self.filter_priority,
-                       self.filter_category, self.search):
-            widget.blockSignals(True)
-        for combo in (self.filter_status, self.filter_mine, self.filter_priority, self.filter_category):
+        combos = (self.filter_status, self.filter_mine, self.filter_priority, self.filter_category)
+        for combo in combos:
+            combo.blockSignals(True)
             combo.setCurrentIndex(0)
+            combo.blockSignals(False)
+        # The search box is not silenced: with its signals blocked it kept
+        # showing its clear (x) button over an empty box.
         self.search.clear()
-        for widget in (self.filter_status, self.filter_mine, self.filter_priority,
-                       self.filter_category, self.search):
-            widget.blockSignals(False)
+        self._search_timer.stop()
         self._apply_filters()
 
     def worst_first(self):

@@ -218,3 +218,33 @@ def test_import_maps_products_to_licences(db, app):
     chosen = {lic["id"]: n for lic, n in dialog.chosen()}
     assert chosen == {1: 4}                     # nuke_i + nuke_r added up; mystery skipped
     assert dialog.ok_btn.isEnabled()
+
+
+def test_search_finds_the_vendor_and_rows_are_never_cut(db, app):
+    """NEW-it-2, IT-065."""
+    from PySide6.QtCore import Qt
+    view = _view(db)
+    view.repo.save("Maya", 30, _in(300), vendor="Autodesk via Prime")
+    view.repo.save("Nuke", 10, _in(300), vendor="Foundry")
+    view.refresh()
+    view.toolbar.search.setText("prime")
+    view.toolbar.filter.apply()
+    shown = [view.table.item(r, 0).text() for r in range(view.table.rowCount()) if not view.table.isRowHidden(r)]
+    assert shown == ["Maya"]
+    assert view.table.isColumnHidden(8)
+    assert view.table.textElideMode() == Qt.TextElideMode.ElideNone
+    view.toolbar.search.setText("")
+    view.toolbar.filter.apply()
+    view.resize(1280, 720)
+    app.processEvents()
+    view._fit_rows()
+    for r in range(view.table.rowCount()):
+        needed = view.table.sizeHintForRow(r)
+        assert view.table.rowHeight(r) >= needed
+
+
+def test_note_fields_use_the_interface_font(db, app):
+    """NEW-it-4."""
+    from slate.gui.tabs.licence_view import LicenceDialog
+    dialog = _keep(LicenceDialog())
+    assert dialog.notes.property("prose") is True

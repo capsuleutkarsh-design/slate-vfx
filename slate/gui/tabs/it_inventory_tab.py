@@ -564,7 +564,7 @@ class ItInventoryTab(QWidget):
     def _sync_buttons(self, *_):
         row = self._selected_row()
         held = bool(row and row.get("holder"))
-        self.issue_btn.setEnabled(bool(row) and not held and not hw.is_end_of_life(row.get("status")))
+        self.issue_btn.setEnabled(bool(row) and not held and hw.can_be_issued(row.get("status")))
         self.collect_btn.setEnabled(held)
 
     def _service(self):
@@ -658,7 +658,7 @@ class ItInventoryTab(QWidget):
             return
         machine = row.get("machine_name")
         status = hw.normalise_status(row.get("status"))
-        if status == hw.REPAIR or hw.is_end_of_life(status):
+        if not hw.can_be_issued(status):
             feedback.warn(self, "Issue machine",
                           "%s is marked %s. Set it back in service first (Edit)." % (machine, status))
             return
