@@ -99,6 +99,26 @@ class TicketRepository:
             (ticket_id,), fetch="one")
         return dict(row) if row else None
 
+    def open_count(self) -> int:
+        """
+        How many tickets are still somebody's problem, by the desk's own idea
+        of "open" (service_desk.is_open), whatever casing a status was stored
+        in. Home's figure reads this, so the two never disagree.
+        """
+        rows = self.db.execute_query(
+            "SELECT status, COUNT(*) AS c FROM it_tickets GROUP BY status", fetch="all")
+        if rows is None:
+            raise RuntimeError(self._why("The tickets could not be counted."))
+        total = 0
+        for row in rows:
+            if isinstance(row, dict):
+                status, count = row.get("status"), row.get("c")
+            else:
+                status, count = row[0], row[1]
+            if sd.is_open(status):
+                total += int(count or 0)
+        return total
+
     def comments(self, ticket_id, include_internal: bool = False) -> List[dict]:
         """
         The conversation. Internal notes only for IT: the requester's query

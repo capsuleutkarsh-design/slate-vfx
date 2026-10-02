@@ -36,7 +36,6 @@ SEQUENCE_SUFFIXES = (".exr", ".dpx", ".tif", ".tiff", ".jpg", ".jpeg", ".png")
 _JUNK_PREFIXES = ("._", "~$", ".")
 
 _VERSION_DIR = re.compile(r"^v(\d+)$", re.IGNORECASE)
-_FRAME_IN_NAME = re.compile(r"^(?P<head>.*?)(?P<frame>\d+)(?P<tail>\.[^.]+)$")
 
 
 @dataclass
@@ -90,29 +89,26 @@ def _sequence_from_files(files: List[Path]) -> Optional[MediaClip]:
 
     Frames become ``name.%04d.exr``; the padding is taken from the real file
     names rather than assumed, because a four-digit assumption silently breaks
-    a show numbering past 9999.
+    a show numbering past 9999. The grouping is the studio's one rule
+    (sequence_utils.group_frames, shared with the ingest and the players), so
+    a review here and an ingest agree on what a sequence is.
     """
-    groups: Dict[tuple, List[int]] = {}
-    for f in files:
-        match = _FRAME_IN_NAME.match(f.name)
-        if not match:
-            continue
-        key = (match.group("head"), len(match.group("frame")), match.group("tail"))
-        groups.setdefault(key, []).append(int(match.group("frame")))
-
-    if not groups:
+    from slate.utils.sequence_utils import group_frames
+    sequences, _stills = group_frames(files, min_frames=1)
+    if not sequences:
         return None
-
-    # The real sequence is the one with the most frames.
-    (head, pad, tail), frames = max(groups.items(), key=lambda kv: len(kv[1]))
-    folder = files[0].parent
-    pattern = f"{head}%0{pad}d{tail}"
-
+    # The real sequence is the one with the most frames (largest first).
+    seq = sequences[0]
+    pattern = seq.filename_pattern
+    if not seq.padding and len(str(seq.start)) == len(str(seq.end)):
+        # Every number written at the same width (100001-100002): say so,
+        # as the players expect, rather than a bare %d.
+        pattern = f"{seq.head}%0{seq.width}d{seq.tail}"
     return MediaClip(
-        path=folder / pattern,
+        path=Path(seq.directory) / pattern,
         is_sequence=True,
-        first_frame=min(frames),
-        last_frame=max(frames),
+        first_frame=seq.start,
+        last_frame=seq.end,
     )
 
 

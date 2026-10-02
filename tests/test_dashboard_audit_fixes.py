@@ -668,3 +668,45 @@ class TestVerifierRound:
         row = mock_db.execute_query("SELECT permissions FROM ut_roles WHERE role_name='Producer'", fetch="one")
         perms = json.loads(row["permissions"])
         assert "Dashboard" in perms and "Reports" in perms
+
+
+class TestShowMyShotsFromHome:
+    """Integration: Home's 'See all my shots' uses the dashboard's own 'my shots' scope."""
+
+    @pytest.mark.parametrize("role", ["Compositor", "Supervisor", "Artist"])
+    def test_show_my_shots_selects_the_scope_and_clears_search(self, qtbot, mock_db, role):
+        _project(mock_db, [_shot("SH010", assigned_artist="priya"),
+                           _shot("SH020", assigned_artist="Priya Sharma"),
+                           _shot("SH030", assigned_artist="rahul")])
+        widget = _open(_widget(qtbot, role=role, username="priya", display_name="Priya Sharma"))
+        widget.search_input.setText("SH0")
+        from slate.core.domain.access import can_be_assigned
+        if not widget._is_artist_scope() and not can_be_assigned([role.lower()]):
+            pytest.skip("this role is never given shots")
+        assert widget.show_my_shots()
+        assert widget.search_input.text() == ""
+        assert widget.scope_combo.currentData() in ("my_shots", "all")
+        assert sorted(s.shot_name for s in widget.displayed_shots) == ["SH010", "SH020"]
+
+    def test_home_calls_the_scope(self, qtbot):
+        from slate.gui.tabs.home_tab import HomeTab
+        calls = []
+
+        class Dash:
+            search_input = None
+
+            def show_my_shots(self):
+                calls.append("scope")
+                return True
+
+        class Host:
+            def _switch_to_tab_label(self, label):
+                return label == "VFX Dashboard"
+
+            def _get_tab_instance(self, label, create=False):
+                return Dash()
+
+        home = HomeTab(user_data={"username": "priya", "display_name": "Priya Sharma"}, mode="vfx")
+        qtbot.addWidget(home)
+        home._host = lambda: Host()
+        assert home.see_all_shots() and calls == ["scope"]

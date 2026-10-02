@@ -222,3 +222,55 @@ STUDIO_ROLES = {
     "DMP": _VFX_ARTIST_TABS + _OWN_STATUS,
     "CG": _VFX_ARTIST_TABS + _OWN_STATUS,
 }
+
+
+# ---------------------------------------------------------------- labels
+def permission_label(key) -> str:
+    """
+    What a stored permission is called on screen: "Shot Review" is the
+    Timeline Viewer, "can:approve_leave" is "Approve leave". The keys stay as
+    they are in the database and the audit files; only the reading changes.
+    """
+    text = str(key or "").strip()
+    if not text:
+        return ""
+    if text.upper() == ALL:
+        return "Everything"
+    for tab in TABS:
+        if tab.key.lower() == text.lower():
+            return tab.label
+    if text.lower().startswith(ABILITY_PREFIX):
+        action = text[len(ABILITY_PREFIX):].strip().lower()
+        for ability in ABILITIES:
+            if ability.key == action:
+                label = ability.label.lstrip("…. ").strip()
+                return label[:1].upper() + label[1:]
+        return action.replace("_", " ").capitalize()
+    return text
+
+
+_ROLE_CHANGE = None
+
+
+def describe_role_change(details: str) -> str:
+    """
+    A role change as written in the audit trail ("Changed role Lead: added
+    Shot Review, can:approve_leave; removed nothing"), with every permission
+    by its screen name. Anything else comes back unchanged.
+    """
+    global _ROLE_CHANGE
+    import re
+    if _ROLE_CHANGE is None:
+        _ROLE_CHANGE = re.compile(r"^(Changed|Created) role (.+?): added (.*); removed (.*)$", re.S)
+    match = _ROLE_CHANGE.match(str(details or ""))
+    if not match:
+        return details
+
+    def names(listing):
+        listing = listing.strip()
+        if listing == "nothing" or not listing:
+            return "nothing"
+        return ", ".join(permission_label(p) for p in listing.split(", "))
+
+    verb, role, added, removed = match.groups()
+    return "%s role %s: added %s; removed %s" % (verb, role, names(added), names(removed))

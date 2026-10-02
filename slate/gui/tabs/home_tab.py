@@ -423,7 +423,8 @@ class HomeLoaderWorker(QThread):
         db = self._db()
         try:
             row = db.execute_query(
-                "SELECT punch_in, punch_out FROM attendance_log WHERE user_id = %s AND day_date = %s",
+                "SELECT punch_in, punch_out, metadata FROM attendance_log "
+                "WHERE user_id = %s AND day_date = %s",
                 (uid, db_today(db).isoformat()), fetch="one")
         except DatabaseUnavailableError:
             raise
@@ -432,7 +433,15 @@ class HomeLoaderWorker(QThread):
             return {}
         if not row:
             return {}
-        return {"punch_in": _value(row, "punch_in", 0), "punch_out": _value(row, "punch_out", 1)}
+        record = {"punch_in": _value(row, "punch_in", 0), "punch_out": _value(row, "punch_out", 1),
+                  "metadata": _value(row, "metadata", 2)}
+        # A second punch-in the same day is a new session (kept in the
+        # metadata): "In since" is the open session's start, not the first
+        # arrival - the lunch break is not time worked.
+        sessions = CentralAttendance._sessions(record)
+        since = sessions[-1]["in"] if sessions else record["punch_in"]
+        return {"punch_in": since, "punch_out": record["punch_out"],
+                "first_in": record["punch_in"], "sessions": len(sessions)}
 
     def leave_pulse(self) -> list:
         """Current and coming leave, soonest first, with dates."""
@@ -530,12 +539,33 @@ class HomeLoaderWorker(QThread):
             % placeholders, tuple(sorted(REVIEW_STATUSES)), fetch="one"))
 
     def _figure_open_tickets(self):
-        # Through the service desk's own idea of "open", whatever the casing a
-        # status was stored in ('open' was not counted).
-        from slate.core.domain.service_desk import is_open
-        rows = self._db().execute_query(
-            "SELECT status, COUNT(*) AS c FROM it_tickets GROUP BY status", fetch="all") or []
-        return sum(_count(r, 1) for r in rows if is_open(_value(r, "status", 0)))
+        # The IT desk's own count (TicketRepository), so Home and the queue
+        # agree on "open" whatever the casing a status was stored in.
+        from slate.core.infra.ticket_repository import TicketRepository
+        return TicketRepository(self._db()).open_count()
+
+    def _figure_licence_renewals(self):
+        """
+        Licences expired or renewing inside the studio's renewal window, so a
+        renewal is not missed because nobody opened the Licences screen.
+        The names go in the tooltip.
+        """
+        from slate.core.domain import licence_compliance as lc
+        from slate.core.infra.licence_repository import LicenceRepository
+        db = self._db()
+        window = lc.renewal_window(db)
+        today = db_today(db)
+        due = []
+        for row in LicenceRepository(db).licences():
+            left = lc.days_until(row.get("expiration_date"), today)
+            if lc.is_renewal_due(left, window):
+                due.append((left, str(row.get("software_name") or "A licence")))
+        due.sort()
+        lines = ["%s - %s" % (name, lc.renewal_phrase(left)) for left, name in due[:6]]
+        if len(due) > 6:
+            lines.append("… and %d more on the Licences screen" % (len(due) - 6))
+        tip = "\n".join(lines)
+        return {"value": len(due), "tip": tip, "warn": bool(due)}
 
     def _figure_upcoming_leave(self):
         # Starting after today and within two weeks - not leave already
@@ -571,6 +601,7 @@ FIGURE_LABELS = {
     "people_online": "People online",
     "pending_leave": "Leave to decide",
     "open_tickets": "Open IT tickets",
+    "licence_renewals": "Licences to renew",
     "upcoming_leave": "Leave in the next 2 weeks",
 }
 
@@ -673,6 +704,16 @@ class HomeTab(QWidget):
                     figures.append("open_tickets")
             except Exception as exc:
                 logging.debug("Home: IT check skipped: %s", exc)
+        # Licence renewals coming up, for whoever can see Licences (IT, or a
+        # Production Head with view_licences) - in any app that has the screen.
+        try:
+            from slate.core.domain.workplace_access import can_view_licences
+            sees = "Licences" in tabs if not no_window else can_view_licences(roles, [])
+        except Exception as exc:
+            logging.debug("Home: licence check skipped: %s", exc)
+            sees = False
+        if sees:
+            figures.append("licence_renewals")
         return figures
 
     def stat_figures(self):
@@ -705,9 +746,17 @@ class HomeTab(QWidget):
             if value is None:
                 label.setText("n/a")
                 label.setToolTip("This figure could not be read just now.")
-            else:
-                label.setText(str(value))
-                label.setToolTip("")
+                continue
+            # A figure may come with a tooltip and a warning tone.
+            tip, warn = "", False
+            if isinstance(value, dict):
+                tip, warn = value.get("tip") or "", bool(value.get("warn"))
+                value = value.get("value")
+            label.setText(str(value))
+            label.setToolTip(tip)
+            label.setStyleSheet(
+                f"background: transparent; border: none; color: {Gate.WARN if warn else Gate.OK}; "
+                "font-size: 26px; font-weight: 800;")
 
     # ------------------------------------------------------------ build
     def init_ui(self):
@@ -1048,11 +1097,15 @@ class HomeTab(QWidget):
         return jump(shot_name) if callable(jump) else False
 
     def see_all_shots(self):
-        """The dashboard, searched for this person's name."""
+        """The dashboard in its own 'my shots' scope (every shot naming this person)."""
         host = self._host()
         if not self._trigger_tab("VFX Dashboard"):
             return False
         tab = host._get_tab_instance("VFX Dashboard", create=True) if hasattr(host, "_get_tab_instance") else None
+        show = getattr(tab, "show_my_shots", None)
+        if callable(show) and show():
+            return True
+        # A dashboard without the scope: fall back to searching for the name.
         search = getattr(tab, "search_input", None)
         if search is not None:
             search.setText(self.user_display_name or self.username)
@@ -1188,7 +1241,11 @@ class HomeTab(QWidget):
             return
         pi = punch_status.get('punch_in')
         po = punch_status.get('punch_out')
-        self.lbl_punch_status.setText(punch_text(pi, po))
+        text = punch_text(pi, po)
+        sessions = int(punch_status.get('sessions') or 0)
+        if sessions > 1 and pi:
+            text += f" - session {sessions} today" if not po else f" - {sessions} sessions today"
+        self.lbl_punch_status.setText(text)
         # After a punch out, punching in again starts a new session the same
         # day (studio decision); only while punched in is Punch In off.
         self.btn_punch_in.setEnabled(not (pi and not po))
@@ -1219,7 +1276,16 @@ class HomeTab(QWidget):
         host = self._host()
 
         try:
-            self.attendance.log_action(self.username, action)
+            stored = self.attendance.log_action(self.username, action)
+        except ValueError as e:
+            # A rule, not a fault: "Already punched in at 09:42." is the message.
+            if host and hasattr(host, "show_feedback"):
+                host.show_feedback(str(e), "warning", 5000)
+            try:
+                self._update_punch_ui()
+            except Exception:
+                pass
+            return
         except Exception as e:
             if host and hasattr(host, "show_feedback"):
                 host.show_feedback("The punch was not saved.", "error", 4000, details=str(e))
@@ -1239,8 +1305,12 @@ class HomeTab(QWidget):
             return
 
         if host and hasattr(host, "show_feedback"):
-            now = datetime.now().strftime("%H:%M")
-            host.show_feedback(f"Punched {'in' if action == 'in' else 'out'} at {now}.", "success", 4000)
+            # The time the database stored, which is what the record says.
+            stored_time = _time_text((stored or {}).get("time")) if isinstance(stored, dict) else ""
+            now = stored_time or datetime.now().strftime("%H:%M")
+            session = (stored or {}).get("session") if isinstance(stored, dict) else None
+            extra = f" (session {session} today)" if action == "in" and session and session > 1 else ""
+            host.show_feedback(f"Punched {'in' if action == 'in' else 'out'} at {now}{extra}.", "success", 4000)
 
 
 class VfxHomeTab(HomeTab):

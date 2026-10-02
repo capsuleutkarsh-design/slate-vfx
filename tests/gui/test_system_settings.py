@@ -200,3 +200,51 @@ def test_unusual_late_cutoff_is_asked(make_tab, monkeypatch, qtbot):
     monkeypatch.setattr(QMessageBox, "question",
                         lambda *a, **k: asked.append(a[2]) or QMessageBox.StandardButton.Cancel)
     assert editor.save() is False and "23:59" in asked[0]
+
+
+def test_licence_renewal_window_is_a_studio_card_setting(qtbot, mock_db, monkeypatch):
+    """IT notes: licence_renewal_days (register_key in licence_compliance) is edited on the studio card."""
+    from slate.gui.tabs.studio_settings_cards import StudioMoneyEditor
+    from slate.core.domain import licence_compliance as lc
+    from slate.core.infra.studio_settings import StudioSettings
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: (_ for _ in ()).throw(AssertionError(a[2])))
+    StudioSettings.invalidate()
+    editor = StudioMoneyEditor()
+    qtbot.addWidget(editor)
+    editor.set_editable(True)
+    editor.load()
+    assert editor.renewal_days.value() == lc.RENEWAL_SOON_DAYS
+    assert (editor.renewal_days.minimum(), editor.renewal_days.maximum()) == (1, 365)
+    editor.renewal_days.setValue(30)
+    assert editor.save()
+    StudioSettings.invalidate()
+    assert lc.renewal_window() == 30
+    editor.renewal_days.setValue(1)
+    editor.load()
+    assert editor.renewal_days.value() == 30
+
+
+def test_staging_an_update_runs_off_the_ui_thread(make_tab, qtbot, monkeypatch):
+    """Shell note: the update toast hands 'Download & install' to _stage_update - a worker, not the UI thread."""
+    import threading
+    from slate.core.updater import sidecar_engine
+    seen = {}
+
+    class FakeEngine:
+        def __init__(self, manifest):
+            self.manifest = manifest
+
+        def stage_update(self):
+            seen["thread"] = threading.get_ident()
+            return True
+
+    monkeypatch.setattr(sidecar_engine, "SidecarEngine", FakeEngine)
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: seen.setdefault("told", a[2]))
+    tab = make_tab(["Admin"])
+    job = tab._stage_update({"version": "9.9.9"})
+    assert not tab.btn_update.isEnabled()
+    qtbot.waitUntil(lambda: "told" in seen, timeout=5000)
+    job.wait(2000)
+    assert seen["thread"] != threading.get_ident()
+    assert tab.btn_update.isEnabled() and "downloaded" in seen["told"]

@@ -675,7 +675,20 @@ class ItInventoryTab(QWidget):
         if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.username():
             return
         who = dialog.username()
-        if self._service().issue_machine(machine, who, self._by_whom()):
+        service = self._service()
+        # The people side refuses a machine for somebody whose last day has
+        # passed or who is on the leaving list. Say why and let IT go ahead on
+        # purpose - the bare "could not be recorded" explained nothing.
+        override = False
+        refusal = service.issue_refusal(who)
+        if refusal:
+            if not feedback.confirm(
+                    self, "Issue machine", refusal,
+                    informative="Issue %s to %s anyway?" % (machine, people.display_name(who)),
+                    yes_label="Issue anyway", no_label="Cancel"):
+                return
+            override = True
+        if service.issue_machine(machine, who, self._by_whom(), override=override):
             feedback.toast(self, "%s is now with %s. When they leave, the leaving checklist will ask "
                                  "for it back." % (machine, people.display_name(who)), "success")
         else:

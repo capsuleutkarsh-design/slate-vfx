@@ -331,8 +331,8 @@ class IngestPreflightDialog(QDialog):
             if item is None:
                 continue
             shot = survey.shots[row]
-            from slate.core.domain.naming import name_problem
-            bad = name_problem(item.text().strip(), "A shot name")
+            from slate.core.domain.naming import shot_name_problem
+            bad = shot_name_problem(item.text().strip(), "A shot name")
             self._filling = True
             try:
                 if bad:

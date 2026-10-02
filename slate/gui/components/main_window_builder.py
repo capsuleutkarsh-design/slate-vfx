@@ -125,6 +125,20 @@ class MainWindowBuilderMixin:
         data = self.user_data or {}
         return str(data.get("user_id") or data.get("username") or "unknown")
 
+    def _screen_roles(self):
+        """
+        The signed-in person's roles for screens that gate their own parts
+        (Settings, Admin Panel): the window's role list, else the single role.
+        None lets the screen look them up itself.
+        """
+        roles = getattr(self, "user_roles", None)
+        if not roles:
+            single = getattr(self, "user_role", None)
+            roles = [single] if single else None
+        if isinstance(roles, str):
+            roles = [roles]
+        return list(roles) if roles else None
+
     def init_ui(self):
             """Initialize the user interface components."""
             from ... import __version__ as APP_VERSION
@@ -528,6 +542,9 @@ class MainWindowBuilderMixin:
                                 (self.user_data or {}).get("username", "Unknown"),
                             ),
                             app_context=self.app_context,
+                            # Who may do what inside (manage_system, wipe caches)
+                            # from the signed-in person's roles, not a guess.
+                            roles=self._screen_roles(),
                         )
                     ),
                     icon="🛡️",
@@ -550,6 +567,7 @@ class MainWindowBuilderMixin:
                 lambda: screen("slate.gui.tester_panel", "TesterPanel")(
                     user_manager=self.app_context.user_manager(),
                     app_context=self.app_context,
+                    roles=self._screen_roles(),
                 ),
                 icon="🧪",
                 permission_key="Tester Panel",
@@ -560,7 +578,8 @@ class MainWindowBuilderMixin:
 
             # Settings
             def create_settings():
-                settings = screen("slate.gui.tabs.settings_tab", "SettingsTab")(self.config_manager)
+                settings = screen("slate.gui.tabs.settings_tab", "SettingsTab")(
+                    self.config_manager, roles=self._screen_roles())
                 settings.templates_refresh_requested.connect(self.on_templates_refreshed)
                 settings.global_settings_updated.connect(self.on_global_settings_updated)
                 return settings

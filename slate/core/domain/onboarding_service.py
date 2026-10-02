@@ -397,10 +397,22 @@ class OnboardingService:
         Diya's last day had passed and Issue machine gave her three more.
         """
         last = self.last_day(username)
+        # Shown to people as is, so worded with the person's name and a
+        # studio date rather than a login and an ISO date.
+        try:
+            from . import people
+            who = people.display_name(username) or username
+        except Exception:
+            who = username
         if last is not None and last < date.today():
-            return "%s's last working day (%s) has passed." % (username, last.isoformat())
+            try:
+                from . import dates
+                when = dates.format_date(last) or last.isoformat()
+            except Exception:
+                when = last.isoformat()
+            return "%s's last working day (%s) has passed." % (who, when)
         if any(not t.get("is_completed") for t in self.tasks_for(username, LEAVING)):
-            return "%s is on the leaving list." % username
+            return "%s is on the leaving list." % who
         return ""
 
     def last_day(self, username: str):

@@ -58,7 +58,6 @@ requests = "^2.33.1"
 pyjwt = "^2.12.1"
 python-multipart = "^0.0.22"
 asyncpg = "^0.31.0"
-fastembed = "^0.8.0"
 imageio = "^2.37.3"
 opencolorio = "^2.5.2"
 python-jose = {extras = ["cryptography"], version = "^3.5.0"}

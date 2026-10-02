@@ -23,6 +23,7 @@ from datetime import date
 from typing import Dict, Iterable, List, Optional
 
 from slate.core.domain.departments import load_departments
+from slate.core.domain.naming import name_problem, shot_name_problem
 
 
 # Status given to a shot that has just arrived and has no work booked yet.
@@ -47,6 +48,8 @@ class RegistrationResult:
     created: List[str] = field(default_factory=list)
     already_present: List[str] = field(default_factory=list)
     new_scans: List[str] = field(default_factory=list)
+    # (name, reason) for names the shot naming rule refuses - never created.
+    refused: List[tuple] = field(default_factory=list)
     project_created: bool = False
     error: Optional[str] = None
 
@@ -62,6 +65,8 @@ class RegistrationResult:
             parts.append(f"{len(self.new_scans)} existing shot(s) flagged with a new scan")
         if self.already_present:
             parts.append(f"{len(self.already_present)} already tracked")
+        if self.refused:
+            parts.append(f"{len(self.refused)} refused: " + "; ".join(r for _n, r in self.refused[:3]))
         return " | ".join(parts)
 
 
@@ -281,6 +286,21 @@ def register_ingested_shots(
             key = (entry.reel.strip().lower(), entry.shot.strip().lower())
             if key in seen:
                 continue
+
+            # The same rule as the dashboard's Add Shots (naming.shot_name_problem),
+            # so no route - ingest, a bid, a script - creates a shot name the
+            # dashboard would refuse. A reel only has to be a safe folder name:
+            # client reels may carry spaces and their folders already exist.
+            # A shot already tracked is left to the branch below (a new scan
+            # on it is still flagged), whatever it was once called.
+            if key not in existing_names:
+                problem = shot_name_problem(entry.shot, "Shot name")
+                if not problem and entry.reel.strip():
+                    problem = name_problem(entry.reel, "Reel")
+                if problem:
+                    result.refused.append((entry.shot, problem))
+                    logging.warning("Shot not registered: %s", problem)
+                    continue
             seen.add(key)
 
             if key in existing_names:

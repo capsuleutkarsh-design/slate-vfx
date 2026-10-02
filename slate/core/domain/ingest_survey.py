@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
-from slate.core.domain.naming import name_problem, normalise_shot_name
+from slate.core.domain.naming import name_problem, normalise_shot_name, shot_name_problem
 from slate.core.domain.stitch_detect import StitchGroup, group_by_reel
 
 # --- what is not media -------------------------------------------------------
@@ -238,7 +238,9 @@ class IngestSurvey:
         """Reasons the run cannot start as it stands (bad or clashing names)."""
         out = []
         for shot in self.active_shots():
-            problem = name_problem(shot.name, f"The shot name for '{shot.source_name}'")
+            # The dashboard's shot rule, so registration never refuses a shot
+            # whose folders were already built.
+            problem = shot_name_problem(shot.name, f"The shot name for '{shot.source_name}'")
             if problem:
                 out.append(problem)
         for clash in self.name_clashes(stitch_mapping):

@@ -247,3 +247,26 @@ def test_unified_viewer_names_its_tabs(qtbot, tmp_path):
     names = [viewer.tabs.tabText(i) for i in range(viewer.tabs.count())]
     assert names == ["Workstation logs", "Change history", "Audit trail"]
     viewer.cleanup_resources()
+
+
+def test_role_changes_show_permission_names_not_keys(qtbot, tmp_path):
+    """MED-108 note: the trail showed raw keys ('Shot Review') for role changes."""
+    import json as _json
+    from slate.core.domain.permissions_catalog import describe_role_change, permission_label
+    from slate.gui.advanced_log_viewer import AuditTrailViewer
+    assert permission_label("Shot Review") == "Timeline Viewer"
+    assert permission_label("can:approve_leave").startswith("Approve leave")
+    assert permission_label("can:department_scoped").startswith("Only")
+    assert permission_label("ALL") == "Everything" and permission_label("odd") == "odd"
+    assert describe_role_change("Deleted role X") == "Deleted role X"
+    (tmp_path / "audit_2026-10-02.log").write_text(_json.dumps({
+        "timestamp": "2026-10-02T10:00:00", "user": "admin", "type": "ROLE_MGMT", "status": "SUCCESS",
+        "details": "Changed role Lead: added Shot Review, Stock Browser; removed nothing"}) + "\n",
+        encoding="utf-8")
+    viewer = AuditTrailViewer(str(tmp_path))
+    qtbot.addWidget(viewer)
+    viewer.refresh_data()
+    texts = [viewer.table.item(r, c).text() for r in range(viewer.table.rowCount())
+             for c in range(viewer.table.columnCount()) if viewer.table.item(r, c)]
+    assert any("added Timeline Viewer, Stock Viewer; removed nothing" in t for t in texts)
+    assert not any("Shot Review" in t for t in texts)

@@ -1662,6 +1662,34 @@ class DashboardWidget(
         self._narrow_columns_to_scope()
         self.apply_filters()
 
+    def show_my_shots(self) -> bool:
+        """
+        The 'my shots' scope, for Home's "See all my shots": every shot this
+        person is named on (shot artist or any department's), whatever name
+        they were entered under. Home used to type the display name into the
+        search box, which also matched other text and missed shots entered
+        under the login. The search is cleared so it does not narrow it.
+        """
+        combo = getattr(self, "scope_combo", None)
+        if combo is None:
+            return False
+        if combo.count() == 0:
+            self.populate_scope_selector(apply=False)
+        # Somebody who only sees their own shots has them under "all".
+        wanted = "all" if self._is_artist_scope() else "my_shots"
+        index = combo.findData(wanted)
+        if index < 0:
+            return False
+        search = getattr(self, "search_input", None)
+        if search is not None and search.text():
+            search.clear()
+        self._scope_user_picked = True
+        if combo.currentIndex() == index:
+            self.on_scope_changed(index)
+        else:
+            combo.setCurrentIndex(index)
+        return True
+
     def _narrow_columns_to_scope(self):
         scope_data = self.scope_combo.currentData() or "all"
         if str(scope_data).startswith("dept:"):

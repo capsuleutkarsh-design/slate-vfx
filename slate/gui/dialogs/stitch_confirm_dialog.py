@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
-from ...core.domain.naming import name_problem
+from ...core.domain.naming import shot_name_problem as name_problem   # shot names: the dashboard rule
 from ...core.domain.stitch_detect import StitchGroup, apply_groups
 from slate.core.infra.gate import Gate
 from slate.gui.core.controls import make_button

@@ -625,6 +625,7 @@ class BidRepository:
         created = set(result.created)
         out["created"] = list(result.created)
         out["existing"] = list(result.already_present)
+        out["refused"] = list(getattr(result, "refused", []) or [])
         if created:
             ids = {}
             for row in self.db.get_tracking_shots(bid.project_code) or []:

@@ -909,6 +909,21 @@ TRAIL_TYPES = {"AUTH": "Sign-in", "USER_MGMT": "Users", "ROLE_MGMT": "Roles",
                "SYSTEM": "System", "ADMIN": "Admin action"}
 
 
+def trail_details(entry: dict) -> str:
+    """
+    The details column: role changes name permissions as Users & Roles does
+    ("Timeline Viewer", not the stored key "Shot Review").
+    """
+    details = entry.get("details") or ""
+    if entry.get("type") == "ROLE_MGMT":
+        try:
+            from slate.core.domain.permissions_catalog import describe_role_change
+            return describe_role_change(details)
+        except Exception as exc:
+            logger.debug("Role change not relabelled: %s", exc)
+    return details
+
+
 class AuditTrailViewer(QWidget):
     COLUMNS = ["Time", "User", "Type", "Result", "Details"]
 
@@ -973,7 +988,7 @@ class AuditTrailViewer(QWidget):
             if failures and e["status"].upper() not in ("FAILURE", "FAILED", "WARNING"):
                 continue
             values = [e["time"], self._who(e["user"]), TRAIL_TYPES.get(e["type"], e["type"].title()),
-                      e["status"].title(), e["details"]]
+                      e["status"].title(), trail_details(e)]
             if text and not any(text in str(v).lower() for v in values):
                 continue
             rows.append((e, values))
