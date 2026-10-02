@@ -463,45 +463,45 @@ class TestWhatIsBeingFilteredForIsRemembered:
         assert controller.current_file_types is None
 
     def test_the_count_is_then_asked_for_with_that_filter(self):
-        """The whole point: the number on screen has to match the list."""
+        """
+        The whole point: the number on screen has to match the list.
+
+        The count is read on the loader thread with the page now (MED-006),
+        so it is the loader that must carry the filter to it.
+        """
         controller = self._controller(search="explosion", media_type="Videos")
         controller.fetch_assets()
+        worker = controller.started_with
 
         asked = {}
 
         class Library:
             @staticmethod
-            def get_total_count(query=None, file_types=None, asset_ids=None):
+            def search_library(**kwargs):
+                return [{"id": "a"}]
+            @staticmethod
+            def get_total_count(query=None, file_types=None, asset_ids=None, **kwargs):
                 asked["query"] = query
                 asked["file_types"] = file_types
                 return 7
             @staticmethod
-            def get_categories():
-                return []
-
-        class Sidebar:
+            def get_category_counts():
+                return {}
             @staticmethod
-            def set_controls_enabled(_): pass
+            def get_favorite_count():
+                return 0
             @staticmethod
-            def update_categories(_): pass
+            def get_pick_count():
+                return 0
 
-        class Model:
-            @staticmethod
-            def load_data(_): pass
-            @staticmethod
-            def rowCount(): return 0
-
-        controller.lib_manager = Library()
-        controller.sidebar = Sidebar()
-        controller.model = Model()
-        controller.apply_post_load_filters = lambda: None
-        controller.update_ui_counts = lambda: None
-
-        controller.on_library_loaded([{"id": "a"}], append=False)
+        results = []
+        worker.lib_manager = Library()
+        worker.loaded.connect(results.append)
+        worker.run()
 
         assert asked["query"] == "explosion"
         assert asked["file_types"], "the media filter was dropped on the way"
-        assert controller.db_total == 7
+        assert results[0]["total"] == 7
 
 
 class TestBothBackendsOfferWhatTheLibraryAsksFor:
