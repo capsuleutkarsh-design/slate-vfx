@@ -304,6 +304,7 @@ class FolderCreatorTab(QWidget):
         self.operation_group.addButton(self.copy_radio)
         self.operation_group.addButton(self.move_radio)
         self.copy_radio.setChecked(True)
+        op_row.setSpacing(Gate.SPACE_4)
         op_row.addWidget(self.copy_radio)
         op_row.addWidget(self.move_radio)
         op_row.addStretch()
@@ -1038,6 +1039,11 @@ class FolderCreatorTab(QWidget):
         for widget in (self.project_card, self.scan_card, self.clear_btn):
             widget.setEnabled(not busy)
         self.check_destination_status()
+        hints = {"survey": "Looking at every folder on the client drive. Stop cancels; nothing is copied yet.",
+                 "run": "Pause and Stop act between files - nothing is ever left half copied.",
+                 "retry": "Retrying the files the last run could not bring in."}
+        if phase in hints:
+            self.stats_label.setText(hints[phase])
 
     def _reset_run_ui(self, status: str = IDLE_STATUS):
         """Back to idle after any early return - the log and last run are kept."""
@@ -1144,6 +1150,10 @@ class FolderCreatorTab(QWidget):
             skipped = survey.mark_unchanged(reels_root, scan_root, stitch_mapping)
             if skipped:
                 self.log_message(f"[INFO] {skipped} shot(s) are already in the project unchanged.")
+            from slate.core.domain.ingest_survey import mark_documents_filed
+            client = next((b for b in template_data[0] if b.lower().startswith("01_")), "01_Frm Client")
+            if mark_documents_filed(survey, project_path / client):
+                self.log_message("[INFO] The documents on the drive were filed by an earlier run.")
 
         dialog = IngestPreflightDialog(
             survey, project_code=code, project_path=project_path,

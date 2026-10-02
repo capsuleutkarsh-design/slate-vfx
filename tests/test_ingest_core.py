@@ -497,3 +497,13 @@ def test_default_format_folders_are_upper_case():
     from slate.core.infra.config_manager import ConfigManager
     leaves = {v.split("/")[-1] for v in ConfigManager().default_format_mapping.values()}
     assert all(leaf == leaf.upper() for leaf in leaves)
+
+
+def test_documents_filed_by_an_earlier_run_are_left_out(tmp_path, db):
+    drive = _drive(tmp_path)
+    (drive / "readme.txt").write_text("notes")
+    target = tmp_path / "P"
+    _run(drive, target)
+    survey = isv.survey_drive(drive)
+    assert isv.mark_documents_filed(survey, target / "PRJ" / "01_Frm Client") == 1
+    assert survey.documents == [] and len(survey.documents_filed_before) == 1

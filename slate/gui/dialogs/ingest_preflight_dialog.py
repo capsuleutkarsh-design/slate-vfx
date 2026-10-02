@@ -102,6 +102,7 @@ class IngestPreflightDialog(QDialog):
         group.addButton(self.move_radio)
         (self.move_radio if self.operation == MOVE else self.copy_radio).setChecked(True)
         self.copy_radio.toggled.connect(self._refresh)
+        op_row.setSpacing(Gate.SPACE_4)
         op_row.addWidget(self.copy_radio)
         op_row.addWidget(self.move_radio)
         op_row.addStretch()
@@ -263,6 +264,9 @@ class IngestPreflightDialog(QDialog):
         merged = {self.survey.stitched_name(s, self.stitch_mapping) for s in survey.shots} - {None}
         if merged:
             out.append(f"{len(merged)} stitch(es) become one shot each.")
+        if survey.documents_filed_before:
+            out.append(f"{len(survey.documents_filed_before)} document(s) were filed by an earlier run "
+                       f"and are left out.")
         if survey.documents:
             out.append(f"{len(survey.documents)} document(s) at the top of the drive are filed under "
                        f"the client folder, not as a shot.")

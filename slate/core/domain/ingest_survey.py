@@ -168,6 +168,7 @@ class IngestSurvey:
     junk_files: List[str] = field(default_factory=list)
     stitch_groups: List[StitchGroup] = field(default_factory=list)
     structure_only: bool = False  # no files anywhere: build the folders from the names
+    documents_filed_before: List[SurveyFile] = field(default_factory=list)
     unreadable: List[str] = field(default_factory=list)
     cancelled: bool = False
     seconds: float = 0.0
@@ -299,6 +300,36 @@ def same_files(incoming, existing) -> bool:
             return False
         times.remove(match)
     return True
+
+
+def mark_documents_filed(survey: "IngestSurvey", client_dir: Path) -> int:
+    """
+    Leave out documents an earlier run already filed (same name, size and
+    time in one of the client folder's *_docs folders). Returns how many.
+    """
+    try:
+        folders = [d for d in Path(client_dir).iterdir() if d.is_dir() and d.name.endswith("_docs")]
+    except OSError:
+        return 0
+    keep, filed = [], []
+    for doc in survey.documents:
+        try:
+            relative = doc.path.relative_to(survey.source)
+        except ValueError:
+            relative = Path(doc.path.name)
+        match = False
+        for folder in folders:
+            try:
+                stat = os.stat(folder / relative)
+            except OSError:
+                continue
+            if stat.st_size == doc.size and abs(stat.st_mtime - doc.mtime) <= MTIME_TOLERANCE:
+                match = True
+                break
+        (filed if match else keep).append(doc)
+    survey.documents = keep
+    survey.documents_filed_before.extend(filed)
+    return len(filed)
 
 
 def existing_versions(scan_dir: Path) -> Dict[str, List[Tuple[str, int, float]]]:
