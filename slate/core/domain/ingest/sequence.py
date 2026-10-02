@@ -46,47 +46,25 @@ class SequenceDetector:
         """
         Scans a directory and returns (Sequences, SingleFiles).
         """
-        sequences: Dict[str, Dict] = {}
-        single_files: List[Path] = []
-        
         if not directory.exists(): return [], []
 
-        for item in directory.iterdir():
-            if not item.is_file(): continue
-            if item.name.startswith('.'): continue # Skip hidden
-            
-            match = SequenceDetector.FRAME_REGEX.match(item.name)
-            if match:
-                base, sep, frame_str, ext = match.groups()
-                # Create a unique key for grouping: "shotname_v01" + ".exr"
-                # We include separator to distinguish shot.1001 vs shot_1001 if needed
-                key = f"{base}{sep}#{ext}" 
-                
-                if key not in sequences:
-                    sequences[key] = {
-                        "name": base,
-                        "head": f"{base}{sep}",
-                        "tail": ext,
-                        "frames": [],
-                        "path": directory
-                    }
-                sequences[key]["frames"].append(int(frame_str))
-            else:
-                single_files.append(item)
+        # The shared rules (slate.utils.sequence_utils.group_frames): the
+        # same name and extension, consistent padding, and at least two
+        # frames. One numbered file on its own used to count as a sequence.
+        from slate.utils.sequence_utils import group_frames
+        files = [item for item in directory.iterdir()
+                 if item.is_file() and not item.name.startswith('.')]
+        found, single_files = group_frames(files)
 
-        # Convert dict to Sequence objects
         result_seqs = []
-        for key, data in sequences.items():
-            # If only 1 frame, is it a sequence? Usually yes but could be ambiguous.
-            # For now treat even 1 frame as sequence if it matched the regex number pattern.
-            seq = Sequence(
-                data["name"], 
-                data["head"], 
-                data["tail"], 
-                data["frames"], 
-                data["tail"], # Extension is tail
-                data["path"]
-            )
-            result_seqs.append(seq)
-            
+        for fs in found:
+            result_seqs.append(Sequence(
+                fs.head.rstrip('._-') or fs.head,
+                fs.head,
+                fs.tail,
+                fs.frames,
+                fs.tail,  # Extension is tail
+                directory,
+            ))
+
         return result_seqs, single_files

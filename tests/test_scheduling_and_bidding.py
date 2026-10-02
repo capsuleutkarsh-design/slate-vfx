@@ -71,10 +71,14 @@ def test_the_project_list_query_actually_returns_projects(db):
 
 
 def test_the_old_query_is_the_one_that_was_broken(db):
-    """Stated directly, so nobody puts it back."""
-    with pytest.raises(Exception):
-        db.execute_query("SELECT DISTINCT project_code FROM tracking_projects",
-                         fetch="all")
+    """
+    Stated directly, so nobody puts it back. A refused read comes back as
+    None on both backends (it used to raise on SQLite only), with the reason
+    kept for last_error().
+    """
+    assert db.execute_query("SELECT DISTINCT project_code FROM tracking_projects",
+                            fetch="all") is None
+    assert "project_code" in db.last_error()
 
 
 def test_an_apostrophe_survives_a_milestone_name(db):

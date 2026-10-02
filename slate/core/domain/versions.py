@@ -222,7 +222,8 @@ class VersionStore:
                 (project_code, shot_name, version_name, department, artist,
                  status, sent_to, sent_date, media_path, comment, created_by),
             )
-            if ok is False:
+            # A WriteResult: falsy when the database refused the insert.
+            if not ok:
                 return None
         except Exception as exc:
             logging.exception("Could not add version %s for %s: %s",

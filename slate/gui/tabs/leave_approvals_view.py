@@ -27,6 +27,8 @@ from ..core.controls import make_button, page_title
 from ..core.offline_notice import on_database_error
 from ..core.empty_state import EmptyState
 from ..core.table_style import style_table
+from slate.core.domain import people
+from slate.core.domain.dates import format_date
 from .my_leave_view import Figure, status_tone
 
 
@@ -164,7 +166,8 @@ class LeaveApprovalsView(QWidget):
         needle = self.search.text().strip().lower()
         if needle:
             rows = [r for r in rows if needle in " ".join(
-                str(r.get(k) or "") for k in ("user_id", "reason", "type")).lower()]
+                [str(r.get(k) or "") for k in ("user_id", "reason", "type")]
+                + [people.display_name(r.get("user_id"))]).lower()]
 
         # Mine first, then soonest starting - somebody leaving on Monday needs
         # an answer before somebody leaving next month.
@@ -216,9 +219,10 @@ class LeaveApprovalsView(QWidget):
             status = row["_status"]
             charge = row.get("days_charged")
             cells = [
-                row.get("user_id") or "",
-                str(row.get("start_date") or ""),
-                str(row.get("end_date") or ""),
+                # The person's name, and dates as every other screen shows them.
+                people.display_name(row.get("user_id")),
+                format_date(row.get("start_date")),
+                format_date(row.get("end_date")),
                 (row.get("type") or "").title(),
                 ("%g" % float(charge)) if charge is not None else "-",
                 status,

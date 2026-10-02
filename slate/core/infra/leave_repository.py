@@ -170,10 +170,12 @@ class LeaveRepository:
             # The return value matters. Two holidays cannot share a date for
             # the same place, so this can be refused - and reporting success
             # anyway shows the old value back and reads as a lost edit.
-            return bool(self.db.execute_update(
+            result = self.db.execute_update(
                 "UPDATE holiday_calendar SET holiday_date = %s, name = %s, "
                 "location = %s WHERE id = %s",
-                (day, name, location or "All", holiday_id)))
+                (day, name, location or "All", holiday_id))
+            # A holiday removed by someone else meanwhile matches no row.
+            return bool(getattr(result, "changed", result))
         except DatabaseUnavailableError:
             raise
         except Exception:
@@ -208,10 +210,20 @@ class LeaveRepository:
         return sorted(out)
 
     def add_holiday(self, day, name, location="All") -> bool:
+        """
+        Add a holiday. False when it was not added - including when there is
+        already one on that date for that place.
+
+        The insert says ON CONFLICT DO NOTHING, which the database accepts
+        and does nothing with. That used to read as success: the typed name
+        was cleared, the list did not change and nobody was told why. What
+        was actually inserted is what counts now.
+        """
         try:
-            return bool(self.db.execute_update(
+            result = self.db.execute_update(
                 "INSERT INTO holiday_calendar (holiday_date, name, location) "
-                "VALUES (%s, %s, %s) ON CONFLICT DO NOTHING", (day, name, location)))
+                "VALUES (%s, %s, %s) ON CONFLICT DO NOTHING", (day, name, location))
+            return bool(getattr(result, "changed", result))
         except DatabaseUnavailableError:
             raise
         except Exception:
@@ -220,8 +232,9 @@ class LeaveRepository:
 
     def remove_holiday(self, holiday_id) -> bool:
         try:
-            return bool(self.db.execute_update(
-                "DELETE FROM holiday_calendar WHERE id = %s", (holiday_id,)))
+            result = self.db.execute_update(
+                "DELETE FROM holiday_calendar WHERE id = %s", (holiday_id,))
+            return bool(getattr(result, "changed", result))
         except DatabaseUnavailableError:
             raise
         except Exception:

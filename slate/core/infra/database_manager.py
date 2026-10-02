@@ -54,39 +54,17 @@ class DatabaseManager:
         # the path of a studio starting up, where it only ever produced a
         # traceback in the log.
 
-        # Runs on both backends and on every start. Widening the shot key is
-        # safe on existing data, so there is no gate on it.
+        # Every schema step, in order, from one list - see
+        # migrations/registry.py. Each step used to be its own try/except
+        # block here; the areas now add theirs to the registry with one line
+        # and never edit this constructor. A failing step is logged and the
+        # rest still run.
         try:
-            from .migrations.shot_identity import ensure_shot_identity
-            ensure_shot_identity(self.backend)
+            from .migrations.registry import run_migrations
+            self.migration_report = run_migrations(self.backend)
         except Exception as e:
-            logger.error(f"Shot identity migration failed: {e}")
-
-        # The stock library's indexes. Cheap to check, and without them every
-        # browse of a large library sorts the whole table.
-        try:
-            from .migrations.stock_indexes import apply_migration as ensure_stock_indexes
-            ensure_stock_indexes(self.backend)
-        except Exception as e:
-            logger.error(f"Stock index migration failed: {e}")
-
-        # The HR and IT tables. Additive only - it adds the holiday calendar,
-        # the comp-off ledger, asset assignments and the columns the approval
-        # chain and the service desk need. It never drops anything.
-        try:
-            from .migrations.workplace_schema import apply_migration as ensure_workplace
-            ensure_workplace(self.backend)
-        except Exception as e:
-            logger.error(f"Workplace schema migration failed: {e}")
-
-        # The change feed, after every table it watches exists. Lets open
-        # screens hear about other people's changes without re-reading
-        # everything - see migrations/change_feed.py.
-        try:
-            from .migrations.change_feed import apply_migration as ensure_change_feed
-            ensure_change_feed(self.backend)
-        except Exception as e:
-            logger.error(f"Change feed migration failed: {e}")
+            self.migration_report = {}
+            logger.error(f"Schema migrations could not run: {e}")
 
         if self.fallback_used:
             logger.warning(

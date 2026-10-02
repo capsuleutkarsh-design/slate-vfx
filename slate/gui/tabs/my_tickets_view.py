@@ -26,6 +26,8 @@ from ..core.controls import make_button, page_title, tidy_form
 from ..core.table_style import style_table
 from ..core.empty_state import EmptyState
 from slate.gui.core.offline_notice import on_database_error
+from slate.core.domain import people
+from slate.core.domain.dates import format_datetime
 
 # Let an outage reach the @on_database_error decorator rather than becoming an
 # empty grid here. Everything else keeps the fallback it already had.
@@ -248,8 +250,11 @@ class TicketThreadDialog(QDialog):
         layout.setContentsMargins(11, 9, 11, 9)
         layout.setSpacing(3)
 
-        who = QLabel(("You" if mine else (row.get("author") or "IT")) +
-                     ("   ·   %s" % row.get("timestamp") if row.get("timestamp") else ""))
+        # The author's name rather than their login, and the studio's date
+        # format rather than the raw database text.
+        who = QLabel(("You" if mine else (people.display_name(row.get("author")) or "IT")) +
+                     ("   ·   %s" % format_datetime(row.get("timestamp"))
+                      if row.get("timestamp") else ""))
         who.setStyleSheet(
             f"color: {Gate.TEXT_DIM}; font-size: 11.5px; background: transparent; border: none;")
         layout.addWidget(who)
@@ -266,10 +271,17 @@ class TicketThreadDialog(QDialog):
         if not message:
             return
         try:
-            self.db.execute_update(
+            saved = self.db.execute_update(
                 "INSERT INTO it_ticket_comments (ticket_id, author, comment_text) "
                 "VALUES (%s, %s, %s)",
                 (self.ticket.get("id"), self.username, message))
+            if not saved:
+                # A refused insert is a result, not an exception. The reply
+                # box used to be cleared anyway, and the reply was lost.
+                QMessageBox.warning(
+                    self, "Not sent", "Your reply was not saved. It is still in the box.\n\n%s"
+                    % (getattr(saved, "error", "") or "The database refused it."))
+                return
 
             # A reply from anybody but the person who raised it is a response,
             # and the response clock should stop there. It used to stop only on
@@ -400,8 +412,9 @@ class MyTicketsView(QWidget):
                 row.get("category") or "",
                 priority,
                 status,
-                row.get("assigned_to") or "Not yet picked up",
-                str(created)[:16] if created else "",
+                # Who has it, by name - it showed the engineer's login.
+                people.display_name(row.get("assigned_to")) or "Not yet picked up",
+                format_datetime(created),
             ]
             for c, text in enumerate(cells):
                 item = QTableWidgetItem(text)

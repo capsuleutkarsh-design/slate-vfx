@@ -16,13 +16,42 @@ import sqlite3
 import json
 import logging
 import os
+import re
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from .db_results import (
+    DatabaseUnavailableError, SqlResult, WriteResult, classify_error, error_text,
+    is_legacy_write_fetch, is_write_statement,
+)
+from .transaction import AtomicUnit
+
 logger = logging.getLogger(__name__)
+
+# "INSERT ... RETURNING id": SQLite builds older than 3.35 do not know
+# RETURNING, so it is taken off and the id comes from lastrowid instead.
+_RETURNING_RE = re.compile(r'\s+RETURNING\s+\w+(?:\s*,\s*\w+)*', re.IGNORECASE)
+
+
+def _sqlite_unavailable(exc: BaseException) -> bool:
+    """
+    Whether an sqlite3 error means the database itself is out of reach -
+    locked by another process past the timeout, missing, or unreadable - as
+    opposed to this statement being wrong. sqlite3 raises OperationalError
+    for both ("no such column" too), so it is told apart by its message.
+    """
+    if isinstance(exc, DatabaseUnavailableError):
+        return True
+    if not isinstance(exc, sqlite3.OperationalError):
+        return False
+    text = str(exc).lower()
+    return any(marker in text for marker in (
+        "database is locked", "unable to open", "disk i/o", "database is busy",
+        "readonly database", "database or disk is full", "malformed"))
+
 
 def _reel_of(data_json) -> str:
     """
@@ -183,7 +212,11 @@ CREATE TABLE IF NOT EXISTS change_history (
     field_changed TEXT DEFAULT '',
     old_value TEXT DEFAULT '',
     new_value TEXT DEFAULT '',
-    timestamp TEXT DEFAULT (datetime('now'))
+    timestamp TEXT DEFAULT (datetime('now')),
+    shot_id INTEGER,
+    shot_name TEXT,
+    reel TEXT,
+    department TEXT
 );
 
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -486,57 +519,169 @@ class SQLiteManager:
             conn.rollback()
             raise
 
+    @contextmanager
+    def atomic(self):
+        """
+        Several statements that happen together or not at all - the same
+        block, the same %s parameters and the same errors as
+        PostgresManager.atomic(). See transaction.py.
+        """
+        if self._is_shutting_down:
+            raise DatabaseUnavailableError("The local database is closing, so nothing was saved.")
+        conn = self._get_conn()
+        # Anything a previous statement left open is committed first, so the
+        # unit starts clean and its rollback cannot take someone else's work.
+        if conn.in_transaction:
+            conn.commit()
+        unit = AtomicUnit(conn, translate=self._translate_sql,
+                          is_unavailable=_sqlite_unavailable, strip_returning=True)
+        try:
+            yield unit
+            conn.commit()
+        except BaseException as e:
+            try:
+                conn.rollback()
+            except Exception as exc:
+                logger.debug("Rollback after a failed atomic block skipped: %s", exc)
+            if _sqlite_unavailable(e):
+                raise DatabaseUnavailableError(
+                    "The local database could not be written, so nothing was saved.") from e
+            raise
+
     # ── Query Execution ─────────────────────────────────────────────────────
+    #
+    # The same contract as PostgresManager (see db_results.py): reads return
+    # rows, or None when the statement was refused; writes return a
+    # WriteResult; a database that cannot be opened or stays locked raises
+    # DatabaseUnavailableError. This backend used to raise RuntimeError for
+    # every refused statement while PostgreSQL returned None, so code tested
+    # on one behaved differently on the other.
+
+    _last_error_local = threading.local()
+
+    def last_error(self) -> str:
+        """Why the most recent statement on this thread was refused, or ''."""
+        return getattr(self._last_error_local, "text", "") or ""
+
+    def _remember_error(self, text: str = "") -> None:
+        self._last_error_local.text = text or ""
+
+    def _prepare(self, query: str):
+        q = self._translate_sql(query)
+        has_returning = bool(_RETURNING_RE.search(query))
+        if has_returning:
+            # Remove the RETURNING clause; the new id comes from lastrowid.
+            q = _RETURNING_RE.sub('', q)
+        return q, has_returning
 
     def execute_query(self, query: str, params: tuple = None, fetch: str = "all") -> Any:
         """
         Execute a query, translating PostgreSQL syntax on-the-fly.
 
         Supports: %s → ?, ILIKE → LIKE, RETURNING id (via lastrowid).
+        fetch=False / None / "none" is a write and returns a WriteResult.
         """
+        if is_legacy_write_fetch(fetch):
+            return self.write(query, params)
         try:
-            q = self._translate_sql(query)
+            q, has_returning = self._prepare(query)
             conn = self._get_conn()
-
-            # Detect RETURNING clause (used by PostgreSQL for INSERT ... RETURNING id)
-            has_returning = "RETURNING" in query.upper()
-            if has_returning:
-                # Remove the RETURNING clause for SQLite
-                import re
-                q = re.sub(r'\s+RETURNING\s+\w+', '', q, flags=re.IGNORECASE)
-
             cur = conn.execute(q, params or ())
 
-            query_type = q.strip().upper().split()[0] if q.strip() else ""
-            is_write = query_type in ('INSERT', 'UPDATE', 'DELETE', 'CREATE', 'ALTER', 'DROP')
-            if is_write:
+            if is_write_statement(q):
                 conn.commit()
 
+            self._remember_error("")
             if has_returning and fetch == "lastrowid":
                 return cur.lastrowid
 
             if fetch == "all":
-                return cur.fetchall()
+                return cur.fetchall() if cur.description is not None else []
             elif fetch == "one":
-                return cur.fetchone()
+                return cur.fetchone() if cur.description is not None else None
             elif fetch == "rowcount":
                 return cur.rowcount
             elif fetch == "lastrowid":
                 return cur.lastrowid
-            elif fetch == "none":
-                return None
-            return None
+            raise ValueError(f"Unknown fetch mode {fetch!r}")
         except Exception as e:
+            self._rollback_quietly()
+            if _sqlite_unavailable(e):
+                logger.error(f"SQLite database unavailable: {e} | Query: {query[:120]}")
+                raise DatabaseUnavailableError(
+                    "The local database could not be read or written. "
+                    "Your work has not been lost - try again in a moment.") from e
+            self._remember_error(error_text(e))
             logger.error(f"SQLite query error: {e} | Query: {query[:120]}")
-            raise RuntimeError(f"SQLite query failed: {e}") from e
+            return None
 
-    def execute_update(self, query: str, params: tuple = None) -> bool:
+    def write(self, query: str, params: tuple = None, *, strict: bool = False) -> WriteResult:
+        """One write, reported as a WriteResult - see PostgresManager.write()."""
         try:
-            result = self.execute_query(query, params, fetch="rowcount")
-            return result is not None and result >= 0
+            q, has_returning = self._prepare(query)
+            conn = self._get_conn()
+            cur = conn.execute(q, params or ())
+            rows = cur.rowcount
+            last_id = None
+            if cur.description is not None:
+                first = cur.fetchone()
+                if first:
+                    last_id = list(first.values())[0] if hasattr(first, "values") else first[0]
+            elif has_returning or q.lstrip().upper().startswith("INSERT"):
+                last_id = cur.lastrowid if has_returning or rows > 0 else None
+            conn.commit()
+            result = WriteResult(True, rows=rows, last_id=last_id)
         except Exception as e:
-            logger.error(f"SQLite update error: {e}")
-            return False
+            self._rollback_quietly()
+            if _sqlite_unavailable(e):
+                logger.error(f"SQLite database unavailable: {e} | Query: {query[:120]}")
+                raise DatabaseUnavailableError(
+                    "The local database could not be written, so nothing was saved. "
+                    "Your work has not been lost - try again in a moment.") from e
+            result = WriteResult.failed(e)
+            logger.error("Write refused: %s | %s", result.error, " ".join(query.split())[:160])
+        self._remember_error(result.error)
+        if strict:
+            result.raise_for_error()
+        return result
+
+    def execute_update(self, query: str, params: tuple = None) -> WriteResult:
+        """The same as write(): truthy when accepted, .rows for what changed."""
+        return self.write(query, params)
+
+    def execute_sql(self, query: str, params: tuple = None, max_rows: Optional[int] = None) -> SqlResult:
+        """Run a typed statement and report everything - see PostgresManager.execute_sql()."""
+        try:
+            conn = self._get_conn()
+            cur = conn.execute(self._translate_sql(query), params or ())
+            if cur.description is not None:
+                columns = [d[0] for d in cur.description]
+                if max_rows is not None and max_rows >= 0:
+                    rows = cur.fetchmany(max_rows + 1)
+                    truncated = len(rows) > max_rows
+                    rows = rows[:max_rows]
+                else:
+                    rows, truncated = cur.fetchall(), False
+                conn.commit()
+                return SqlResult(columns, [dict(r) for r in rows], rowcount=len(rows),
+                                 truncated=truncated, is_query=True)
+            rowcount = cur.rowcount
+            conn.commit()
+            return SqlResult(rowcount=max(rowcount, 0), is_query=False)
+        except Exception as e:
+            self._rollback_quietly()
+            if _sqlite_unavailable(e):
+                raise DatabaseUnavailableError(
+                    "The local database could not be opened, so the statement did not run.") from e
+            return SqlResult(error=error_text(e), kind=classify_error(e))
+
+    def _rollback_quietly(self):
+        try:
+            conn = getattr(self._local, "conn", None)
+            if conn is not None and conn.in_transaction:
+                conn.rollback()
+        except Exception:
+            pass
 
     # ── SQL Translation ─────────────────────────────────────────────────────
 
@@ -676,8 +821,7 @@ class SQLiteManager:
                 config_json = excluded.config_json,
                 last_updated = excluded.last_updated
         """
-        self.execute_query(q, (code, name, config_json, datetime.now().isoformat()), fetch="none")
-        return True
+        return bool(self.execute_update(q, (code, name, config_json, datetime.now().isoformat())))
 
     def get_tracking_project(self, code):
         q = "SELECT config_json FROM tracking_projects WHERE code=%s"
@@ -728,29 +872,26 @@ class SQLiteManager:
             return False
 
     def get_tracking_shots(self, project_code):
-        q = "SELECT id, data_json, version FROM tracking_shots WHERE project_code=%s"
+        from .tracking_repository import shot_row_to_dict
+        q = ("SELECT id, reel, shot_name, data_json, version FROM tracking_shots "
+             "WHERE project_code=%s")
         rows = self.execute_query(q, (project_code,)) or []
-        results = []
-        for r in rows:
-            if r.get('data_json'):
-                d = json.loads(r['data_json'])
-                d['version'] = r['version']
-                d['id'] = r['id']
-                results.append(d)
-        return results
+        return [d for d in (shot_row_to_dict(r) for r in rows) if d is not None]
 
     def update_tracking_shot_safe(self, project_code, shot_name, data_json,
                                   current_version, reel=None):
+        from .tracking_repository import status_and_priority
         timestamp = datetime.now().isoformat()
         if reel is None:
             reel = _reel_of(data_json)
+        status, priority = status_and_priority(data_json)
         q = """
             UPDATE tracking_shots
-            SET data_json=%s, version=version+1, last_updated=%s
+            SET data_json=%s, status=%s, priority=%s, version=version+1, last_updated=%s
             WHERE project_code=%s AND reel=%s AND shot_name=%s AND version=%s
         """
         result = self.execute_query(
-            q, (data_json, timestamp, project_code, reel, shot_name, current_version),
+            q, (data_json, status, priority, timestamp, project_code, reel, shot_name, current_version),
             fetch="rowcount"
         )
         return (result or 0) > 0
@@ -964,39 +1105,26 @@ class SQLiteManager:
 
     # ── Change History & Audit ──────────────────────────────────────────────
 
-    def log_change_event(self, project_code, entity_type, entity_id, user_id, action_type, field, old_val, new_val):
-        q = """
-            INSERT INTO change_history
-            (project_code, entity_type, entity_id, user_id, action_type, field_changed, old_value, new_value)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+    def log_change_event(self, project_code, entity_type, entity_id, user_id, action_type,
+                         field, old_val, new_val, **shot):
         """
-        self.execute_query(q, (project_code, entity_type, entity_id, user_id, action_type, field, str(old_val), str(new_val)), fetch="none")
+        One line of change history. user_id is the author's username (see
+        change_history.py); shot may carry shot_id, shot_name, reel and
+        department. Returns the WriteResult.
+        """
+        from .change_history import log_change
+        return log_change(self, project_code, entity_type, entity_id, user_id, action_type,
+                          field, old_val, new_val, **shot)
 
-    def get_history(self, project_code=None, shot_name=None, limit=200):
+    def get_history(self, project_code=None, shot_name=None, limit=200, **shot):
+        """History, newest first - see change_history.read_history()."""
+        from .change_history import read_history
         try:
-            where = ["1=1"]
-            params = []
-            if project_code:
-                where.append("ch.project_code=?")
-                params.append(project_code)
-            if shot_name:
-                where.append("(ch.entity_id=? OR ch.entity_id LIKE ?)")
-                params.extend([shot_name, f"{shot_name}_%"])
-            params.append(int(limit))
-            q = f"""
-                SELECT ch.timestamp,
-                       COALESCE(u.display_name, u.username, 'Unknown') AS user_name,
-                       ch.field_changed, ch.old_value, ch.new_value,
-                       ch.entity_type, ch.entity_id, ch.action_type
-                FROM change_history ch
-                LEFT JOIN users u ON u.id = ch.user_id
-                WHERE {' AND '.join(where)}
-                ORDER BY ch.timestamp DESC
-                LIMIT ?
-            """
-            return [dict(r) for r in (self.execute_query(q, tuple(params)) or [])]
+            return read_history(self, project_code, shot_name, limit, **shot)
+        except DatabaseUnavailableError:
+            raise
         except Exception as e:
-            logger.error(f"get_history failed: {e}")
+            logger.exception(f"Failed to fetch history for project={project_code}, shot={shot_name}: {e}")
             return []
 
     # ── Stubs for less critical features ────────────────────────────────────

@@ -28,6 +28,8 @@ except ImportError:                                  # pragma: no cover
         class DatabaseUnavailableError(ConnectionError):
             """Fallback when the manager cannot be imported."""
 
+from .transaction import atomic
+
 logger = logging.getLogger(__name__)
 
 
@@ -52,20 +54,31 @@ class LicenceRepository:
             logger.exception("licences failed")
             return []
 
+    # The column's size, so the dialog can stop a name the database would refuse.
+    NAME_MAX = 100
+
     def save(self, software_name, total_seats, expiry, licence_id=None) -> bool:
+        """
+        Add or change a licence. True only when the database kept it.
+
+        The result of the write used to be thrown away and True returned, so a
+        name longer than the column was refused, the dialog closed, and the
+        licence simply was not there. An edit of a licence that no longer
+        exists is a failure too.
+        """
         try:
             if licence_id:
-                self.db.execute_update(
+                result = self.db.execute_update(
                     "UPDATE software_licenses SET software_name = %s, total_seats = %s, "
                     "expiration_date = %s WHERE id = %s",
                     (software_name, int(total_seats or 0), expiry, licence_id))
-            else:
-                self.db.execute_update(
-                    "INSERT INTO software_licenses "
-                    "(software_name, total_seats, active_seats, expiration_date) "
-                    "VALUES (%s, %s, 0, %s)",
-                    (software_name, int(total_seats or 0), expiry))
-            return True
+                return bool(getattr(result, "changed", result))
+            result = self.db.execute_update(
+                "INSERT INTO software_licenses "
+                "(software_name, total_seats, active_seats, expiration_date) "
+                "VALUES (%s, %s, 0, %s)",
+                (software_name, int(total_seats or 0), expiry))
+            return bool(result)
         except DatabaseUnavailableError:
             raise
         except Exception:
@@ -74,17 +87,17 @@ class LicenceRepository:
 
     def remove(self, licence_id) -> bool:
         """
-        Delete a licence and the readings taken against it.
+        Delete a licence and the readings taken against it - both or neither.
 
         Leaving the readings behind would leave a peak with nothing to compare
         it to, and it would keep counting towards the name-keyed fallback - so
         a deleted contract would go on flagging its replacement.
         """
         try:
-            self.db.execute_update(
-                "DELETE FROM licence_readings WHERE licence_id = %s", (licence_id,))
-            self.db.execute_update(
-                "DELETE FROM software_licenses WHERE id = %s", (licence_id,))
+            with atomic(self.db) as tx:
+                tx.write("DELETE FROM licence_readings WHERE licence_id = %s", (licence_id,))
+                tx.write("DELETE FROM software_licenses WHERE id = %s", (licence_id,),
+                         expect_rows=True)
             return True
         except DatabaseUnavailableError:
             raise
@@ -105,29 +118,30 @@ class LicenceRepository:
 
         active_seats on the purchase row is kept as the latest reading, so a
         screen that only knows about the purchase table is not left stale.
+        The reading and that copy are written together.
         """
         try:
-            self.db.execute_update(
-                "INSERT INTO licence_readings "
-                "(software_name, licence_id, taken_at, seats_in_use, seats_total) "
-                "VALUES (%s, %s, %s, %s, %s)",
-                (software_name, licence_id, taken_at or datetime.now(),
-                 int(seats_in_use or 0), int(seats_total or 0)))
-            if licence_id:
-                self.db.execute_update(
-                    "UPDATE software_licenses SET active_seats = %s WHERE id = %s",
-                    (int(seats_in_use or 0), licence_id))
-            else:
-                self.db.execute_update(
-                    "UPDATE software_licenses SET active_seats = %s WHERE software_name = %s",
-                    (int(seats_in_use or 0), software_name))
+            with atomic(self.db) as tx:
+                tx.write(
+                    "INSERT INTO licence_readings "
+                    "(software_name, licence_id, taken_at, seats_in_use, seats_total) "
+                    "VALUES (%s, %s, %s, %s, %s)",
+                    (software_name, licence_id, taken_at or datetime.now(),
+                     int(seats_in_use or 0), int(seats_total or 0)))
+                if licence_id:
+                    tx.write(
+                        "UPDATE software_licenses SET active_seats = %s WHERE id = %s",
+                        (int(seats_in_use or 0), licence_id))
+                else:
+                    tx.write(
+                        "UPDATE software_licenses SET active_seats = %s WHERE software_name = %s",
+                        (int(seats_in_use or 0), software_name))
             return True
         except DatabaseUnavailableError:
             raise
         except Exception:
             logger.exception("record failed")
             return False
-
     def peaks(self, days: int = 90) -> dict:
         """
         Highest concurrent use per licence over a window.

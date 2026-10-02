@@ -95,49 +95,53 @@ class TestConfigManagerActualAPI:
         assert "custom_setting" in loaded
         assert loaded["custom_setting"] == "test_value"
     
-    def test_sanitize_settings_escapes_html(self, config_manager):
-        """Test that _sanitize_settings escapes HTML/XSS."""
-        malicious_settings = {
-            "user_input": "<script>alert('XSS')</script>",
-            "project_name": "<img src=x onerror=alert(1)>"
-        }
-        
-        sanitized = config_manager._sanitize_settings(malicious_settings)
-        
-        # Should escape HTML entities
-        assert "&lt;script&gt;" in sanitized["user_input"]
-        assert "&lt;img" in sanitized["project_name"]
-        assert "<script>" not in sanitized["user_input"]
-    
+    # Settings are JSON, not HTML. They used to be html.escape()d on every
+    # load and every save, so "Tom & Jerry's Show" became
+    # "Tom &amp;amp; Jerry&amp;#x27;s Show" after one restart (SYS-105).
+
+    def test_sanitize_settings_keeps_values_exactly(self, config_manager):
+        values = {"path": "D:/Tom & Jerry's Show/<plates>", "quote": 'say "hi"'}
+        assert config_manager._sanitize_settings(values) == values
+
     def test_sanitize_settings_recursively(self, config_manager):
-        """Test that sanitization works on nested dicts."""
-        nested = {
-            "level1": {
-                "level2": {
-                    "xss": "<script>alert('nested')</script>"
-                }
-            }
-        }
-        
-        sanitized = config_manager._sanitize_settings(nested)
-        
-        # Check deep sanitization
-        deep_value = sanitized["level1"]["level2"]["xss"]
-        assert "&lt;script&gt;" in deep_value
-        assert "<script>" not in deep_value
-    
-    def test_sanitize_settings_handles_lists(self, config_manager):
-        """Test sanitization of list values."""
-        settings_with_list = {
-            "tags": ["<script>xss1</script>", "normal", "<b>bold</b>"]
-        }
-        
-        sanitized = config_manager._sanitize_settings(settings_with_list)
-        
-        # All list items should be sanitized
-        assert "&lt;script&gt;" in sanitized["tags"][0]
-        assert "normal" == sanitized["tags"][1]
-        assert "&lt;b&gt;" in sanitized["tags"][2]
+        """Nested dicts and lists are checked, and kept as they are."""
+        nested = {"level1": {"level2": {"v": "A & B"}}, "tags": ["x & y", 3, {"k": "<b>"}]}
+        assert config_manager._sanitize_settings(nested) == nested
+
+    def test_sanitize_settings_limits_length(self, config_manager):
+        sanitized = config_manager._sanitize_settings({"big": "x" * 20000, "list": ["y" * 20000]})
+        assert len(sanitized["big"]) == 10000 and len(sanitized["list"][0]) == 10000
+
+    def test_ampersands_and_apostrophes_survive_save_and_load(self, config_manager):
+        original = "D:/Studio/Tom & Jerry's Show"
+        config_manager.settings["global_settings"]["last_project_dir"] = original
+        assert config_manager.save_settings(config_manager.settings)
+        for _ in range(3):
+            loaded = config_manager.load_settings()
+            assert loaded["global_settings"]["last_project_dir"] == original
+            config_manager.save_settings(loaded)
+
+    def test_a_file_escaped_by_an_older_slate_is_repaired_once(self, config_manager):
+        import json
+        path = config_manager.settings_file
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "global_settings": {"last_project_dir": "Tom &amp;amp; Jerry&amp;#x27;s Show"},
+            "logo": ["A &amp;amp; B"]}), encoding="utf-8")
+        loaded = config_manager.load_settings()
+        assert loaded["global_settings"]["last_project_dir"] == "Tom & Jerry's Show"
+        assert loaded["logo"] == ["A & B"]
+        on_disk = json.loads(path.read_text(encoding="utf-8"))
+        assert on_disk["global_settings"]["last_project_dir"] == "Tom & Jerry's Show"
+        assert on_disk[config_manager.ESCAPE_REPAIRED_KEY] is True
+
+    def test_after_the_repair_a_literal_entity_is_left_alone(self, config_manager):
+        import json
+        path = config_manager.settings_file
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"note": "write &amp; like this",
+                                    config_manager.ESCAPE_REPAIRED_KEY: True}), encoding="utf-8")
+        assert config_manager.load_settings()["note"] == "write &amp; like this"
     
     def test_templates_available(self, config_manager):
         """Test that templates are loaded."""

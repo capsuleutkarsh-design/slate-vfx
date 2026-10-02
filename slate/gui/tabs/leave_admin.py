@@ -27,6 +27,8 @@ from slate.core.infra.leave_repository import LeaveRepository
 from slate.core.domain import leave_policy as lp
 from ..core.controls import make_button
 from slate.gui.core.offline_notice import on_database_error
+from slate.gui.core.data_display import date_item, setup_date_edit
+from slate.core.domain.dates import format_date
 
 
 class HolidayEditDialog(QDialog):
@@ -51,9 +53,10 @@ class HolidayEditDialog(QDialog):
         form = QFormLayout()
         form.setSpacing(Gate.SPACE_2)
 
-        self.day = QDateEdit()
-        self.day.setCalendarPopup(True)
-        self.day.setDisplayFormat("d MMMM yyyy")
+        # The same date format as the calendar's table and its date box - this
+        # dialog spelled the month out, the box showed 30-09-2026 and the
+        # table 2026-09-30.
+        self.day = setup_date_edit(QDateEdit(), weekday=True)
         form.addRow("Date", self.day)
 
         self.name = QLineEdit()
@@ -146,11 +149,14 @@ class HolidayCalendarDialog(QDialog):
         entry = QHBoxLayout()
         entry.setSpacing(Gate.SPACE_2)
 
-        self.day = QDateEdit()
-        self.day.setCalendarPopup(True)
+        # Each field of the add row is labelled - the date and the "All" box
+        # had no labels, so nothing said what the second box meant.
+        entry.addWidget(QLabel("Date"))
+        self.day = setup_date_edit(QDateEdit(), weekday=True)
         self.day.setDate(QDate.currentDate())
         entry.addWidget(self.day)
 
+        entry.addWidget(QLabel("Name"))
         self.name = QLineEdit()
         self.name.setPlaceholderText("Diwali, Republic Day...")
         self.name.returnPressed.connect(self.add)
@@ -160,8 +166,12 @@ class HolidayCalendarDialog(QDialog):
         # than a fixed list of three cities belonging to whoever this was
         # written for. A holiday applies to a location only when the spelling
         # matches, so guessing it is worse than not offering it.
+        entry.addWidget(QLabel("Applies to"))
         self.location = QComboBox()
         self.location.setEditable(True)
+        self.location.setToolTip(
+            "All means everybody. A place name means only the people whose "
+            "record says that place, spelled the same way.")
         entry.addWidget(self.location)
 
         entry.addWidget(make_button("Add", "primary", on_click=self.add))
@@ -228,9 +238,9 @@ class HolidayCalendarDialog(QDialog):
                 weekday = day.strftime("%A")
             except Exception:
                 weekday = ""
-            cells = [str(day), weekday, row.get("name") or "", row.get("location") or "All"]
+            cells = [format_date(day), weekday, row.get("name") or "", row.get("location") or "All"]
             for c, text in enumerate(cells):
-                item = QTableWidgetItem(text)
+                item = date_item(day) if c == 0 else QTableWidgetItem(text)
                 # A holiday already behind us is history, not something to plan
                 # around - dimming it keeps the eye on the rest of the year.
                 if isinstance(day, date) and day < today:
@@ -258,10 +268,26 @@ class HolidayCalendarDialog(QDialog):
             QMessageBox.information(self, "Name it", "A holiday needs a name.")
             return
         d = self.day.date()
-        if not self.repo.add_holiday(date(d.year(), d.month(), d.day()), name,
-                                     self.location.currentText().strip() or "All"):
-            QMessageBox.warning(self, "Not saved", "That holiday could not be added.")
+        day = date(d.year(), d.month(), d.day())
+        place = self.location.currentText().strip() or "All"
+        if not self.repo.add_holiday(day, name, place):
+            # Most often it is already there: the insert skips a holiday on a
+            # date that place already has, which used to look like success -
+            # the name was cleared and nothing appeared. Say which, and keep
+            # the typed name so nothing has to be typed again.
+            clash = [r for r in self.repo.holiday_rows(day.year)
+                     if str(r.get("holiday_date"))[:10] == day.isoformat()
+                     and str(r.get("location") or "All").lower() == place.lower()]
+            if clash:
+                QMessageBox.information(
+                    self, "Already on the calendar",
+                    "There is already a holiday on %s for %s: %s."
+                    % (format_date(day), place, clash[0].get("name") or "unnamed"))
+            else:
+                QMessageBox.warning(self, "Not saved", "That holiday could not be added.")
+            return
         self.name.clear()
+        self._wanted_year = day.year
         self._load_years()
         self.refresh()
 
@@ -372,7 +398,8 @@ class CompOffReviewDialog(QDialog):
         if not rules.get("comp_off_enabled"):
             self.note.setText(
                 "This studio does not operate comp off, so nothing is earned back "
-                "for working a day off. Turn it on in the studio policy first.")
+                "for working a day off. HR or an admin can turn it on in "
+                "Settings > Studio Policy > Comp-off.")
             self.btn_credit.setEnabled(False)
             self.table.setRowCount(0)
             self._entries = []

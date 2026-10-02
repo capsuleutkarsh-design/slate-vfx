@@ -511,7 +511,18 @@ class ConfigManager:
                     logging.warning("Settings file does not contain a dictionary. Using defaults.")
                     return settings
 
-                # SECURITY: Sanitize loaded settings before merging
+                # A file written by an older Slate had every string HTML-
+                # escaped, once per save - 'Tom & Jerry' came back as
+                # 'Tom &amp;amp; Jerry' after two restarts, and a studio logo
+                # path with '&' in it stopped existing. Undo that once and
+                # save the clean file; after that nothing escapes anything.
+                if not loaded_settings.get(self.ESCAPE_REPAIRED_KEY):
+                    repaired = self._unescape_settings(loaded_settings)
+                    repaired[self.ESCAPE_REPAIRED_KEY] = True
+                    loaded_settings = repaired
+                    self._write_repaired(repaired)
+
+                # SECURITY: Validate loaded settings before merging
                 sanitized_settings = self._sanitize_settings(loaded_settings)
                 
                 # Merge loaded settings with defaults
@@ -548,32 +559,78 @@ class ConfigManager:
                 else:
                     logging.warning(f"Type mismatch for setting {key}: {type(base_dict[key])} vs {type(value)}")
 
+    # Written into the file once the old HTML escaping has been undone, so the
+    # repair runs exactly once: a value that legitimately contains "&amp;"
+    # is never touched again.
+    ESCAPE_REPAIRED_KEY = "_settings_unescaped"
+    MAX_VALUE_LENGTH = 10000
+
     def _sanitize_settings(self, settings: Dict[str, Any]) -> Dict[str, Any]:
-        """SECURE: Recursively sanitize all string values in settings."""
+        """
+        Check the shape of settings: string keys only, no absurdly long values.
+
+        Values are stored exactly as given. This used to html.escape() every
+        string, on load and again on save - but settings are JSON, not HTML,
+        and nothing renders them as markup. The effect was only corruption: an
+        '&' or an apostrophe in a path was escaped again on every load/save
+        cycle, so paths grew '&amp;amp;...' and stopped existing.
+        """
         sanitized = {}
-        
+
         for key, value in settings.items():
-            # SECURITY: Validate key
             if not isinstance(key, str):
                 logging.warning(f"Skipping settings key with invalid type: {key}")
                 continue
-                
+
             if isinstance(value, str):
-                # SECURITY: Escape potentially dangerous characters and validate length
-                if len(value) > 10000:  # Reasonable limit for settings
+                if len(value) > self.MAX_VALUE_LENGTH:
                     logging.warning(f"Settings value too long for key {key}, truncating")
-                    value = value[:10000]
-                sanitized[key] = html.escape(value)
+                    value = value[:self.MAX_VALUE_LENGTH]
+                sanitized[key] = value
             elif isinstance(value, dict):
                 sanitized[key] = self._sanitize_settings(value)
             elif isinstance(value, list):
-                sanitized[key] = [self._sanitize_settings(item) if isinstance(item, dict) 
-                                else html.escape(item) if isinstance(item, str) 
-                                else item for item in value]
+                sanitized[key] = [self._sanitize_settings(item) if isinstance(item, dict)
+                                  else item[:self.MAX_VALUE_LENGTH] if isinstance(item, str)
+                                  else item for item in value]
             else:
                 sanitized[key] = value
-        
+
         return sanitized
+
+    @classmethod
+    def _unescape_text(cls, text: str) -> str:
+        """Undo any number of rounds of html.escape: '&amp;amp;#x27;' -> "'"."""
+        for _ in range(20):
+            cleaner = html.unescape(text)
+            if cleaner == text:
+                break
+            text = cleaner
+        return text
+
+    @classmethod
+    def _unescape_settings(cls, value):
+        """Every string in a settings structure, with the old escaping undone."""
+        if isinstance(value, str):
+            return cls._unescape_text(value)
+        if isinstance(value, dict):
+            return {k: cls._unescape_settings(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [cls._unescape_settings(v) for v in value]
+        return value
+
+    def _write_repaired(self, settings: Dict[str, Any]) -> None:
+        """Save the repaired file straight away, keeping the old one as .bak."""
+        try:
+            if self.settings_file.exists():
+                shutil.copy2(self.settings_file, self.settings_file.with_suffix('.bak'))
+            with open(self.settings_file, 'w', encoding='utf-8') as f:
+                json.dump(settings, f, indent=4, ensure_ascii=False)
+            logging.info("Settings: undid the old HTML escaping in %s", self.settings_file)
+        except Exception as exc:
+            # Not fatal: the repaired values are used in memory, and the next
+            # save writes them out.
+            logging.warning("Could not rewrite %s after repairing it: %s", self.settings_file, exc)
 
     def save_settings(self, settings: Dict[str, Any]) -> bool:
         """SECURE: Save settings with security validation and backup."""
@@ -582,8 +639,9 @@ class ConfigManager:
             if not isinstance(settings, dict):
                 raise SecurityError("Settings data is not a dictionary")
 
-            # SECURITY: Sanitize settings before saving
+            # SECURITY: Validate settings before saving
             sanitized_settings = self._sanitize_settings(settings)
+            sanitized_settings[self.ESCAPE_REPAIRED_KEY] = True
 
             # Create backup of existing settings
             if self.settings_file.exists():

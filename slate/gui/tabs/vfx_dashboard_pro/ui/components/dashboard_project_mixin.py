@@ -47,11 +47,15 @@ class DashboardProjectMixin:
 
             if db_project:
                 self.log("Loading from DATABASE (SQLiteHandler)...")
-                # Resolve ID
-                user_id = database_manager.get_user_id(self.user_display_name) or 1
+                # History is written under the signed-in username. It used to
+                # be the id found for the display name, or 1 when none was -
+                # which recorded the admin as the author of anyone's change.
+                username = str(self.user_data.get("username")
+                               or self.user_data.get("user_id") or "").strip()
                 self.data_handler = SQLiteHandler(
-                    project_code, user_id=user_id, user_role=self.access_roles,
+                    project_code, user_role=self.access_roles,
                     department_family=self._department_family() or "",
+                    username=username,
                 )
 
                 # PHASE 2: Check/Run Migration to Relational Logic
