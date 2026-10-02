@@ -8,6 +8,7 @@ from PySide6.QtGui import QFont, QColor
 import json
 import logging
 from slate.core.domain.user_manager import UserManager
+from slate.core.infra.gate import Gate
 
 logger = logging.getLogger(__name__)
 
@@ -448,7 +449,7 @@ class UsersPanel(QWidget):
                 if c == 0:
                     item.setData(Qt.ItemDataRole.UserRole + 1, active)
                 if not active:
-                    item.setForeground(QColor("#87857F"))
+                    item.setForeground(QColor(Gate.TEXT_DIM))
                 # A missing joining date is not cosmetic - accrual counts from
                 # it, so say so rather than showing a tidy dash.
                 if c == 4 and text == "-":
