@@ -638,7 +638,7 @@ class ApplicationEntry:
         # Ensure the app doesn't quit when we switch windows
         self.app.setQuitOnLastWindowClosed(False)
         
-        self.login_dialog = LoginDialog(app_context=self.app_context) # Keep reference
+        self.login_dialog = LoginDialog(app_context=self.app_context, app_mode=self.app_mode)  # Keep reference
         result = self.login_dialog.exec()
         
         # Blocking call finished here
