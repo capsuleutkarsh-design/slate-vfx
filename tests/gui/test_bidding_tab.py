@@ -334,3 +334,20 @@ def test_PRD_090_the_help_describes_what_is_built():
     page = json.loads((root / "slate/core/help_content.json").read_text(encoding="utf-8"))["bidding"]["content"]
     for words in ("line", "revision", "GST", "Won", "Archive", "Tracking", "Create shots", "Approve bids"):
         assert words.casefold() in page.casefold(), words
+
+
+def test_NEW_production_3_legacy_bids_get_their_own_project_filter_entry(qtbot, app, seeded):
+    tab = make_tab(qtbot)
+    index = tab.project_filter.findData("OLDJOB")
+    assert index > 0 and tab.project_filter.itemText(index) == "OLDJOB (no project code)"
+    tab.project_filter.setCurrentIndex(index)
+    assert [b.project_name for b in tab.visible_bids()] == ["OLDJOB"]
+
+
+def test_NEW_production_1_buttons_follow_the_decision_rule(qtbot, app, seeded):
+    from slate.gui.components.table_tools import select_keys
+    tab = make_tab(qtbot, COORD)
+    select_keys(tab.grid, [seeded["won"]])
+    assert not tab.revise_button.isEnabled() and not tab.archive_button.isEnabled()
+    select_keys(tab.grid, [seeded["draft"]])
+    assert tab.revise_button.isEnabled() and tab.archive_button.isEnabled()

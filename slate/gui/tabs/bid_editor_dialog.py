@@ -313,7 +313,10 @@ class BidEditorDialog(QDialog):
             close = self.buttons.addButton(QDialogButtonBox.StandardButton.Close)
             style_button(self.revise_button, "primary")
             style_button(close, "secondary")
-            self.revise_button.setEnabled(bid.status != DB.SUPERSEDED and not bid.archived)
+            refusal = repo.decided_refusal(bid, username) if repo is not None and hasattr(
+                repo, "decided_refusal") else ""
+            self.revise_button.setEnabled(bid.status != DB.SUPERSEDED and not bid.archived and not refusal)
+            self.revise_button.setToolTip(refusal)
             self.revise_button.clicked.connect(self._revise)
             close.clicked.connect(self.reject)
             self.save_button = None

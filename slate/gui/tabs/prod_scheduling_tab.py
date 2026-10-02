@@ -655,11 +655,13 @@ class ProdSchedulingTab(QWidget):
             f" and {len(doomed) - 4} more" if len(doomed) > 4 else "")
         detail = ""
         if waiting:
-            detail = (f"{DS.plural(len(waiting), 'milestone')} wait on "
+            detail = (f"{DS.plural(len(waiting), 'milestone')} "
+                      f"{'waits' if len(waiting) == 1 else 'wait'} on "
                       f"{'it' if len(doomed) == 1 else 'them'} ("
                       + ", ".join(m.name for m in waiting[:4])
                       + (" …" if len(waiting) > 4 else "")
-                      + "). They are kept and will no longer depend on anything.")
+                      + ("). It is kept and will no longer depend on anything." if len(waiting) == 1
+                         else "). They are kept and will no longer depend on anything."))
         if not confirm(self, "Delete milestones",
                        f"Delete {DS.plural(len(doomed), 'milestone')}: {names}? This cannot be undone.",
                        yes_label=f"Delete {DS.plural(len(doomed), 'milestone')}",

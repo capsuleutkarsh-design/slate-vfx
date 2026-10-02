@@ -224,8 +224,10 @@ class ProdBiddingTab(QWidget):
         self.tracking = BidTrackingView(self)
         # Small minimums, so the page fits a 1280x720 screen without scrolling.
         self.grid.setMinimumHeight(110)
-        self.tracking.setMinimumHeight(90)
-        self.tracking.table.setMinimumHeight(40)
+        # The tracking table keeps room for its header and at least two rows:
+        # at 1280x720 it was squeezed to the header alone.
+        self.tracking.table.setMinimumHeight(Gate.ROW_HEIGHT * 3 + 8)
+        self.tracking.setMinimumHeight(Gate.ROW_HEIGHT * 3 + 8 + 48)
         split = _FillSplitter(Qt.Orientation.Vertical)
         split.addWidget(self.grid)
         split.addWidget(self.tracking)
@@ -285,12 +287,21 @@ class ProdBiddingTab(QWidget):
         combo.blockSignals(True)
         combo.clear()
         combo.addItem("All projects", "")
-        projects = {}
+        # The filter matches the Project cell's text. Bids from before project
+        # codes were stored show their name there (or a dash), so each gets an
+        # entry of its own - they used to fold into one whose value was "",
+        # which is "All projects".
+        projects, legacy = {}, set()
         for b in bids:
-            projects.setdefault(b.project_code, b.project_name)
+            if b.project_code:
+                projects.setdefault(b.project_code, b.project_name)
+            else:
+                legacy.add(b.project_name or "—")
         for code in sorted(projects, key=str.casefold):
             name = projects[code]
             combo.addItem(f"{code} – {name}" if name and name.casefold() != code.casefold() else code, code)
+        for name in sorted(legacy, key=str.casefold):
+            combo.addItem("(no project)" if name == "—" else f"{name} (no project code)", name)
         index = combo.findData(keep)
         combo.setCurrentIndex(index if index >= 0 else 0)
         combo.blockSignals(False)
@@ -432,6 +443,10 @@ class ProdBiddingTab(QWidget):
             self.tracking.show_nothing(f"The dashboard figures could not be read: {exc}")
             return
         self.tracking.show_tracking(bid, tracking)
+        # Give the tracking half the room when there is something to track.
+        total = sum(self.splitter.sizes())
+        if total > 0 and self.splitter.sizes()[1] < total * 0.45:
+            self.splitter.setSizes([int(total * 0.5), total - int(total * 0.5)])
 
     def _sync_buttons(self):
         chosen = self._selected()
@@ -439,15 +454,23 @@ class ProdBiddingTab(QWidget):
         live = [b for b in chosen if not b.archived]
         self.edit_button.setEnabled(one)
         self.edit_button.setText("Edit…" if not one or chosen[0].editable else "Open…")
-        self.revise_button.setEnabled(one and not chosen[0].archived and chosen[0].status != DB.SUPERSEDED)
+        # Revising or archiving a won/lost bid takes the decision away, so it
+        # needs what deciding needs (approve_bid, never your own bid).
+        refusals = {b.id: self.repo.decided_refusal(b, self.username) for b in chosen}
+        self.revise_button.setEnabled(one and not chosen[0].archived and chosen[0].status != DB.SUPERSEDED
+                                      and not refusals[chosen[0].id])
+        self.revise_button.setToolTip(refusals[chosen[0].id] if one and refusals[chosen[0].id] else
+                                      "Copy the bid into a new draft revision; this one is kept")
         self.sent_button.setEnabled(bool(live) and all(DB.can_change(b.status, DB.SENT) for b in live))
         self.won_button.setEnabled(bool(live) and all(DB.can_change(b.status, DB.WON) for b in live))
         self.lost_button.setEnabled(bool(live) and all(DB.can_change(b.status, DB.LOST) for b in live))
-        self.archive_button.setEnabled(bool(live))
+        self.archive_button.setEnabled(bool(live) and not any(refusals[b.id] for b in live))
+        blocked = next((refusals[b.id] for b in live if refusals[b.id]), "")
+        self.archive_button.setToolTip(blocked)
         self.archive_button.setVisible(not chosen or bool(live))
         archived = [b for b in chosen if b.archived]
         self.restore_button.setVisible(bool(archived))
-        self.restore_button.setEnabled(bool(archived))
+        self.restore_button.setEnabled(bool(archived) and not any(refusals[b.id] for b in archived))
 
     def _fill_more_menu(self):
         menu = self.more_menu
@@ -464,7 +487,8 @@ class ProdBiddingTab(QWidget):
         menu.addAction("Export bid as PDF…", self.export_pdf).setEnabled(one is not None)
         menu.addAction("Export list…", self.export_list).setEnabled(self.grid.rowCount() > 0)
         shots = menu.addAction("Create shots on the dashboard…", self.create_shots)
-        shots.setEnabled(one is not None and one.status == DB.WON and not one.archived)
+        shots.setEnabled(one is not None and one.status == DB.WON and not one.archived
+                         and self.repo.can_create_shots())
         shots.setToolTip("Adds the shots this won bid names to the VFX Dashboard, with their bid days")
         if self.is_superuser:
             menu.addSeparator()

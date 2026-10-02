@@ -368,3 +368,24 @@ def test_PRD_061_PRD_125_artists_and_coordinators_do_not_get_bidding():
     source = inspect.getsource(user_manager.UserManager._create_default_roles_sql)
     artist_line = next(l for l in source.splitlines() if l.strip().startswith('"Artist":'))
     assert "Scheduling" not in artist_line and "Bidding" not in artist_line
+
+
+def test_NEW_production_2_delete_wording_is_singular(qtbot, app, seeded, monkeypatch):
+    from slate.gui.components import feedback
+    from slate.gui.components.table_tools import select_keys
+    tab = make_tab(qtbot)
+    asked = {}
+    monkeypatch.setattr(feedback, "confirm", lambda parent, title, text, **k: asked.update(k) or False)
+    select_keys(tab.grid, [seeded["a"]])
+    tab.delete_milestones()
+    assert asked["informative"].startswith("1 milestone waits on it (Comp first pass). It is kept")
+
+
+def test_an_overdue_bar_keeps_its_status_colour_with_a_red_outline(qtbot, app, seeded):
+    from slate.core.infra.gate import Gate
+    from slate.gui.core.table_style import status_colour
+    from slate.gui.tabs.prod_scheduling_tab import VIEW_TIMELINE
+    tab = make_tab(qtbot)
+    tab.set_view(VIEW_TIMELINE)
+    bar = tab.timeline.gantt._bars[seeded["a"]]                # In Progress, overdue
+    assert bar.fill == status_colour("warn") and bar.outline == Gate.BAD

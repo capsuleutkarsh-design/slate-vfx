@@ -203,6 +203,26 @@ class BidRepository:
         from slate.core.domain import access
         return access.can(self.roles, "approve_bid")
 
+    def decided_refusal(self, bid, by: str = "") -> str:
+        """
+        Why this person may not revise or archive a won or lost bid, or ''.
+        Either one takes a decision out of the list and the pipeline, so it
+        needs what deciding needs: approve_bid, and not on your own bid.
+        """
+        if bid is None or bid.status not in DB.DECIDED:
+            return ""
+        refusal = DB.decision_refusal(bid.status, can_approve=self.can_approve(),
+                                      superuser=self._superuser(), creator=bid.created_by,
+                                      me=by or self.username)
+        return f"{bid.title} is {DB.status_label(bid.status).lower()}: {refusal}" if refusal else ""
+
+    def can_create_shots(self) -> bool:
+        """Creating shots writes to the dashboard, so it needs dashboard_write."""
+        if self.roles is None:
+            return True
+        from slate.core.domain import access
+        return access.can(self.roles, "dashboard_write")
+
     # ----------------------------------------------------------- reads
     def _last_error(self) -> str:
         try:
@@ -434,6 +454,9 @@ class BidRepository:
             raise DB.BidError("That bid no longer exists.")
         if current.status == DB.SUPERSEDED:
             raise DB.BidError(f"{current.title} already has a newer revision.")
+        refusal = self.decided_refusal(current, by)
+        if refusal:
+            raise PermissionError(refusal)
         lines = self.lines(bid_id)
         copy = replace(current, id=None, status=DB.DRAFT)
         return self.create(copy, [replace(l, id=None) for l in lines], by=by, revision_of=current)
@@ -505,6 +528,10 @@ class BidRepository:
         by = by or self.username
         now = self._now()
         bids = [b for b in (self.get(i) for i in ids) if b is not None]
+        for bid in bids:
+            refusal = self.decided_refusal(bid, by)
+            if refusal:
+                raise PermissionError(refusal)
         with atomic(self.db) as tx:
             for bid in bids:
                 tx.write("UPDATE prod_bidding SET archived_at = %s, archived_by = %s WHERE id = %s",
@@ -517,6 +544,10 @@ class BidRepository:
         from .transaction import atomic
         by = by or self.username
         bids = [b for b in (self.get(i) for i in ids) if b is not None]
+        for bid in bids:
+            refusal = self.decided_refusal(bid, by)
+            if refusal:
+                raise PermissionError(refusal)
         with atomic(self.db) as tx:
             for bid in bids:
                 tx.write("UPDATE prod_bidding SET archived_at = NULL, archived_by = NULL WHERE id = %s",
@@ -570,6 +601,9 @@ class BidRepository:
         exactly as they are. Returns {'created': [...], 'existing': [...],
         'group_lines': n, 'error': ''}.
         """
+        if not self.can_create_shots():
+            raise PermissionError("Creating shots on the dashboard needs the right to edit the "
+                                  "dashboard (dashboard_write).")
         bid = self.get(bid_id)
         if bid is None:
             raise DB.BidError("That bid no longer exists.")

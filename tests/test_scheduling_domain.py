@@ -343,3 +343,12 @@ def test_PRD_012_a_leave_overlap_is_found_for_the_dialog_warning():
     away = [DS.Away("Priya", date(2026, 10, 8), date(2026, 10, 9))]
     assert DS.leave_overlap("priya", date(2026, 10, 1), date(2026, 10, 8), away)
     assert not DS.leave_overlap("priya", date(2026, 10, 10), date(2026, 10, 20), away)
+
+
+def test_PRD_002_a_parent_cannot_move_to_another_project_under_its_dependents():
+    parent = ms(1, "Roto", "2026-09-01", "2026-09-10", project="AVTR3")
+    child = ms(2, "Comp", "2026-09-11", "2026-09-20", dep=1, project="AVTR3")
+    moved = ms(1, "Roto", "2026-09-01", "2026-09-10", project="RRR_REDUX")
+    problems = DS.check_milestone(moved, [parent, child])
+    assert any(p.field == "project" and "\"Comp\" in AVTR3 waits on" in str(p) for p in problems)
+    assert not DS.check_milestone(ms(1, "Roto 2", "2026-09-01", "2026-09-10"), [parent, child])

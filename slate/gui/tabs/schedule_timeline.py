@@ -524,7 +524,8 @@ class GanttView(QWidget):
             rect = QRectF(self.scale.x(start), ry + BAR_PAD, self.scale.width(start, end),
                           rh - 2 * BAR_PAD)
             overdue = DS.is_overdue(m, today)
-            tone = DS.OVERDUE_TONE if overdue else DS.status_tone(m.status)
+            # The status keeps its colour; overdue is the red outline (the legend says so).
+            tone = DS.status_tone(m.status)
             fill = status_colour(tone) if tone != "idle" else Gate.TEXT_DIM
             bar = _Bar(self, m.id, rect, fill, m.name, self._tooltip(m, by_id, calendar, today),
                        outline=Gate.BAD if (overdue or m.dates_reversed) else "",
