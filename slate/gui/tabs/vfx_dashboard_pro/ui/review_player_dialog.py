@@ -182,7 +182,7 @@ class ReviewPlayerDialog(QDialog):
         sidebar_layout.addWidget(new_note_label)
 
         self.note_edit = QTextEdit()
-        self.note_edit.setPlaceholderText("Enter feedback or revision notes...")
+        self.note_edit.setPlaceholderText("Feedback or revision notes…")
         self.note_edit.setMaximumHeight(90)
         self.note_edit.setStyleSheet(f"""
             QTextEdit {{

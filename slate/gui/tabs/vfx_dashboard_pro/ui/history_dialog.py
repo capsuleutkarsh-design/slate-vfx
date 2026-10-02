@@ -25,7 +25,7 @@ class HistoryDialog(QDialog):
         
         layout = QVBoxLayout(self)
         
-        self.label = QLabel("Loading history...")
+        self.label = QLabel("Loading history…")
         self.label.setStyleSheet("font-weight: 600;")
         layout.addWidget(self.label)
         

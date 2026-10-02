@@ -8,7 +8,7 @@ import os
 class AddProjectDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Add New Project")
+        self.setWindowTitle("Add project")
         self.setMinimumWidth(600)
         
         self.main_layout = QVBoxLayout(self)
@@ -29,7 +29,7 @@ class AddProjectDialog(QDialog):
         self.excel_input.setPlaceholderText("Select the Production Tracker (.xlsx)")
         excel_layout = QHBoxLayout()
         excel_layout.addWidget(self.excel_input)
-        self.excel_btn = QPushButton("Browse...")
+        self.excel_btn = QPushButton("Browse…")
         self.excel_btn.clicked.connect(self.browse_excel)
         excel_layout.addWidget(self.excel_btn)
         self.form.addRow("Excel File:", excel_layout)
@@ -51,7 +51,7 @@ class AddProjectDialog(QDialog):
         self.folder_input = QLineEdit()
         folder_layout = QHBoxLayout()
         folder_layout.addWidget(self.folder_input)
-        self.folder_btn = QPushButton("Browse...")
+        self.folder_btn = QPushButton("Browse…")
         self.folder_btn.clicked.connect(self.browse_folder)
         folder_layout.addWidget(self.folder_btn)
         self.form.addRow("Project Root:", folder_layout)
