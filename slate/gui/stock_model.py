@@ -43,6 +43,7 @@ COLUMN_SORTS = {0: ("name", "name_desc"), 1: ("type", "type_desc"), 2: None, 3: 
                 4: ("size_asc", "size"), 5: ("oldest", "newest"), 6: ("category", "category_desc")}
 
 RAW_SUFFIXES = {".r3d", ".ari"}
+QT_STILLS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff"}
 DASH = "—"
 
 
@@ -369,6 +370,9 @@ class StockModel(QAbstractTableModel):
         if path and can_preview(asset) and key not in self._asked_for_thumbs:
             self._asked_for_thumbs.add(key)
             self.thumbnail_needed.emit(dict(asset))
+        # Meanwhile a still Qt can read is shown from the source itself.
+        if path and Path(path).suffix.lower() in QT_STILLS and not asset.get('is_sequence'):
+            self.loader.request_image(path)
         return None
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
