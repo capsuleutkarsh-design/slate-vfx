@@ -44,6 +44,7 @@ from slate.utils.resource_manager import ResourcePathManager
 
 from ..models.shot_model import Shot
 from .date_fields import OptionalDateField
+from .date_fields import scaled_font
 
 
 def _section(title: str) -> QLabel:
@@ -52,7 +53,7 @@ def _section(title: str) -> QLabel:
     label.setObjectName("detailSection")
     font = label.font()
     font.setBold(True)
-    font.setPointSizeF(font.pointSizeF() * 1.1)
+    font = scaled_font(font, 1.1)
     label.setFont(font)
     label.setStyleSheet(f"color: {Gate.TEXT}; padding-top: 6px;")
     return label
@@ -171,10 +172,13 @@ class ShotDetailWidget(QWidget):
         self.title_label.setObjectName("detailTitle")
         title_font = QFont(self.title_label.font())
         title_font.setBold(True)
-        title_font.setPointSizeF(title_font.pointSizeF() * 1.45)
+        title_font = scaled_font(title_font, 1.45)
         self.title_label.setFont(title_font)
         self.title_label.setStyleSheet(f"color: {Gate.TEXT};")
         self.title_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        # A long shot name is cut with an ellipsis, never widening the panel.
+        self.title_label.setMinimumWidth(60)
+        self.title_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         title_area.addWidget(self.title_label)
         self.reel_label = QLabel(self.shot.reel_episode or "No reel")
         self.reel_label.setStyleSheet(f"color: {Gate.TEXT_2};")
@@ -481,7 +485,7 @@ class ShotDetailWidget(QWidget):
         self._loading = True
         try:
             shot = self.shot
-            self.title_label.setText(shot.shot_name)
+            self._elide_title()
             self.title_label.setToolTip(f"{shot.shot_name} ({shot.reel_episode})" if shot.reel_episode
                                         else shot.shot_name)
             self.reel_label.setText(shot.reel_episode or "No reel")
@@ -755,6 +759,12 @@ class ShotDetailWidget(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._refresh_text_heights()
+        self._elide_title()
+
+    def _elide_title(self):
+        width = max(60, self.title_label.width())
+        self.title_label.setText(self.title_label.fontMetrics().elidedText(
+            self.shot.shot_name or "", Qt.TextElideMode.ElideRight, width))
 
     # ------------------------------------------------------------ folders and apps
     def _fill_folder_menu(self):

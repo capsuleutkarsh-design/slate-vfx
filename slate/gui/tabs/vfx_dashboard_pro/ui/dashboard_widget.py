@@ -604,7 +604,26 @@ class DashboardWidget(
     def showEvent(self, event):
         super().showEvent(event)
         self._apply_pending_live_changes_on_show()
+        self._watch_scroll_frame()
         QTimer.singleShot(0, self._fit_toolbar)
+
+    def _watch_scroll_frame(self):
+        """Refit the toolbar when the frame the tab sits in changes size."""
+        if getattr(self, "_watched_viewport", None) is not None:
+            return
+        from PySide6.QtWidgets import QAbstractScrollArea
+        parent = self.parentWidget()
+        while parent is not None and not isinstance(parent, QAbstractScrollArea):
+            parent = parent.parentWidget()
+        if parent is not None:
+            self._watched_viewport = parent.viewport()
+            self._watched_viewport.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        from PySide6.QtCore import QEvent
+        if obj is getattr(self, "_watched_viewport", None) and event.type() == QEvent.Type.Resize:
+            QTimer.singleShot(0, self._fit_toolbar)
+        return super().eventFilter(obj, event)
 
     def hideEvent(self, event):
         self._cancel_thumbnail_prefetch()
@@ -624,7 +643,17 @@ class DashboardWidget(
         wanted_visible = {b: (b is not self.manage_proj_btn or not self.project_menu.isEmpty())
                           for b in foldable}
         margins = self.app_bar.layout().contentsMargins()
-        available = self.app_bar.width() - margins.left() - margins.right()
+        # The room actually on screen: inside Slate the tab sits in a scroll
+        # frame, which would otherwise grow to fit whatever the row asks for.
+        width = self.width()
+        from PySide6.QtWidgets import QAbstractScrollArea
+        parent = self.parentWidget()
+        while parent is not None:
+            if isinstance(parent, QAbstractScrollArea):
+                width = min(width, parent.viewport().width())
+                break
+            parent = parent.parentWidget()
+        available = width - margins.left() - margins.right()
         needed = 0
         for i in range(row.count()):
             item = row.itemAt(i)

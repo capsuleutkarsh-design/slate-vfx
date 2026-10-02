@@ -325,6 +325,10 @@ class DashboardFilterMixin:
         self._board_dirty = True
         if self._board_visible():
             self.update_kanban()
+        fit = getattr(self, "_fit_toolbar", None)
+        if fit is not None:
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(0, fit)
 
     def _update_filter_chip(self):
         chip = getattr(self, "filter_chip", None)
@@ -349,9 +353,11 @@ class DashboardFilterMixin:
         self._only_shots = None
         box = getattr(self, "search_input", None)
         if box is not None:
-            box.blockSignals(True)
+            # Not blocked: the box's own clear button must see the change.
             box.clear()
-            box.blockSignals(False)
+            timer = getattr(self, "_search_debounce_timer", None)
+            if timer is not None:
+                timer.stop()
         combo = getattr(self, "status_filter", None)
         if combo is not None:
             combo.blockSignals(True)

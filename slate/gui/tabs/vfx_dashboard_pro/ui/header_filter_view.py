@@ -160,7 +160,7 @@ class FilterHeaderView(QHeaderView):
 
         if filtered:
             painter.save()
-            painter.fillRect(rect.adjusted(0, 0, -1, -1), QColor(Gate.tint(Gate.ACCENT, 0.14)))
+            painter.fillRect(rect.adjusted(0, 0, -1, -1), Gate.qcolor(Gate.ACCENT, 0.14))
             painter.restore()
         if filtered or self._hover == logical_index:
             colour = Gate.ACCENT if filtered else Gate.TEXT_DIM

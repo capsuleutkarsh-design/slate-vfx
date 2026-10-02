@@ -158,3 +158,14 @@ class OptionalDateField(QWidget):
     def setReadOnly(self, read_only: bool):
         self.edit.setReadOnly(read_only)
         self.clear_button.setVisible(not read_only)
+
+
+def scaled_font(font, factor: float):
+    """A copy of `font`, `factor` times larger - in points or in pixels, whichever it is set in."""
+    from PySide6.QtGui import QFont
+    out = QFont(font)
+    if out.pointSizeF() > 0:
+        out.setPointSizeF(out.pointSizeF() * factor)
+    elif out.pixelSize() > 0:
+        out.setPixelSize(max(1, round(out.pixelSize() * factor)))
+    return out

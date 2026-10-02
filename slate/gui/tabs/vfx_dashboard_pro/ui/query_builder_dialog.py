@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 from slate.core.infra.gate import Gate
 from slate.gui.core.controls import make_button, set_default_button
 from slate.gui.core.icons import icon as draw_icon
+from .date_fields import scaled_font
 
 OPERATORS = ["Contains", "Equals", "Not Equals", "Does Not Contain", "Is Empty", "Is Not Empty"]
 NEEDS_NO_VALUE = ("Is Empty", "Is Not Empty")
@@ -113,7 +114,7 @@ class QueryBuilderDialog(QDialog):
         title = QLabel("Filters")
         font = title.font()
         font.setBold(True)
-        font.setPointSizeF(font.pointSizeF() * 1.25)
+        font = scaled_font(font, 1.25)
         title.setFont(font)
         self.match_combo = QComboBox()
         self.match_combo.addItems(["Match all rules", "Match any rule"])

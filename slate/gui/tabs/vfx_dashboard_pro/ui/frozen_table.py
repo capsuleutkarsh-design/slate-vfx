@@ -94,16 +94,25 @@ class FrozenColumnTable(QTableView):
     def frozen_width(self) -> int:
         return sum(self.columnWidth(c) for c in self.frozen_columns() if not self.isColumnHidden(c))
 
+    def setHorizontalHeader(self, header):
+        super().setHorizontalHeader(header)
+        if hasattr(self, "frozen"):
+            # A new heading is stacked on top; the frozen columns must stay above it.
+            self.frozen.raise_()
+
     def update_frozen_geometry(self):
         width = self.frozen_width()
         self.frozen.setVisible(width > 0)
+        self.frozen.raise_()
         x = (self.verticalHeader().width() if self.verticalHeader().isVisible() else 0) + self.frameWidth()
         self.frozen.setGeometry(x, self.frameWidth(), width,
                                 self.viewport().height() + self.horizontalHeader().height())
 
     # ------------------------------------------------------------ keeping in step
     def _frozen_resized(self, logical, old, new):
-        if self.columnWidth(logical) != new:
+        # Only the frozen columns' own widths travel back; the overlay's
+        # hidden columns resizing to nothing must not shrink the grid's.
+        if new > 0 and logical in self.frozen_columns() and self.columnWidth(logical) != new:
             self.setColumnWidth(logical, new)
         self.update_frozen_geometry()
 

@@ -444,10 +444,10 @@ class ShotTableModel(QAbstractTableModel):
 
         if role == Qt.ItemDataRole.BackgroundRole:
             if getattr(shot, "_modified", False):
-                return QColor(Gate.tint(Gate.WARN, 0.10))
+                return Gate.qcolor(Gate.WARN, 0.10)
             if self._restricted() and self._editable(shot, col_key):
                 # What this person may change, out of a grid they mostly cannot.
-                return QColor(Gate.tint(Gate.ACCENT, 0.10))
+                return Gate.qcolor(Gate.ACCENT, 0.10)
             return None
 
         if role == Qt.ItemDataRole.FontRole:

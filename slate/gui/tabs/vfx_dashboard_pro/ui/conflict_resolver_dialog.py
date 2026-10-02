@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 from slate.core.infra.gate import Gate
 from slate.gui.core.controls import make_button, set_default_button
 from slate.gui.core.icons import pixmap
+from .date_fields import scaled_font
 
 
 def _escape(text) -> str:
@@ -59,7 +60,7 @@ class ConflictResolverDialog(QDialog):
         head.addWidget(icon, 0, Qt.AlignmentFlag.AlignTop)
         title = QLabel(self._title())
         font = title.font()
-        font.setPointSizeF(font.pointSizeF() * 1.25)
+        font = scaled_font(font, 1.25)
         font.setBold(True)
         title.setFont(font)
         title.setWordWrap(True)

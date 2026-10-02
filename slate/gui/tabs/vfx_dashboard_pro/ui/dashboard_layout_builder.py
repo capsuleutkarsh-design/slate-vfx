@@ -99,6 +99,8 @@ def build_dashboard_ui(widget):
 
     widget.stats_widget = StatsWidget()
     widget.stats_widget.status_clicked.connect(widget.on_stat_clicked)
+    # It folds what does not fit into "+N more", so it must not hold the row open.
+    widget.stats_widget.setMinimumWidth(1)
     row1.addWidget(widget.stats_widget, 1)
 
     widget.backup_label = QLabel("")

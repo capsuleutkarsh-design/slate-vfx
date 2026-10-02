@@ -183,6 +183,7 @@ class KanbanColumn(QListWidget):
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.setSpacing(4)
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.itemDoubleClicked.connect(self.on_item_double_clicked)
         self.setStyleSheet(
             "QListWidget { background-color: transparent; border: none; outline: none; }"
@@ -300,7 +301,7 @@ class _ColumnFrame(QFrame):
     def set_collapsed(self, collapsed: bool):
         self.collapsed = bool(collapsed)
         self.list.setVisible(not self.collapsed)
-        width = 150 if self.collapsed else KanbanCard.WIDTH + 30
+        width = 150 if self.collapsed else KanbanCard.WIDTH + 40
         self.setFixedWidth(width)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
         self.update_count()

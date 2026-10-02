@@ -549,3 +549,23 @@ def test_placeholder_thumbnail_paths_are_cleared_once(mock_db):
     assert clear_placeholder_thumbnails(mock_db) is True
     paths = {s.shot_name: s.thumbnail_path for s in handler.read_shots()}
     assert paths == {"SH010": "", "SH020": r"\server\thumbs\SH020.jpg"}
+
+
+def test_column_widths_survive_showing_the_grid(qtbot, mock_db):
+    """The frozen overlay's hidden columns must not shrink the grid's (seen on screen)."""
+    _project(mock_db, [_shot("SH010")])
+    widget = _open(_widget(qtbot))
+    before = [widget.table.columnWidth(i) for i in range(6)]
+    widget.resize(1200, 700)
+    widget.show()
+    qtbot.wait(200)
+    assert [widget.table.columnWidth(i) for i in range(6)] == before
+
+
+def test_row_colours_are_real_colours():
+    """A modified row was painted black: QColor('rgba(...)') is invalid in Qt."""
+    shot = _shot()
+    model = ShotTableModel([shot], user_role="supervisor")
+    model.setData(model.index(0, _col(model, "sow")), "x")
+    colour = model.index(0, 0).data(Qt.ItemDataRole.BackgroundRole)
+    assert colour.isValid() and colour.alpha() < 255
