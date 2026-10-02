@@ -1063,11 +1063,15 @@ class HomeTab(QWidget):
         return jump(shot_name) if callable(jump) else False
 
     def see_all_shots(self):
-        """The dashboard, searched for this person's name."""
+        """The dashboard in its own 'my shots' scope (every shot naming this person)."""
         host = self._host()
         if not self._trigger_tab("VFX Dashboard"):
             return False
         tab = host._get_tab_instance("VFX Dashboard", create=True) if hasattr(host, "_get_tab_instance") else None
+        show = getattr(tab, "show_my_shots", None)
+        if callable(show) and show():
+            return True
+        # A dashboard without the scope: fall back to searching for the name.
         search = getattr(tab, "search_input", None)
         if search is not None:
             search.setText(self.user_display_name or self.username)
