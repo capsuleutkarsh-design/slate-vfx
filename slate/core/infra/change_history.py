@@ -96,16 +96,8 @@ def log_change(db, project_code: str, entity_type: str, entity_id: str, author: 
          _text(old_val), _text(new_val)))
 
 
-def read_history(db, project_code: Optional[str] = None, shot_name: Optional[str] = None,
-                 limit: int = 200, *, shot_id: Optional[int] = None,
-                 reel: Optional[str] = None) -> List[Dict[str, Any]]:
-    """
-    History, newest first: everything, one project, or one shot.
-
-    A shot is best named by shot_id. Given only a name (and optionally a
-    reel), rows are matched by the shot_name column, and rows written before
-    that column existed by their exact entity_id or '<name>_<department>'.
-    """
+def _history_filters(db, project_code, shot_name, shot_id, reel, since, until):
+    """The WHERE clauses and parameters shared by read_history and count_history."""
     where = ["1=1"]
     params: List[Any] = []
     shot_cols = _has_shot_columns(db)
@@ -114,6 +106,17 @@ def read_history(db, project_code: Optional[str] = None, shot_name: Optional[str
         where.append("ch.project_code = %s")
         params.append(project_code)
 
+    # A date range for the Audit Logs: since is inclusive, until exclusive.
+    if since is not None:
+        where.append("ch.timestamp >= %s")
+        params.append(since)
+    if until is not None:
+        where.append("ch.timestamp < %s")
+        params.append(until)
+
+    # A shot is best named by shot_id. Given only a name (and optionally a
+    # reel), rows are matched by the shot_name column, and rows written before
+    # that column existed by their exact entity_id or '<name>_<department>'.
     if shot_id is not None and shot_cols:
         clause = "ch.shot_id = %s"
         params.append(int(shot_id))
@@ -138,8 +141,37 @@ def read_history(db, project_code: Optional[str] = None, shot_name: Optional[str
             where.append(legacy)
             params.extend(legacy_params)
 
+    return where, params, shot_cols
+
+
+def count_history(db, project_code: Optional[str] = None, *, since=None, until=None) -> int:
+    """How many history rows a read_history() with the same filters could page through."""
+    where, params, _cols = _history_filters(db, project_code, None, None, None, since, until)
+    rows = db.execute_query(
+        f"SELECT COUNT(*) AS n FROM change_history ch WHERE {' AND '.join(where)}",
+        tuple(params), fetch="all")
+    if not rows:
+        return 0
+    row = rows[0]
+    value = row.get("n") if isinstance(row, dict) else row[0]
+    return int(value or 0)
+
+
+def read_history(db, project_code: Optional[str] = None, shot_name: Optional[str] = None,
+                 limit: int = 200, *, shot_id: Optional[int] = None,
+                 reel: Optional[str] = None, since=None, until=None,
+                 offset: int = 0) -> List[Dict[str, Any]]:
+    """
+    History, newest first: everything, one project, or one shot.
+
+    since / until (datetimes or ISO text) narrow it to a time range and offset
+    pages through it - the Audit Logs use both.
+    """
+    where, params, shot_cols = _history_filters(db, project_code, shot_name, shot_id, reel,
+                                                since, until)
     extra = (", ch.shot_id, ch.shot_name, ch.reel, ch.department" if shot_cols else "")
     params.append(int(limit))
+    params.append(max(0, int(offset or 0)))
     query = f"""
         SELECT
             ch.timestamp,
@@ -158,7 +190,7 @@ def read_history(db, project_code: Optional[str] = None, shot_name: Optional[str
                ON u.username = ch.user_id OR CAST(u.id AS TEXT) = CAST(ch.user_id AS TEXT)
         WHERE {' AND '.join(where)}
         ORDER BY ch.timestamp DESC, ch.id DESC
-        LIMIT %s
+        LIMIT %s OFFSET %s
     """
     try:
         rows = db.execute_query(query, tuple(params), fetch="all")
