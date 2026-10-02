@@ -830,29 +830,6 @@ class DashboardSync:
         
         return mapping.get(status, 'pending')
 
-    async def _update_semantic_embedding(self, shot: ReviewShot):
-        """Generates a semantic vector for the shot in the background."""
-        if self._is_local_fallback_mode(): return
-        if not getattr(shot, "name", ""): return
-        
-        try:
-            # Avoid blocking the main asyncio event loop heavily
-            text = f"Shot {shot.name} in project {getattr(shot, 'project_code', '')}. Status is {shot.status.name}. Notes: {' '.join(shot.notes)}"
-            
-            from .vector_service import vector_service
-            # Run generator in a thread since fastembed is CPU bound
-            loop = asyncio.get_event_loop()
-            vec = await loop.run_in_executor(None, vector_service.generate_embedding, text)
-            
-            if vec:
-                vec_str = "[" + ",".join(map(str, vec)) + "]"
-                await self.db.execute_query(
-                    "UPDATE tracking_shots SET semantic_embedding = %s WHERE project_code=%s AND shot_name=%s AND version=%s",
-                    (vec_str, shot.project_code, shot.name, getattr(shot, "version", "v001"))
-                )
-        except Exception as e:
-            logger.debug(f"Failed to generate semantic embedding: {e}")
-
     async def _sync_tracking_shot(self, shot: ReviewShot, set_status: bool = False, set_notes: bool = False) -> bool:
         project = await self._resolve_tracking_project(shot.project_name or None)
         if not project:
@@ -917,8 +894,6 @@ class DashboardSync:
                 ),
                 fetch="rowcount",
             )
-            if updated:
-                asyncio.create_task(self._update_semantic_embedding(shot))
             return bool(updated and int(updated) > 0)
         except Exception as e:
             logger.error(f"Error syncing tracking shot {shot_name}: {e}", exc_info=True)
@@ -956,9 +931,7 @@ class DashboardSync:
                 query,
                 (db_status, shot.reviewer, datetime.now(), shot.id)
             )
-            
-            asyncio.create_task(self._update_semantic_embedding(shot))
-            logger.info(f"Synced status for shot {shot.name}: {db_status}")
+                        logger.info(f"Synced status for shot {shot.name}: {db_status}")
             return True
         
         except Exception as e:

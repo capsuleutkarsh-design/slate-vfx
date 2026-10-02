@@ -1,8 +1,5 @@
 from PySide6.QtCore import QItemSelectionModel, QTimer
 import qasync
-from slate.core.domain.vector_search import vector_search
-from slate.core.domain.vector_service import vector_service
-import numpy as np
 class DashboardFilterMixin:
     """
     Mixin class to handle Dashboard filtering, search, and table selections.
@@ -59,17 +56,8 @@ class DashboardFilterMixin:
         def to_lower(v):
             return str(v or "").lower()
             
-        # Semantic Vector Search Hook
-        if search_text.startswith("?"):
-            if len(search_text) > 3:
-                self._trigger_semantic_search()
-            else:
-                self.displayed_shots = []
-                self.update_table()
-            return
-            
-        # Standard filter
-        self._cancel_semantic_search()
+        # The hidden "?" semantic search (and its model download) was removed
+        # on the user's decision; a search is the plain filter below.
         
         header_filters = self.header_view.active_filters if hasattr(self, "header_view") else {}
         
@@ -210,75 +198,5 @@ class DashboardFilterMixin:
             self.displayed_shots.append(s)
         
         self.update_table()
-        if hasattr(self, "start_thumbnail_loading"):
-            self.start_thumbnail_loading()
-
-    def _trigger_semantic_search(self):
-        if not hasattr(self, "_semantic_timer"):
-            self._semantic_timer = QTimer(self)
-            self._semantic_timer.setSingleShot(True)
-            self._semantic_timer.timeout.connect(self._execute_semantic_search)
-        self._semantic_timer.start(500) # 500ms debounce
-        
-    def _cancel_semantic_search(self):
-        if hasattr(self, "_semantic_timer") and self._semantic_timer.isActive():
-            self._semantic_timer.stop()
-            
-    @qasync.asyncSlot()
-    async def _execute_semantic_search(self):
-        search_text = self.search_input.text()[1:].strip()
-        if not search_text: return
-        
-        self.log(f"Running offline semantic search for: {search_text}")
-        
-        # 1. Embed the search query using the local fastembed AI engine
-        query_vec = vector_service.generate_embedding(search_text)
-        if not query_vec:
-            self.displayed_shots = []
-            self.update_table()
-            return
-            
-        query_np = np.array(query_vec)
-        
-        # 2. Score all shots locally
-        scored_shots = []
-        for s in self.all_shots:
-            # Check if this shot matches the status filter first to save computation
-            status = self.status_filter.currentText()
-            if status != "All Status" and s.status != status:
-                continue
-                
-            # Embed the shot if it hasn't been embedded yet (caches in memory)
-            if not getattr(s, "_semantic_embedding", None):
-                artists = " ".join(s.get_all_artists())
-                context = f"{s.shot_name} {s.sow} {s.description} {artists} {s.shot_type}".strip()
-                s._semantic_embedding = vector_service.generate_embedding(context)
-                
-            if not s._semantic_embedding:
-                continue
-                
-            shot_np = np.array(s._semantic_embedding)
-            
-            # Cosine similarity: (A dot B) / (norm(A) * norm(B))
-            # fastembed vectors are usually pre-normalized, but we compute it properly anyway.
-            dot = np.dot(query_np, shot_np)
-            norm_a = np.linalg.norm(query_np)
-            norm_b = np.linalg.norm(shot_np)
-            if norm_a == 0 or norm_b == 0:
-                continue
-                
-            similarity = dot / (norm_a * norm_b)
-            
-            # Keep shots with a reasonable similarity threshold
-            if similarity > 0.35: # Tune this threshold based on feedback
-                scored_shots.append((similarity, s))
-                
-        # 3. Sort by highest similarity
-        scored_shots.sort(key=lambda x: x[0], reverse=True)
-        
-        # Take the top 30 hits
-        self.displayed_shots = [s for score, s in scored_shots[:30]]
-        self.update_table()
-        
         if hasattr(self, "start_thumbnail_loading"):
             self.start_thumbnail_loading()
