@@ -170,6 +170,10 @@ def _notice_for(widget: QWidget) -> Optional[StateNotice]:
     if anchor is None:
         return None
     parent = anchor.parentWidget()
+    if parent is None:
+        # The table is not on the screen yet (a load run before the layout
+        # was built). A notice made now would float as a window of its own.
+        return None
     notice = StateNotice()
     placed = False
     if isinstance(parent, QSplitter):

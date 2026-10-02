@@ -255,7 +255,6 @@ class ProdSchedulingTab(QWidget):
                        ("Overdue", "__overdue__")],
             column=6, match=self._status_matches)
         main_layout.addWidget(self.toolbar)
-        self.load_data()
         # Other people's milestones appear without a restart.
         from slate.gui.components.auto_refresh import AutoRefresh
         self._auto_refresh = AutoRefresh(self, self.load_data, seconds=30,
@@ -264,6 +263,11 @@ class ProdSchedulingTab(QWidget):
         self.grid.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.grid.hideColumn(0) # Hide ID
         main_layout.addWidget(self.grid)
+        # First read only now that the table is in the layout: a notice for a
+        # failed read takes the table's place, and with no layout yet it
+        # floated as a window of its own while the empty state said
+        # there was nothing here.
+        self.load_data()
 
     def _status_matches(self, cell, value, row):
         if value != "__overdue__":
@@ -273,6 +277,20 @@ class ProdSchedulingTab(QWidget):
         end_text = (end.text() if end else "")[:10]
         return cell != "Completed" and bool(end_text) and end_text < _date.today().isoformat()
 
+    @staticmethod
+    def _project_names() -> dict:
+        """{project code (lower-case): name} - empty when it cannot be read."""
+        try:
+            from slate.core.infra.database_manager import database_manager
+            rows = database_manager.execute_query(
+                "SELECT code, name FROM tracking_projects", fetch="all") or []
+            return {str(dict(r).get("code") or "").casefold(): str(dict(r).get("name") or "").strip()
+                    for r in rows}
+        except DatabaseUnavailableError:
+            raise
+        except Exception:
+            return {}            # only the labels suffer: codes alone
+
     def _refresh_project_filter(self, sched):
         combo = self.project_filter
         keep = combo.currentData()
@@ -280,8 +298,11 @@ class ProdSchedulingTab(QWidget):
         combo.blockSignals(True)
         combo.clear()
         combo.addItem("All projects", "")
+        names = self._project_names()
         for code in codes:
-            combo.addItem(code, code)
+            # "KLC - Kalki Chapter 2"; the filter still matches the code column.
+            name = names.get(code.casefold(), "")
+            combo.addItem(f"{code} - {name}" if name and name != code else code, code)
         index = combo.findData(keep)
         combo.setCurrentIndex(index if index >= 0 else 0)
         combo.blockSignals(False)

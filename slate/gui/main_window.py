@@ -1226,6 +1226,10 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
                 "refresh_project",
                 "load_library_from_server",
                 "reload",
+                # Screens built on the shared table tools (Hardware,
+                # Deployment, Scheduling, Bidding) reload with load_data;
+                # their Refresh button promises F5.
+                "load_data",
             ):
                 if hasattr(current_widget, method_name):
                     getattr(current_widget, method_name)()

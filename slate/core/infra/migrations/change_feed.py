@@ -46,7 +46,6 @@ WATCHED = {
     "it_deployments": "id",
     "prod_scheduling": "id",
     "prod_bidding": "id",
-    "prod_bid_lines": "bid_id",
     "notifications": "user_id",
 }
 

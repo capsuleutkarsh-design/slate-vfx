@@ -89,10 +89,31 @@ class VFXReviewDualModeTab(QWidget):
                 background-color: #3EA8BF;
             }
         """)
-        refresh_btn.clicked.connect(self.refresh_from_dashboard)
+        refresh_btn.clicked.connect(self._on_refresh_clicked)
         layout.addWidget(refresh_btn)
+        self.refresh_btn = refresh_btn
 
         return header
+
+    def _on_refresh_clicked(self):
+        """
+        The button: busy while it reads, then say what happened. It dropped
+        the result, so "the dashboard has no shots loaded" was never shown.
+        """
+        from PySide6.QtWidgets import QApplication
+        from ..components.feedback import report
+        button = getattr(self, "refresh_btn", None)
+        if button is not None:
+            button.setEnabled(False)
+            button.setText("Refreshing…")
+            QApplication.processEvents()
+        try:
+            result = self.refresh_from_dashboard()
+        finally:
+            if button is not None:
+                button.setEnabled(True)
+                button.setText("Refresh from Dashboard")
+        report(self, result)
 
     def show_notifications(self):
         """Open the header's notification list (kept for anything that calls it)."""

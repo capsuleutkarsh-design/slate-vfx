@@ -228,15 +228,19 @@ class ProdBiddingTab(QWidget):
             "Status", [("All statuses", ""), ("Draft", "Draft"), ("Approved", "Approved"),
                        ("Rejected", "Rejected")], column=8)
         main_layout.addWidget(self.toolbar)
-        self.load_data()
         # Other people's bids appear without a restart.
         from slate.gui.components.auto_refresh import AutoRefresh
         self._auto_refresh = AutoRefresh(self, self.load_data, seconds=30,
-                                         topics=("prod_bidding", "prod_bid_lines"))
+                                         topics=("prod_bidding",))
         
         self.grid.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.grid.hideColumn(0) # Hide ID
         main_layout.addWidget(self.grid)
+        # First read only now that the table is in the layout: a notice for a
+        # failed read takes the table's place, and with no layout yet it
+        # floated as a window of its own while the empty state said
+        # there was nothing here.
+        self.load_data()
 
     @on_database_error
     def load_data(self):

@@ -88,6 +88,74 @@ def test_search_and_combo_filters_hide_rows(qtbot):
     assert bar.count_label.text() == "1 of 3"
 
 
+def test_a_hidden_row_is_not_left_selected(qtbot):
+    """Search hid the selected row; Delete would still have acted on it."""
+    from slate.gui.components.table_tools import TableToolbar, selected_keys
+    table = _table(qtbot, [(1, "alpha", 1), (2, "beta", 2), (3, "gamma", 3)])
+    bar = TableToolbar(table, columns=(0,))
+    qtbot.addWidget(bar)
+    table.selectRow(0)
+    assert selected_keys(table) == [1]
+    bar.search.setText("gamma")
+    bar.filter.apply()
+    assert selected_keys(table) == []
+
+
+def test_empty_cells_sort_last_both_ways(qtbot):
+    from slate.gui.components.table_tools import make_item
+    table = _table(qtbot, [(1, "a", 5), (2, "b", 1), (3, "c", 3)])
+    table.setItem(1, 1, make_item(""))                    # no value
+    for order, expected in ((Qt.SortOrder.AscendingOrder, ["3 d", "5 d", ""]),
+                            (Qt.SortOrder.DescendingOrder, ["5 d", "3 d", ""])):
+        table.horizontalHeader().setSortIndicator(1, order)
+        table.sortItems(1, order)
+        assert [table.item(r, 1).text() for r in range(3)] == expected
+
+
+def test_dates_and_times_sort_on_one_scale(qtbot):
+    from slate.gui.components.table_tools import make_item
+    table = _table(qtbot, [(1, "a", 1), (2, "b", 2)])
+    table.setItem(0, 1, make_item("2 Jan 10:00", sort_value=datetime(2026, 1, 2, 10, 0)))
+    table.setItem(1, 1, make_item("1 Jan", sort_value=date(2026, 1, 1)))
+    table.sortItems(1, Qt.SortOrder.AscendingOrder)
+    assert table.item(0, 1).text() == "1 Jan"
+
+
+def test_a_refresh_wired_to_a_signal_ignores_the_signals_value(qtbot):
+    """currentTextChanged passed its text into load_data(self): the filter broke."""
+    from slate.gui.core.offline_notice import on_database_error
+
+    class Screen(QWidget):
+        loads = 0
+
+        @on_database_error
+        def load_data(self):
+            Screen.loads += 1
+
+    screen = Screen()
+    qtbot.addWidget(screen)
+    screen.load_data("In use")
+    assert Screen.loads == 1
+
+
+def test_a_notice_never_floats_as_its_own_window(qtbot):
+    """A load before the table was in a layout made the notice a window."""
+    from slate.gui.components.state_notice import show_state
+
+    class Screen(QWidget):
+        def __init__(self):
+            super().__init__()
+            self.grid = QTableWidget(0, 1)          # not in a layout yet
+
+    screen = Screen()
+    qtbot.addWidget(screen)
+    show_state(screen, "Could not load the list")
+    assert not any(w.isWindow() and w.isVisible() and w is not screen
+                   for w in screen.findChildren(QWidget))
+    from PySide6.QtWidgets import QApplication
+    assert not any(type(w).__name__ == "StateNotice" and w.isVisible()
+                   for w in QApplication.topLevelWidgets())
+
 def test_inline_edits_are_saved_or_put_back(qtbot, monkeypatch):
     from slate.gui.components import feedback
     from slate.gui.components.table_tools import enable_inline_edits

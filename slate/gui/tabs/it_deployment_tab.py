@@ -166,7 +166,7 @@ class ItDeploymentTab(QWidget):
                 selection-color: #3EA8BF;
             }
         """)
-        self.filter_cb.currentTextChanged.connect(self.load_data)
+        self.filter_cb.currentTextChanged.connect(lambda _text: self.load_data())
         controls.addWidget(self.filter_cb)
         
         add_btn = QPushButton("+ Record deployment")
@@ -195,7 +195,6 @@ class ItDeploymentTab(QWidget):
         self.toolbar = TableToolbar(self.grid, placeholder="Search package, machine or person…",
                                     columns=(1, 2, 3), on_refresh=self.load_data)
         main_layout.addWidget(self.toolbar)
-        self.load_data()
         # Other people's records appear without a restart: the change feed,
         # or a timer where it is missing.
         from slate.gui.components.auto_refresh import AutoRefresh
@@ -221,6 +220,11 @@ class ItDeploymentTab(QWidget):
         # start switched off rather than arguing with a dialog.
         gate_selection_buttons(self, self.grid)
 
+        # First read only now that the table is in the layout: a notice for a
+        # failed read takes the table's place, and with no layout yet it
+        # floated as a window of its own while the empty state said
+        # there was nothing here.
+        self.load_data()
 
     @on_database_error
     def load_data(self):

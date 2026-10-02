@@ -75,10 +75,11 @@ def _sortable(value):
         return int(value)
     if isinstance(value, (int, float, Decimal)):
         return float(value)
+    # Dates and date-times on one scale, so a column mixing them still sorts.
     if isinstance(value, _dt.datetime):
-        return value.timestamp() if value.tzinfo else value.timestamp()
+        return value.timestamp()
     if isinstance(value, _dt.date):
-        return float(value.toordinal())
+        return _dt.datetime.combine(value, _dt.time()).timestamp()
     return str(value).casefold()
 
 
@@ -95,10 +96,17 @@ class SortItem(QTableWidgetItem):
         if mine is None and theirs is None:
             return self.text().casefold() < (other.text().casefold() if other else "")
         a, b = _sortable(mine), _sortable(theirs)
-        if a is None:
-            return False
-        if b is None:
-            return True
+        if a is None or b is None:
+            # Empty cells last in either direction. A descending sort asks
+            # "other < self", so the answer for an empty cell flips with it.
+            descending = False
+            table = self.tableWidget()
+            if table is not None:
+                descending = (table.horizontalHeader().sortIndicatorOrder()
+                              == Qt.SortOrder.DescendingOrder)
+            if a is None and b is None:
+                return False
+            return (a is None) == descending
         try:
             return a < b
         except TypeError:
@@ -220,6 +228,8 @@ def select_keys(table: QTableWidget, keys: Iterable, key_column: int = KEY_COLUM
     current_row = -1
     last_col = max(0, table.columnCount() - 1)
     for row in range(table.rowCount()):
+        if table.isRowHidden(row):
+            continue            # a record filtered out of sight is not acted on
         key = key_of_row(table, row, key_column)
         if key in wanted:
             selection.select(table.model().index(row, 0), table.model().index(row, last_col))
@@ -444,10 +454,24 @@ class TableFilter(QObject):
         try:
             total = self.table.rowCount()
             visible = 0
+            hidden = []
             for row in range(total):
                 show = self.row_matches(row)
                 self.table.setRowHidden(row, not show)
                 visible += int(show)
+                if not show:
+                    hidden.append(row)
+            # A row the search hid must not stay selected: Delete or Mark
+            # Failed would act on a record nobody can see.
+            model = self.table.selectionModel()
+            if hidden and model is not None:
+                from PySide6.QtCore import QItemSelection, QItemSelectionModel
+                drop = QItemSelection()
+                last_col = max(0, self.table.columnCount() - 1)
+                for row in hidden:
+                    drop.select(self.table.model().index(row, 0),
+                                self.table.model().index(row, last_col))
+                model.select(drop, QItemSelectionModel.SelectionFlag.Deselect)
             self.counted.emit(visible, total)
         except RuntimeError:
             pass

@@ -64,6 +64,18 @@ def show_offline(widget, retry=None):
     return False
 
 
+def _positional_slots(method):
+    """How many positional arguments after self the method takes; None = any."""
+    import inspect
+    try:
+        params = list(inspect.signature(method).parameters.values())[1:]
+    except (TypeError, ValueError):
+        return None
+    if any(p.kind == p.VAR_POSITIONAL for p in params):
+        return None
+    return sum(1 for p in params if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD))
+
+
 def on_database_error(method):
     """
     Let a refresh fail politely instead of raising into Qt.
@@ -75,8 +87,16 @@ def on_database_error(method):
     When the method succeeds, any "can't reach" notice from an earlier try is
     taken away; the notice's Try again runs the method again.
     """
+    # A refresh is often connected straight to a signal that passes its own
+    # value (a combo's text, a button's checked flag). A method that takes no
+    # arguments is given none, rather than failing with "takes 1 positional
+    # argument but 2 were given" - which is how a status filter broke.
+    takes = _positional_slots(method)
+
     @wraps(method)
     def guarded(self, *args, **kwargs):
+        if takes is not None:
+            args = args[:takes]
         # A notice from an earlier try goes first; one the method raises
         # itself this time (show_load_error) stays.
         try:
