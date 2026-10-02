@@ -233,7 +233,9 @@ class TestALargeIngestDoesNotFloodTheInterface:
     def test_updates_are_sent_in_groups(self):
         from slate.core.domain.asset_ingestor import IngestWorker
 
-        source = inspect.getsource(IngestWorker.run)
+        # The analysis runs on a small pool now (MED-029); the grouping lives
+        # with it rather than in run() itself.
+        source = inspect.getsource(IngestWorker)
 
         assert "_update_buffer.append" in source
         assert "_flush_update_buffer" in source
@@ -368,7 +370,8 @@ class TestAddingAndEditingReportTheirResult:
 
         source = inspect.getsource(LibraryManager.update_asset_metadata)
 
-        assert "return True" in source
+        # True only when a row really changed (rows > 0), False on failure.
+        assert "> 0" in source
         assert "return False" in source
 
 
@@ -552,7 +555,15 @@ class TestBothBackendsOfferWhatTheLibraryAsksFor:
             assert hasattr(StockRepository, name), name
 
     def test_the_filtered_count_takes_the_same_arguments_all_the_way_down(self):
-        """A forward with the wrong signature fails just as quietly."""
+        """
+        A forward with the wrong signature fails just as quietly.
+
+        The library now asks its own StockRepository directly (category,
+        visual filter and favourites need arguments the managers' hand-written
+        forwards never had), so nothing can be dropped on the way. The old
+        forwards still take the leading arguments in the same order.
+        """
+        from slate.core.domain.library_manager import LibraryManager
         from slate.core.infra.stock_repository import StockRepository
         from slate.core.infra.postgres_manager import PostgresManager
 
@@ -561,7 +572,8 @@ class TestBothBackendsOfferWhatTheLibraryAsksFor:
         forwarded = list(inspect.signature(
             PostgresManager.count_stock_assets).parameters)[1:]
 
-        assert forwarded == expected
+        assert expected[:len(forwarded)] == forwarded
+        assert "self.repo.count_stock_assets" in inspect.getsource(LibraryManager.get_total_count)
 
 
 class TestTheLibraryIsIndexed:

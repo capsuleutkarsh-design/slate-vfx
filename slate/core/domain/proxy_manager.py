@@ -54,11 +54,47 @@ class ProxyManager:
             logging.exception(f"Error resolving cache path: {e}")
             return Path.cwd() / "Cache"
 
+    # Proxies are never made bigger than this, and never bigger than the
+    # source. They used to be forced to exactly 1920x1080 and cropped to fill
+    # it, so a portrait, square, scope or phone clip lost picture and small
+    # sources were blown up (MED-024). Now the frame is fitted inside the box,
+    # aspect kept, nothing cropped, nothing enlarged.
+    PROXY_BOX = (1920, 1080)
+
+    @classmethod
+    def fit_filter(cls, width: int = None, height: int = None) -> str:
+        """The ffmpeg scale filter that fits a frame inside PROXY_BOX without cropping."""
+        w, h = (width, height) if width and height else cls.PROXY_BOX
+        return (f"scale='min({w},iw)':'min({h},ih)'"
+                ":force_original_aspect_ratio=decrease:force_divisible_by=2")
+
     @staticmethod
-    def _usable(path: Path) -> bool:
+    def long_path(path) -> str:
+        """
+        The path in a form Windows accepts past 260 characters.
+
+        Deep studio shares easily go past that, and then Python could not see
+        the thumbnail Qt had just written, so it was never moved into place and
+        the asset stayed without a picture - silently (MED-039). File-system
+        calls made here go through this; the long-path prefix is only added on
+        Windows, only when the path is long, and only once.
+        """
+        prefix = "\\\\?\\"
+        text = str(path)
+        if os.name != "nt" or len(text) < 240 or text.startswith(prefix):
+            return text
+        absolute = os.path.abspath(text)
+        if absolute.startswith("\\\\"):
+            # \\server\share\... becomes \\?\UNC\server\share\...
+            return prefix + "UNC\\" + absolute.lstrip("\\")
+        return prefix + absolute
+
+    @classmethod
+    def _usable(cls, path: Path) -> bool:
         """A cached file counts only if it is there and has something in it."""
         try:
-            return path.exists() and path.stat().st_size > 0
+            long = cls.long_path(path)
+            return os.path.exists(long) and os.path.getsize(long) > 0
         except OSError:
             return False
 
@@ -81,28 +117,32 @@ class ProxyManager:
         # worker can be asked for the same file at the same time.
         return final.with_name(f"{final.stem}.part{os.getpid()}-{threading.get_ident()}{final.suffix}")
 
-    @staticmethod
-    def _discard(partial: Path):
+    @classmethod
+    def _discard(cls, partial: Path):
         try:
-            if partial.exists():
-                partial.unlink()
+            long = cls.long_path(partial)
+            if os.path.exists(long):
+                os.unlink(long)
         except OSError:
             pass
 
     @classmethod
     def _commit_partial(cls, partial: Path, final: Path) -> bool:
         """Move a finished partial file into place, or clean it up."""
+        src, dst = cls.long_path(partial), cls.long_path(final)
         try:
-            if partial.exists() and partial.stat().st_size > 0:
-                os.replace(partial, final)
+            if os.path.exists(src) and os.path.getsize(src) > 0:
+                os.replace(src, dst)
                 return True
+            logging.warning("Could not finish %s: the new file was not there to move "
+                            "into place (path %d characters long).", final.name, len(str(final)))
         except OSError as exc:
             logging.warning("Could not finish %s: %s", final.name, exc)
         cls._discard(partial)
         return False
 
     def get_hash(self, path: Path) -> str:
-        stat = path.stat()
+        stat = os.stat(self.long_path(path))
         unique_str = f"{path}_{stat.st_mtime}_{stat.st_size}"
         return hashlib.md5(unique_str.encode()).hexdigest()
 
@@ -130,7 +170,7 @@ class ProxyManager:
         shard = identity[:2] or "00"
         folder = self.cache_dir / shard
         try:
-            folder.mkdir(parents=True, exist_ok=True)
+            os.makedirs(self.long_path(folder), exist_ok=True)
         except OSError:
             folder = self.cache_dir
         # The steady name comes first so earlier copies of the same file can be
@@ -265,10 +305,13 @@ class ProxyManager:
 
     def parse_resolution(self, res_str: str) -> Tuple[int, int]:
         """Parse resolution string into (width, height) tuple."""
-        parts = res_str.lower().split('x')
-        if len(parts) == 2:
-            return int(parts[0]), int(parts[1])
-        return (1920, 1080)
+        parts = str(res_str or "").lower().split('x')
+        try:
+            if len(parts) == 2:
+                return int(parts[0]), int(parts[1])
+        except ValueError:
+            pass
+        return self.PROXY_BOX
 
     def get_proxy_codec(self) -> str:
         """Return default video codec for proxies."""
@@ -283,7 +326,15 @@ class ProxyManager:
         }
         return presets.get(preset.lower(), presets["standard"])
 
-    def generate_proxy(self, input_path: Path = None, is_seq: bool = False, source_path: Path = None, proxy_path: Path = None, target_resolution: str = "1920x1080") -> Tuple[bool, Path]:
+    def generate_proxy(self, input_path: Path = None, is_seq: bool = False, source_path: Path = None,
+                       proxy_path: Path = None, target_resolution: str = "1920x1080",
+                       sequence=None) -> Tuple[bool, Path]:
+        """
+        A review proxy: a JPG for a still, an H.264 MP4 for a movie or sequence.
+
+        sequence=(printf pattern, first frame) reads a known sequence directly;
+        without it a sequence is found from the frame named.
+        """
         if input_path is None and source_path is not None:
             input_path = Path(source_path)
         if not input_path:
@@ -315,14 +366,18 @@ class ProxyManager:
                 # Generate a single 1920x1080 JPG proxy
                 cmd.extend([
                     "-i", str(input_path),
-                    "-vf", "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080",
+                    "-vf", self.fit_filter(*self.parse_resolution(target_resolution)),
                     "-vframes", "1",
                     "-q:v", "2",  # High quality JPG
                     str(partial)
                 ])
             else:
                 # Generate MP4 proxy
-                if is_seq:
+                if is_seq and sequence:
+                    pattern, start_number = sequence
+                    cmd.extend(["-framerate", "24", "-start_number", str(int(start_number)),
+                                "-i", str(pattern)])
+                elif is_seq:
                     try:
                         import re
                         stem = input_path.stem
@@ -346,7 +401,7 @@ class ProxyManager:
                     cmd.extend(["-i", str(input_path)])
                 
                 cmd.extend([
-                    "-vf", "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,format=yuv420p",
+                    "-vf", self.fit_filter(*self.parse_resolution(target_resolution)) + ",format=yuv420p",
                     "-c:v", "libx264",
                     "-preset", "ultrafast",
                     "-crf", "28",

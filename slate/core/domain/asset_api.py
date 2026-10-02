@@ -35,8 +35,8 @@ class AssetAPI:
             asset_ids=asset_ids,
         )
 
-    def count_assets(self) -> int:
-        return int(self._backend.get_total_count() or 0)
+    def count_assets(self, **filters) -> int:
+        return int(self._backend.get_total_count(**filters) or 0)
 
     def create_assets_batch(self, assets: List[Dict[str, Any]]) -> None:
         self._backend.add_assets_batch(assets)
@@ -51,8 +51,11 @@ class AssetAPI:
         return bool(self._backend.clear_all_assets())
 
     # --- Legacy compatibility passthroughs ---
-    def get_total_count(self):
-        return self._backend.get_total_count()
+    def get_total_count(self, *args, **kwargs):
+        # The filters go through. This took no arguments, so the browser's
+        # filtered count raised a TypeError that was swallowed, and the label
+        # showed the number of rows loaded as the library total (MED-006).
+        return self._backend.get_total_count(*args, **kwargs)
 
     def search_library(self, *args, **kwargs):
         return self._backend.search_library(*args, **kwargs)

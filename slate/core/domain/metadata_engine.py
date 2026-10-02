@@ -1,6 +1,5 @@
 import os
 import json
-import cv2
 import logging
 import re
 import subprocess
@@ -113,19 +112,56 @@ class SmartMetadataManager:
         tag_list.insert(0, primary_category)
         return primary_category, tag_list
 
+    # Single pictures whose size Qt can read straight from the file header.
+    # Running ffprobe - a separate process - on each of them made an ingest of
+    # tiny stills take over a second apiece (MED-029), and ffprobe reports a
+    # still as 25 fps lasting 0.04 s, which the inspector then showed (MED-020).
+    _QT_STILLS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff", ".tga"}
+    # Pictures that are stills even when ffprobe has to read them.
+    _STILL_EXTENSIONS = set(IMAGE_EXTENSIONS)
+
+    @staticmethod
+    def _still_size(file_path: str):
+        """(width, height, format) from the file header, or None."""
+        try:
+            from PySide6.QtGui import QImageReader
+            reader = QImageReader(str(file_path))
+            size = reader.size()
+            if size.isValid() and size.width() > 0 and size.height() > 0:
+                fmt = bytes(reader.format()).decode("ascii", "ignore").lower()
+                return size.width(), size.height(), fmt or Path(file_path).suffix.lstrip(".").lower()
+        except Exception as exc:
+            logging.debug("Header read failed for %s: %s", Path(file_path).name, exc)
+        return None
+
     @staticmethod
     def extract_tech_metadata(file_path: str):
         """
-        Extracts metadata using FFprobe (JSON) and adds duration fallback.
+        Width, height, fps, duration and codec of a file.
+
+        Stills come back with is_still True, fps 0 and duration 0 - a picture
+        has no frame rate, whatever ffprobe says about it. Their size is read
+        from the header without starting a process; only movies and the
+        formats Qt cannot read (EXR, DPX, HDR) go to ffprobe.
         """
         meta = {"width": 0, "height": 0, "fps": 0.0, "duration_sec": 0.0}
-        
+
         ffprobe_path = proxy_manager_meta.ffprobe_path
         ffmpeg_path = proxy_manager_meta.ffmpeg_path
-        
+
         # FIX: Ignore macOS resource fork files (._*)
         if Path(file_path).name.startswith("._"):
              return meta
+
+        suffix = Path(str(file_path)).suffix.lower()
+        is_still = suffix in SmartMetadataManager._STILL_EXTENSIONS
+        if is_still:
+            meta["is_still"] = True
+            if suffix in SmartMetadataManager._QT_STILLS:
+                found = SmartMetadataManager._still_size(file_path)
+                if found:
+                    meta["width"], meta["height"], meta["codec"] = found
+                    return meta
 
         if proxy_manager_meta._tool_available(ffprobe_path):
             try:
@@ -203,7 +239,8 @@ class SmartMetadataManager:
 
         # 2. CRITICAL DURATION & VIDEO INFO FALLBACK (Simple FFmpeg command)
         # Run if ffprobe failed OR missed critical data
-        if (meta["duration_sec"] == 0 or meta["width"] == 0) and proxy_manager_meta._tool_available(ffmpeg_path):
+        needs_fallback = meta["width"] == 0 or (meta["duration_sec"] == 0 and not is_still)
+        if needs_fallback and proxy_manager_meta._tool_available(ffmpeg_path):
              try:
                 cmd = [ffmpeg_path, "-i", str(file_path)]
                 
@@ -267,13 +304,11 @@ class SmartMetadataManager:
                  logging.warning(f"Simple FFmpeg duration fallback failed: {e}")
 
 
-        # 3. OpenCV Fallback for FPS/Resolution (DISABLE FOR STABILITY)
-        # Using cv2.VideoCapture crashes on H.265 files without system codecs.
-        # Since we have FFMPEG now (via proper lookup), we don't need this risky fallback.
-        # if meta["width"] == 0 or meta["fps"] == 0:
-        #      # DISABLED to prevent crash
-        #      pass
-
+        if is_still:
+            # ffprobe reads a picture as a one-frame 25 fps "video"; a still has
+            # neither a rate nor a length.
+            meta["fps"] = 0.0
+            meta["duration_sec"] = 0.0
         return meta
 
     @staticmethod
@@ -288,61 +323,78 @@ class SmartMetadataManager:
     @staticmethod
     def extract_visual_tags(thumb_path: str):
         """
-        Analyzes the thumbnail to generate smart visual tags.
-        Returns a list of tags: ['Bright', 'Dark', 'Warm', 'Cold', 'Green Screen', 'Blue Screen']
+        What a picture looks like, as tags: Dark, Bright, Warm, Cold,
+        Green Screen, Blue Screen.
+
+        Rebuilt without OpenCV (MED-005). The first version was switched off
+        "for stability" and never came back, so the gallery's Visual filter
+        could never match anything. It now reads the small cached thumbnail
+        through Qt - safe on a worker thread, and the same decoder the gallery
+        already uses - and does the colour maths in numpy on 64x64 pixels.
+
+        Warm and cold are decided by how many coloured pixels fall in the warm
+        and cool hue ranges, not by an average hue: reds sit at both ends of
+        the hue circle, and averaging them called a red flame "cold".
         """
         if not thumb_path or not os.path.exists(thumb_path):
             return []
-
-        tags = []
         try:
-            # Read image (UNICODE SAFE)
-            # cv2.imread fails on non-ASCII paths. Use numpy fromfile + imdecode.
-            stream = np.fromfile(str(thumb_path), dtype=np.uint8)
-            img = cv2.imdecode(stream, cv2.IMREAD_COLOR)
-            if img is None: return []
-
-            # Resize to small 64x64 for speed
-            img = cv2.resize(img, (64, 64), interpolation=cv2.INTER_AREA)
-
-            # Convert to HSV
-            hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-            h, s, v = cv2.split(hsv)
-
-            # 1. Brightness Analysis
-            avg_v = np.mean(v)
-            if avg_v < 60: tags.append("Dark")
-            elif avg_v > 190: tags.append("Bright")
-
-            # 2. Keying Color Analysis (Green/Blue Screen)
-            # Green in OpenCV Hue (0-180) is approx 40-80
-            # Blue is approx 100-140
-            # We check if >40% of the image is in that range AND high saturation
-            
-            # Mask for Green
-            green_mask = cv2.inRange(hsv, (35, 100, 50), (85, 255, 255))
-            green_ratio = np.sum(green_mask > 0) / (64*64)
-            if green_ratio > 0.4: tags.append("Green Screen")
-
-            # Mask for Blue
-            blue_mask = cv2.inRange(hsv, (95, 120, 50), (135, 255, 255)) 
-            blue_ratio = np.sum(blue_mask > 0) / (64*64)
-            if blue_ratio > 0.4: tags.append("Blue Screen")
-
-            # 3. Temperature Analysis (Warm vs Cool)
-            # Warm: Red (0-15, 165-180), Orange, Yellow
-            # Cool: Blue, Cyan (85-135)
-            # We calculate mean hue of saturated pixels
-            
-            sat_mask = s > 50  # Only consider colorful pixels
-            if np.sum(sat_mask) > 100: # Ensure we have enough color
-                mean_h = np.mean(h[sat_mask])
-                if (0 <= mean_h < 25) or (155 <= mean_h <= 180):
-                    tags.append("Warm")
-                elif (90 <= mean_h < 135):
-                    tags.append("Cold")
-
+            from PySide6.QtCore import Qt as _Qt
+            from PySide6.QtGui import QImage
+            image = QImage(str(thumb_path))
+            if image.isNull():
+                return []
+            image = image.scaled(64, 64, _Qt.AspectRatioMode.IgnoreAspectRatio,
+                                 _Qt.TransformationMode.SmoothTransformation)
+            image = image.convertToFormat(QImage.Format.Format_RGB888)
+            stride = image.bytesPerLine()
+            raw = np.frombuffer(image.constBits(), dtype=np.uint8,
+                                count=stride * image.height())
+            rgb = raw.reshape(image.height(), stride)[:, :image.width() * 3]
+            rgb = rgb.reshape(image.height(), image.width(), 3).astype(np.float32) / 255.0
+            return SmartMetadataManager.visual_tags_from_rgb(rgb)
         except Exception as e:
             logging.warning(f"Visual Analysis failed: {e}")
-        
+            return []
+
+    @staticmethod
+    def visual_tags_from_rgb(rgb):
+        """The tag rules on an (h, w, 3) float array in 0..1."""
+        tags = []
+        r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+        v = rgb.max(axis=2)
+        low = rgb.min(axis=2)
+        chroma = v - low
+        s = np.where(v > 0, chroma / np.maximum(v, 1e-6), 0.0)
+        # Hue in degrees, 0..360.
+        safe = np.maximum(chroma, 1e-6)
+        hue = np.where(v == r, ((g - b) / safe) % 6.0,
+              np.where(v == g, (b - r) / safe + 2.0, (r - g) / safe + 4.0)) * 60.0
+        hue = np.where(chroma > 0, hue, 0.0)
+        total = float(rgb.shape[0] * rgb.shape[1]) or 1.0
+
+        # Brightness as the eye sees it (Rec.709 luma), not HSV value: a
+        # saturated green screen is not a "bright" picture.
+        brightness = float((0.2126 * r + 0.7152 * g + 0.0722 * b).mean()) * 255.0
+        if brightness < 60:
+            tags.append("Dark")
+        elif brightness > 190:
+            tags.append("Bright")
+
+        green = (hue >= 70) & (hue <= 170) & (s >= 100 / 255.0) & (v >= 50 / 255.0)
+        if green.sum() / total > 0.4:
+            tags.append("Green Screen")
+        blue = (hue >= 190) & (hue <= 270) & (s >= 120 / 255.0) & (v >= 50 / 255.0)
+        if blue.sum() / total > 0.4:
+            tags.append("Blue Screen")
+
+        coloured = (s > 50 / 255.0) & (v > 40 / 255.0)
+        n = int(coloured.sum())
+        if n > max(100, total * 0.05):
+            warm = (((hue < 50) | (hue >= 310)) & coloured).sum() / n
+            cold = (((hue >= 180) & (hue < 270)) & coloured).sum() / n
+            if warm > 0.5:
+                tags.append("Warm")
+            elif cold > 0.5:
+                tags.append("Cold")
         return tags

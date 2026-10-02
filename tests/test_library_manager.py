@@ -46,14 +46,18 @@ class TestLibraryManager(unittest.TestCase):
                 "proxy_path": ""
             }
         ]
-        self.mock_db.get_all_stock_assets.return_value = fake_assets
-        
+        # The library reads through its own repository.
+        self.lib_mgr.repo = MagicMock()
+        self.lib_mgr.repo.get_all_stock_assets.return_value = fake_assets
+        self.lib_mgr.repo.favorite_ids.return_value = set()
+        self.lib_mgr.repo.pick_ids.return_value = set()
+
         # Call
         results = self.lib_mgr.get_all_assets()
-        
+
         # Verify
         self.assertEqual(len(results), 2)
-        self.mock_db.get_all_stock_assets.assert_called_once()
+        self.lib_mgr.repo.get_all_stock_assets.assert_called_once()
         # Verify remapping happened (LibraryManager might rename keys)
         self.assertEqual(results[0]['name'], "Fire_01.mov")
 

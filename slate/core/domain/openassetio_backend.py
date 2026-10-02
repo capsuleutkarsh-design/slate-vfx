@@ -140,8 +140,8 @@ class OpenAssetIOBackend:
     def search_library(self, *args, **kwargs):
         return self._lib.search_library(*args, **kwargs)
 
-    def get_total_count(self):
-        return self._lib.get_total_count()
+    def get_total_count(self, *args, **kwargs):
+        return self._lib.get_total_count(*args, **kwargs)
 
     def add_assets_batch(self, *args, **kwargs):
         return self._lib.add_assets_batch(*args, **kwargs)
@@ -169,12 +169,6 @@ class OpenAssetIOBackend:
 
     def update_asset_metadata(self, *args, **kwargs):
         return self._lib.update_asset_metadata(*args, **kwargs)
-
-    def toggle_favorite_status(self, *args, **kwargs):
-        return self._lib.toggle_favorite_status(*args, **kwargs)
-
-    def trash_asset(self, *args, **kwargs):
-        return self._lib.trash_asset(*args, **kwargs)
 
     # Transparent delegation for any methods not explicitly listed
     def __getattr__(self, item):
