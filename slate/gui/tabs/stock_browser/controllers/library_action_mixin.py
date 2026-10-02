@@ -125,6 +125,13 @@ class LibraryActionMixin:
         dialog = ClearLibraryDialog(count, self)
         if not dialog.exec() or not dialog.confirmed():
             return
+        # Let go of every picture Slate holds from the cache first, or Windows
+        # refuses to delete it (NEW-media-7).
+        self.inspector.clear()
+        self.model.clear()
+        pool = getattr(self, "_stock_pool", None)
+        if pool is not None:
+            pool.waitForDone(5000)
         result = self.lib_manager.clear_all_assets()
         ok, removed, failed = result if isinstance(result, tuple) else (bool(result), 0, 0)
         if not ok:
@@ -135,7 +142,8 @@ class LibraryActionMixin:
         self.inspector.clear()
         self._refresh_categories()
         self.update_ui_counts()
-        extra = f" {failed} cached files could not be removed." if failed else ""
+        extra = (f" {failed} cached file{'s' if failed != 1 else ''} could not be removed."
+                 if failed else "")
         self._notify(f"Cleared the stock library ({count:,} assets).{extra}",
                      "warning" if failed else "success")
 

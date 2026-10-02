@@ -248,3 +248,18 @@ def test_the_rv_picker_reads_the_same_on_every_row(qtbot, tmp_path):
     assert dialog.selected_keys() == ["scan", "comp"] and dialog.open_btn.text() == "Open 2 in RV"
     dialog.btn_none.click()
     assert dialog.selected_keys() == [] and not dialog.open_btn.isEnabled()
+
+
+def test_shot_names_stay_readable_at_1280(qtbot, editor, tmp_path):
+    """NEW-media-5: the Shot column was 55 px; the strip read 'SEQ010_S...'."""
+    editor.resize(1280, 640)
+    _load(qtbot, editor, tmp_path, [_shot(tmp_path, f"SEQ0{i}0_SH010") for i in range(1, 4)])
+    editor.show()
+    qtbot.wait(50)
+    shot_col = editor.table.columnWidth(2)
+    needed = editor.table.fontMetrics().horizontalAdvance("SEQ010_SH010")
+    assert shot_col >= needed
+    from slate.gui.tabs.shot_review.lineup_preview import strip_label
+    metrics = editor.preview.strip.fontMetrics()
+    assert strip_label(metrics, "SEQ010_SH010", 1000) == "SEQ010_SH010"
+    assert strip_label(metrics, "SEQ010_SH010", metrics.horizontalAdvance("SH010") + 2) == "SH010"

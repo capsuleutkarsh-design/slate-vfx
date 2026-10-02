@@ -208,6 +208,7 @@ def can_preview(asset) -> bool:
 class ThumbnailLoader(QThread):
     """Background thread to load thumbnails to avoid UI freeze. Uses LIFO Stack."""
     image_loaded = Signal(str, QImage) # path, QImage (Thread Safe)
+    image_missing = Signal(str)        # a recorded thumbnail is not on disk
 
     def __init__(self):
         super().__init__()
@@ -247,6 +248,7 @@ class ThumbnailLoader(QThread):
             from slate.core.domain.proxy_manager import ProxyManager
             if not ProxyManager.exists(path):
                 logging.debug(f"Thumbnail Missing on Disk: {path}")
+                self.image_missing.emit(path)
                 self.mutex.lock()
                 self.processed.discard(path)
                 self.mutex.unlock()
@@ -331,6 +333,7 @@ class StockModel(QAbstractTableModel):
 
         self.loader = ThumbnailLoader()
         self.loader.image_loaded.connect(self.on_image_loaded)
+        self.loader.image_missing.connect(self.on_image_missing)
         self.loader.start()
         self.destroyed.connect(lambda *_: self.cleanup())
 
@@ -567,6 +570,20 @@ class StockModel(QAbstractTableModel):
                 self.dataChanged.emit(idx, idx, [Qt.ItemDataRole.DecorationRole, THUMB_ROLE])
         except Exception as e:
             logging.exception(f"Error processing loaded image {path}: {e}")
+
+    def on_image_missing(self, path):
+        """A recorded thumbnail has gone from the cache: ask for it once more (NEW-media-8)."""
+        row = self._asset_map.get(path)
+        if row is None or row >= len(self.assets):
+            return
+        asset = self.assets[row]
+        if asset.get('thumb_path') != path:
+            return
+        key = "missing:" + str(asset.get('id') or path)
+        if key in self._asked_for_thumbs or not can_preview(asset):
+            return
+        self._asked_for_thumbs.add(key)
+        self.thumbnail_needed.emit(dict(asset))
 
     def clear(self):
         self.beginResetModel()

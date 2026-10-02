@@ -55,6 +55,19 @@ def media_for(entry, layer: str):
     return first_frame_file(clip), "frames", clip
 
 
+def strip_label(metrics, name: str, width: int) -> str:
+    """
+    The shot's name if it fits, else its last part (SEQ010_SH010 -> SH010),
+    which tells neighbouring shots apart - not "SEQ010_S..." on every block.
+    """
+    if metrics.horizontalAdvance(name) <= width:
+        return name
+    tail = name.replace("-", "_").split("_")[-1]
+    if tail and metrics.horizontalAdvance(tail) <= width:
+        return tail
+    return metrics.elidedText(tail or name, Qt.TextElideMode.ElideRight, width)
+
+
 class LineupStrip(QWidget):
     """The lineup as blocks, as long as each shot; click to go to one."""
 
@@ -107,10 +120,9 @@ class LineupStrip(QWidget):
             painter.setBrush(base)
             painter.setPen(QPen(QColor(Gate.LINE_SOFT), 1))
             painter.drawRoundedRect(rect, 2, 2)
-            if rect.width() > 46:
+            if rect.width() > 30:
                 painter.setPen(QColor(Gate.TEXT_ON_ACCENT if index == self.current else Gate.TEXT_2))
-                text = painter.fontMetrics().elidedText(entry.name, Qt.TextElideMode.ElideRight,
-                                                        int(rect.width()) - 6)
+                text = strip_label(painter.fontMetrics(), entry.name, int(rect.width()) - 6)
                 painter.drawText(rect.adjusted(3, 0, -3, 0), Qt.AlignmentFlag.AlignCenter, text)
         painter.end()
 
