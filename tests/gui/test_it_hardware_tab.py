@@ -183,6 +183,43 @@ def test_issue_uses_the_person_picker_and_collect_words_repair(db, app, monkeypa
     assert "still marked for repair" in toasts[-1]
 
 
+def test_issue_to_a_leaver_says_why_and_offers_the_override(db, app, monkeypatch):
+    """Integration: issue_machine refuses leavers; the tab shows the reason and can override."""
+    from datetime import date, timedelta
+    from slate.gui.tabs import it_inventory_tab as module
+    from slate.gui.components import feedback
+    from slate.core.domain.onboarding_service import LEAVING
+    tab = _tab(db)
+    tab.repo.add("WS-L1", {})
+    tab.load_data()
+    tab._service().start("rahul.s", LEAVING, effective_date=date.today() + timedelta(days=10))   # still here, leaving soon
+
+    class Picked(module.IssueDialog):
+        def exec(self):
+            self.person.set_username("rahul.s")
+            return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(module, "IssueDialog", Picked)
+    asked, warned, toasts = [], [], []
+    answer = {"yes": False}
+    monkeypatch.setattr(feedback, "confirm", lambda *a, **k: asked.append((a[2], k)) or answer["yes"])
+    monkeypatch.setattr(feedback, "warn", lambda *a, **k: warned.append(a[2]))
+    monkeypatch.setattr(feedback, "toast", lambda *a, **k: toasts.append(a[1]))
+
+    def pick():
+        tab.grid.selectRow(next(r for r in range(tab.grid.rowCount())
+                                if tab.grid.item(r, 0).text() == "WS-L1"))
+        tab.issue_selected()
+
+    pick()
+    assert asked and "Rahul Sharma" in asked[-1][0] and "leaving list" in asked[-1][0]
+    assert asked[-1][1]["yes_label"] == "Issue anyway"
+    assert tab.repo.holder("WS-L1") is None and not warned      # cancelled, no "not saved"
+    answer["yes"] = True
+    pick()
+    assert tab.repo.holder("WS-L1") == "rahul.s" and not warned and "Rahul Sharma" in toasts[-1]
+
+
 def test_sync_names_the_reports_it_could_not_read(db, app, tmp_path, monkeypatch):
     """IT-012."""
     from slate.gui.components import feedback
