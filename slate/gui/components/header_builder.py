@@ -234,7 +234,9 @@ class HeaderBuilder:
         )
         self.local_mode_label.setToolTip("LOCAL MODE: central sync features are limited")
         self.local_mode_label.setVisible(False)
-        header_layout.addWidget(self.local_mode_label)
+        # Sized to its text: left to the row it stretched into a tall slab.
+        self.local_mode_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        header_layout.addWidget(self.local_mode_label, 0, Qt.AlignmentFlag.AlignVCenter)
 
         # 3e. SYSTEM HEALTH STRIP
         self.health_label = ClickableLabel("Health: --")
