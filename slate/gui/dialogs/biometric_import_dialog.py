@@ -234,19 +234,60 @@ class BiometricImportDialog(QDialog):
         self.summary.setText("")
         self.import_btn.setEnabled(bool(self.days))
 
+    def _people_snapshot(self):
+        """
+        Everybody the codes can be matched to, read once for all the rows:
+        active people whose Employee ID Slate knows.
+        """
+        known = {str(i).strip().lower() for i in self.known_ids}
+        try:
+            from slate.core.domain.user_manager import UserManager
+            records = UserManager().get_all_users() or {}
+        except Exception:
+            records = {}
+        records = {u: r for u, r in records.items() if str(u).strip().lower() in known}
+        for user_id in self.known_ids:          # an ID with no account row still counts
+            records.setdefault(user_id, {"display_name": user_id})
+
+        class _Snapshot:
+            def get_all_users(self_inner):
+                return records
+        return _Snapshot()
+
     def _fill_unknown(self):
+        """
+        One searchable person picker per unmatched code ("Display Name
+        (username)", type to filter), pre-filled from the file's Name column
+        when that names exactly one person. It was a combo of every raw
+        username, 150 long, with no search.
+        """
+        from slate.gui.components.person_picker import PersonPicker
         self.unknown_table.setRowCount(0)
+        names = {}
+        try:
+            punches, _ = bio.extract_punches(self.header, self.rows, self.mapping)
+            for punch in punches:
+                if punch.name and punch.code not in names:
+                    names[punch.code] = punch.name
+        except Exception:
+            names = {}
+        people = self._people_snapshot()
         for code, count in sorted(self.unknown.items(), key=lambda kv: -kv[1]):
             r = self.unknown_table.rowCount()
             self.unknown_table.insertRow(r)
-            self.unknown_table.setItem(r, 0, QTableWidgetItem(code))
+            label = code + (f"  -  {names[code]}" if names.get(code) else "")
+            self.unknown_table.setItem(r, 0, QTableWidgetItem(label))
             self.unknown_table.setItem(r, 1, QTableWidgetItem(str(count)))
-            box = QComboBox()
-            box.addItem("(skip)", "")
-            for user_id in self.known_ids:
-                box.addItem(user_id, user_id)
-            box.currentIndexChanged.connect(lambda _i, c=code, b=box: self._assign(c, b.currentData()))
-            self.unknown_table.setCellWidget(r, 2, box)
+            picker = PersonPicker(people, placeholder="Skip, or type a name…")
+            picker.setToolTip("Leave empty to skip this code")
+            self.unknown_table.setCellWidget(r, 2, picker)
+            self.unknown_table.setRowHeight(
+                r, max(self.unknown_table.rowHeight(r), picker.sizeHint().height() + 8))
+            if names.get(code):
+                picker.suggest(names[code])
+                if picker.username():
+                    self._assign(code, picker.username())
+            picker.person_changed.connect(lambda username, c=code: self._assign(c, username))
 
     def _assign(self, code: str, user_id: str):
         if user_id:

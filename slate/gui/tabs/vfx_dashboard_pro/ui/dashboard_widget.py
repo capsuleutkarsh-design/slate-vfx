@@ -237,6 +237,10 @@ class DashboardWidget(
         return count
 
     def show_notifications(self):
+        """The header's notification list; this tab's own copy only when run on its own."""
+        from slate.gui.components.notification_center import open_notifications
+        if open_notifications(self):
+            return
         from .notifications_panel import NotificationsDialog
 
         dialog = NotificationsDialog(
@@ -461,8 +465,18 @@ class DashboardWidget(
         return can_edit_dashboard(self.user_roles)
 
     def _is_artist_scope(self) -> bool:
-        """Artists should only see their assigned shots."""
-        return "artist" in self.user_roles and not self._user_can_edit()
+        """
+        Whether this person sees only the shots they are named on.
+
+        Decided by abilities, not by the word "artist": that let Compositor
+        and Roto Artist - real roles without it - see all 262 shots while
+        Artist saw 115. Without dashboard_view_all and without dashboard_write
+        (access.can_view_all_shots), you see your own shots.
+        """
+        from slate.core.domain.access import can_view_all_shots
+        if self._user_can_edit():
+            return False
+        return not can_view_all_shots(self.user_roles)
 
     def _artist_identity_candidates(self):
         candidates = {
@@ -537,26 +551,29 @@ class DashboardWidget(
             logging.exception(f"Failed to log message: {e}")
 
     def _get_user_list(self):
-        """Flatten user dict to list of display names. Filters by Role (Artist/Supervisor)."""
+        """
+        The people work can be assigned to, by display name.
+
+        Everybody active with the "assignable" ability (access.can_be_assigned:
+        artist-type roles and leads, or any role it is ticked on). This used
+        to test the first role's name against a list, which left out
+        Compositors, DMP and CG artists and offered supervisors and producers
+        as artists.
+        """
+        from slate.core.domain.access import can_be_assigned
         valid_users = set()
         try:
             db_users = self.user_manager.get_all_users()
             for username, u in db_users.items():
-                role = u.get('role')
-                if not role:
-                    roles = u.get('roles', [])
-                    role = roles[0] if isinstance(roles, list) and roles else "Artist"
-                name = u.get('display_name', '').strip()
-                
-                # Check normalized role (case-insensitive)
-                # Allow any role that contains 'artist' or is in the specific list
-                r_norm = str(role).lower()
-                if (r_norm in ['artist', 'supervisor', 'lead', 'generalist', 'admin', 'producer'] or 
-                    'artist' in r_norm):
-                    if name:
-                        valid_users.add(name)
-                    else:
-                        valid_users.add(username)
+                if not u.get('active', True):
+                    continue
+                roles = u.get('roles') or u.get('role') or []
+                if isinstance(roles, str):
+                    roles = [roles]
+                if not can_be_assigned(roles):
+                    continue
+                name = str(u.get('display_name') or '').strip()
+                valid_users.add(name or username)
         except Exception as e:
             logging.exception(f"ERROR: Failed to fetch DB users: {e}")
         result = sorted(list(valid_users))
@@ -1443,13 +1460,19 @@ class DashboardWidget(
     def delete_project_click(self):
         if not self.current_project:
             return
+        # Deleting a whole project is Admin and Developer's (delete_project),
+        # not every coordinator's.
+        from slate.core.domain.access import can_delete_project
+        if not can_delete_project(self.user_roles):
+            self._notify("Only an Admin or Developer can delete a project.", "warning")
+            return
             
         code = self.current_project.code
         text, ok = QInputDialog.getText(self, "Delete Project", 
                                         f"WARNING: This will delete ALL data for '{code}'.\n\nType 'DELETE' to confirm:",
                                         QLineEdit.EchoMode.Normal, "")
         if ok and text == "DELETE":
-            if self.project_manager.delete_project(code):
+            if self.project_manager.delete_project(code, roles=self.user_roles):
                 self._notify(f"Project {code} deleted.", "success")
                 self.load_projects()
                 # Clear selection or select another

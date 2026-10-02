@@ -79,6 +79,23 @@ class MainWindowBuilderMixin:
             return ServiceDeskView(self._current_username())
         return MyTicketsView(self._current_username())
 
+    def _attendance_tooltip(self) -> str:
+        """
+        What Attendance is for this person. Everybody punches in and out and
+        sees their month; only people who look after others see a team. It
+        used to promise every artist "team attendance and timesheets".
+        """
+        from ...core.domain.access import can
+        roles = list(getattr(self, "user_roles", None) or [])
+        text = "Punch in and out, and see your month"
+        if can(roles, "view_team_attendance"):
+            text += ", the studio's attendance and timesheets"
+        elif can(roles, "approve_leave"):
+            text += ", and your team's attendance"
+        if self._is_sqlite_fallback_mode():
+            text += " (LOCAL MODE: team views and exports are limited)"
+        return text
+
     def _current_username(self) -> str:
         data = self.user_data or {}
         return str(data.get("user_id") or data.get("username") or "unknown")
@@ -270,7 +287,7 @@ class MainWindowBuilderMixin:
                     permission_key="Folder Creator",
                     user_role=self.user_role,
                     allowed_tabs=self.allowed_tabs,
-                    tooltip="Scan the client drive, build the project structure, and move the scans into it"
+                    tooltip="Scan the client drive, build the project structure, and bring the scans into it"
                 )
 
                 # CAP Rename
@@ -331,7 +348,7 @@ class MainWindowBuilderMixin:
                 # Production Scheduling
                 self.tab_coordinator.register_tab_factory(
                     "Scheduling",
-                    lambda: ProdSchedulingTab(),
+                    lambda: ProdSchedulingTab(user_data=self.user_data),
                     icon="📅",
                     permission_key="Scheduling",
                     user_role=self.user_role,
@@ -342,7 +359,7 @@ class MainWindowBuilderMixin:
                 # Production Bidding
                 self.tab_coordinator.register_tab_factory(
                     "Bidding",
-                    lambda: ProdBiddingTab(),
+                    lambda: ProdBiddingTab(user_data=self.user_data),
                     icon="💰",
                     permission_key="Bidding",
                     user_role=self.user_role,
@@ -383,11 +400,7 @@ class MainWindowBuilderMixin:
                     icon="⏱️",
                     user_role=self.user_role,
                     allowed_tabs=self.allowed_tabs,
-                    tooltip=(
-                        "Track team attendance, hours and export timesheets"
-                        if not self._is_sqlite_fallback_mode()
-                        else "LOCAL MODE. Team sync/export actions are limited."
-                    )
+                    tooltip=self._attendance_tooltip()
                 )
 
                 # Leave. One entry, two entirely different screens behind it:
@@ -424,24 +437,40 @@ class MainWindowBuilderMixin:
 
                 self.tab_coordinator.add_category_header("IT & INFRA")
 
+                # The "IT" tab key opens the IT screens; so does working the
+                # desk (manage_it). They used to be one flag that also swapped
+                # the person's own tickets for the queue.
+                from ...core.domain.workplace_access import can_view_licences, sees_it_screens
+                roles_now = getattr(self, "user_roles", None)
+                it_screens = sees_it_screens(roles_now, self.allowed_tabs)
+                it_key = None if it_screens else "IT"
+
                 # Hardware Inventory
                 self.tab_coordinator.register_tab_factory(
                     "Hardware",
                     lambda: ItInventoryTab(user_data=self.user_data),
                     icon="🖥️",
-                    permission_key="IT",
+                    permission_key=it_key,
                     user_role=self.user_role,
                     allowed_tabs=self.allowed_tabs,
-                    tooltip="Studio Hardware Inventory"
+                    tooltip="Machines the studio owns, who has them, and their state"
                 )
 
                 # Licences. Not an inventory - a compliance and renewal read,
                 # which is the only version of this question anybody asks.
+                #
+                # Also read-only for people with view_licences (a Production
+                # Head who approves renewals) - once the view can be read-only.
+                import inspect
+                licence_read_only = (not it_screens
+                                     and can_view_licences(roles_now, self.allowed_tabs)
+                                     and "read_only" in inspect.signature(LicenceView).parameters)
                 self.tab_coordinator.register_tab_factory(
                     "Licences",
-                    lambda: LicenceView(self._current_username()),
+                    (lambda: LicenceView(self._current_username(), read_only=True))
+                    if licence_read_only else (lambda: LicenceView(self._current_username())),
                     icon="🔑",
-                    permission_key="IT",
+                    permission_key=None if (it_screens or licence_read_only) else "IT",
                     user_role=self.user_role,
                     allowed_tabs=self.allowed_tabs,
                     tooltip="Seats bought against seats used, and what each renewal needs"
@@ -464,10 +493,10 @@ class MainWindowBuilderMixin:
                     "Deployment",
                     lambda: ItDeploymentTab(user_data=self.user_data),
                     icon="📦",
-                    permission_key="IT",
+                    permission_key=it_key,
                     user_role=self.user_role,
                     allowed_tabs=self.allowed_tabs,
-                    tooltip="Manage automated script and software deployments"
+                    tooltip="Keep a record of what was installed where"
                 )
 
                 self.tab_coordinator.add_category_header("ADMINISTRATION")
@@ -514,7 +543,7 @@ class MainWindowBuilderMixin:
                     user_role=self.user_role,
                     allowed_tabs=self.allowed_tabs,
                     tooltip=(
-                        "User management, live workstation monitoring and fleet reports"
+                        "Workstations, logs and the database"
                         if not self._is_sqlite_fallback_mode()
                         else "Unavailable in LOCAL MODE (requires central PostgreSQL)."
                     )
@@ -551,7 +580,7 @@ class MainWindowBuilderMixin:
                 permission_key="Settings",
                 user_role=self.user_role,
                 allowed_tabs=self.allowed_tabs,
-                tooltip="Configure application paths, templates and global preferences"
+                tooltip="Your preferences, and the studio's settings if you may change them"
             )
 
             # Store nav_items reference for backward compatibility
@@ -647,6 +676,23 @@ class MainWindowBuilderMixin:
                 self.header_builder.help_button.clicked.connect(self.show_help_dialog)
             if hasattr(self.header_builder, 'logout_button') and self.header_builder.logout_button:
                 self.header_builder.logout_button.clicked.connect(self.logout_user)
+            # Sync pushes offline changes; it was created and connected to nothing.
+            if getattr(self.header_builder, "sync_button", None) is not None:
+                self.header_builder.sync_button.clicked.connect(self.trigger_sync_database)
+
+            # The one notification centre, beside Help, for everybody. It used
+            # to exist only inside the Timeline Viewer and the dashboard.
+            self.notification_center = None
+            if self.user_data:
+                try:
+                    from .notification_center import NotificationCenter
+                    data = self.user_data or {}
+                    self.notification_center = NotificationCenter(
+                        self, self._current_username(),
+                        aliases=(data.get("display_name"),))
+                    self.header_builder.insert_before_help(self.notification_center.bell)
+                except Exception as exc:
+                    logging.warning("Notification centre not available: %s", exc)
             if hasattr(self.header_builder, "health_label") and self.header_builder.health_label:
                 try:
                     self.header_builder.health_label.clicked.connect(self.show_runtime_diagnostics)

@@ -6,7 +6,8 @@
     "developer",
     "supervisor",
     "coordinator",
-    "lead"
+    "lead",
+    "producer"
   ],
   "_excel_sync": "May import from and export to the project Excel backup.",
   "excel_sync": [
@@ -56,19 +57,17 @@
     "developer",
     "admin"
   ],
-  "_manage_users": "Creates, edits and deletes user accounts on the Users & Roles tab.",
+  "_manage_users": "Creates, edits and deactivates user accounts on the Users & Roles tab - only giving roles no more powerful than the editor's own.",
   "manage_users": [
     "hr",
     "human resources",
     "admin",
-    "developer",
-    "supervisor"
+    "developer"
   ],
-  "_view_team_attendance": "Sees the whole team's attendance grid, corrects punches and exports timesheets.",
+  "_view_team_attendance": "Sees the whole studio's attendance grid, corrects punches and exports timesheets. Supervisors see their own reports through approve_leave instead.",
   "view_team_attendance": [
     "hr",
     "human resources",
-    "supervisor",
     "developer",
     "admin"
   ],
@@ -90,13 +89,83 @@
     "supervisor",
     "lead"
   ],
-  "_manage_permissions": "Changes what every role may open and do, on the Permissions screen.",
+  "_manage_permissions": "Changes what roles may open and do, on the Permissions screen - only handing on what the editor holds; Full access and the sensitive abilities are Admin/Developer only.",
   "manage_permissions": [
     "admin",
     "developer",
     "it",
     "hr",
     "human resources"
+  ],
+  "_assignable": "May be given work on the dashboard (appears in the Artist pickers).",
+  "assignable": [
+    "artist",
+    "lead",
+    "team lead",
+    "generalist",
+    "compositor",
+    "roto artist",
+    "paint artist",
+    "deage artist",
+    "ai artist",
+    "dmp",
+    "cg"
+  ],
+  "_dashboard_view_all": "Sees every shot of a project on the dashboard (read-only unless they can also edit). Without it, and without dashboard_write, a person sees the shots they are named on.",
+  "dashboard_view_all": [
+    "admin",
+    "developer",
+    "supervisor",
+    "coordinator",
+    "producer",
+    "production head",
+    "production coordinator",
+    "comp supervisor",
+    "roto prep supervisor",
+    "editor"
+  ],
+  "_schedule_write": "Adds, changes and shifts milestones on Scheduling.",
+  "schedule_write": [
+    "admin",
+    "developer",
+    "production head",
+    "production coordinator",
+    "producer"
+  ],
+  "_approve_bid": "Marks a bid Won or Lost. Nobody approves their own bid except Admin and Developer.",
+  "approve_bid": [
+    "admin",
+    "developer",
+    "production head"
+  ],
+  "_delete_project": "Archives or deletes a whole dashboard project.",
+  "delete_project": [
+    "admin",
+    "developer"
+  ],
+  "_view_licences": "Opens Licences read-only (for people who approve renewals).",
+  "view_licences": [
+    "admin",
+    "developer",
+    "production head",
+    "it",
+    "it support"
+  ],
+  "_manage_system": "Data Center, table editing, the SQL console, purge, the API gateway, Audit Logs and every remote workstation action.",
+  "manage_system": [
+    "admin",
+    "developer"
+  ],
+  "_studio_settings": "Studio-wide settings: studio policy, server and database paths, branding and updates.",
+  "studio_settings": [
+    "admin",
+    "developer",
+    "it",
+    "it support"
+  ],
+  "_tester_destructive": "The Tester Panel's destructive tools: wipe, set file dates, the big generators, VACUUM.",
+  "tester_destructive": [
+    "developer"
   ],
   "_roles_in_database": "These lists match role names. A role can also be given any of these actions by ticking it under Abilities on the Permissions screen; that is stored with the role and needs no change here."
 }

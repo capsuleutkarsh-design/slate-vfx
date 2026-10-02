@@ -10,6 +10,7 @@ list. Somebody leaves and the machine they were given on day one is already
 named on the row - nobody has to remember it.
 """
 
+import html
 from datetime import date
 
 from PySide6.QtCore import Qt, QDate, Signal
@@ -48,14 +49,22 @@ class StartPersonDialog(QDialog):
         form = QFormLayout()
         form.setSpacing(Gate.SPACE_2)
 
-        self.person = QComboBox()
-        self.person.setEditable(True)
-        for row in service.people():
-            name = row.get("display_name") or row.get("username") or ""
-            self.person.addItem(
-                "%s (%s)" % (name, row.get("username")) if name else str(row.get("username")),
-                row.get("username"))
+        # A searchable picker that only ever yields a real username. The
+        # editable combo it replaces took the still-selected item whatever was
+        # typed, so a typo started a checklist for somebody else.
+        from slate.gui.components.person_picker import PersonPicker
+        self.person = PersonPicker(
+            placeholder="Type a name…", allow_empty=False,
+            order=self._joining_order(service) if joining else None)
+        self.person.person_changed.connect(self._sync_start)
         form.addRow("Person", self.person)
+        self.person_hint = QLabel("")
+        self.person_hint.setWordWrap(True)
+        self.person_hint.setStyleSheet(f"color: {Gate.WARN}; font-size: 12px;")
+        # "Users & Roles" in the hint is a link that opens that screen.
+        self.person_hint.setTextFormat(Qt.TextFormat.RichText)
+        self.person_hint.linkActivated.connect(self._open_users)
+        form.addRow("", self.person_hint)
 
         self.employment = QComboBox()
         self.employment.addItem("Staff", "staff")
@@ -90,12 +99,80 @@ class StartPersonDialog(QDialog):
         buttons = QHBoxLayout()
         buttons.addStretch(1)
         buttons.addWidget(make_button("Cancel", "ghost", on_click=self.reject))
-        buttons.addWidget(make_button(
-            "Start joining" if joining else "Start leaving", "primary", on_click=self.accept))
+        self.start_button = make_button(
+            "Start joining" if joining else "Start leaving", "primary", on_click=self.accept)
+        buttons.addWidget(self.start_button)
         root.addLayout(buttons)
+        self._sync_start(self.person.username())
+
+    @staticmethod
+    def _joining_order(service):
+        """
+        For joining: people without a finished joining list first, newest
+        first among them (no joining date yet counts as newest), then those
+        whose joining list is finished, alphabetical. It was every account by
+        joining date, blanks first - and a new hire whose joining date was
+        already set dropped to the bottom among long-standing staff.
+        """
+        try:
+            done = service.joining_finished()
+        except Exception:
+            done = set()           # only the order suffers
+
+        def key(entry):
+            username, display, record = entry
+            if username.lower() in done:
+                return (1, 0, display.casefold())
+            joined = str(record.get("joined_on") or "")[:10]
+            try:
+                age = -date.fromisoformat(joined).toordinal()
+            except ValueError:
+                age = -date.max.toordinal()
+            return (0, age, display.casefold())
+        return key
+
+    def _sync_start(self, username):
+        text = self.person.currentText().strip()
+        if username:
+            self.person_hint.setText("")
+        elif text and self._inactive_named(text):
+            self.person_hint.setText(
+                "%s is deactivated or has left - reactivate the account on "
+                "%s first." % (html.escape(self._inactive_named(text)), self._users_link()))
+        elif text:
+            self.person_hint.setText(
+                "No such person - create the account on %s first." % self._users_link())
+        else:
+            self.person_hint.setText("")
+        self.start_button.setEnabled(bool(username))
+
+    @staticmethod
+    def _users_link() -> str:
+        # Read when shown, so the colour follows the theme in force.
+        return '<a href="users" style="color: %s;">Users &amp; Roles</a>' % Gate.ACCENT
+
+    def _open_users(self, _link=None):
+        """Close this dialog and open Users & Roles, where accounts are made."""
+        window = self.parent().window() if self.parent() is not None else None
+        switch = getattr(window, "_switch_to_tab_label", None)
+        if callable(switch) and switch("Users & Roles"):
+            self.reject()
+
+    def _inactive_named(self, text: str) -> str:
+        """The username of a switched-off account this text names, if any."""
+        if not hasattr(self, "_inactive"):
+            from slate.gui.components.person_picker import label_for, people
+            self._inactive = {}
+            for username, display, record in people(include_inactive=True):
+                if record.get("active", True):
+                    continue
+                for name in (username, display, label_for(username, display)):
+                    self._inactive[str(name).casefold()] = username
+        return self._inactive.get(text.strip().casefold(), "")
 
     def payload(self):
-        username = self.person.currentData() or self.person.currentText().strip()
+        # Only a real username; never the text as typed.
+        username = self.person.username()
         day = self.effective.date()
         return (str(username), self.employment.currentData(),
                 self.department.text().strip(),
@@ -415,8 +492,14 @@ class JoiningLeavingView(QWidget):
         username, employment, department, effective = dialog.payload()
         if not username:
             return
-        made = self.service.start(username, direction, employment, department,
-                                  effective_date=effective)
+        from slate.core.domain.onboarding_service import UnknownPerson
+        try:
+            made = self.service.start(username, direction, employment, department,
+                                      effective_date=effective)
+        except UnknownPerson as missing:
+            QMessageBox.warning(self, "Start joining" if direction == JOINING else "Start leaving",
+                                str(missing))
+            return
         if not made:
             QMessageBox.information(
                 self, "Already on the list",

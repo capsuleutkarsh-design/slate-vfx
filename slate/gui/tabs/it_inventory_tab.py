@@ -16,6 +16,10 @@ from slate.gui.core.offline_notice import on_database_error
 from slate.core.infra.gate import Gate
 from slate.gui.core.data_display import export_table_dialog
 from slate.core.domain import people
+from slate.gui.components.table_tools import (
+    KeepSelection, TableToolbar, make_item, selected_keys, setup_table,
+)
+from slate.gui.components.state_notice import show_load_error
 
 # Let an outage reach the @on_database_error decorator rather than becoming an
 # empty grid here. Everything else keeps the fallback it already had.
@@ -123,7 +127,7 @@ class AddPCDialog(QDialog):
     def auto_fill(self):
         machine_name = self.inp_name.text().strip()
         if not machine_name:
-            QMessageBox.warning(self, "Warning", "Please enter a Machine Name to scan for.")
+            QMessageBox.warning(self, "Auto-fill from Live Ops", "Type the machine name first.")
             return
             
         if self.hub:
@@ -145,11 +149,11 @@ class AddPCDialog(QDialog):
                         total_gb = sum(float(d.get("Capacity_GB", 0)) for d in drives)
                         self.inp_storage.setText(f"{total_gb:.0f} GB")
                         
-                    QMessageBox.information(self, "Success", "Auto-filled data from Live Ops!")
+                    QMessageBox.information(self, "Auto-fill from Live Ops", "Filled in from the last Live Ops report.")
                 except Exception as e:
-                    QMessageBox.warning(self, "Error", f"Could not read Live Ops data: {e}")
+                    QMessageBox.warning(self, "Auto-fill from Live Ops", f"The Live Ops report could not be read: {e}")
             else:
-                QMessageBox.warning(self, "Not Found", "No Live Ops data found for this machine. It may be offline.")
+                QMessageBox.warning(self, "Auto-fill from Live Ops", "Live Ops has no report for this machine. It may be switched off or not running Slate.")
 
 
 class ItInventoryTab(QWidget):
@@ -168,7 +172,7 @@ class ItInventoryTab(QWidget):
         self.build_ui(main_layout)
 
     def build_ui(self, main_layout):
-        header_title = page_title('Hardware', 'Workstations registered to the studio')
+        header_title = page_title('Hardware', 'Machines the studio owns, who has them, and their state')
         main_layout.addWidget(header_title)
         
         # Controls
@@ -181,7 +185,7 @@ class ItInventoryTab(QWidget):
         
         self.filter_cb = QComboBox()
         self.filter_cb.addItems(["All", "Active", "Repair", "Available"])
-        self.filter_cb.currentTextChanged.connect(self.load_data)
+        self.filter_cb.currentTextChanged.connect(lambda _text: self.load_data())
         controls.addWidget(self.filter_cb)
         controls.addStretch()
         
@@ -206,7 +210,16 @@ class ItInventoryTab(QWidget):
         self.grid = QTableWidget(0, 8)
         self.grid.setHorizontalHeaderLabels(["Machine Name", "Assigned To", "Location", "CPU", "GPU", "RAM", "Storage", "Status"])
         self.style_table(self.grid)
-        self.load_data()
+        # Read-only (typing into a cell saved nothing), whole rows, sortable
+        # headers; double-click edits the machine instead.
+        setup_table(self.grid)
+        self.grid.doubleClicked.connect(lambda _index: self.edit_workstation())
+
+        # Search by name, person, location, CPU or GPU, and Refresh.
+        self.toolbar = TableToolbar(
+            self.grid, placeholder="Search machine, person, location, CPU or GPU…",
+            columns=(0, 1, 2, 3, 4, 7), on_refresh=self.load_data)
+        main_layout.addWidget(self.toolbar)
         # Other people's changes, without a restart (the change feed; a timer if it is missing).
         from slate.gui.components.auto_refresh import AutoRefresh
         self._auto_refresh = AutoRefresh(self, self.load_data, seconds=30, topics=("hardware_inventory", "asset_assignments"))
@@ -228,6 +241,11 @@ class ItInventoryTab(QWidget):
         # start switched off rather than arguing with a dialog.
         gate_selection_buttons(self, self.grid)
 
+        # First read only now that the table is in the layout: a notice for a
+        # failed read takes the table's place, and with no layout yet it
+        # floated as a window of its own while the empty state said
+        # there was nothing here.
+        self.load_data()
 
     @on_database_error
     def load_data(self):
@@ -256,23 +274,34 @@ class ItInventoryTab(QWidget):
         except DatabaseUnavailableError:
             raise
         except Exception as e:
-            self.hardware_data = []
-            
-        self.grid.setRowCount(len(self.hardware_data))
-        for r, row in enumerate(self.hardware_data):
+            # A failed read is not an empty inventory. It used to become []
+            # here and the screen said "No machines registered yet".
+            logging.exception("Hardware could not be read")
+            show_load_error(self, e, retry=self.load_data, what="the machine list")
+            return
+
+        # The selection follows the machine, not the row number, across the
+        # 30-second refresh and after every action.
+        with KeepSelection(self.grid):
+            self._fill(self.hardware_data)
+
+    def _fill(self, rows):
+        self.grid.setRowCount(len(rows))
+        for r, row in enumerate(rows):
             assigned = row.get('display_name') or row.get('username') or row.get('assigned_to')
-            self.grid.setItem(r, 0, QTableWidgetItem(str(row.get('machine_name', ''))))
-            assigned_item = QTableWidgetItem(assigned or "Unassigned")
+            name = str(row.get('machine_name', ''))
+            self.grid.setItem(r, 0, make_item(name, key=name))
+            assigned_item = make_item(assigned or "Unassigned")
             if not assigned:
                 dim_cell(assigned_item)        # a placeholder, not a name
             self.grid.setItem(r, 1, assigned_item)
-            self.grid.setItem(r, 2, QTableWidgetItem(str(row.get('location', ''))))
-            self.grid.setItem(r, 3, QTableWidgetItem(str(row.get('cpu', 'N/A'))))
-            self.grid.setItem(r, 4, QTableWidgetItem(str(row.get('gpu', 'N/A'))))
-            self.grid.setItem(r, 5, QTableWidgetItem(str(row.get('ram', 'N/A'))))
-            self.grid.setItem(r, 6, QTableWidgetItem(str(row.get('storage', 'N/A'))))
-            
-            status_item = QTableWidgetItem(str(row.get('status', '')))
+            self.grid.setItem(r, 2, make_item(str(row.get('location', ''))))
+            self.grid.setItem(r, 3, make_item(str(row.get('cpu', 'N/A'))))
+            self.grid.setItem(r, 4, make_item(str(row.get('gpu', 'N/A'))))
+            self.grid.setItem(r, 5, make_item(str(row.get('ram', 'N/A'))))
+            self.grid.setItem(r, 6, make_item(str(row.get('storage', 'N/A'))))
+
+            status_item = make_item(str(row.get('status', '')))
             st_text = status_item.text().strip().lower()
             if st_text == "active":
                 set_cell_status(status_item, "ok", background=False)
@@ -285,13 +314,15 @@ class ItInventoryTab(QWidget):
             self.grid.setItem(r, 7, status_item)
 
     def _selected_row(self):
-        selected = self.grid.selectedItems()
-        if not selected:
+        """The selected machine's record - found by name, so sorting cannot
+        make an action hit the wrong machine."""
+        keys = selected_keys(self.grid)
+        if not keys:
             return None
-        row = selected[0].row()
-        if row >= len(self.hardware_data):
-            return None
-        return self.hardware_data[row]
+        for record in getattr(self, "hardware_data", []) or []:
+            if str(record.get('machine_name', '')) == str(keys[0]):
+                return record
+        return None
 
     def _service(self):
         from slate.core.domain.onboarding_service import OnboardingService
@@ -341,7 +372,7 @@ class ItInventoryTab(QWidget):
     def edit_workstation(self):
         edit_data = self._selected_row()
         if edit_data is None:
-            QMessageBox.warning(self, "Warning", "Please select a PC to edit.")
+            QMessageBox.warning(self, "Edit machine", "Select the machine to edit.")
             return
 
         dialog = AddPCDialog(self, self.hub, edit_data=edit_data)
@@ -377,7 +408,7 @@ class ItInventoryTab(QWidget):
         """
         row = self._selected_row()
         if row is None:
-            QMessageBox.warning(self, "Warning", "Please select a PC to issue.")
+            QMessageBox.warning(self, "Issue machine", "Select the machine to issue.")
             return
 
         machine = row.get("machine_name")
@@ -434,7 +465,7 @@ class ItInventoryTab(QWidget):
         """Take a machine back, and close the loan."""
         row = self._selected_row()
         if row is None:
-            QMessageBox.warning(self, "Warning", "Please select a PC to collect.")
+            QMessageBox.warning(self, "Collect machine", "Select the machine to collect.")
             return
 
         machine = row.get("machine_name")
@@ -465,7 +496,7 @@ class ItInventoryTab(QWidget):
     def delete_workstation(self):
         row = self._selected_row()
         if row is None:
-            QMessageBox.warning(self, "Warning", "Please select a PC to delete.")
+            QMessageBox.warning(self, "Delete machine", "Select the machine to delete.")
             return
 
         mname = row.get('machine_name')
@@ -483,7 +514,7 @@ class ItInventoryTab(QWidget):
                 % (mname, people.display_name(held[0].get("user_id"))))
             return
 
-        reply = QMessageBox.question(self, "Confirm Delete", f"Are you sure you want to delete PC '{mname}'?",
+        reply = QMessageBox.question(self, "Delete machine", f"Delete {mname} from the inventory?",
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
             from slate.core.infra.database_manager import database_manager
@@ -507,7 +538,7 @@ class ItInventoryTab(QWidget):
         from slate.core.infra.database_manager import database_manager
         status_dir = self.hub.get_livestatus_dir()
         if not status_dir.exists():
-            QMessageBox.warning(self, "Error", "Live Ops directory not found.")
+            QMessageBox.warning(self, "Live Ops sync", "The Live Ops folder on the server could not be found, so nothing was imported.")
             return
 
         added = updated = failed = 0
@@ -561,7 +592,7 @@ class ItInventoryTab(QWidget):
                 logging.debug("Live Ops sync skipped %s: %s", f.name, exc)
 
         QMessageBox.information(
-            self, "Sync Complete",
+            self, "Live Ops sync",
             "%d new machine(s) added, %d existing one(s) refreshed.%s\n\n"
             "New machines are left unassigned - use Issue to say who has them."
             % (added, updated,

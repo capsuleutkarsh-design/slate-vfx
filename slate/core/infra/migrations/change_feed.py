@@ -41,6 +41,12 @@ WATCHED = {
     "licence_readings": "licence_id",
     "tracking_shots": "id",
     "tracking_tasks": "shot_id",
+    # Added with the shared table tools and the header notification centre,
+    # so these screens refresh on other people's changes too.
+    "it_deployments": "id",
+    "prod_scheduling": "id",
+    "prod_bidding": "id",
+    "notifications": "user_id",
 }
 
 _PG_FEED = """

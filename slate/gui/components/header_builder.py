@@ -322,26 +322,6 @@ class HeaderBuilder:
         logo_layout.setContentsMargins(0, 0, 0, 0)
         logo_layout.setSpacing(8)
 
-        global_settings = {}
-        if hasattr(self.parent, "config_manager"):
-            try:
-                global_settings = self.parent.config_manager.settings.get("global_settings", {})
-            except Exception:
-                global_settings = {}
-        branding_logo_path = str(global_settings.get("branding_logo_path", "") or "").strip()
-
-        if branding_logo_path and Path(branding_logo_path).exists():
-            logo_label = QLabel()
-            logo_label.setStyleSheet("background: transparent; border: none;")
-            logo_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            pix = QPixmap(branding_logo_path)
-            if not pix.isNull():
-                scaled = pix.scaledToHeight(44, Qt.SmoothTransformation)
-                logo_label.setPixmap(scaled)
-                logo_label.setFixedSize(scaled.size())
-                logo_layout.addWidget(logo_label)
-                return logo_widget
-        
         # The mark, drawn from the same vector the icons and the installer use.
         from ..core.icons_brand import slate_mark
         mark_icon = QLabel()
@@ -392,22 +372,71 @@ class HeaderBuilder:
         logo_layout.addWidget(mark_label, 0, Qt.AlignmentFlag.AlignVCenter)
         logo_layout.addWidget(vfx_label, 0, Qt.AlignmentFlag.AlignVCenter)
 
+        # The studio's own logo, if one is set (Settings > Studio Logo). It has
+        # its own box beside the wordmark. It used to share the wordmark's
+        # slot, and after a settings change the new logo was painted straight
+        # over the "S" of SLATE.
+        self.studio_logo_divider = QFrame()
+        self.studio_logo_divider.setFrameShape(QFrame.Shape.VLine)
+        self.studio_logo_divider.setFixedSize(1, 28)
+        self.studio_logo_divider.setStyleSheet(f"background: {Gate.LINE}; border: none;")
+        self.studio_logo_label = QLabel()
+        self.studio_logo_label.setObjectName("studioLogo")
+        self.studio_logo_label.setStyleSheet("background: transparent; border: none;")
+        self.studio_logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.studio_logo_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        logo_layout.addSpacing(6)
+        logo_layout.addWidget(self.studio_logo_divider, 0, Qt.AlignmentFlag.AlignVCenter)
+        logo_layout.addSpacing(6)
+        logo_layout.addWidget(self.studio_logo_label, 0, Qt.AlignmentFlag.AlignVCenter)
+        self._apply_studio_logo()
+
         return logo_widget
 
-    def reload_branding(self):
-        """Rebuild branding widget (used after settings change)."""
-        if not self.header_layout or not self.branding_widget:
+    # The box the studio logo is fitted into, aspect ratio kept.
+    STUDIO_LOGO_MAX = (160, 40)
+
+    def _studio_logo_path(self) -> str:
+        global_settings = {}
+        if hasattr(self.parent, "config_manager"):
+            try:
+                global_settings = self.parent.config_manager.settings.get("global_settings", {}) or {}
+            except Exception:
+                global_settings = {}
+        return str(global_settings.get("branding_logo_path", "") or "").strip()
+
+    def _apply_studio_logo(self):
+        """Put the configured studio logo in its box, or hide the box."""
+        label = getattr(self, "studio_logo_label", None)
+        if label is None:
             return
+        path = self._studio_logo_path()
+        pix = QPixmap(path) if path and Path(path).exists() else QPixmap()
+        shown = not pix.isNull()
+        if shown:
+            max_w, max_h = self.STUDIO_LOGO_MAX
+            pix = pix.scaled(max_w, max_h, Qt.AspectRatioMode.KeepAspectRatio,
+                             Qt.TransformationMode.SmoothTransformation)
+            label.setPixmap(pix)
+            label.setFixedSize(pix.size())
+            label.setToolTip("Studio logo (change it in Settings)")
+        else:
+            label.clear()
+        label.setVisible(shown)
+        divider = getattr(self, "studio_logo_divider", None)
+        if divider is not None:
+            divider.setVisible(shown)
+
+    def reload_branding(self):
+        """
+        Show a changed studio logo (used after settings change).
+
+        Only the logo's own box changes. The whole branding block used to be
+        rebuilt and swapped, which is how a new logo ended up drawn over the
+        wordmark.
+        """
         try:
-            idx = self.header_layout.indexOf(self.branding_widget)
-            if idx < 0:
-                return
-            old_widget = self.branding_widget
-            new_widget = self._create_branding()
-            self.header_layout.removeWidget(old_widget)
-            old_widget.deleteLater()
-            self.header_layout.insertWidget(idx, new_widget)
-            self.branding_widget = new_widget
+            self._apply_studio_logo()
             self.update_responsive_layout(self.parent.width())
         except Exception as exc:
             logging.warning("Header branding reload failed: %s", exc)
@@ -433,15 +462,43 @@ class HeaderBuilder:
 
     def _create_sync_button(self):
         """
-        The one thing the header is actually for: pushing local work to the
-        central database. This is the primary action up here.
+        Push the changes made while working offline up to the studio database.
+
+        Shown only while Slate is in local mode (set_sync_available): with the
+        studio database connected every change is shared when it is saved, and
+        a Sync button then does nothing - which is exactly what it used to do,
+        for everybody, connected to nothing.
         """
-        sync_btn = make_button("Sync", "primary",
-                               tooltip="Synchronise local offline changes to the central database")
+        sync_btn = make_button(
+            "Sync", "primary",
+            tooltip=("Slate is working offline on this machine's copy.\n"
+                     "Sync sends the changes made here to the studio database "
+                     "and brings the studio's changes back."))
         sync_btn.setMinimumHeight(28)
         sync_btn.setMinimumWidth(70)
         sync_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        sync_btn.setVisible(False)
         return sync_btn
+
+    def insert_before_help(self, widget):
+        """Place a header control (the notification bell) just left of Help."""
+        if not self.header_layout:
+            return
+        idx = self.header_layout.indexOf(getattr(self, "help_button", None))
+        if idx < 0:
+            self.header_layout.addWidget(widget)
+        else:
+            self.header_layout.insertWidget(idx, widget, 0, Qt.AlignmentFlag.AlignVCenter)
+
+    def set_sync_available(self, available: bool):
+        """Show Sync only while offline (local/fallback) mode is active."""
+        button = getattr(self, "sync_button", None)
+        if button is None:
+            return
+        try:
+            button.setVisible(bool(available))
+        except RuntimeError:
+            pass
 
     def _create_user_profile(self):
         """Create the user profile section with avatar and name."""

@@ -24,7 +24,10 @@ except ImportError as e:
     logging.critical("Missing required dependency 'qasync'. Please install it using 'pip install qasync'.")
     from PySide6.QtWidgets import QApplication, QMessageBox
     app = QApplication(sys.argv)
-    QMessageBox.critical(None, "Startup Error", "Missing required background software 'qasync'.\nPlease install it or contact support.")
+    QMessageBox.critical(
+        None, "Starting Slate",
+        "Slate could not start: a part it needs (qasync) is missing from this "
+        "installation.\n\nReinstall Slate, or ask IT to.")
     sys.exit(1)
 
 
@@ -697,13 +700,18 @@ class ApplicationEntry:
             import traceback
             traceback.print_exc()
             
-            # Ensure we see the error
-            box = QMessageBox()
-            box.setIcon(QMessageBox.Critical)
-            box.setText("Startup Error")
-            box.setInformativeText(str(e))
-            box.setDetailedText(traceback.format_exc())
-            box.exec()
+            # Ensure we see the error - in words, with the traceback only
+            # behind "Show Details..." and "Copy details for IT". The box used
+            # to say "Startup Error" and then the raw exception.
+            from slate.gui.components.feedback import show_error
+            show_error(
+                None,
+                "Slate could not open its main window.",
+                exc=e,
+                title="Starting Slate",
+                hint=("Close Slate and start it again. If it keeps happening, "
+                      "copy the details and send them to IT."),
+            )
             
             self.cleanup_and_exit()
         finally:

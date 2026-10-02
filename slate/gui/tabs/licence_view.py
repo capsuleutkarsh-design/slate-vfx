@@ -207,6 +207,14 @@ class LicenceView(QWidget):
             "What this means": "stretch",
         }, multi_select=False)
         self.table.itemSelectionChanged.connect(self._sync_buttons)
+        # Sortable headers (seats, peak, use and renewal sort by value, not
+        # text), a search box, and double-click to edit.
+        from slate.gui.components.table_tools import TableToolbar, setup_table
+        setup_table(self.table, multi_select=False)
+        self.table.doubleClicked.connect(lambda _index: self.edit_licence())
+        self.toolbar = TableToolbar(self.table, placeholder="Search software…",
+                                    columns=(0, 1, 6), on_refresh=self.refresh)
+        root.addWidget(self.toolbar)
         root.addWidget(self.table, 1)
 
         self.empty = EmptyState(
@@ -261,6 +269,12 @@ class LicenceView(QWidget):
             self.figures.addWidget(card)
 
     def _paint_rows(self, rows):
+        from slate.gui.components.table_tools import KeepSelection
+        with KeepSelection(self.table):
+            self._fill_rows(rows)
+
+    def _fill_rows(self, rows):
+        from slate.gui.components.table_tools import make_item
         self.table.setRowCount(len(rows))
         for r, row in enumerate(rows):
             peak = row.get("peak")
@@ -286,8 +300,15 @@ class LicenceView(QWidget):
                 renews,
                 row.get("finding") or "",
             ]
+            # What each column sorts by: numbers and dates by value.
+            sort_values = [None, None, int(row.get("total_seats") or 0),
+                           None if peak is None else int(peak),
+                           None if use is None else float(use),
+                           None if left is None else int(left), None]
             for c, text in enumerate(cells):
-                item = QTableWidgetItem(text)
+                item = make_item(text, sort_value=sort_values[c],
+                                 key=(row.get("id") if row.get("id") is not None
+                                      else row.get("software_name")) if c == 0 else None)
                 if c in (2, 3, 4):
                     item.setTextAlignment(
                         Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -302,8 +323,16 @@ class LicenceView(QWidget):
                 self.table.setItem(r, c, item)
 
     def _selected(self):
-        rows = sorted({i.row() for i in self.table.selectedIndexes()})
-        return self._rows[rows[0]] if rows and rows[0] < len(self._rows) else None
+        """The selected licence, found by its id - the table can be sorted."""
+        from slate.gui.components.table_tools import selected_keys
+        keys = selected_keys(self.table)
+        if not keys:
+            return None
+        for row in self._rows:
+            key = row.get("id") if row.get("id") is not None else row.get("software_name")
+            if key == keys[0]:
+                return row
+        return None
 
     def _sync_buttons(self, *_):
         picked = self._selected() is not None

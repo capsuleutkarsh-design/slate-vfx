@@ -257,6 +257,27 @@ class LeaveRepository:
             return None
         return as_date(row["joined_on"] if isinstance(row, dict) else row[0])
 
+    def last_day(self, username: str):
+        """
+        The person's last working day, if they are leaving or have left.
+        Leave stops accruing after it (see balance).
+        """
+        try:
+            row = self.db.execute_query(
+                "SELECT last_day FROM ut_users WHERE LOWER(username) = LOWER(%s)",
+                (username,), fetch="one")
+        except DatabaseUnavailableError:
+            raise
+        except Exception:
+            logger.debug("last_day not read for %s", username, exc_info=True)
+            return None
+        if not row:
+            return None
+        try:
+            return as_date(row["last_day"] if isinstance(row, dict) else row[0])
+        except (KeyError, IndexError, TypeError, ValueError):
+            return None
+
     def reports_to(self, manager: str) -> set:
         """
         The people whose first approval stage is this person, lower-cased.
@@ -654,8 +675,9 @@ class LeaveRepository:
         trust in the whole module.
         """
         try:
+            # SELECT *: last_day / deactivated_on may not exist on an old table.
             rows = self.db.execute_query(
-                "SELECT username FROM ut_users ORDER BY username", fetch="all") or []
+                "SELECT * FROM ut_users ORDER BY username", fetch="all") or []
         except DatabaseUnavailableError:
             raise
         except Exception:
@@ -663,10 +685,19 @@ class LeaveRepository:
             return []
 
         as_of = date(year, 12, 31)
+        year_start = date(year, 1, 1)
         out = []
         for row in rows:
-            name = (row["username"] if isinstance(row, dict) else row[0]) or ""
+            record = dict(row) if hasattr(row, "keys") else {"username": row[0]}
+            name = record.get("username") or ""
             if not name:
+                continue
+            # Somebody who had left (or was deactivated) before the year began
+            # has nothing to close: their balance stopped with their last day.
+            # They were listed - and written - every year for ever.
+            ended = [as_date(record.get(k)) for k in ("last_day", "deactivated_on")]
+            ended = [d for d in ended if d]
+            if ended and min(ended) < year_start:
                 continue
             closing = self.balance(name, rules, as_of)["available"]
             split = lp.carry_forward(closing, rules)
@@ -751,7 +782,10 @@ class LeaveRepository:
                 pending[kind] = pending.get(kind, 0.0) + days
 
         earned_from = since or self.joined_on(username)
-        accrued = opening + lp.accrued_by(as_of, earned_from, rules)
+        # Nothing is earned after somebody's last day. It used to keep
+        # crediting a leaver every month for as long as the account existed.
+        accrued = opening + lp.accrued_by(as_of, earned_from, rules,
+                                          left=self.last_day(username))
         spent = sum(used.get(k, 0.0) for k in lp.ACCRUED_TYPES)
         held = sum(pending.get(k, 0.0) for k in lp.ACCRUED_TYPES)
 

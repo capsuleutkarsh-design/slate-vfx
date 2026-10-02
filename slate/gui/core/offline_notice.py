@@ -11,8 +11,8 @@ so, or the screen simply breaks instead of lying.
     def refresh(self):
         ...
 
-The wrapped method is skipped when the database is down, and the widget's
-EmptyState says what happened in words the person can act on.
+The wrapped method is skipped when the database is down, and a short notice
+with "Try again" stands in for the screen's table until a refresh succeeds.
 """
 
 from functools import wraps
@@ -20,11 +20,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-TITLE = "The database is not responding"
-BODY = ("Nothing was read, so nothing here is out of date - there is simply "
-        "nothing to show yet. Your work has not been lost. This usually clears "
-        "on its own; if it does not, tell IT that the studio database is "
-        "unreachable from this machine.")
+TITLE = "Can't reach the studio database"
+BODY = ("Your work is safe - this screen fills in when the connection is back. "
+        "If it does not come back, tell IT.")
 
 
 def _unavailable():
@@ -36,69 +34,46 @@ def _unavailable():
         return ()
 
 
-def _say_it_in_the_table(widget):
+def show_offline(widget, retry=None):
     """
-    Put the message where the rows would have been.
+    Say the database is down, in place of the screen's table (with Try again).
 
-    Not every screen has an EmptyState - several were written before there was
-    one, and they show a bare table instead. Returning quietly for those is how
-    a tab ends up silent during an outage, which is the whole fault this module
-    exists to stop. So the table itself carries the message: one row, spanning
-    every column, in the place the person is already looking.
-
-    It needs no clearing. The next refresh that succeeds calls setRowCount()
-    with the real number and overwrites this.
+    It used to be one long sentence that contradicted itself ("nothing here is
+    out of date - there is simply nothing to show"), and on screens without an
+    EmptyState it was squeezed into the first cell of the table. It is now the
+    shared notice panel (slate/gui/components/state_notice.py), which stands
+    in for the table and goes away on the next successful refresh.
     """
     try:
-        from PySide6.QtWidgets import QTableWidget, QTableWidgetItem
-        from PySide6.QtCore import Qt
-    except ImportError:                       # pragma: no cover - no Qt
-        return False
-
-    table = widget if isinstance(widget, QTableWidget) else None
-    if table is None:
-        try:
-            table = widget.findChild(QTableWidget)
-        except (AttributeError, RuntimeError):
-            return False
-    if table is None or table.columnCount() < 1:
-        return False
-
-    try:
-        table.setRowCount(1)
-        item = QTableWidgetItem("%s - %s" % (TITLE, BODY))
-        item.setFlags(Qt.ItemIsEnabled)       # not selectable, not editable
-        item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        table.setItem(0, 0, item)
-        table.setSpan(0, 0, 1, table.columnCount())
-        return True
+        from slate.gui.components.state_notice import show_state
+        if show_state(widget, TITLE, BODY, retry=retry):
+            return True
     except RuntimeError:
         return False
-
-
-def show_offline(widget):
-    """Put the widget's empty state into the 'database is down' message."""
+    # No table on this screen: an EmptyState, if there is one, carries it.
     empty = getattr(widget, "empty", None) or getattr(widget, "people_empty", None)
-    if empty is None:
-        # No EmptyState on this screen. Say it in the table rather than say
-        # nothing - an empty grid with no explanation is exactly the thing that
-        # reads as "the studio owns no computers".
-        _say_it_in_the_table(widget)
-        return
-    try:
-        if hasattr(empty, "set_message"):
+    if empty is not None and hasattr(empty, "set_message"):
+        try:
             empty.set_message(TITLE, BODY)
-        else:
-            for attr, value in (("title", TITLE), ("message", BODY),
-                                ("_title", TITLE), ("_message", BODY)):
-                if hasattr(empty, attr):
-                    setattr(empty, attr, value)
-        if hasattr(empty, "refresh"):
-            empty.refresh()
-        empty.setVisible(True)
-    except RuntimeError:
-        # The C++ object is gone - the tab was closed while this ran.
-        pass
+            empty.setVisible(True)
+            return True
+        except RuntimeError:
+            return False
+    from slate.gui.components.feedback import toast
+    toast(widget, f"{TITLE}. {BODY}", "warning")
+    return False
+
+
+def _positional_slots(method):
+    """How many positional arguments after self the method takes; None = any."""
+    import inspect
+    try:
+        params = list(inspect.signature(method).parameters.values())[1:]
+    except (TypeError, ValueError):
+        return None
+    if any(p.kind == p.VAR_POSITIONAL for p in params):
+        return None
+    return sum(1 for p in params if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD))
 
 
 def on_database_error(method):
@@ -108,13 +83,31 @@ def on_database_error(method):
     Only DatabaseUnavailableError is caught. Every other exception still
     propagates, because a bug in the screen is not the same as a database
     being unreachable and should not be dressed up as one.
+
+    When the method succeeds, any "can't reach" notice from an earlier try is
+    taken away; the notice's Try again runs the method again.
     """
+    # A refresh is often connected straight to a signal that passes its own
+    # value (a combo's text, a button's checked flag). A method that takes no
+    # arguments is given none, rather than failing with "takes 1 positional
+    # argument but 2 were given" - which is how a status filter broke.
+    takes = _positional_slots(method)
+
     @wraps(method)
     def guarded(self, *args, **kwargs):
+        if takes is not None:
+            args = args[:takes]
+        # A notice from an earlier try goes first; one the method raises
+        # itself this time (show_load_error) stays.
+        try:
+            from slate.gui.components.state_notice import clear_state
+            clear_state(self)
+        except RuntimeError:
+            pass
         try:
             return method(self, *args, **kwargs)
         except _unavailable():
             logger.warning("%s: the database did not answer", type(self).__name__)
-            show_offline(self)
+            show_offline(self, retry=lambda: guarded(self, *args, **kwargs))
             return None
     return guarded

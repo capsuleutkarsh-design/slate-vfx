@@ -10,6 +10,9 @@ from slate.gui.core.stat_card import StatStrip
 from slate.gui.core.table_style import style_table, set_cell_status
 from slate.core.infra.gate import Gate
 from slate.gui.core.data_display import date_item, select_row_by_id, setup_date_edit
+from slate.gui.components.table_tools import (
+    KeepSelection, TableToolbar, make_item, selected_keys, setup_table,
+)
 
 # Let an outage reach the @on_database_error decorator rather than becoming an
 # empty grid here. Everything else keeps the fallback it already had.
@@ -153,8 +156,13 @@ class ShiftDatesDialog(QDialog):
         layout.addLayout(btn_box)
 
 class ProdSchedulingTab(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, user_data=None):
         super().__init__(parent)
+        # Who is looking, so the tab can ask access.can(self.user_roles, ...)
+        # (schedule_write / approve_bid). It was built without any user at all.
+        self.user_data = dict(user_data or {})
+        roles = self.user_data.get("roles") or self.user_data.get("role") or []
+        self.user_roles = [roles] if isinstance(roles, str) else list(roles)
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(10, 10, 10, 10)
         
@@ -181,10 +189,73 @@ class ProdSchedulingTab(QWidget):
         self.grid = QTableWidget(0, 7)
         self.grid.setHorizontalHeaderLabels(["ID", "Project Code", "Milestone", "Depends On", "Start Date", "End Date", "Status"])
         self.style_table(self.grid)
-        self.load_data()
+        # Read-only: typing a new End Date into a cell looked like a re-plan
+        # and saved nothing. Headers sort (dates by date).
+        setup_table(self.grid)
+
+        # Find a milestone without scrolling: search, project, status
+        # (Overdue included) and Refresh.
+        self.toolbar = TableToolbar(self.grid, placeholder="Search milestone, project or dependency…",
+                                    columns=(1, 2, 3, 6), on_refresh=self.load_data)
+        self.project_filter = self.toolbar.add_filter("Project", [("All projects", "")], column=1)
+        self.status_filter = self.toolbar.add_filter(
+            "Status", [("All statuses", ""), ("Scheduled", "Scheduled"),
+                       ("In Progress", "In Progress"), ("Completed", "Completed"),
+                       ("Overdue", "__overdue__")],
+            column=6, match=self._status_matches)
+        main_layout.addWidget(self.toolbar)
+        # Other people's milestones appear without a restart.
+        from slate.gui.components.auto_refresh import AutoRefresh
+        self._auto_refresh = AutoRefresh(self, self.load_data, seconds=30,
+                                         topics=("prod_scheduling",))
 
         self.grid.hideColumn(0) # Hide ID
         main_layout.addWidget(self.grid)
+        # First read only now that the table is in the layout: a notice for a
+        # failed read takes the table's place, and with no layout yet it
+        # floated as a window of its own while the empty state said
+        # there was nothing here.
+        self.load_data()
+
+    def _status_matches(self, cell, value, row):
+        if value != "__overdue__":
+            return cell.casefold() == str(value).casefold()
+        from datetime import date as _date
+        # The cell shows '3 Oct 2026'; its sort value is the ISO date.
+        from slate.gui.core.data_display import SORT_ROLE
+        end = self.grid.item(row, 5)
+        end_text = str((end.data(SORT_ROLE) if end else "") or "")[:10]
+        return cell != "Completed" and bool(end_text) and end_text < _date.today().isoformat()
+
+    @staticmethod
+    def _project_names() -> dict:
+        """{project code (lower-case): name} - empty when it cannot be read."""
+        try:
+            from slate.core.infra.database_manager import database_manager
+            rows = database_manager.execute_query(
+                "SELECT code, name FROM tracking_projects", fetch="all") or []
+            return {str(dict(r).get("code") or "").casefold(): str(dict(r).get("name") or "").strip()
+                    for r in rows}
+        except DatabaseUnavailableError:
+            raise
+        except Exception:
+            return {}            # only the labels suffer: codes alone
+
+    def _refresh_project_filter(self, sched):
+        combo = self.project_filter
+        keep = combo.currentData()
+        codes = sorted({str(r.get('project_code') or '') for r in sched if r.get('project_code')})
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("All projects", "")
+        names = self._project_names()
+        for code in codes:
+            # "KLC - Kalki Chapter 2"; the filter still matches the code column.
+            name = names.get(code.casefold(), "")
+            combo.addItem(f"{code} - {name}" if name and name != code else code, code)
+        index = combo.findData(keep)
+        combo.setCurrentIndex(index if index >= 0 else 0)
+        combo.blockSignals(False)
 
     @on_database_error
     def load_data(self):
@@ -194,11 +265,21 @@ class ProdSchedulingTab(QWidget):
             sched = database_manager.execute_query(query) or []
         except DatabaseUnavailableError:
             raise
-        except:
-            sched = []
-            
-        self.grid.setRowCount(len(sched))
-        
+        except Exception as e:
+            # A failed read is not an empty schedule.
+            import logging
+            from slate.gui.components.state_notice import show_load_error
+            logging.exception("Schedule could not be read")
+            show_load_error(self, e, retry=self.load_data, what="the schedule")
+            return
+
+        # Grouped by project, then in date order - not by internal id, which
+        # scattered one project's milestones through the list.
+        sched = sorted(sched, key=lambda r: (str(r.get('project_code') or ''),
+                                             str(r.get('start_date') or '9999'),
+                                             r.get('id') or 0))
+        self._refresh_project_filter(sched)
+
         from datetime import date as _date
 
         completed = sum(1 for row in sched if row.get('status') == 'Completed')
@@ -234,22 +315,29 @@ class ProdSchedulingTab(QWidget):
         self.lbl_upcoming.set_tone("bad" if overdue else "warn")
         self.lbl_completed.set_value(completed)
 
+        # The selection follows the milestone (by id), not the row number.
+        with KeepSelection(self.grid):
+            self._fill(sched)
+
+    def _fill(self, sched):
+        self.grid.setRowCount(len(sched))
         for r, row in enumerate(sched):
-            self.grid.setItem(r, 0, QTableWidgetItem(str(row.get('id', ''))))
-            self.grid.setItem(r, 1, QTableWidgetItem(str(row.get('project_code', ''))))
-            self.grid.setItem(r, 2, QTableWidgetItem(str(row.get('milestone', ''))))
+            mid = row.get('id')
+            self.grid.setItem(r, 0, make_item(str(mid or ''), sort_value=mid, key=mid))
+            self.grid.setItem(r, 1, make_item(str(row.get('project_code', ''))))
+            self.grid.setItem(r, 2, make_item(str(row.get('milestone', ''))))
             
             dep_id = row.get('depends_on_id')
             dep_name = "None"
             if dep_id:
                 dep_row = next((x for x in sched if x.get('id') == dep_id), None)
                 if dep_row: dep_name = dep_row.get('milestone', str(dep_id))
-            self.grid.setItem(r, 3, QTableWidgetItem(dep_name))
-            
+            self.grid.setItem(r, 3, make_item(dep_name))
+
             self.grid.setItem(r, 4, date_item(row.get('start_date')))
             self.grid.setItem(r, 5, date_item(row.get('end_date')))
-            
-            status_item = QTableWidgetItem(str(row.get('status', '')))
+
+            status_item = make_item(str(row.get('status', '')))
             if status_item.text() == "Completed":
                 set_cell_status(status_item, "ok", background=False)
             elif status_item.text() == "In Progress":
@@ -297,8 +385,9 @@ class ProdSchedulingTab(QWidget):
             QMessageBox.information(self, "Added", f"Added \"{ms}\" to {proj}.")
 
     def update_status(self):
-        selected_rows = set(item.row() for item in self.grid.selectedItems())
-        if not selected_rows:
+        # By milestone id, never by row number (see KeepSelection).
+        selected_ids = [k for k in selected_keys(self.grid) if k is not None]
+        if not selected_ids:
             QMessageBox.warning(self, "Selection Empty", "Please select a milestone to update.")
             return
             
@@ -320,29 +409,22 @@ class ProdSchedulingTab(QWidget):
             new_status = cb.currentText()
             from slate.core.infra.database_manager import database_manager
             failed = []
-            for r in selected_rows:
-                item = self.grid.item(r, 0)
-                if item:
-                    mid = item.text()
-                    query = "UPDATE prod_scheduling SET status = %s WHERE id = %s"
-                    result = database_manager.execute_update(query, (new_status, int(mid)))
-                    if not result.changed:
-                        failed.append(result.error or "that milestone no longer exists")
+            for mid in selected_ids:
+                query = "UPDATE prod_scheduling SET status = %s WHERE id = %s"
+                result = database_manager.execute_update(query, (new_status, int(mid)))
+                if not result.changed:
+                    failed.append(result.error or "that milestone no longer exists")
             self.load_data()
             if failed:
                 QMessageBox.warning(self, "Not all updated",
                                     "%d milestone(s) were not updated:\n\n%s" % (len(failed), failed[0]))
             
     def shift_dates(self):
-        selected_rows = set(item.row() for item in self.grid.selectedItems())
-        if len(selected_rows) != 1:
-            QMessageBox.warning(self, "Selection Error", "Please select exactly one milestone to shift.")
+        selected_ids = [k for k in selected_keys(self.grid) if k is not None]
+        if len(selected_ids) != 1:
+            QMessageBox.warning(self, "Shift dates", "Select exactly one milestone to shift.")
             return
-            
-        r = list(selected_rows)[0]
-        id_item = self.grid.item(r, 0)
-        if not id_item: return
-        mid = int(id_item.text())
+        mid = int(selected_ids[0])
         
         dialog = ShiftDatesDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:

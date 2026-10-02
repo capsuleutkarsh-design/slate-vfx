@@ -69,29 +69,10 @@ class VFXReviewDualModeTab(QWidget):
         
         layout.addStretch()
         
-        # --- NOTIFICATION BELL ---
-        self.btn_notif = QPushButton("N")
-        self.btn_notif.setFixedSize(40, 36)
-        self.btn_notif.setStyleSheet(f"""
-            QPushButton {{ background: transparent; border: none; font-size: 20px; color: {Gate.TEXT_DIM}; }}
-            QPushButton:hover {{ color: {Gate.TEXT}; background: {Gate.RAISED_HI}; border-radius: 4px; }}
-        """)
-        self.btn_notif.clicked.connect(self.show_notifications)
-        layout.addWidget(self.btn_notif)
-        
-        # Badge Label (Hidden by default)
-        self.lbl_badge = QLabel("0", self.btn_notif)
-        self.lbl_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_badge.hide()
-        self.lbl_badge.setStyleSheet(f"""
-            background-color: red; color: {Gate.TEXT}; border-radius: 8px; 
-            font-size: 10px; font-weight: bold; padding: 2px;
-        """)
-        self.lbl_badge.resize(16, 16)
-        self.lbl_badge.move(22, 2)
-        
-        # -------------------------
-        
+        # Notifications are in the header now, beside Help, for everybody
+        # (slate/gui/components/notification_center.py). The "N" bell that
+        # lived here was only seen by people with this tab open.
+
         refresh_btn = QPushButton("Refresh from Dashboard")
         refresh_btn.setToolTip(
             "Re-read the shots the dashboard is tracking and rebuild the list."
@@ -109,129 +90,37 @@ class VFXReviewDualModeTab(QWidget):
                 background-color: {Gate.ACCENT};
             }}
         """)
-        refresh_btn.clicked.connect(self.refresh_from_dashboard)
+        refresh_btn.clicked.connect(self._on_refresh_clicked)
         layout.addWidget(refresh_btn)
+        self.refresh_btn = refresh_btn
 
-        # Initialize Notification Polling
-        try:
-            self.init_notifications()
-        except Exception as e:
-            logger.warning(f"Notification init failed (non-critical): {e}")
-        
         return header
 
-    def init_notifications(self):
-        self.notifier = None
-        self.current_user_ids = self._resolve_notification_user_ids()
-        
+    def _on_refresh_clicked(self):
+        """
+        The button: busy while it reads, then say what happened. It dropped
+        the result, so "the dashboard has no shots loaded" was never shown.
+        """
+        from PySide6.QtWidgets import QApplication
+        from ..components.feedback import report
+        button = getattr(self, "refresh_btn", None)
+        if button is not None:
+            button.setEnabled(False)
+            button.setText("Refreshing…")
+            QApplication.processEvents()
         try:
-            from ...core.domain.notification_manager import NotificationManager
-            self.notifier = NotificationManager()
-            
-            # Start timer only if successful
-            from PySide6.QtCore import QTimer
-            self.notif_timer = QTimer(self)
-            self.notif_timer.timeout.connect(self.check_notifications)
-            self.notif_timer.start(10000) # Check every 10s
-            self.check_notifications() # Initial check
-        except Exception as e:
-            logging.exception(f"Notification System Init Failed: {e}")
-
-    def _resolve_notification_user_ids(self):
-        ids = []
-        for key in ("user_id", "username", "display_name"):
-            value = self.user_data.get(key) if isinstance(self.user_data, dict) else None
-            if isinstance(value, str) and value.strip():
-                ids.append(value.strip())
-
-        # Backward-compatible fallback.
-        if not ids:
-            ids = ["Artist"]
-
-        deduped = []
-        seen = set()
-        for item in ids:
-            norm = item.lower()
-            if norm in seen:
-                continue
-            seen.add(norm)
-            deduped.append(item)
-        return deduped
-
-    def _get_unread_notifications(self):
-        if not self.notifier:
-            return []
-
-        merged = {}
-        for user_id in self.current_user_ids:
-            for note in self.notifier.get_unread(user_id):
-                note_id = note.get("id")
-                if note_id:
-                    merged[note_id] = note
-
-        return sorted(merged.values(), key=lambda x: x.get("timestamp", 0), reverse=True)
-
-    def check_notifications(self):
-        if self._is_closing or not self.notifier:
-            return
-        try:
-            notes = self._get_unread_notifications()
-            count = len(notes)
-            
-            if count > 0:
-                self.btn_notif.setStyleSheet(f"QPushButton {{ background: transparent; border: none; font-size: 20px; color: {Gate.WARN}; }}")
-                self.lbl_badge.setText(str(count) if count < 9 else "9+")
-                self.lbl_badge.show()
-                self.lbl_badge.raise_()
-            else:
-                self.btn_notif.setStyleSheet(f"QPushButton {{ background: transparent; border: none; font-size: 20px; color: {Gate.TEXT_DIM}; }}")
-                self.lbl_badge.hide()
-        except Exception as e:
-            logger.warning(f"Failed to update notification badge: {e}")
+            result = self.refresh_from_dashboard()
+        finally:
+            if button is not None:
+                button.setEnabled(True)
+                button.setText("Refresh from Dashboard")
+        report(self, result)
 
     def show_notifications(self):
-        if self._is_closing or not self.notifier:
-            return
-        from PySide6.QtWidgets import QDialog, QListWidget, QListWidgetItem, QVBoxLayout, QPushButton
-        
-        d = QDialog(self)
-        d.setWindowTitle("Notifications")
-        d.setMinimumSize(400, 300)
-        d.resize(400, 300)
-        d.setStyleSheet(f"background: {Gate.RAISED}; color: {Gate.TEXT};")
-        l = QVBoxLayout(d)
-        
-        notes = self._get_unread_notifications()
-        list_w = QListWidget()
-        list_w.setStyleSheet(f"QListWidget {{ border: none; background: {Gate.RAISED}; }} QListWidget::item {{ padding: 8px; border-bottom: 1px solid {Gate.RAISED_HI}; }}")
-        
-        ids_to_clear = []
-        for n in notes:
-            item = QListWidgetItem(f"[{n['type'].upper()}] {n['message']}")
-            list_w.addItem(item)
-            ids_to_clear.append(n['id'])
-            
-        if not notes:
-            list_w.addItem("No new notifications.")
-            
-        l.addWidget(list_w)
-        
-        btn_clear = QPushButton("Mark All Read")
-        btn_clear.setStyleSheet(f"background: {Gate.LINE}; color: {Gate.TEXT}; padding: 6px; border: none;") 
-        
-        def close_and_clear():
-            if self._is_closing or not self.notifier:
-                d.accept()
-                return
-            self.notifier.mark_read(ids_to_clear)
-            self.check_notifications() # Refresh UI
-            d.accept()
-            
-        btn_clear.clicked.connect(close_and_clear)
-        l.addWidget(btn_clear)
-        
-        d.exec()
-    
+        """Open the header's notification list (kept for anything that calls it)."""
+        from ..components.notification_center import open_notifications
+        open_notifications(self)
+
     def set_shots(self, shots, project_root=None, folder_resolver=None,
                   project_name="", project_path=None):
         """
@@ -255,22 +144,39 @@ class VFXReviewDualModeTab(QWidget):
         VFX Dashboard and pick a project first", which is a reasonable sentence
         and a poor answer: the project is already chosen and stored, and this
         tab can read it.
-        """
-        dashboard = self._find_dashboard()
-        if dashboard is not None:
-            project = getattr(dashboard, "current_project", None)
-            self.set_shots(
-                getattr(dashboard, "all_shots", None) or [],
-                project_root=getattr(project, "folder_base", "") or None,
-                folder_resolver=getattr(dashboard, "_shot_folder_resolver", None),
-                project_name=getattr(project, "code", "") or "",
-            )
-            return
 
-        self._refresh_from_database()
+        Returns a Result (slate/gui/components/feedback.py) saying what really
+        happened. It returned nothing, so the command palette announced
+        "Timeline rebuilt from the dashboard." even when it had failed.
+        """
+        from PySide6.QtWidgets import QApplication
+        from ..components.feedback import Result
+
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            dashboard = self._find_dashboard()
+            if dashboard is not None:
+                project = getattr(dashboard, "current_project", None)
+                shots = getattr(dashboard, "all_shots", None) or []
+                self.set_shots(
+                    shots,
+                    project_root=getattr(project, "folder_base", "") or None,
+                    folder_resolver=getattr(dashboard, "_shot_folder_resolver", None),
+                    project_name=getattr(project, "code", "") or "",
+                )
+                if not shots:
+                    return Result.failure(
+                        "The dashboard has no shots loaded, so there is no lineup to build.")
+                return Result.success(
+                    "Timeline rebuilt from the dashboard: %d shot(s)." % len(shots))
+
+            return self._refresh_from_database()
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def _refresh_from_database(self):
         """Load the stored project's shots without the dashboard tab."""
+        from ..components.feedback import Result
         try:
             from .vfx_dashboard_pro.core.project_manager import ProjectManager
             from .vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler
@@ -278,21 +184,20 @@ class VFXReviewDualModeTab(QWidget):
             manager = ProjectManager()
             projects = manager.get_all_projects()
             if not projects:
-                self.lineup_editor.status_label.setText(
-                    "No projects yet. Build one in Build & Ingest, or add it on "
-                    "the VFX Dashboard."
-                )
-                return
+                message = ("No projects yet. Build one in Build & Ingest, or add it on "
+                           "the VFX Dashboard.")
+                self.lineup_editor.status_label.setText(message)
+                return Result.failure(message)
 
             code = getattr(manager, "default_project", None) or projects[0].code
             project = manager.get_project(code) or projects[0]
 
             shots = SQLiteHandler(project.code).read_shots()
             if not shots:
-                self.lineup_editor.status_label.setText(
-                    "%s has no shots yet, so there is no lineup to build."
-                    % project.code)
-                return
+                message = ("%s has no shots yet, so there is no lineup to build."
+                           % project.code)
+                self.lineup_editor.status_label.setText(message)
+                return Result.failure(message)
 
             self.set_shots(
                 shots,
@@ -300,12 +205,14 @@ class VFXReviewDualModeTab(QWidget):
                 folder_resolver=None,
                 project_name=project.code or "",
             )
+            return Result.success("Timeline rebuilt for %s: %d shot(s)."
+                                  % (project.code, len(shots)))
         except Exception as exc:
             logger.warning("Could not load the lineup from the database: %s", exc)
-            self.lineup_editor.status_label.setText(
-                "Could not read the project from the database. Open the VFX "
-                "Dashboard to load it, or check the connection."
-            )
+            message = ("Could not read the project from the database. Open the VFX "
+                       "Dashboard to load it, or check the connection.")
+            self.lineup_editor.status_label.setText(message)
+            return Result.failure(message, detail=str(exc))
 
     def _find_dashboard(self):
         """The dashboard widget, wherever this tab has been put."""

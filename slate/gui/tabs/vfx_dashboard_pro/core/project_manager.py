@@ -442,8 +442,18 @@ class ProjectManager:
 
         return True
 
-    def delete_project(self, code: str) -> bool:
-        """Deletes a project from config and database."""
+    def delete_project(self, code: str, roles=None) -> bool:
+        """
+        Deletes a project from config and database.
+
+        `roles` are the acting person's: when given, the delete_project ability
+        is checked here too, not only by the menu that offers it.
+        """
+        if roles is not None:
+            from slate.core.domain.access import can_delete_project
+            if not can_delete_project(roles):
+                logging.warning("ProjectManager: delete of %s refused for roles %s", code, roles)
+                return False
         if code not in self.projects:
             return False
         

@@ -162,6 +162,36 @@ class CapRenameTab(QWidget):
         if config_manager:
             self.apply_global_settings(config_manager.settings.get("global_settings", {}))
 
+    # --- CLOSING SLATE WHILE WORKING (slate/gui/components/work_guard.py) ---
+    def busy_reason(self):
+        """A rename in progress, or None."""
+        worker = self.worker
+        try:
+            if worker is not None and worker.isRunning():
+                return "CAP Rename is still renaming files."
+        except RuntimeError:
+            pass
+        return None
+
+    def shutdown(self, timeout_ms: int = 15000) -> bool:
+        """
+        Let a running rename finish rather than cut it off: stopping between
+        the two passes would leave files under their temporary names.
+        """
+        worker = self.worker
+        try:
+            if worker is None or not worker.isRunning():
+                return True
+            from PySide6.QtCore import QDeadlineTimer
+            from PySide6.QtWidgets import QApplication
+            deadline = QDeadlineTimer(int(timeout_ms))
+            while worker.isRunning() and not deadline.hasExpired():
+                worker.wait(100)
+                QApplication.processEvents()
+            return not worker.isRunning()
+        except RuntimeError:
+            return True
+
     def _cleanup_worker(self, timeout_ms: int = 2000):
         worker = self.worker
         if worker is None:
@@ -277,6 +307,10 @@ class CapRenameTab(QWidget):
         # looked exactly like one that would rename cleanly.
         style_table(self.table, {"Original Filename": "stretch", "New Filename": "stretch",
                                  "Status": ("fixed", 130)})
+        # A preview, not an editor: typed names were shown and then ignored -
+        # the rename always used the computed name. Rows stay in file order.
+        from slate.gui.components.table_tools import setup_table
+        setup_table(self.table, sortable=False)
         layout.addWidget(self.table)
         self.table_empty = EmptyState.over(
             self.table, "Nothing to rename yet",
@@ -352,7 +386,7 @@ class CapRenameTab(QWidget):
             <li><b>Step:</b> Increment size (usually 1).</li>
         </ul>
 
-        <p><b>⚠️ Safety Feature:</b> Every rename operation generates an <code>undo_rename.bat</code> file in the folder, allowing you to instantly revert changes if needed.</p>
+        <p><b>Undo:</b> every rename writes an undo script, <code>undo_rename_&lt;date&gt;_&lt;time&gt;.bat</code>, next to the files as it goes. Run it to put the old names back - it covers the files renamed so far, even if the rename stopped half way.</p>
         """)
         msg.exec()
 
@@ -730,7 +764,8 @@ class CapRenameTab(QWidget):
             
         confirm = QMessageBox.question(
             self, "Confirm Rename", 
-            f"Are you sure you want to rename {len(self.preview_map)} files?\nThis action cannot be undone easily.",
+            f"Rename {len(self.preview_map)} files on disk?\n\nAn undo script (undo_rename_<date>_<time>.bat) is "
+            "saved next to them; run it to put the old names back.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
         

@@ -63,8 +63,20 @@ def test_it_support_works_the_desk_but_not_the_leave_queue():
 def test_permission_key_still_wins_over_role_names():
     """A studio that grants the HRMS permission to an unusual role keeps it."""
     assert manages_leave(["Producer"], allowed_tabs=["HRMS"])
-    assert manages_it(["Producer"], allowed_tabs=["IT"])
     assert manages_leave(["Producer"], allowed_tabs=["ALL"])
+    assert manages_it(["Producer"], allowed_tabs=["ALL"])
+
+
+def test_the_it_key_opens_the_screens_but_not_the_queue():
+    """
+    The IT tab key used to swap a person's own tickets for the IT queue. It
+    now only opens the IT screens; the queue is manage_it (existing roles
+    holding the key were given manage_it on upgrade).
+    """
+    from slate.core.domain.workplace_access import sees_it_screens
+    assert sees_it_screens(["Producer"], allowed_tabs=["IT"])
+    assert not manages_it(["Producer"], allowed_tabs=["IT"])
+    assert manages_it(["IT Support"]) and sees_it_screens(["IT Support"])
 
 
 def test_stock_ingest_is_a_table_entry_not_a_hostname():
