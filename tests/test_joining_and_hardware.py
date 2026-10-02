@@ -21,7 +21,7 @@ from datetime import date, timedelta
 import pytest
 
 from slate.core.domain.onboarding_service import (
-    OnboardingService, JOINING, LEAVING,
+    OnboardingService, JOINING, LEAVING, OFFBOARD_TASKS,
 )
 from slate.core.domain.user_manager import UserManager
 
@@ -76,7 +76,7 @@ def test_starting_somebody_joining_records_when(db, service):
 
     record = UserManager(db=db).get_all_users()["jo"]
     assert str(record["joined_on"])[:10] == "2026-04-06"
-    assert record["employment"] == "freelance"
+    assert record["employment"] == "Freelance", "one spelling, as Users & Roles"
 
 
 def test_relaying_the_checklist_does_not_move_the_joining_date(db, service):
@@ -203,3 +203,75 @@ def test_the_ledger_knows_who_has_a_machine_not_just_who_has_what(db, service):
 
     assert service.held_by_machine("WS-01")[0]["user_id"] == "jo"
     assert service.held_by_machine("WS-NOBODY") == []
+
+
+# ------------------------------------------------------------ audit 2026-09
+
+def test_the_joining_date_changes_only_when_asked(db, service):
+    """HR-103: the typed date was ignored silently when one existed."""
+    UserManager(db=db).add_user("sai", "pw", ["Artist"], "Sai", "Paint", joined_on="2025-12-20")
+    service.start("sai", JOINING, effective_date=date(2026, 10, 5))
+    assert service.joined_on("sai") == date(2025, 12, 20)
+    service.start("sai", JOINING, effective_date=date(2026, 10, 5), overwrite_joined=True)
+    assert service.joined_on("sai") == date(2026, 10, 5)
+
+
+def test_workstation_returned_waits_for_every_machine(db, service):
+    """HR-105: collecting one of three machines ticked 'Workstation returned'."""
+    UserManager(db=db).add_user("diya", "pw", ["Artist"], "Diya", "Roto")
+    for name in ("WS-1", "WS-2", "WS-3"):
+        _machine(db, name)
+        assert service.issue_machine(name, "diya", "it")
+    service.start("diya", LEAVING, effective_date=date.today() + timedelta(days=10))
+    names = {t["task_name"] for t in service.tasks_for("diya", LEAVING)}
+    assert {"Return WS-1", "Return WS-2", "Return WS-3"} <= names
+
+    assert service.return_machine("WS-1", "diya", "it.sana")
+    tasks = {t["task_name"]: t for t in service.tasks_for("diya", LEAVING)}
+    assert tasks["Return WS-1"]["is_completed"]
+    assert not tasks["Workstation returned"]["is_completed"]
+
+    service.return_machine("WS-2", "diya")
+    service.return_machine("WS-3", "diya")
+    tasks = {t["task_name"]: t for t in service.tasks_for("diya", LEAVING)}
+    assert tasks["Workstation returned"]["is_completed"]
+
+
+def test_a_mistaken_checklist_can_be_cancelled(db, service):
+    """HR-106."""
+    UserManager(db=db).add_user("krishna", "pw", ["Artist"], "Krishna", "Comp")
+    service.start("krishna", LEAVING, effective_date=date(2026, 12, 31))
+    first = service.tasks_for("krishna", LEAVING)[0]
+    service.complete(first["id"], True, by="hr.meera")
+    removed = service.cancel_checklist("krishna", LEAVING, "hr.meera", clear_last_day=True)
+    left = service.tasks_for("krishna", LEAVING)
+    assert removed == len(OFFBOARD_TASKS) - 1 and [t["id"] for t in left] == [first["id"]]
+    assert service.last_day("krishna") is None
+
+
+def test_no_machine_for_somebody_who_has_left(db, service):
+    """HR-109."""
+    UserManager(db=db).add_user("diya", "pw", ["Artist"], "Diya", "Roto")
+    _machine(db, "WS-9")
+    service.start("diya", LEAVING, effective_date=date.today() - timedelta(days=5))
+    assert service.issue_refusal("diya")
+    assert not service.issue_machine("WS-9", "diya", "it")
+    assert service.issue_machine("WS-9", "diya", "it", override=True)
+
+
+def test_a_tick_records_who_and_when(db, service):
+    """HR-110."""
+    UserManager(db=db).add_user("jo", "pw", ["Artist"], "Jo", "Comp")
+    service.start("jo", JOINING)
+    task = service.tasks_for("jo", JOINING)[0]
+    service.complete(task["id"], True, by="hr.meera")
+    again = service.tasks_for("jo", JOINING)[0]
+    assert again["completed_by"] == "hr.meera" and again["completed_at"]
+    service.complete(task["id"], False)
+    assert service.tasks_for("jo", JOINING)[0]["completed_by"] is None
+
+
+def test_collecting_a_machine_nobody_has_is_not_reported_done(db, service):
+    """HR-114."""
+    _machine(db, "WS-7")
+    assert not service.return_machine("WS-7", "jo")
