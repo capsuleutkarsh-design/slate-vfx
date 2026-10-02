@@ -250,3 +250,24 @@ def test_existing_bids_are_dollars_and_get_a_group(db):
     bid = BidRepository(db).list()[0]
     assert bid.currency == "USD" and bid.bid_group == bid.id and bid.revision == 1
     assert [l.label for l in BidRepository(db).lines(bid.id)] == ["Whole job"]
+
+
+def test_NEW_production_1_revise_archive_and_create_shots_are_gated(db, repo):
+    bid_id = repo.create(new_bid(), [line(shot="SH010")], by="priya")
+    BidRepository(db, roles=["Admin"], username="admin").set_status([bid_id], DB.WON)
+    coord = BidRepository(db, roles=["Production Coordinator"], username="coord")
+    with pytest.raises(PermissionError):
+        coord.revise(bid_id)
+    with pytest.raises(PermissionError):
+        coord.archive([bid_id])
+    maker = BidRepository(db, roles=["Production Head"], username="priya")
+    assert maker.decided_refusal(maker.get(bid_id))           # her own bid
+    head = BidRepository(db, roles=["Production Head"], username="rahul")
+    assert head.decided_refusal(head.get(bid_id)) == ""
+    assert repo.get(bid_id).status == DB.WON, "nothing changed"
+    no_dash = BidRepository(db, roles=["Production Coordinator"], username="coord")
+    no_dash.roles = ["Bid Clerk"]
+    with pytest.raises(PermissionError, match="dashboard"):
+        no_dash.create_shots(bid_id)
+    draft = coord.create(new_bid("KALKI2"), [line()])
+    assert coord.archive([draft]) == 1, "drafts are anybody's to archive"

@@ -386,6 +386,18 @@ def check_milestone(m: Milestone, others: Iterable[Milestone]) -> List[ScheduleE
                 problems.append(ScheduleError(
                     f"It starts before \"{parent.name}\" ends ({format_date(parent.end)}). "
                     "Start it after that, or choose another dependency.", "start"))
+
+    # The other direction: moving a milestone to another project would leave
+    # whatever waits on it depending across projects.
+    if m.id is not None and m.project_code:
+        waiting = [o for o in others if o.depends_on_id == m.id
+                   and o.project_code.casefold() != m.project_code.casefold()]
+        if waiting:
+            names = ", ".join(f"\"{o.name}\"" for o in waiting[:3]) + (" …" if len(waiting) > 3 else "")
+            problems.append(ScheduleError(
+                f"{names} in {waiting[0].project_code} {'waits' if len(waiting) == 1 else 'wait'} on "
+                "this milestone, so it cannot move to another project. Change "
+                f"{'its' if len(waiting) == 1 else 'their'} dependency first.", "project"))
     return problems
 
 

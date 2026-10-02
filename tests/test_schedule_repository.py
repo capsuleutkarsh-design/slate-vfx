@@ -232,3 +232,13 @@ def test_PRD_075_PRD_122_the_model_knows_the_columns_the_migration_creates(db):
                          (ProdBidLineModel, "prod_bid_lines")):
         for column in model.__table__.columns.keys():
             assert _column_exists(db, table, column), f"{table}.{column} is in the model only"
+
+
+def test_PRD_002_editing_the_parent_project_is_refused(repo):
+    parent = repo.add(_ms("AVTR3", "Roto", "2026-09-01", "2026-09-10"), by="priya")
+    repo.add(_ms("AVTR3", "Comp", "2026-09-11", "2026-09-20", dep=parent), by="priya")
+    m = repo.get(parent)
+    m.project_code = "RRR_REDUX"
+    with pytest.raises(DS.ScheduleError, match="cannot move to another project"):
+        repo.edit(m, by="priya")
+    assert repo.get(parent).project_code == "AVTR3"
