@@ -341,6 +341,15 @@ class StudioPolicyEditor(_StudioEditor):
         return True
 
 
+def _renewal_default() -> int:
+    """The licence renewal window's default; importing the module registers the key."""
+    try:
+        from slate.core.domain import licence_compliance
+        return int(licence_compliance.RENEWAL_SOON_DAYS)
+    except Exception:
+        return 45
+
+
 class StudioMoneyEditor(_StudioEditor):
     """The studio's currency, day rates, GST and working hours."""
 
@@ -348,8 +357,9 @@ class StudioMoneyEditor(_StudioEditor):
         super().__init__(parent)
         note = QLabel(
             "What bids are written in unless a client needs another currency, the artist "
-            "day rate per currency, GST on rupee bids, and the studio's working hours "
-            "(IT's response clocks count these). Saved for the whole studio.")
+            "day rate per currency, GST on rupee bids, the studio's working hours "
+            "(IT's response clocks count these) and how early a licence renewal is "
+            "flagged. Saved for the whole studio.")
         note.setWordWrap(True)
         note.setStyleSheet(f"font-size: 11px; color: {C.TEXT_GRAY_LIGHTER};")
         self.root.addWidget(note)
@@ -403,6 +413,16 @@ class StudioMoneyEditor(_StudioEditor):
         days.addStretch(1)
         form.addRow("Working days", days)
 
+        # How many days before a licence expires it counts as "renewal due"
+        # (the Licences screen, its reminders and the Home figure).
+        self.renewal_days = _fixed(QSpinBox())
+        self.renewal_days.setRange(1, 365)
+        self.renewal_days.setValue(_renewal_default())      # also registers the key
+        self.renewal_days.setSuffix(" days before expiry")
+        self.renewal_days.setToolTip("Licences inside this window show as due for renewal, and "
+                                     "IT is reminded.")
+        form.addRow("Licence renewal warning", self.renewal_days)
+
         self.root.addLayout(form)
         self.root.addWidget(self.lbl_who)
         row = QHBoxLayout()
@@ -443,6 +463,11 @@ class StudioMoneyEditor(_StudioEditor):
         working = set(hours.get("days") or [])
         for box in self.work_days:
             box.setChecked(box.property("weekday") in working)
+        try:
+            renewal = int(values.get("licence_renewal_days") or _renewal_default())
+        except (TypeError, ValueError):
+            renewal = _renewal_default()
+        self.renewal_days.setValue(min(max(renewal, 1), 365))
         if self._editable:
             self._show_meta(store, "day_rates")
 
@@ -456,6 +481,7 @@ class StudioMoneyEditor(_StudioEditor):
                 "end": self.day_end.time().toString("HH:mm"),
                 "days": [b.property("weekday") for b in self.work_days if b.isChecked()],
             },
+            "licence_renewal_days": int(self.renewal_days.value()),
         }
 
     def save(self) -> bool:
