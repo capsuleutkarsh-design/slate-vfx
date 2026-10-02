@@ -4,16 +4,17 @@ from ..core.infra.global_config import GlobalConfig # For initial load reading
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QMessageBox, QLineEdit, QFrame, QInputDialog,
-    QStackedWidget, QListWidget, QListWidgetItem
+    QStackedWidget, QTabBar, QLabel
 )
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtCore import Qt, QSize, QUrl
+from PySide6.QtCore import Qt, QUrl, QThread, Signal
 import subprocess
 import os
 import sys
 
 
 from ..core.infra.app_context import AppContext
+from ..core.domain import access
 from ..core.domain.user_manager import UserManager
 from ..core.infra.config_manager import ConfigManager
 from ..core.infra.database_manager import DatabaseManager
@@ -28,79 +29,69 @@ from .admin_fleet_report_service import run_fleet_report_export
 from .components.queued_worker_controller import QueuedWorkerController
 
 # Import design tokens for theming
-from ..core.infra.design_tokens import ColorTokens as C, TypographyTokens as T, SpacingTokens as S, RadiusTokens as R
+from ..core.infra.design_tokens import ColorTokens as C
 from ..core.infra.style_builder import StyleBuilder
 from .core.icons import icon as draw_icon
 from .core.controls import make_button
 from slate.core.infra.gate import Gate
 
-# Import shared PyToggle widget (no more duplication!)
-
-# --- STYLESHEETS (Using Design Tokens) ---
-STYLE_SWITCHER = f"""
-    QListWidget {{
-        background-color: {C.BG_SURFACE};
-        border: none;
-        border-bottom: 1px solid {C.BORDER_DEFAULT};
-        outline: none;
-        padding: 0px {S.SM}px;
-    }}
-    QListWidget::item {{
-        color: {C.TEXT_SECONDARY};
-        padding: 0px {S.MD}px;
-        margin: {S.XS}px {S.XS}px;
-        border-radius: {R.SM}px;
-        font-size: {T.SIZE_BASE}px;
-        font-weight: {T.WEIGHT_MEDIUM};
-        border: 1px solid transparent;
-    }}
-    QListWidget::item:hover {{
-        background-color: {C.BG_HOVER};
-        color: {C.TEXT_PRIMARY};
-    }}
-    QListWidget::item:selected {{
-        background-color: {C.BG_ELEVATED};
-        color: {C.ACCENT_PRIMARY};
-        border: 1px solid {C.BORDER_DEFAULT};
-    }}
-"""
-
-STYLE_SIDEBAR = f"""
-    QListWidget {{ 
-        background-color: {C.BG_SIDEBAR}; 
-        border: none; 
-        outline: none; 
-        padding-top: {S.MD}px; 
-    }} 
-    QListWidget::item {{ 
-        color: {C.TEXT_GRAY_LIGHT}; 
-        padding: {S.LG}px {S.XL}px; 
-        margin: {S.XS}px {S.LG}px; 
-        border-radius: {R.MD}px; 
-        font-size: {T.SIZE_MD}px; 
-        font-weight: {T.WEIGHT_SEMIBOLD}; 
-        border: 1px solid transparent;
-    }} 
-    QListWidget::item:hover {{ 
-        background-color: {Gate.PANEL}; 
-        color: {Gate.TEXT}; 
-        border: 1px solid {C.BORDER_DEFAULT};
-    }} 
-    QListWidget::item:selected {{ 
-        background-color: {Gate.ACCENT_SURFACE}; 
-        color: {C.BORDER_HOVER}; 
-        border: 1px solid {C.BORDER_HOVER}; 
-        font-weight: {T.WEIGHT_STYLE_BOLD};
-    }}
-"""
-STYLE_CARD = f"QFrame#Card {{ background-color: {C.BG_SURFACE}; border-radius: {S.LG}px; border: 1px solid {C.BORDER_DEFAULT}; }} QLabel {{ border: none; }}"
-STYLE_BTN_PRIMARY = StyleBuilder.primary_button()
-STYLE_BTN_DANGER = StyleBuilder.danger_button()
 STYLE_INPUT = StyleBuilder.input_field()
+
+API_PORT = 8000
+
+PAGES = (
+    # (label, glyph, needs manage_system)
+    ("Live Ops", "monitor", False),
+    ("Audit Logs", "info", True),
+    ("Data Center", "database", True),
+)
+
+
+def probe_api(hosts, timeout=1.0):
+    """
+    The first host whose API answers on API_PORT, or None. Called off the UI
+    thread: each refused probe can take the whole timeout.
+    """
+    import urllib.request
+    for host in hosts:
+        if not host:
+            continue
+        try:
+            urllib.request.urlopen(f"http://{host}:{API_PORT}/docs", timeout=timeout)
+            return host
+        except Exception:
+            continue
+    return None
+
+
+class _ApiProbe(QThread):
+    """Asks whether the API gateway is already running, without freezing the window."""
+    done = Signal(object)
+
+    def __init__(self, hosts, parent=None):
+        super().__init__(parent)
+        self.hosts = list(hosts)
+
+    def run(self):
+        self.done.emit(probe_api(self.hosts))
+
+
+def roles_of_user(roles=None, user_role=None, app_context=None):
+    """The signed-in person's roles: given, legacy single role, or from the context."""
+    if roles:
+        return [roles] if isinstance(roles, str) else list(roles)
+    if user_role:
+        return [user_role] if isinstance(user_role, str) else list(user_role)
+    try:
+        return list(app_context.current_roles()) if app_context is not None else []
+    except Exception:
+        return []
+
 
 # --- MAIN ADMIN PANEL ---
 class AdminPanelTab(QWidget):
-    def __init__(self, current_username=None, user_manager=None, hub=None, attendance=None, db_manager=None, app_context=None):
+    def __init__(self, current_username=None, user_manager=None, hub=None, attendance=None,
+                 db_manager=None, app_context=None, roles=None):
         super().__init__()
         self.app_context = app_context or AppContext()
         self._is_closing = False
@@ -109,65 +100,84 @@ class AdminPanelTab(QWidget):
         self.hub = hub or self.app_context.server_hub()
         self.attendance = attendance or self.app_context.attendance()
         self.db = db_manager or self.app_context.db_manager()
+        self.api_process = None
+        self._api_probe = None
+
+        # Who may do what here. A supervisor keeps this tab but sees only Live
+        # Ops, read-only: the logs, the database and every remote action are
+        # for admins and developers (manage_system). Before, anybody who could
+        # open the tab had a SQL console and fleet restart.
+        self.roles = roles_of_user(roles, getattr(self, "user_role", None), self.app_context)
+        self.can_manage_system = access.can(self.roles, "manage_system")
+        self.can_wipe_caches = self.can_manage_system and access.can(self.roles, "wipe_fleet_caches")
+
         self.log_file = self.hub.get_attendance_dir().parent / "Config" / "audit.log"
         try: self.log_file.parent.mkdir(parents=True, exist_ok=True)
         except OSError as e:
-            import logging
             logging.warning(f"Could not create audit log directory: {e}")
-            
-        self.setStyleSheet(f"background-color: {C.BG_MAIN}; color: {C.TEXT_PRIMARY};")
+
+        # Scoped to the panel itself. A selector-less sheet was inherited by
+        # every child, so fields and lists took the panel's background.
+        self.setObjectName("AdminPanel")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(f"QWidget#AdminPanel {{ background-color: {C.BG_MAIN}; color: {C.TEXT_PRIMARY}; }}")
         self.setup_ui()
         self.destroyed.connect(self.cleanup_resources)
 
     def setup_ui(self):
         """
-        Panel switcher across the top, then the panel.
+        Page switcher across the top, then the page.
 
-        This used to be a second vertical sidebar 220px wide, sitting directly
-        beside the application's own. Two stacked navigations ate 470px before
-        any content appeared, and the five entries were spread down 900px of
-        mostly empty column. Across the top costs 40px and matches how Tester
-        Panel already works.
+        The switcher is a tab bar like every other tab bar in Slate. It was a
+        horizontal list with ~10 px text whose selected page was only an
+        outline.
         """
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # --- PANEL SWITCHER ---
-        self.sidebar = QListWidget()
-        self.sidebar.setFlow(QListWidget.Flow.LeftToRight)
-        self.sidebar.setFixedHeight(42)
-        self.sidebar.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.sidebar.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.sidebar.setStyleSheet(STYLE_SWITCHER)
-        self.sidebar.currentRowChanged.connect(self.change_page)
+        self.pages = [(label, glyph) for label, glyph, restricted in PAGES
+                      if self.can_manage_system or not restricted]
 
-        # Users and roles are managed in one place only: the Users & Roles tab.
-        # This panel carried a second copy of both with no permission check,
-        # so anybody who could open Admin Panel could add or delete accounts.
-        items = [
-            ("Live Ops", "monitor"),
-            ("Audit Logs", "info"),
-            ("Data Center", "database"),
-        ]
+        # --- PAGE SWITCHER ---
+        self.sidebar = QTabBar()
+        self.sidebar.setDrawBase(False)
+        self.sidebar.setExpanding(False)
+        for label, glyph in self.pages:
+            self.sidebar.addTab(draw_icon(glyph), label)
+        self.sidebar.currentChanged.connect(self.change_page)
+        switcher = QWidget()
+        switcher.setObjectName("AdminSwitcher")
+        switcher.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        switcher.setStyleSheet(f"QWidget#AdminSwitcher {{ background-color: {C.BG_SURFACE}; "
+                               f"border-bottom: 1px solid {C.BORDER_DEFAULT}; }}")
+        sw = QHBoxLayout(switcher)
+        sw.setContentsMargins(8, 4, 8, 0)
+        sw.addWidget(self.sidebar)
+        sw.addStretch(1)
+        layout.addWidget(switcher)
+        # One page needs no switcher.
+        switcher.setVisible(len(self.pages) > 1)
 
-        for label, glyph in items:
-            item = QListWidgetItem(label)
-            item.setIcon(draw_icon(glyph))
-            # Width from the text itself, so no label is ever clipped.
-            width = self.sidebar.fontMetrics().horizontalAdvance(label) + 62
-            item.setSizeHint(QSize(width, 34))
-            self.sidebar.addItem(item)
+        if not self.can_manage_system:
+            note = QLabel("Live Ops, read-only. Remote actions, the logs and the database "
+                          "are for admins and developers.")
+            note.setObjectName("AdminReadOnlyNote")
+            note.setWordWrap(True)
+            note.setStyleSheet(f"QLabel#AdminReadOnlyNote {{ color: {Gate.TEXT_DIM}; padding: 8px 15px; }}")
+            layout.addWidget(note)
 
-        layout.addWidget(self.sidebar)
-
-        # --- RIGHT CONTENT STACK ---
+        # --- CONTENT STACK ---
         self.stack = QStackedWidget()
-        self.stack.setStyleSheet(f"background-color: {C.BG_MAIN};")
         layout.addWidget(self.stack)
-        
-        # 1. LIVE DASHBOARD (Restored Mission Control)
-        self.live_dashboard = LiveDashboard(self.hub, verify_callback=self.verify_admin_action)
+
+        # 1. LIVE OPS
+        self.live_dashboard = LiveDashboard(
+            self.hub,
+            verify_callback=self.verify_admin_action,
+            read_only=not self.can_manage_system,
+            log_action=self.log_action,
+        )
         self.live_dashboard_worker_controller = QueuedWorkerController(
             self.live_dashboard.worker,
             self.live_dashboard,
@@ -176,47 +186,63 @@ class AdminPanelTab(QWidget):
         self.restore_mission_control(self.live_dashboard)
         self.stack.addWidget(self.live_dashboard)
 
-        # 2. AUDIT LOG
-        self.audit_widget = QWidget()
-        self.setup_audit_ui()
-        self.stack.addWidget(self.audit_widget)
-        
-        # 3. DATA CENTER
-        self.data_center = DatabaseExplorer(self.db, app_context=self.app_context)
-        self.stack.addWidget(self.data_center)
-        
-        # Select first item
-        self.sidebar.setCurrentRow(0)
+        # 2. AUDIT LOGS and 3. DATA CENTER - built only for the people who may
+        # use them, so nothing of either exists for anybody else.
+        if self.can_manage_system:
+            self.audit_widget = QWidget()
+            self.setup_audit_ui()
+            self.stack.addWidget(self.audit_widget)
+
+            self.data_center = DatabaseExplorer(self.db, app_context=self.app_context)
+            self.stack.addWidget(self.data_center)
+
+        self.sidebar.setCurrentIndex(0)
+
+    def page_labels(self):
+        return [label for label, _glyph in self.pages]
 
     def change_page(self, row):
+        if row < 0:
+            return
         self.stack.setCurrentIndex(row)
-        
-        # Refresh logic based on page
-        if row == 1:  # Audit Logs
+        if self.pages[row][0] == "Audit Logs":
             self.load_audit_log()
+
+    def show_page(self, label) -> bool:
+        """Switch to a page by name; False when this person has no such page."""
+        labels = self.page_labels()
+        if label not in labels:
+            return False
+        self.sidebar.setCurrentIndex(labels.index(label))
+        return True
 
     def load_audit_log(self):
         """Refreshes the data in the Unified Log Viewer."""
         if hasattr(self, 'unified_log_viewer'):
-            # Refresh both system logs and database audit
-            if hasattr(self.unified_log_viewer, 'sys_logs'):
-                self.unified_log_viewer.sys_logs.refresh_list()
-            if hasattr(self.unified_log_viewer, 'db_audit'):
-                self.unified_log_viewer.db_audit.refresh_data()
+            self.unified_log_viewer.refresh_all()
 
     def restore_mission_control(self, dashboard):
-        """Injects the 'Mission Control' bar into the LiveDashboard layout."""
-        # Find the existing layout or create a wrapper
-        # The Dashboard has a VBoxLayout. We insert at index 0.
-        
+        """The admin actions above the Live Ops grid."""
+        # Reading the fleet is allowed to everybody who sees Live Ops.
+        btn_export = make_button("Fleet report", "secondary",
+                                 tooltip="Save every machine's latest report as Excel, CSV or JSON",
+                                 on_click=self.export_fleet_report)
+        btn_export.setIcon(draw_icon("download"))
+        dashboard.add_tool(btn_export)
+
+        if not self.can_manage_system:
+            return
+
         control_frame = QFrame()
-        control_frame.setStyleSheet(f"background-color: {C.BG_ELEVATED}; border-bottom: 1px solid {C.BORDER_LIGHT};")
+        control_frame.setObjectName("MissionControl")
+        control_frame.setStyleSheet(
+            f"QFrame#MissionControl {{ background-color: {C.BG_ELEVATED}; "
+            f"border-bottom: 1px solid {C.BORDER_LIGHT}; }}")
         control_frame.setFixedHeight(60)
-        
+
         h = QHBoxLayout(control_frame)
         h.setContentsMargins(15, 5, 15, 5)
-        
-        # Broadcast Input
+
         self.inp_broadcast = QLineEdit()
         self.inp_broadcast.setPlaceholderText("Broadcast a message to every workstation...")
         self.inp_broadcast.setStyleSheet(STYLE_INPUT)
@@ -229,67 +255,89 @@ class AdminPanelTab(QWidget):
         btn_alert = make_button("Send alert", "primary", on_click=self.send_broadcast)
         h.addWidget(btn_alert)
 
-        btn_export = make_button("Fleet report", "secondary",
-                                 tooltip="Export the current fleet status",
-                                 on_click=self.export_fleet_report)
-        btn_export.setIcon(draw_icon("download"))
-        h.addWidget(btn_export)
-
         self.btn_api = make_button("Start API gateway", "secondary",
+                                   tooltip=f"Start Slate's web API on this computer (port {API_PORT}), "
+                                           "or open it if it is already running",
                                    on_click=self.start_api_server)
         h.addWidget(self.btn_api)
 
-        btn_wipe = make_button("Wipe caches", "danger",
-                               tooltip="Clear the local cache on every connected workstation",
-                               on_click=self.wipe_remote_caches)
-        btn_wipe.setIcon(draw_icon("trash"))
-        h.addWidget(btn_wipe)
-        
+        if self.can_wipe_caches:
+            btn_wipe = make_button("Wipe caches", "danger",
+                                   tooltip="Clear the local cache on every connected workstation",
+                                   on_click=self.wipe_remote_caches)
+            btn_wipe.setIcon(draw_icon("trash"))
+            h.addWidget(btn_wipe)
+
         dashboard.layout().insertWidget(0, control_frame)
-        self.api_process = None
+
+    # ------------------------------------------------------------ API gateway
+    def _api_hosts(self):
+        db_host = str(GlobalConfig.get("db_host", "") or "").strip()
+        hosts = ["127.0.0.1"]
+        if db_host and db_host not in ("127.0.0.1", "localhost"):
+            hosts.append(db_host)
+        return hosts
 
     def start_api_server(self):
-        import urllib.request
-        server_running = False
-        host = GlobalConfig.get("db_host", "127.0.0.1")
-        try:
-            # Check if server is already running (maybe started by slate_server.py)
-            urllib.request.urlopen(f"http://{host}:8000/docs", timeout=1)
-            server_running = True
-        except Exception:
-            pass
-
-        if server_running or (self.api_process and self.api_process.poll() is None):
-            # Already running, just open the dashboard
-            QDesktopServices.openUrl(QUrl(f"http://{host}:8000/admin"))
-            self.btn_api.setText("Open API Dashboard")
-            self.btn_api.setStyleSheet(f"background-color: {Gate.ACCENT}; color: {Gate.TEXT_ON_ACCENT}; border: none; padding: 6px 12px; border-radius: 4px; font-weight: bold;")
+        """
+        Open the API gateway if it is running (here or on the database
+        server), else start it on this computer. The check runs off the UI
+        thread; it used to freeze the window for a second on every click.
+        """
+        if not self.can_manage_system:
             return
-            
+        if self._api_probe is not None and self._api_probe.isRunning():
+            return
+        if self.api_process is not None and self.api_process.poll() is None:
+            self._open_api("127.0.0.1")
+            return
+        self.btn_api.setEnabled(False)
+        self.btn_api.setText("Checking…")
+        self._api_probe = _ApiProbe(self._api_hosts(), self)
+        self._api_probe.done.connect(self._on_api_probe_done)
+        self._api_probe.start()
+
+    def _on_api_probe_done(self, host):
+        if self._is_closing:
+            return
+        self.btn_api.setEnabled(True)
+        if host:
+            self._open_api(host)
+            return
+        self._launch_api()
+
+    def _open_api(self, host):
+        # The host that answered (or this computer, when this client started
+        # it) - it used to open the database server whatever was running.
+        QDesktopServices.openUrl(QUrl(f"http://{host}:{API_PORT}/admin"))
+        self.btn_api.setText("Open API dashboard")
+
+    def _launch_api(self):
         try:
-            # Find the path to api/main.py
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             api_main_path = os.path.join(base_dir, "api", "main.py")
-            
-            # Start process
-            cwd = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            env = os.environ.copy()
-            proc = subprocess.Popen([sys.executable, api_main_path], cwd=cwd, env=env, shell=False)
+            cwd = os.path.dirname(base_dir)
+            proc = subprocess.Popen([sys.executable, api_main_path], cwd=cwd,
+                                    env=os.environ.copy(), shell=False)
             try:
                 from ..utils.process_manager import subprocess_tracker
                 self.api_process = subprocess_tracker.register(proc)
             except Exception:
                 self.api_process = proc
-            self.log_action("Started API Gateway (FastAPI) on port 8000")
-            
-            self.btn_api.setText("Open API Dashboard")
-            self.btn_api.setStyleSheet(f"background-color: {Gate.ACCENT}; color: {Gate.TEXT_ON_ACCENT}; border: none; padding: 6px 12px; border-radius: 4px; font-weight: bold;")
-            QMessageBox.information(self, "API Started", "The Waiter (FastAPI) is now booting up on port 8000!\n\nClick the button again to view the Admin Dashboard.")
-            
+            self.log_action(f"Started the API gateway on port {API_PORT}")
+            self.btn_api.setText("Open API dashboard")
+            QMessageBox.information(
+                self, "Start API gateway",
+                f"The API server is starting on this computer, port {API_PORT}.\n\n"
+                "Press 'Open API dashboard' in a few seconds to open it.")
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to start API Server:\n{e}")
-            self.log_action(f"Failed to start API Server: {e}")
+            self.btn_api.setText("Start API gateway")
+            QMessageBox.critical(self, "Start API gateway", f"The API server could not be started:\n{e}")
+            self.log_action(f"Could not start the API gateway: {e}")
 
+    # ------------------------------------------------------- remote actions
+    # Sending commands to workstations (broadcast, wipe) is unchanged here:
+    # who may send them and how they are authorised is on the security list.
     def send_broadcast(self):
         msg = self.inp_broadcast.text().strip()
         if not msg: return
@@ -299,6 +347,8 @@ class AdminPanelTab(QWidget):
         self.log_action(f"Broadcast Alert: {msg}")
 
     def wipe_remote_caches(self):
+        if not self.can_wipe_caches:
+            return
         # Fleet-wide and irreversible, so it takes the same re-authentication
         # restart and shutdown do. It used to ask only yes/no.
         if QMessageBox.question(self, "Confirm", "Wipe thumbnails/cache on ALL connected PCs?") != QMessageBox.StandardButton.Yes:
@@ -316,10 +366,11 @@ class AdminPanelTab(QWidget):
         """Initialize the Advanced Audit Log Viewer."""
         layout = QVBoxLayout(self.audit_widget)
         layout.setContentsMargins(0, 0, 0, 0)
-        
+
         self.unified_log_viewer = UnifiedLogViewer(
             db_manager=self.db,
             app_context=self.app_context,
+            audit_file=self.log_file,
         )
         layout.addWidget(self.unified_log_viewer)
 
@@ -343,7 +394,7 @@ class AdminPanelTab(QWidget):
         )
         if not ok or not password:
             return False
-            
+
         # 1. Check Master Password (from config.json / default_config.json)
         # This allows the 'admin_password' key in the JSON to actually work as an override
         master_pass = GlobalConfig.get("admin_password")
@@ -355,7 +406,7 @@ class AdminPanelTab(QWidget):
         if self.current_username and self.user_manager.authenticate(self.current_username, password):
             self.log_action(f"Admin verified for destructive action by {self.current_username}")
             return True
-            
+
         QMessageBox.warning(self, "Denied", "Invalid password.")
         return False
 
@@ -366,6 +417,17 @@ class AdminPanelTab(QWidget):
             try:
                 self.live_dashboard.cleanup()
             except Exception:
+                pass
+        if hasattr(self, 'unified_log_viewer'):
+            try:
+                self.unified_log_viewer.cleanup_resources()
+            except Exception:
+                pass
+        probe = getattr(self, "_api_probe", None)
+        if probe is not None:
+            try:
+                probe.wait(2000)
+            except RuntimeError:
                 pass
         # Shutdown API Server
         if hasattr(self, 'api_process') and self.api_process:
@@ -390,6 +452,6 @@ class AdminPanelTab(QWidget):
 class AdminPanel(AdminPanelTab):
     """Backward-compatible wrapper for legacy callers/tests."""
     def __init__(self, user_role=None, current_username=None, **kwargs):
-        # user_role is kept for compatibility with older API.
+        # The legacy single role still decides what the panel shows.
         self.user_role = user_role
         super().__init__(current_username=current_username, **kwargs)
