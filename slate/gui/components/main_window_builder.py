@@ -293,7 +293,7 @@ class MainWindowBuilderMixin:
                 # CAP Rename
                 self.tab_coordinator.register_tab_factory(
                     "CAP Rename",
-                    lambda: CapRenameTab(self.config_manager),
+                    lambda: CapRenameTab(self.config_manager, user_data=self.user_data),
                     icon="🏷️",
                     permission_key="Rename Tool",
                     user_role=self.user_role,

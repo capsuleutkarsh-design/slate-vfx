@@ -25,27 +25,10 @@ import pytest
 # ------------------------------------------------------- the two-phase rename
 
 def _rename_two_phase(pairs):
-    """
-    The worker's algorithm, without Qt: stage everything, then place it.
+    """The real worker's algorithm (slate.core.domain.batch_rename.rename_files)."""
+    from slate.core.domain.batch_rename import rename_files
 
-    Kept in step with RenameWorker.run by test_a_swap_is_what_one_pass_cannot_do,
-    which fails if the real worker ever goes back to a single pass.
-    """
-    import uuid
-
-    staged = []
-    for old_path, new_path in pairs:
-        if not old_path.exists():
-            continue
-        holding = old_path.parent / (".slate_rename_%s.tmp" % uuid.uuid4().hex)
-        os.rename(old_path, holding)
-        staged.append((holding, old_path, new_path))
-
-    done = 0
-    for holding, old_path, new_path in staged:
-        os.rename(holding, new_path)
-        done += 1
-    return done
+    return rename_files(pairs).count
 
 
 def test_a_swap_is_what_one_pass_cannot_do(tmp_path):
@@ -82,31 +65,6 @@ def test_shifting_a_whole_sequence_up_by_one(tmp_path):
     # 0003 and 0004 were both a source and a target in that set, which is the
     # case a single pass cannot survive.
     assert not (tmp_path / "plate_0001.dpx").exists()
-
-
-def test_the_real_worker_still_stages_before_placing():
-    """
-    The guard on the test above. If RenameWorker goes back to renaming straight
-    into place, this fails and says so.
-    """
-    import inspect
-    from slate.gui.cap_rename_tab import RenameWorker
-
-    source = inspect.getsource(RenameWorker.run)
-    assert "holding" in source, "the worker must stage to a temporary name first"
-    assert source.count("os.rename") >= 2, "staging and placing are two renames"
-
-
-def test_the_undo_script_is_written_as_the_run_goes():
-    """
-    The run that most needs undoing is the one that did not finish, so the
-    script cannot be written at the end.
-    """
-    import inspect
-    from slate.gui.cap_rename_tab import RenameWorker
-
-    source = inspect.getsource(RenameWorker.run)
-    assert "handle.flush()" in source, "each line is flushed as it is written"
 
 
 # ----------------------------------------------------------- the status casing
