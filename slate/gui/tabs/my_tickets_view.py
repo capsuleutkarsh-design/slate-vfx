@@ -812,6 +812,9 @@ class MyTicketsView(QWidget):
                 "If something is broken - a workstation, a licence, the farm - tell IT here "
                 "and you can follow what happens to it.")
         self.empty.refresh()
+        # Nothing ever raised: no toggle and no Open button over an empty page.
+        self.include_closed.setVisible(bool(self._all))
+        self.btn_open.setVisible(bool(self._all))
         self._fit_table()
         self._show_waiting()
         self._sync_buttons()

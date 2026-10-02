@@ -411,6 +411,11 @@ class ServiceDeskView(QWidget):
             r["_sla"] = sla_state(r, now, self._calendar)
         self._paint_stats(self._all)
         self._apply_filters()
+        # Licence renewal reminders reach IT through the bell; the queue is
+        # the screen IT open every day, so the (hourly, once-per-threshold)
+        # check runs from here as well as from Licences.
+        from slate.core.infra.licence_repository import LicenceRepository
+        LicenceRepository(self.db).send_renewal_reminders()
 
     def _filters_changed(self, *_):
         self._card_filter = ""
