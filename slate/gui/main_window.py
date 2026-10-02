@@ -596,16 +596,10 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
             except Exception as e:
                 logging.warning(f"Header branding refresh failed: {e}")
 
+        # Settings says once, in its own toast, what was saved and what waits
+        # for a restart; a second status-bar message here only repeated it.
         if applied_labels:
-            self.status_bar.showMessage(
-                f"Settings applied to: {', '.join(applied_labels)}",
-                3000,
-            )
-        else:
-            self.status_bar.showMessage(
-                "Settings saved (will apply when tabs are opened)",
-                3000,
-            )
+            logging.debug("Settings applied to: %s", ", ".join(applied_labels))
 
     def apply_stylesheet(self):
         """
