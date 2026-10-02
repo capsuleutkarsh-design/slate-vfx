@@ -389,7 +389,8 @@ class HomeLoaderWorker(QThread):
         db = self._db()
         try:
             row = db.execute_query(
-                "SELECT punch_in, punch_out FROM attendance_log WHERE user_id = %s AND day_date = %s",
+                "SELECT punch_in, punch_out, metadata FROM attendance_log "
+                "WHERE user_id = %s AND day_date = %s",
                 (uid, db_today(db).isoformat()), fetch="one")
         except DatabaseUnavailableError:
             raise
@@ -398,7 +399,15 @@ class HomeLoaderWorker(QThread):
             return {}
         if not row:
             return {}
-        return {"punch_in": _value(row, "punch_in", 0), "punch_out": _value(row, "punch_out", 1)}
+        record = {"punch_in": _value(row, "punch_in", 0), "punch_out": _value(row, "punch_out", 1),
+                  "metadata": _value(row, "metadata", 2)}
+        # A second punch-in the same day is a new session (kept in the
+        # metadata): "In since" is the open session's start, not the first
+        # arrival - the lunch break is not time worked.
+        sessions = CentralAttendance._sessions(record)
+        since = sessions[-1]["in"] if sessions else record["punch_in"]
+        return {"punch_in": since, "punch_out": record["punch_out"],
+                "first_in": record["punch_in"], "sessions": len(sessions)}
 
     def leave_pulse(self) -> list:
         """Current and coming leave, soonest first, with dates."""
@@ -1194,7 +1203,11 @@ class HomeTab(QWidget):
             return
         pi = punch_status.get('punch_in')
         po = punch_status.get('punch_out')
-        self.lbl_punch_status.setText(punch_text(pi, po))
+        text = punch_text(pi, po)
+        sessions = int(punch_status.get('sessions') or 0)
+        if sessions > 1 and pi:
+            text += f" - session {sessions} today" if not po else f" - {sessions} sessions today"
+        self.lbl_punch_status.setText(text)
         # After a punch out, punching in again starts a new session the same
         # day (studio decision); only while punched in is Punch In off.
         self.btn_punch_in.setEnabled(not (pi and not po))
@@ -1225,7 +1238,16 @@ class HomeTab(QWidget):
         host = self._host()
 
         try:
-            self.attendance.log_action(self.username, action)
+            stored = self.attendance.log_action(self.username, action)
+        except ValueError as e:
+            # A rule, not a fault: "Already punched in at 09:42." is the message.
+            if host and hasattr(host, "show_feedback"):
+                host.show_feedback(str(e), "warning", 5000)
+            try:
+                self._update_punch_ui()
+            except Exception:
+                pass
+            return
         except Exception as e:
             if host and hasattr(host, "show_feedback"):
                 host.show_feedback("The punch was not saved.", "error", 4000, details=str(e))
@@ -1245,8 +1267,12 @@ class HomeTab(QWidget):
             return
 
         if host and hasattr(host, "show_feedback"):
-            now = datetime.now().strftime("%H:%M")
-            host.show_feedback(f"Punched {'in' if action == 'in' else 'out'} at {now}.", "success", 4000)
+            # The time the database stored, which is what the record says.
+            stored_time = _time_text((stored or {}).get("time")) if isinstance(stored, dict) else ""
+            now = stored_time or datetime.now().strftime("%H:%M")
+            session = (stored or {}).get("session") if isinstance(stored, dict) else None
+            extra = f" (session {session} today)" if action == "in" and session and session > 1 else ""
+            host.show_feedback(f"Punched {'in' if action == 'in' else 'out'} at {now}{extra}.", "success", 4000)
 
 
 class VfxHomeTab(HomeTab):

@@ -613,7 +613,12 @@ class CentralAttendance:
     def sync_attendance(self, user_id, user_name, action, timestamp=None) -> bool:
         """Sync attendance event to central database."""
         try:
-            act = "in" if str(action).lower() in ("login", "in") else "out"
+            word = str(action).lower()
+            if word in ("logout", "close", "exit"):
+                # Closing Slate or signing out never punches anybody out
+                # (studio decision); only an explicit "out" does.
+                return True
+            act = "in" if word in ("login", "in") else "out"
             self.log_action(user_name=user_id or user_name, action=act,
                             automatic=(act == "in"))
             return True
