@@ -111,6 +111,11 @@ class RetryWorker(QThread):
         self.done.emit(self.result)
 
 
+def wrap_path(text: str) -> str:
+    """A path that may wrap after its separators (a zero-width space after each)."""
+    return str(text).replace("\\", "\\\u200b").replace("/", "/\u200b")
+
+
 def find_project_folder(root: str, code: str) -> Optional[Path]:
     """
     A folder at or above `root` that is this project, by name - 'My-Show'
@@ -357,6 +362,9 @@ class FolderCreatorTab(QWidget):
         left_scroll.setFrameShape(QFrame.Shape.NoFrame)
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         left_scroll.setWidget(left_widget)
+        # Wide enough for the fields and their Browse buttons; the preview
+        # gives way instead (it was clipping the buttons at 1366 px).
+        left_scroll.setMinimumWidth(min(max(left_widget.minimumSizeHint().width() + 16, 440), 560))
         return left_scroll
 
     @staticmethod
@@ -375,6 +383,9 @@ class FolderCreatorTab(QWidget):
         preview_layout.setContentsMargins(Gate.SPACE_2, Gate.SPACE_3, Gate.SPACE_2, Gate.SPACE_2)
         self.folder_preview_tree = QTreeWidget()
         self.folder_preview_tree.setHeaderHidden(True)
+        # Small minimums, so on a 720 px screen the page fits and the run bar
+        # under it stays visible.
+        self.folder_preview_tree.setMinimumHeight(60)
         self.folder_preview_tree.setToolTip("What a project built from this template looks like.")
         preview_layout.addWidget(self.folder_preview_tree)
         self.preview_warning = QLabel("")
@@ -405,6 +416,7 @@ class FolderCreatorTab(QWidget):
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
         self.log_text.setPlaceholderText("What each run did appears here.")
+        self.log_text.setMinimumHeight(40)
         log_layout.addWidget(self.log_text)
         self.right_splitter.addWidget(log_card)
         self.right_splitter.setStretchFactor(0, 3)
@@ -424,8 +436,10 @@ class FolderCreatorTab(QWidget):
         status_row = QHBoxLayout()
         self.progress_label = QLabel(IDLE_STATUS)
         self.progress_label.setStyleSheet(f"color: {Gate.TEXT}; font-weight: 600;")
+        # No word wrap in the run bar: a wrapping label makes the page ask
+        # for its preferred height, which pushed the bar off a 720 px screen.
         self.stats_label = QLabel(IDLE_HINT)
-        self.stats_label.setWordWrap(True)
+        self.stats_label.setMinimumWidth(10)
         self.stats_label.setStyleSheet(f"color: {Gate.TEXT_2};")
         status_row.addWidget(self.progress_label)
         status_row.addSpacing(Gate.SPACE_3)
@@ -442,7 +456,7 @@ class FolderCreatorTab(QWidget):
         self.last_run_label.setTextFormat(Qt.TextFormat.RichText)
         self.last_run_label.setOpenExternalLinks(False)
         self.last_run_label.linkActivated.connect(lambda *_: self.open_last_report())
-        self.last_run_label.setWordWrap(True)
+        self.last_run_label.setMinimumWidth(10)
         self.last_run_label.setVisible(False)
         outer.addWidget(self.last_run_label)
 
@@ -634,6 +648,9 @@ class FolderCreatorTab(QWidget):
                 self.destination_label.setText(f"Builds {target}")
         else:
             self.destination_label.setText("")
+        # Paths have no spaces: let them wrap after a separator instead of
+        # forcing the panel wider than the screen.
+        self.destination_label.setText(wrap_path(self.destination_label.text()))
         self.destination_label.setVisible(bool(self.destination_label.text()))
 
         busy = self._phase != "idle"

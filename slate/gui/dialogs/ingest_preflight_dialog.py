@@ -35,6 +35,11 @@ from slate.gui.core.table_style import dim_cell, numeric_item, set_cell_status, 
 COPY, MOVE = "copy", "move"
 
 
+def _wrap(path) -> str:
+    """A path that may wrap after its separators."""
+    return str(path).replace("\\", "\\\u200b").replace("/", "/\u200b")
+
+
 def size_text(size: float) -> str:
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if size < 1024 or unit == "TB":
@@ -80,7 +85,7 @@ class IngestPreflightDialog(QDialog):
         layout.addWidget(self.headline)
 
         facts = form_layout()
-        self.from_label = QLabel(str(survey.source))
+        self.from_label = QLabel(_wrap(survey.source))
         self.to_label = QLabel(str(self.project_path))
         for label in (self.from_label, self.to_label):
             label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -301,7 +306,7 @@ class IngestPreflightDialog(QDialog):
         reels = len(survey.reels)
         verb = "Simulate" if self.dry_run else ("Move" if self.chosen_operation() == MOVE else "Copy")
         target = self.chosen_project_dir()
-        self.to_label.setText(str(target))
+        self.to_label.setText(_wrap(target))
         self.headline.setText(
             f"{verb} {files:,} file(s) ({size}) - {shots} shot(s) in {reels} reel(s) - into {target.name}")
         notes = self.notes()
