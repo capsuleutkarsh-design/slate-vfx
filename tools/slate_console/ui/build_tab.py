@@ -36,7 +36,7 @@ class BuildTab(QWidget):
         layout.setSpacing(15)
         
         # --- HEADER ---
-        header = QLabel("DEPLOYMENT FORGE")
+        header = QLabel("Build and release")
         header.setStyleSheet("color: #00B4D8; font-size: 18px; font-weight: bold; letter-spacing: 2px;")
         layout.addWidget(header)
 
@@ -54,10 +54,10 @@ class BuildTab(QWidget):
 
         v_layout.addWidget(QLabel("Target Component:"))
         self.target_combo = QComboBox()
-        self.target_combo.addItem("🌐 All Components (Full Suite)", "all")
-        self.target_combo.addItem("🎬 Slate Studio", "vfx")
-        self.target_combo.addItem("🏢 Slate Operations", "ops")
-        self.target_combo.addItem("🖥️ Slate Central Server", "server")
+        self.target_combo.addItem("All components (full suite)", "all")
+        self.target_combo.addItem("Slate VFX", "vfx")
+        self.target_combo.addItem("Slate Operations", "ops")
+        self.target_combo.addItem("Slate Central Server", "server")
         self.target_combo.setStyleSheet("background: #111; color: #00B4D8; border: 1px solid #444; padding: 5px; font-weight: bold;")
         v_layout.addWidget(self.target_combo)
         layout.addWidget(ver_group)
@@ -95,36 +95,36 @@ class BuildTab(QWidget):
             QPushButton:disabled { background-color: #1a1a1a; color: #555; border: 1px solid #222; }
         """
         
-        self.btn_full = QPushButton("🚀 FULL BUILD PIPELINE")
+        self.btn_full = QPushButton("Full build (program and installer)")
         self.btn_full.setToolTip("Builds Exe + Inno Setup Installer for selected target")
         self.btn_full.setStyleSheet(btn_style + "QPushButton { border: 2px solid #00B4D8; background-color: #1a2a3a; }")
         self.btn_full.clicked.connect(self.run_full_build)
         
-        self.btn_update = QPushButton("📦 BUILD UPDATE PACKAGE")
+        self.btn_update = QPushButton("Build update package")
         self.btn_update.setToolTip("Builds and packages an update zip with SHA-256 validation.")
         self.btn_update.setStyleSheet(btn_style + "QPushButton { border: 2px solid #00D8B4; background-color: #1a3a2a; }")
         self.btn_update.clicked.connect(self.run_build_update)
         
-        self.btn_vfx = QPushButton("🎬 BUILD VFX STUDIO")
+        self.btn_vfx = QPushButton("Build Slate VFX")
         self.btn_vfx.setToolTip("Direct full build for Slate Studio (Exe + Setup)")
         self.btn_vfx.setStyleSheet(btn_style)
         self.btn_vfx.clicked.connect(lambda: self.run_component_build("vfx"))
 
-        self.btn_ops = QPushButton("🏢 BUILD STUDIO OPS")
+        self.btn_ops = QPushButton("Build Slate Operations")
         self.btn_ops.setToolTip("Direct full build for Slate Operations (Exe + Setup)")
         self.btn_ops.setStyleSheet(btn_style)
         self.btn_ops.clicked.connect(lambda: self.run_component_build("ops"))
 
-        self.btn_server = QPushButton("🖥️ BUILD SERVER")
+        self.btn_server = QPushButton("Build Slate Server")
         self.btn_server.setToolTip("Direct full build for Slate Central Server (Exe + Setup)")
         self.btn_server.setStyleSheet(btn_style)
         self.btn_server.clicked.connect(lambda: self.run_component_build("server"))
 
-        self.btn_clean = QPushButton("🧹 CLEAN ARTIFACTS")
+        self.btn_clean = QPushButton("Clean build folders")
         self.btn_clean.setStyleSheet(btn_style)
         self.btn_clean.clicked.connect(self.run_clean)
         
-        self.btn_exe = QPushButton("⚡ ONEDIR / EXE ONLY")
+        self.btn_exe = QPushButton("Program only (no installer)")
         self.btn_exe.setStyleSheet(btn_style)
         self.btn_exe.clicked.connect(self.run_build_exe)
 

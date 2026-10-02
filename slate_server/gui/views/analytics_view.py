@@ -8,7 +8,7 @@ from ..design_system import C, T
 class StatCard(QFrame):
     clicked = Signal(str)
     
-    def __init__(self, title, initial_value="-", icon="📊", parent=None):
+    def __init__(self, title, initial_value="-", icon="chart", parent=None):
         super().__init__(parent)
         self.title = title
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -33,8 +33,15 @@ class StatCard(QFrame):
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
         
-        lbl_icon = QLabel(icon)
-        lbl_icon.setStyleSheet("font-size: 18px; border: none; background: transparent;")
+        # The client's drawn icons, not colour emoji.
+        lbl_icon = QLabel()
+        try:
+            from slate.gui.core.icons import pixmap, has_icon
+            lbl_icon.setPixmap(pixmap(icon if has_icon(icon) else "chart", C.TEXT_SECONDARY, 18))
+        except Exception:
+            lbl_icon.setText("")
+        lbl_icon.setStyleSheet("border: none; background: transparent;")
+        self.icon_name = icon
         
         lbl_title = QLabel(title)
         lbl_title.setStyleSheet(f"font-size: 14px; font-weight: {T.WEIGHT_SEMI}; color: {C.TEXT_SECONDARY}; border: none; background: transparent;")
@@ -178,22 +185,21 @@ class AnalyticsView(QWidget):
         # --- STAT CARDS GRID ---
         cards_layout = QGridLayout()
         cards_layout.setSpacing(20)
+        self.cards_layout = cards_layout
         
-        self.card_connections = StatCard("Active PCs", "0", "💻")
-        self.card_projects = StatCard("Total Projects", "-", "📁")
-        self.card_assets = StatCard("Stock Assets", "-", "🎞️")
-        self.card_load = StatCard("DB Load", "0%", "🔥")
-        self.card_db_size = StatCard("Database Size", "-", "🗄️")
-        self.card_cpu = StatCard("CPU Usage", "0%", "⚙️")
-        self.card_ram = StatCard("RAM Usage", "0%", "🧠")
-        
-        cards_layout.addWidget(self.card_connections, 0, 0)
-        cards_layout.addWidget(self.card_projects, 0, 1)
-        cards_layout.addWidget(self.card_assets, 0, 2)
-        cards_layout.addWidget(self.card_load, 0, 3)
-        cards_layout.addWidget(self.card_db_size, 1, 0)
-        cards_layout.addWidget(self.card_cpu, 1, 1)
-        cards_layout.addWidget(self.card_ram, 1, 2)
+        self.card_connections = StatCard("Active PCs", "0", "monitor")
+        self.card_projects = StatCard("Total Projects", "-", "folder")
+        self.card_assets = StatCard("Stock Assets", "-", "film")
+        self.card_load = StatCard("DB Load", "0%", "chart")
+        self.card_db_size = StatCard("Database Size", "-", "database")
+        self.card_cpu = StatCard("CPU Usage", "0%", "cpu")
+        self.card_ram = StatCard("RAM Usage", "0%", "server")
+        self.cards = [self.card_connections, self.card_projects, self.card_assets,
+                      self.card_load, self.card_db_size, self.card_cpu, self.card_ram]
+        # Three to a row unless there is room for four: four needed 1,020 px
+        # and the window gives the page 980 at its default size.
+        self._card_columns = 0
+        self._arrange_cards(3)
         
         main_layout.addLayout(cards_layout)
         
@@ -272,6 +278,19 @@ class AnalyticsView(QWidget):
         
         main_layout.addWidget(self.table)
         
+    def _arrange_cards(self, columns: int):
+        if columns == self._card_columns:
+            return
+        self._card_columns = columns
+        for card in self.cards:
+            self.cards_layout.removeWidget(card)
+        for i, card in enumerate(self.cards):
+            self.cards_layout.addWidget(card, i // columns, i % columns)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._arrange_cards(4 if self.width() >= 1100 else 3)
+
     def set_sessions(self, rows):
         """
         Every connected session with how long it has been in that state.

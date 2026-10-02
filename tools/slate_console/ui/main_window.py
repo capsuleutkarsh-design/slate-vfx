@@ -49,8 +49,8 @@ class MainWindow(QMainWindow):
         self.build_tab = BuildTab()
         self.test_tab = TestTab()
         
-        self.tabs.addTab(self.build_tab, "🔥 THE FORGE")
-        self.tabs.addTab(self.test_tab, "🧪 THE LAB")
+        self.tabs.addTab(self.build_tab, "Build")
+        self.tabs.addTab(self.test_tab, "Tests")
         
         layout.addWidget(self.tabs)
 
