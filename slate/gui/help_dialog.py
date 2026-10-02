@@ -16,10 +16,11 @@ whatever you were reading.
     show_help(self, "leave", mode="ops")
 """
 
+import html
 import logging
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QColor, QFont, QTextDocument
 from PySide6.QtWidgets import (
     QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QStackedWidget, QTextBrowser, QVBoxLayout,
@@ -35,20 +36,27 @@ from .core.icons import icon as drawn_icon
 # named here still appears, under "More" - so adding one to the JSON is enough
 # to make it show up, and forgetting to list it here is untidy rather than
 # invisible.
+#
+# The same groups, names and membership as the sidebar (main_window_builder):
+# Help used to say People / IT / System while the sidebar said HRMS / IT &
+# Infra / Administration, with Users & Roles and Admin Panel in other places.
 GROUPS = [
-    ("Start here", ["getting_started", "home"]),
-
-    # The VFX client's own screens.
-    ("Production", ["folder_creator", "rename_tool", "stock_browser",
-                    "shot_review", "dashboard", "scheduling", "bidding"]),
-
-    # The operations shell's. Split into the two teams that use them rather
-    # than one long list, because almost nobody works across both.
-    ("People",     ["attendance", "leave", "joining_leaving", "users_roles"]),
-    ("IT",         ["it_support", "hardware", "licences", "deployment"]),
-
-    ("System",     ["settings", "admin_panel", "tester", "workspace_info"]),
+    ("Start here",     ["getting_started", "home"]),
+    ("Production",     ["folder_creator", "rename_tool", "stock_browser",
+                        "shot_review", "dashboard", "scheduling", "bidding"]),
+    ("HRMS",           ["attendance", "leave", "joining_leaving"]),
+    ("IT & Infra",     ["hardware", "licences", "it_support", "deployment"]),
+    ("Administration", ["users_roles", "admin_panel"]),
+    ("System",         ["tester", "settings", "workspace_info"]),
 ]
+
+
+def plain_text(content: str) -> str:
+    """A page's words without its markup, so a search for "td" or "code"
+    finds text, not table tags."""
+    doc = QTextDocument()
+    doc.setHtml(content or "")
+    return doc.toPlainText()
 
 _ROLE_SECTION = Qt.ItemDataRole.UserRole
 _ROLE_HEADING = Qt.ItemDataRole.UserRole + 1
@@ -74,6 +82,7 @@ class HelpDialog(QDialog):
 
         self._pages = {}      # section id -> index in the stack
         self._items = []      # (item, section id, searchable text)
+        self._last_section = None   # the page being read, to come back to
 
         self._build()
         self._populate()
@@ -155,7 +164,7 @@ class HelpDialog(QDialog):
         box.setSpacing(Gate.SPACE_2)
 
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Search help...")
+        self.search.setPlaceholderText("Search help\u2026")
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self._filter)
         self.search.setStyleSheet(f"""
@@ -165,6 +174,8 @@ class HelpDialog(QDialog):
                 border-radius: {Gate.RADIUS_SM}px;
                 padding: 7px 10px;
                 color: {Gate.TEXT};
+                font-family: 'Segoe UI', Arial, sans-serif;
+                font-size: 13px;
             }}
             QLineEdit:focus {{ border: 1px solid {Gate.ACCENT}; }}
         """)
@@ -291,7 +302,7 @@ class HelpDialog(QDialog):
 
                 self._items.append((
                     item, section["id"],
-                    (section["title"] + " " + body.get("content", "")).lower()))
+                    (section["title"] + " " + plain_text(body.get("content", ""))).lower()))
 
         self.tally.setText("%d pages" % len(self._items))
 
@@ -299,6 +310,8 @@ class HelpDialog(QDialog):
         self.nothing.setHtml(self.format_html(
             f'<h1 style="color:{Gate.WARN};">{title}</h1><p>{message}</p>'))
         self.stack.setCurrentWidget(self.nothing)
+        # Not the page that was open before: the crumb says what this is.
+        self.crumb.setText("Search")
 
     # ----------------------------------------------------------------- events
     def _picked(self, current, _previous=None):
@@ -308,6 +321,7 @@ class HelpDialog(QDialog):
         if section_id in self._pages:
             self.stack.setCurrentIndex(self._pages[section_id])
             self.crumb.setText(current.text())
+            self._last_section = section_id
 
     def _filter(self, query):
         """
@@ -324,7 +338,8 @@ class HelpDialog(QDialog):
                 self.nav.item(i).setHidden(False)
             self.tally.setText("%d pages" % len(self._items))
             if self.stack.currentWidget() is self.nothing:
-                self.set_active_tab(None)
+                # Back to the page you were reading, not the first one.
+                self.set_active_tab(self._last_section)
             return
 
         matched = 0
@@ -346,7 +361,8 @@ class HelpDialog(QDialog):
 
         self.tally.setText("%d of %d pages match" % (matched, len(self._items)))
         if matched == 0:
-            self._empty("Nothing matches &ldquo;%s&rdquo;" % query,
+            # The query is shown as text, never read as HTML.
+            self._empty("Nothing matches &ldquo;%s&rdquo;" % html.escape(query),
                         "Try another word &mdash; the search reads every page, "
                         "not just their titles.")
 
@@ -361,6 +377,12 @@ class HelpDialog(QDialog):
             super().keyPressEvent(event)
 
     # -------------------------------------------------------------------- api
+    def current_section(self):
+        """The id of the page on screen (None on the search page)."""
+        if self.stack.currentWidget() is self.nothing:
+            return None
+        return self._last_section
+
     def set_active_tab(self, tab_id):
         """Open a section by id. Falls back to the first page."""
         for item, section_id, _haystack in self._items:
