@@ -199,6 +199,7 @@ class FolderCreationWorker(QThread):
         self._planned_dirs = set()
         self._placed = set()
         self._reels_seen = set()
+        self._shots_seen = set()
         self._details = []
 
         self.sequences_found = []
@@ -341,6 +342,11 @@ class FolderCreationWorker(QThread):
 
             if not self.cancelled:
                 self._mkdir(project_path)
+                if getattr(self.lock, "created_folder", False) and not self.dry_run:
+                    # Taking the lock made the project folder a moment ago;
+                    # it is still a folder this run created (the dry run
+                    # counts it too).
+                    self.folders_created += 1
                 for f in base_folders:
                     self._mkdir(project_path / f)
                 for s in list(prod_subs) + list(outsource_subs):
@@ -625,7 +631,11 @@ class FolderCreationWorker(QThread):
         }
         self._entries[key] = entry
         self.ingested_shots.append(entry)
-        if count:
+        # A shot is a destination (reel, shot): two deliveries of SH_050 in
+        # one run are one shot with two scan versions, as on the dashboard.
+        shot_key = (shot.reel.lower(), dest_shot.name.lower())
+        if count and shot_key not in self._shots_seen:
+            self._shots_seen.add(shot_key)
             self.shots_count += 1
         return entry
 

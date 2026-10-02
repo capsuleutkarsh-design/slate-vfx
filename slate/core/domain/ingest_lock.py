@@ -95,8 +95,12 @@ class IngestLock:
         self.holder = holder or os.environ.get("USERNAME") or "unknown"
         self.machine = socket.gethostname()
         self.acquired = False
+        self.created_folder = False
 
     def acquire(self) -> "IngestLock":
+        # Whether this lock made the project folder - the ingest counts it as
+        # a folder it created.
+        self.created_folder = not self.path.parent.exists()
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
         if self.path.exists() and _is_stale(self.path):

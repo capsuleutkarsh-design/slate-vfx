@@ -30,7 +30,8 @@ from PySide6.QtWidgets import (
 from slate.core.domain.ingest_survey import IngestSurvey
 from slate.core.infra.gate import Gate
 from slate.gui.core.controls import form_layout, make_button
-from slate.gui.core.table_style import dim_cell, numeric_item, set_cell_status, style_table
+from slate.gui.core.table_style import (clear_cell_status, dim_cell, numeric_item, set_cell_status,
+                                       style_table)
 
 COPY, MOVE = "copy", "move"
 
@@ -302,7 +303,7 @@ class IngestPreflightDialog(QDialog):
         survey = self.survey
         files = survey.total_files
         size = size_text(survey.total_bytes)
-        shots = len(survey.active_shots())
+        shots = len(survey.destination_shots(self.stitch_mapping))
         reels = len(survey.reels)
         verb = "Simulate" if self.dry_run else ("Move" if self.chosen_operation() == MOVE else "Copy")
         target = self.chosen_project_dir()
@@ -337,8 +338,14 @@ class IngestPreflightDialog(QDialog):
                 if bad:
                     set_cell_status(item, "bad")
                     item.setToolTip(bad)
-                elif not shot.skip:
-                    set_cell_status(item, "accent" if shot.proposed != shot.base else "idle", background=False)
+                elif shot.skip:
+                    dim_cell(item)
+                elif shot.proposed != shot.base:
+                    set_cell_status(item, "accent", background=False)
+                    item.setToolTip("Name tidied by Slate - double-click to change it.")
+                else:
+                    clear_cell_status(item)
+                    item.setToolTip("Double-click to change the shot name.")
             finally:
                 self._filling = False
 
