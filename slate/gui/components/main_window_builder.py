@@ -366,7 +366,7 @@ class MainWindowBuilderMixin:
                     permission_key="Scheduling",
                     user_role=self.user_role,
                     allowed_tabs=self.allowed_tabs,
-                    tooltip="Production Scheduling & Gantt Charts"
+                    tooltip="Milestones, dependencies and a Gantt timeline"
                 )
 
                 # Production Bidding
@@ -377,7 +377,7 @@ class MainWindowBuilderMixin:
                     permission_key="Bidding",
                     user_role=self.user_role,
                     allowed_tabs=self.allowed_tabs,
-                    tooltip="Project Bidding & Cost Tracking"
+                    tooltip="Bids, their revisions and cost tracking"
                 )
 
             if show_ops:

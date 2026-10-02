@@ -96,6 +96,11 @@ CORE = (
 
 # ---- production (Scheduling, Bidding) ----
 PRODUCTION = (
+    # Milestone owners and real dates, bid line items, revisions and tax.
+    step("production_schema", "slate.core.infra.migrations.production_schema:apply_migration"),
+    # Budgets float4 had rounded, put back to the exact figure.
+    step("repair_bid_budgets",
+         "slate.core.infra.migrations.production_schema:repair_bid_budgets", once=True),
 )
 
 # ---- people (Attendance, Leave, HR) ----

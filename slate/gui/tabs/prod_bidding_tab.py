@@ -1,448 +1,780 @@
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
-    QFrame, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox, QDialog, QFormLayout, QComboBox, QDoubleSpinBox, QSpinBox
-)
+"""
+Bidding: what each job is priced at, its revisions, and how won work tracks.
+
+It used to be one dialog with one complexity and one day rate per project, a
+table you could type into without saving, and Approve / Reject / Edit / Delete
+buttons that answered with pop-ups. Editing re-priced a bid at the default
+rate (and an approved one to the tracker's current shot count), Delete removed
+the first of the selected bids for good, the pipeline added every draft of
+every project and the sidebar promised cost tracking that did not exist.
+
+The rules are in core/domain/bidding.py, the SQL in
+core/infra/bid_repository.py. This file is the screen:
+
+    New bid / Edit…        bid_editor_dialog.py: line items, currency, margin,
+                           discount, tax (GST on rupee bids), live totals
+    New revision           a sent or decided bid is changed by revising it;
+                           Compare revisions shows what moved
+    Mark sent / Won / Lost Won and Lost need the 'Approve bids' ability and are
+                           never yours to give on your own bid (Admin and
+                           Developer excepted); Reopen puts a bid back to draft
+    Archive / Restore      bids are kept, never lost; only an Admin can delete a
+                           plain draft for good
+    Tracking               below the table for a won bid: bid vs planned vs
+                           delivered vs actual days and money, per department
+    Export                 the list as CSV/Excel, a bid as a PDF for the client
+    Create shots           a won bid's shots onto the dashboard
+"""
+
+import logging
+from pathlib import Path
+
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QColor
-from slate.core.infra.database_manager import database_manager
-from slate.gui.core.offline_notice import on_database_error
-from slate.gui.core.controls import make_button, page_title, tidy_form
-from slate.gui.core.stat_card import StatStrip
-from slate.gui.core.table_style import style_table, set_cell_status
-from slate.core.infra.gate import Gate
-from slate.gui.core.data_display import money_item, select_row_by_id
+from PySide6.QtWidgets import (
+    QCheckBox, QComboBox, QDialog, QHBoxLayout, QInputDialog, QLabel, QMenu, QSplitter,
+    QTableWidget, QVBoxLayout, QWidget,
+)
+
+from slate.core.domain import bidding as DB
 from slate.core.domain import money
+from slate.core.infra.gate import Gate
+from slate.gui.core.offline_notice import on_database_error
+from slate.gui.core.controls import make_button, page_title
+from slate.gui.core.empty_state import EmptyState
+from slate.gui.core.stat_card import StatStrip
+from slate.gui.core.table_style import dim_cell, set_cell_status, style_table
+from slate.gui.core.data_display import date_item, money_item
 from slate.gui.components.table_tools import (
-    KeepSelection, TableToolbar, make_item, selected_keys, setup_table,
+    KEY_ROLE, KeepSelection, TableToolbar, make_item, select_keys, selected_keys, setup_table,
 )
 
 # Let an outage reach the @on_database_error decorator rather than becoming an
-# empty grid here. Everything else keeps the fallback it already had.
+# empty grid here. Everything else is reported as a failed read.
 try:
     from slate.core.infra.postgres_manager import DatabaseUnavailableError
 except ImportError:                                  # pragma: no cover
     class DatabaseUnavailableError(ConnectionError):
         """Fallback when the manager cannot be imported."""
 
-class AddBidDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("New Project Bid")
-        layout = tidy_form(QFormLayout(self))
-        
-        self.proj_input = QComboBox()
-        self.populate_projects()
-        
-        self.shot_count_input = QSpinBox()
-        self.shot_count_input.setRange(0, 100000)
-        self.shot_count_input.setReadOnly(True) # Auto-calculated from DB
+logger = logging.getLogger(__name__)
 
-        # Each bid has its own currency: the studio's (rupees unless changed
-        # in the studio settings) or the foreign client's. Every amount in the
-        # dialog is shown in it. A dollar sign used to be written into the
-        # widgets, with digits grouped by the Windows locale - Indian here,
-        # western in the table next to it.
-        self.currency_input = QComboBox()
-        for code, cur in money.CURRENCIES.items():
-            self.currency_input.addItem(f"{cur.symbol}  {code} - {cur.name}", code)
-        index = self.currency_input.findData(money.studio_currency())
-        self.currency_input.setCurrentIndex(max(index, 0))
+(C_ID, C_PROJECT, C_CLIENT, C_REV, C_LINES, C_SHOTS, C_DAYS, C_COST, C_PRICE, C_TOTAL,
+ C_STATUS, C_CURRENCY, C_CREATED, C_BY) = range(14)
+HEADERS = ["ID", DB.WORDS["project"], DB.WORDS["client"], DB.WORDS["revision"], "Lines",
+           DB.WORDS["shots"], DB.WORDS["days"], DB.WORDS["cost"], DB.WORDS["price"],
+           DB.WORDS["total"], DB.WORDS["status"], "Currency", "Created", "Created by"]
 
-        self.cost_input = QDoubleSpinBox()
-        self.cost_input.setRange(0, 100000000)
-        self.cost_input.setDecimals(2)
-        # No locale grouping in an editable box - the formatted figure is
-        # shown by the budget line below instead.
-        self.cost_input.setGroupSeparatorShown(False)
-        self._rate_touched = False
-        self.cost_input.valueChanged.connect(self.update_budget)
-        self.cost_input.editingFinished.connect(self._rate_edited)
 
-        from slate.core.domain.bidding import COMPLEXITIES, day_rate
-        self.complexity_input = QComboBox()
-        self.complexity_input.addItems(list(COMPLEXITIES))
-        self.complexity_input.setCurrentText("Medium")
-        self.complexity_input.currentTextChanged.connect(self.update_budget)
+def export_bid_pdf(parent, bid, lines, totals, path: str = None):
+    """
+    Print one bid to PDF for the client (cost and margin left out). Returns
+    the path written, or None. The file dialog starts in Documents.
+    """
+    from PySide6.QtGui import QPageSize, QPdfWriter, QTextDocument
+    from PySide6.QtWidgets import QFileDialog
+    from slate.core.domain.bid_export import bid_document_html
+    from slate.gui.components.feedback import toast
+    if path is None:
+        default = str(Path.home() / "Documents" / f"Bid_{bid.project_code}_v{bid.revision}.pdf")
+        path, _ = QFileDialog.getSaveFileName(parent, "Export bid as PDF", default, "PDF (*.pdf)")
+        if not path:
+            return None
+    try:
+        from slate.core.infra.studio_settings import get_setting
+        studio = str(get_setting("studio_name", "") or "")
+    except Exception:
+        studio = ""
+    document = QTextDocument()
+    document.setHtml(bid_document_html(bid, lines, totals, studio=studio))
+    writer = QPdfWriter(path)
+    writer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
+    writer.setResolution(150)
+    document.print_(writer)
+    del writer
+    if Path(path).is_file() and Path(path).stat().st_size > 0:
+        toast(parent, f"Saved {Path(path).name}.", "success")
+        return path
+    toast(parent, f"Could not write {path}.", "error")
+    return None
 
-        self.margin_input = QDoubleSpinBox()
-        self.margin_input.setRange(0, 100)
-        self.margin_input.setSuffix(" %")
-        self.margin_input.setValue(20.0)
-        self.margin_input.valueChanged.connect(self.update_budget)
 
-        self.days_input = QDoubleSpinBox()
-        self.days_input.setRange(0, 1000000)
-        self.days_input.setSuffix(" days")
-        self.days_input.setReadOnly(True)
+class _FillSplitter(QSplitter):
+    """
+    Asks only for its minimum height. The page title wraps, so the page frame
+    sizes the page by its preferred height - and the table's preferred height
+    pushed the page past a 1280x720 screen into a scroll bar. The splitter
+    takes whatever room is left instead.
+    """
 
-        # Kept (the tab reads it) but not shown: the figure is shown formatted
-        # in its currency by budget_label.
-        self.budget_input = QDoubleSpinBox()
-        self.budget_input.setRange(0, 100000000000)
-        self.budget_input.setDecimals(2)
-        self.budget_input.setReadOnly(True)
-        self.budget_input.setVisible(False)
-        self.budget_label = QLabel("")
-        self.budget_label.setStyleSheet("font-weight: bold;")
+    def sizeHint(self):
+        hint = super().sizeHint()
+        hint.setHeight(self.minimumSizeHint().height())
+        return hint
 
-        self._apply_currency(set_rate=True)
-        self.currency_input.currentIndexChanged.connect(lambda *_: self._apply_currency())
-
-        layout.addRow("Project Code:", self.proj_input)
-        layout.addRow("Currency:", self.currency_input)
-        layout.addRow("Total Shots (Auto):", self.shot_count_input)
-        layout.addRow("Average Complexity:", self.complexity_input)
-        layout.addRow("Artist Day Rate:", self.cost_input)
-        layout.addRow("Target Margin:", self.margin_input)
-        layout.addRow("Estimated Artist Days:", self.days_input)
-        layout.addRow("Final Estimated Budget:", self.budget_label)
-        
-        self.proj_input.currentTextChanged.connect(self.on_project_changed)
-        if self.proj_input.count() > 0:
-            self.on_project_changed(self.proj_input.currentText())
-
-        btn_layout = QHBoxLayout()
-        btn_layout.addStretch()
-        btn_layout.addWidget(make_button("Cancel", on_click=self.reject))
-        btn_layout.addWidget(make_button("Save Bid", "primary", on_click=self.accept))
-        layout.addRow(btn_layout)
-
-    @on_database_error
-    def populate_projects(self):
-        query = "SELECT code FROM tracking_projects WHERE active=1 ORDER BY code"
-        try:
-            projects = database_manager.execute_query(query) or []
-            for p in projects:
-                self.proj_input.addItem(p.get('code', ''))
-        except DatabaseUnavailableError:
-            raise
-        except Exception as e:
-            print(f"Error loading projects: {e}")
-
-    @on_database_error
-    def on_project_changed(self, proj_code):
-        if not proj_code:
-            return
-        query = "SELECT COUNT(id) as count FROM tracking_shots WHERE project_code = %s"
-        try:
-            res = database_manager.execute_query(query, (proj_code,))
-            count = res[0]['count'] if res else 0
-            self.shot_count_input.setValue(count)
-            self.update_budget()
-        except DatabaseUnavailableError:
-            raise
-        except Exception as e:
-            print(f"Error fetching shots: {e}")
-
-    def currency(self) -> str:
-        return self.currency_input.currentData() or money.studio_currency()
-
-    def set_currency(self, code) -> None:
-        index = self.currency_input.findData(money.normalise_code(code, "USD"))
-        if index >= 0:
-            self.currency_input.setCurrentIndex(index)
-
-    def _rate_edited(self):
-        self._rate_touched = True
-
-    def _apply_currency(self, set_rate: bool = False):
-        """Show the day rate in the bid's currency, and the studio's rate for it."""
-        code = self.currency()
-        self.cost_input.setPrefix(money.currency(code).symbol + " ")
-        if set_rate or not self._rate_touched:
-            rate = money.day_rate(code)
-            if rate is None and code == "USD":
-                from slate.core.domain.bidding import day_rate as _day_rate
-                rate = _day_rate()
-            if rate is not None:
-                self.cost_input.setValue(float(rate))
-        self.update_budget()
-
-    def update_budget(self):
-        # The days-per-shot figures used to be three literals here, so a studio
-        # whose comp runs heavier than the default had no way to say so.
-        from slate.core.domain.bidding import estimate
-
-        if not hasattr(self, "budget_label"):
-            return      # still being built
-        result = estimate(self.shot_count_input.value(),
-                          self.complexity_input.currentText(),
-                          rate=self.cost_input.value(),
-                          margin=self.margin_input.value())
-
-        self.days_input.setValue(result["days"])
-        self.budget_input.setValue(result["price"])
-        self.budget_label.setText(money.format_money(result["price"], self.currency()))
 
 class ProdBiddingTab(QWidget):
-    def __init__(self, parent=None, user_data=None):
+    def __init__(self, parent=None, user_data=None, repo=None):
         super().__init__(parent)
-        # Who is looking, so the tab can ask access.can(self.user_roles, ...)
-        # (schedule_write / approve_bid). It was built without any user at all.
+        # Who is looking: Won/Lost need approve_bid, and nobody decides their own bid.
         self.user_data = dict(user_data or {})
         roles = self.user_data.get("roles") or self.user_data.get("role") or []
         self.user_roles = [roles] if isinstance(roles, str) else list(roles)
+        self.username = str(self.user_data.get("username") or "")
+        from slate.core.domain import access
+        self.can_approve = access.can(self.user_roles, "approve_bid")
+        self.is_superuser = access.is_superuser(self.user_roles)
+        self.can_change_settings = self.can_approve or access.can(self.user_roles, "studio_settings")
+        if repo is None:
+            from slate.core.infra.bid_repository import BidRepository
+            repo = BidRepository(roles=self.user_roles, username=self.username)
+        self.repo = repo
+        self.bids = []
+        self.by_id = {}
+
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(10, 10, 10, 10)
-        
         self.build_ui(main_layout)
 
+    # ------------------------------------------------------------------ layout
     def build_ui(self, main_layout):
-        main_layout.addWidget(page_title("Bidding", "Bids, their estimates and whether they were won"))
+        main_layout.addWidget(page_title("Bids", "What each job is priced at, its revisions, and how "
+                                                 "won work is tracking"))
 
-        # Summary on one compact line, so the table keeps the height at 1366x768.
         strip = StatStrip(compact=True)
-        self.lbl_total = strip.add("Total bids", "0", tone="accent")
-        self.lbl_value = strip.add("Pipeline value", "0", tone="ok")
-        self.lbl_approved = strip.add("Approved", "0", tone="accent")
+        self.lbl_total = strip.add("Bids", "0", tone="accent",
+                                   tooltip="Bids shown (latest revision of each)")
+        self.lbl_value = strip.add("Open pipeline", "0", tone="info",
+                                   tooltip="Draft and sent bids - the newest per project")
+        self.lbl_approved = strip.add("Won", "0", tone="ok")
         main_layout.addWidget(strip)
 
         controls = QHBoxLayout()
         controls.setSpacing(Gate.SPACE_2)
-        controls.addWidget(make_button("Create Bid", "primary", icon="plus", on_click=self.add_bid))
+        self.new_button = make_button("New bid", "primary", icon="plus", on_click=self.add_bid)
+        self.edit_button = make_button("Edit…", icon="edit", on_click=self.edit_bid,
+                                       tooltip="Open the selected bid (or double-click it)")
+        self.revise_button = make_button("New revision", icon="copy", on_click=self.revise_bid,
+                                         tooltip="Copy the bid into a new draft revision; this one is kept")
+        self.sent_button = make_button("Mark sent", icon="send", on_click=lambda: self.update_status(DB.SENT))
+        self.won_button = make_button("Won", icon="check", on_click=lambda: self.update_status(DB.WON))
+        self.lost_button = make_button("Lost", icon="x-circle", on_click=lambda: self.update_status(DB.LOST))
+        self.archive_button = make_button("Archive…", icon="archive", on_click=self.archive_bids)
+        self.restore_button = make_button("Restore", icon="undo", on_click=self.restore_bids)
+        self.more_button = make_button("More", "ghost", icon="more")
+        self.more_menu = QMenu(self.more_button)
+        self.more_button.setMenu(self.more_menu)
+        self.more_menu.aboutToShow.connect(self._fill_more_menu)
+        for w in (self.new_button, self.edit_button, self.revise_button):
+            controls.addWidget(w)
         controls.addSpacing(Gate.SPACE_2)
-        # Approve and Reject are one decision, so they sit together.
-        controls.addWidget(make_button("Approve Bid", on_click=lambda: self.update_status("Approved")))
-        controls.addWidget(make_button("Reject Bid", on_click=lambda: self.update_status("Rejected")))
+        # The decision buttons, together - and only for those who may decide.
+        for w in (self.sent_button, self.won_button, self.lost_button):
+            controls.addWidget(w)
+        self.won_button.setVisible(self.can_approve or self.is_superuser)
+        self.lost_button.setVisible(self.can_approve or self.is_superuser)
         controls.addSpacing(Gate.SPACE_2)
-        controls.addWidget(make_button("Edit Bid", on_click=self.edit_bid))
-        controls.addWidget(make_button("Delete Bid", "danger", on_click=self.delete_bid))
+        controls.addWidget(self.archive_button)
+        controls.addWidget(self.restore_button)
+        controls.addWidget(self.more_button)
         controls.addStretch()
+        self.revisions_box = QCheckBox("All revisions")
+        self.revisions_box.setToolTip("Show superseded revisions too, not only the latest")
+        self.archived_box = QCheckBox("Archived")
+        self.archived_box.setToolTip("Show archived bids too")
+        for box in (self.revisions_box, self.archived_box):
+            box.toggled.connect(lambda *_: self.load_data())
+            controls.addWidget(box)
         main_layout.addLayout(controls)
 
-        self.grid = QTableWidget(0, 9)
-        self.grid.setHorizontalHeaderLabels(["ID", "Project Code", "Shots", "Complexity", "Est. Days", "Margin", "Est. Cost", "Final Budget", "Status"])
+        self.grid = QTableWidget(0, len(HEADERS))
+        self.grid.setHorizontalHeaderLabels(HEADERS)
         self.style_table(self.grid)
-        # Read-only (typing into Final Budget saved nothing); double-click
-        # edits the bid; headers sort money and days by value.
+        # Read-only (typing into a price saved nothing); double-click opens the bid.
         setup_table(self.grid)
+        self.grid.setWordWrap(False)
         self.grid.doubleClicked.connect(lambda _index: self.edit_bid())
+        self.grid.itemSelectionChanged.connect(self._selection_changed)
 
-        self.toolbar = TableToolbar(self.grid, placeholder="Search project, complexity or status…",
-                                    columns=(1, 3, 8), on_refresh=self.load_data)
-        self.project_filter = self.toolbar.add_filter("Project", [("All projects", "")], column=1)
+        self.toolbar = TableToolbar(self.grid, placeholder="Search project, client or person…",
+                                    columns=(C_PROJECT, C_CLIENT, C_STATUS, C_BY), on_refresh=self.load_data)
+        self.project_filter = self.toolbar.add_filter("Project", [("All projects", "")], column=C_PROJECT)
         self.status_filter = self.toolbar.add_filter(
-            "Status", [("All statuses", ""), ("Draft", "Draft"), ("Approved", "Approved"),
-                       ("Rejected", "Rejected")], column=8)
+            "Status", [("All statuses", "")] + [(DB.status_label(s), DB.status_label(s))
+                                               for s in DB.STATUSES], column=C_STATUS,
+            match=lambda cell, value: cell.casefold().startswith(str(value).casefold()))
+        self.currency_filter = self.toolbar.add_filter(
+            "Currency", [("All currencies", "")] + [(f"{c.symbol} {code}", code)
+                                                   for code, c in money.CURRENCIES.items()],
+            column=C_CURRENCY)
+        for combo, width in ((self.project_filter, 22), (self.status_filter, 12),
+                             (self.currency_filter, 12)):
+            combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+            combo.setMinimumContentsLength(width)
+            combo.view().setMinimumWidth(240)
+        self.toolbar.filter.counted.connect(self._filtered)
         main_layout.addWidget(self.toolbar)
-        # Other people's bids appear without a restart.
+
         from slate.gui.components.auto_refresh import AutoRefresh
         self._auto_refresh = AutoRefresh(self, self.load_data, seconds=30,
-                                         topics=("prod_bidding",))
-        
-        self.grid.hideColumn(0) # Hide ID
-        main_layout.addWidget(self.grid)
-        # First read only now that the table is in the layout: a notice for a
-        # failed read takes the table's place, and with no layout yet it
-        # floated as a window of its own while the empty state said
-        # there was nothing here.
+                                         topics=("prod_bidding", "prod_bid_lines"))
+
+        self.grid.hideColumn(C_ID)
+        self.grid.hideColumn(C_CURRENCY)
+        from slate.gui.tabs.bid_tracking_view import BidTrackingView
+        self.tracking = BidTrackingView(self)
+        # Small minimums, so the page fits a 1280x720 screen without scrolling.
+        self.grid.setMinimumHeight(110)
+        self.tracking.setMinimumHeight(90)
+        self.tracking.table.setMinimumHeight(40)
+        split = _FillSplitter(Qt.Orientation.Vertical)
+        split.addWidget(self.grid)
+        split.addWidget(self.tracking)
+        split.setStretchFactor(0, 3)
+        split.setStretchFactor(1, 2)
+        split.setChildrenCollapsible(False)
+        self.splitter = split
+        main_layout.addWidget(split, 1)
+
+        self.empty = EmptyState.over(
+            self.grid, "No bids yet",
+            "Create a bid for a project to see its price and the pipeline here.",
+            primary=("New bid", self.add_bid), glyph="money")
+        self._sync_buttons()
+        # First read only now that the table is in the layout.
         self.load_data()
 
+    def style_table(self, table: QTableWidget):
+        """The project takes the spare width; counts and money right-aligned to their content."""
+        style_table(table, {
+            DB.WORDS["project"]: ("interactive", 170),
+            DB.WORDS["client"]: "stretch",
+            DB.WORDS["revision"]: "contents",
+            "Lines": "numeric",
+            DB.WORDS["shots"]: "numeric",
+            DB.WORDS["days"]: "numeric",
+            DB.WORDS["cost"]: "numeric",
+            DB.WORDS["price"]: "numeric",
+            DB.WORDS["total"]: "numeric",
+            DB.WORDS["status"]: "contents",
+            "Created": "contents",
+            "Created by": ("interactive", 140),
+        })
+
+    # ------------------------------------------------------------------ data
     @on_database_error
-    def load_data(self):
+    def load_data(self, *_):
         try:
-            query = "SELECT * FROM prod_bidding ORDER BY id DESC"
-            bids = database_manager.execute_query(query) or []
+            bids = self.repo.list(include_archived=self.archived_box.isChecked(),
+                                  all_revisions=self.revisions_box.isChecked())
         except DatabaseUnavailableError:
             raise
         except Exception as e:
             # A failed read is not an empty pipeline.
-            import logging
             from slate.gui.components.state_notice import show_load_error
-            logging.exception("Bids could not be read")
+            logger.exception("Bids could not be read")
             show_load_error(self, e, retry=self.load_data, what="the bids")
             return
+        from slate.gui.components.state_notice import clear_state
+        clear_state(self)
+        self.bids = bids
+        self.by_id = {b.id: b for b in bids}
+        self._names = self._display_names({b.created_by for b in bids if b.created_by})
 
         combo = self.project_filter
         keep = combo.currentData()
         combo.blockSignals(True)
         combo.clear()
         combo.addItem("All projects", "")
-        for code in sorted({str(b.get('project_code') or '') for b in bids if b.get('project_code')}):
-            combo.addItem(code, code)
+        projects = {}
+        for b in bids:
+            projects.setdefault(b.project_code, b.project_name)
+        for code in sorted(projects, key=str.casefold):
+            name = projects[code]
+            combo.addItem(f"{code} – {name}" if name and name.casefold() != code.casefold() else code, code)
         index = combo.findData(keep)
         combo.setCurrentIndex(index if index >= 0 else 0)
         combo.blockSignals(False)
 
-        total = len(bids)
-        # Pipeline value is work that might still happen. Rejected bids were
-        # counted in it, so the figure grew every time the studio lost a job.
-        # Kept per currency - rupees and dollars do not add up to anything -
-        # and shown short (3.8 Cr, 380.3M) with the exact figures in the
-        # tooltip. It used to be whole dollars while the table showed cents.
-        totals = money.sum_by_currency(
-            (row.get('estimated_budget') or 0, row.get('currency') or 'USD') for row in bids
-            if str(row.get('status') or '') in ('Draft', 'Approved'))
-        approved = sum(1 for row in bids if row.get('status') == 'Approved')
-
-        self.lbl_total.set_value(total)
-        self.lbl_value.set_value(money.format_totals(totals, compact=True))
-        self.lbl_value.setToolTip(money.format_totals(totals))
-        self.lbl_approved.set_value(approved)
-
-        # The selection follows the bid (by id), not the row number: after a
-        # delete the highlighted rows used to be other bids.
+        # The selection follows the bid (by id), not the row number.
         with KeepSelection(self.grid):
             self._fill(bids)
+        self.toolbar.filter.apply()
+        self.empty.refresh()
+        self._update_cards()
+        self._selection_changed()
+
+    @staticmethod
+    def _display_names(usernames):
+        try:
+            from slate.core.domain.people import display_names
+            return {u: (n or u) for u, n in display_names(usernames).items()}
+        except DatabaseUnavailableError:
+            raise
+        except Exception:
+            return {u: u for u in usernames}
+
+    def _update_cards(self):
+        shown = self.visible_bids()
+        p = DB.pipeline(b.as_dict() for b in shown)
+        self.lbl_total.set_value(len(shown))
+        self.lbl_value.set_value(money.format_totals(p.open_totals, compact=True))
+        self.lbl_value.setToolTip(f"{p.open_count} open "
+                                  + ("bid" if p.open_count == 1 else "bids")
+                                  + f" (the newest per project): {money.format_totals(p.open_totals)}")
+        self.lbl_approved.set_value(money.format_totals(p.won_totals, compact=True)
+                                    if p.won_count else "0")
+        self.lbl_approved.setToolTip(f"{p.won_count} won: {money.format_totals(p.won_totals)}")
+
+    def visible_bids(self):
+        out = []
+        for row in range(self.grid.rowCount()):
+            if not self.grid.isRowHidden(row):
+                bid = self._bid_of_row(row)
+                if bid is not None:
+                    out.append(bid)
+        return out
+
+    def _bid_of_row(self, row):
+        item = self.grid.item(row, C_ID)
+        return self.by_id.get(item.data(KEY_ROLE)) if item else None
 
     def _fill(self, bids):
+        right = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        self.grid.setRowCount(0)
         self.grid.setRowCount(len(bids))
-        for r, row in enumerate(bids):
-            bid_id = row.get('id')
-            days = row.get('estimated_days', 0) or 0
-            margin = row.get('target_margin', 0) or 0
-            self.grid.setItem(r, 0, make_item(str(bid_id or ''), sort_value=bid_id, key=bid_id))
-            self.grid.setItem(r, 1, make_item(str(row.get('project_code', ''))))
-            self.grid.setItem(r, 2, make_item(str(row.get('shot_count', 0)),
-                                              sort_value=row.get('shot_count', 0) or 0))
-            self.grid.setItem(r, 3, make_item(str(row.get('complexity', ''))))
-            self.grid.setItem(r, 4, make_item(f"{days:.1f} d", sort_value=days))
-            self.grid.setItem(r, 5, make_item(f"{margin:.0f}%", sort_value=margin))
-            # Bids made before currencies were recorded were in dollars.
-            code = row.get('currency') or 'USD'
-            self.grid.setItem(r, 6, money_item(row.get('estimated_cost') or 0, code))
-            self.grid.setItem(r, 7, money_item(row.get('estimated_budget') or 0, code))
+        for r, b in enumerate(bids):
+            # Build every cell of the row from the record: a bad value shows a
+            # dash rather than stopping the table half way with stale rows.
+            self.grid.setItem(r, C_ID, make_item(str(b.id), sort_value=b.id, key=b.id))
+            # A bid from before project codes were stored has only its name.
+            project = make_item(b.project_code or b.project_name or "—",
+                                tooltip=(f"{b.project_code} – {b.project_name}"
+                                         if b.project_code and b.project_name else
+                                         (b.project_code or b.project_name)))
+            self.grid.setItem(r, C_PROJECT, project)
+            client = make_item(b.client_name or "—", tooltip=b.client_name)
+            if not b.client_name:
+                dim_cell(client)
+            self.grid.setItem(r, C_CLIENT, client)
+            self.grid.setItem(r, C_REV, make_item(f"v{b.revision}", sort_value=b.revision))
+            lines = make_item(str(b.line_count) if b.has_lines else "—",
+                              sort_value=b.line_count, align=right,
+                              tooltip="" if b.has_lines else "Made before line items: one line")
+            if not b.has_lines:
+                dim_cell(lines)
+            self.grid.setItem(r, C_LINES, lines)
+            self.grid.setItem(r, C_SHOTS, make_item(f"{b.shot_count:,}", sort_value=b.shot_count, align=right))
+            self.grid.setItem(r, C_DAYS, make_item(DB.fmt_days(b.estimated_days),
+                                                   sort_value=b.estimated_days, align=right))
+            self.grid.setItem(r, C_COST, money_item(b.estimated_cost, b.currency))
+            self.grid.setItem(r, C_PRICE, money_item(b.estimated_budget, b.currency))
+            total = money_item(b.total_amount, b.currency)
+            if b.tax_amount:
+                total.setToolTip(f"Includes {b.tax_label or 'tax'} {DB.fmt_percent(b.tax)}: "
+                                 f"{money.format_money(b.tax_amount, b.currency)}")
+            self.grid.setItem(r, C_TOTAL, total)
+            status_text = DB.status_label(b.status) + (" (archived)" if b.archived else "")
+            status = make_item(status_text)
+            set_cell_status(status, "idle" if b.archived else DB.status_tone(b.status), background=False)
+            if b.decided_by:
+                status.setToolTip(f"{DB.status_label(b.status)} - decided by "
+                                  f"{self._names.get(b.decided_by, b.decided_by)}")
+            self.grid.setItem(r, C_STATUS, status)
+            self.grid.setItem(r, C_CURRENCY, make_item(b.currency))
+            self.grid.setItem(r, C_CREATED, date_item(b.created_at))
+            by = make_item(self._names.get(b.created_by, b.created_by) if b.created_by else "—",
+                           tooltip=b.created_by)
+            if not b.created_by:
+                dim_cell(by)
+            self.grid.setItem(r, C_BY, by)
+            if b.archived or b.status == DB.SUPERSEDED:
+                for c in (C_PROJECT, C_REV, C_SHOTS, C_DAYS, C_COST, C_PRICE, C_TOTAL):
+                    item = self.grid.item(r, c)
+                    if item is not None:
+                        dim_cell(item)
 
-            status_item = make_item(str(row.get('status', '')))
-            if status_item.text() == "Approved":
-                set_cell_status(status_item, "ok", background=False)
-            elif status_item.text() == "Rejected":
-                set_cell_status(status_item, "bad", background=False)
-            self.grid.setItem(r, 8, status_item)
-
-    def add_bid(self):
-        dialog = AddBidDialog(self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            # No quote doubling: the insert below is parameterised.
-            proj = dialog.proj_input.currentText().strip()
-            shots = dialog.shot_count_input.value()
-            comp = dialog.complexity_input.currentText()
-            margin = dialog.margin_input.value()
-            days = dialog.days_input.value()
-            
-            # Recompute cost based on days and rate
-            cost = days * dialog.cost_input.value()
-            budget = dialog.budget_input.value()
-            
-            if not proj:
-                QMessageBox.warning(self, "Error", "Project Code is required.")
-                return
-                
-            query = """
-            INSERT INTO prod_bidding
-            (project_code, project_name, shot_count, complexity, estimated_days, target_margin, estimated_cost, estimated_budget, status, currency)
-            VALUES
-            (%s, %s, %s, %s, %s, %s, %s, %s, 'Draft', %s)
-            RETURNING id
-            """
-            params = (proj, proj, shots, comp, days, margin, cost, budget, dialog.currency())
-            # execute_query(..., fetch=False) returned None even when the bid
-            # was written, so neither the message nor the reload ran and people
-            # saved again, making duplicates. Checked, reloaded, selected.
-            result = database_manager.execute_update(query, params)
-            self.load_data()
-            if not result:
-                QMessageBox.warning(self, "Not saved", "The bid was not saved:\n\n%s"
-                                    % (result.error or "the database refused it"))
-                return
-            if result.last_id is not None:
-                select_row_by_id(self.grid, result.last_id)
-            QMessageBox.information(self, "Draft bid created", f"Draft bid created for {proj}.")
-
-    def _selected_bid_id(self):
-        keys = [k for k in selected_keys(self.grid) if k is not None]
-        return int(keys[0]) if keys else None
-
-    def edit_bid(self):
-        """
-        Change a bid. There was no way to - a typo meant a second bid for the
-        same project and two rows in the pipeline value.
-        """
-        bid_id = self._selected_bid_id()
-        if bid_id is None:
-            QMessageBox.warning(self, "Selection Empty", "Please select a bid to edit.")
+    def _filtered(self, visible, total):
+        if not hasattr(self, "empty"):
             return
+        narrowed = bool(total) and visible == 0
+        self.empty.set_filtered(narrowed, on_clear=self.toolbar.filter.clear, noun="bids")
+        if narrowed:
+            self.empty.setVisible(True)
+            self.empty.raise_()
+        else:
+            self.empty.refresh()
+        self._update_cards()
 
-        dialog = AddBidDialog(self)
-        row = database_manager.execute_query(
-            "SELECT * FROM prod_bidding WHERE id = %s", (bid_id,), fetch="one")
-        if row:
-            row = dict(row)
-            index = dialog.proj_input.findText(str(row.get("project_code") or ""))
-            if index >= 0:
-                dialog.proj_input.setCurrentIndex(index)
-            dialog.complexity_input.setCurrentText(str(row.get("complexity") or "Medium"))
-            dialog.set_currency(row.get("currency") or "USD")
-            try:
-                dialog.margin_input.setValue(float(row.get("target_margin") or 0))
-            except (TypeError, ValueError):
-                pass
+    # ------------------------------------------------------------------ selection
+    def _selected(self):
+        return [self.by_id[int(k)] for k in selected_keys(self.grid)
+                if k is not None and int(k) in self.by_id]
 
+    def _selection_changed(self):
+        self._sync_buttons()
+        chosen = self._selected()
+        if len(chosen) == 1 and chosen[0].status == DB.WON:
+            self._show_tracking(chosen[0])
+        elif len(chosen) == 1:
+            self.tracking.show_nothing(f"{chosen[0].title} is {DB.status_label(chosen[0].status).lower()}"
+                                       " - tracking starts once a bid is won.")
+        else:
+            self.tracking.show_nothing()
+
+    @on_database_error
+    def _show_tracking(self, bid):
+        try:
+            tracking = self.repo.tracking(bid)
+        except DatabaseUnavailableError:
+            raise
+        except Exception as exc:
+            logger.exception("Tracking not read")
+            self.tracking.show_nothing(f"The dashboard figures could not be read: {exc}")
+            return
+        self.tracking.show_tracking(bid, tracking)
+
+    def _sync_buttons(self):
+        chosen = self._selected()
+        one = len(chosen) == 1
+        live = [b for b in chosen if not b.archived]
+        self.edit_button.setEnabled(one)
+        self.edit_button.setText("Edit…" if not one or chosen[0].editable else "Open…")
+        self.revise_button.setEnabled(one and not chosen[0].archived and chosen[0].status != DB.SUPERSEDED)
+        self.sent_button.setEnabled(bool(live) and all(DB.can_change(b.status, DB.SENT) for b in live))
+        self.won_button.setEnabled(bool(live) and all(DB.can_change(b.status, DB.WON) for b in live))
+        self.lost_button.setEnabled(bool(live) and all(DB.can_change(b.status, DB.LOST) for b in live))
+        self.archive_button.setEnabled(bool(live))
+        self.archive_button.setVisible(not chosen or bool(live))
+        archived = [b for b in chosen if b.archived]
+        self.restore_button.setVisible(bool(archived))
+        self.restore_button.setEnabled(bool(archived))
+
+    def _fill_more_menu(self):
+        menu = self.more_menu
+        menu.clear()
+        chosen = self._selected()
+        one = chosen[0] if len(chosen) == 1 else None
+        reopen = menu.addAction("Reopen as draft", lambda: self.update_status(DB.DRAFT))
+        reopen.setEnabled(bool(chosen) and all(DB.can_change(b.status, DB.DRAFT) and not b.archived
+                                                for b in chosen))
+        menu.addSeparator()
+        compare = menu.addAction("Compare revisions…", self.compare_revisions)
+        compare.setEnabled(one is not None and (one.revision > 1 or one.status == DB.SUPERSEDED))
+        menu.addAction("Duplicate to project…", self.duplicate_bid).setEnabled(one is not None)
+        menu.addAction("Export bid as PDF…", self.export_pdf).setEnabled(one is not None)
+        menu.addAction("Export list…", self.export_list).setEnabled(self.grid.rowCount() > 0)
+        shots = menu.addAction("Create shots on the dashboard…", self.create_shots)
+        shots.setEnabled(one is not None and one.status == DB.WON and not one.archived)
+        shots.setToolTip("Adds the shots this won bid names to the VFX Dashboard, with their bid days")
+        if self.is_superuser:
+            menu.addSeparator()
+            delete = menu.addAction("Delete draft permanently…", self.delete_draft)
+            delete.setEnabled(one is not None and one.status == DB.DRAFT and one.revision == 1)
+        if self.can_change_settings:
+            menu.addSeparator()
+            menu.addAction("Bidding settings…", self.open_settings)
+
+    # ------------------------------------------------------------------ actions
+    def _projects(self):
+        try:
+            return self.repo.projects()
+        except DatabaseUnavailableError:
+            raise
+        except Exception as exc:
+            logger.exception("Projects not read")
+            from slate.gui.components.feedback import warn
+            warn(self, "New bid", f"The project list could not be read: {exc}")
+            return None
+
+    @on_database_error
+    def add_bid(self, *_):
+        from slate.gui.tabs.bid_editor_dialog import BidEditorDialog
+        projects = self._projects()
+        if projects is None:
+            return
+        if not projects:
+            from slate.gui.components.feedback import inform
+            inform(self, "New bid", "There are no active projects yet.",
+                   "Create the project on the VFX Dashboard first, then bid it here.")
+            return
+        dialog = BidEditorDialog(self, repo=self.repo, projects=projects, username=self.username,
+                                 default_project=self.project_filter.currentData() or "")
+        from slate.gui.components.screen_fit import fit_to_screen
+        fit_to_screen(dialog, 1180, 760)
+        if dialog.exec() != QDialog.DialogCode.Accepted or dialog.saved_id is None:
+            return
+        self.load_data()
+        select_keys(self.grid, [dialog.saved_id])
+        from slate.gui.components.feedback import toast
+        toast(self, f"Draft bid created for {dialog.project_code()}.", "success")
+
+    @on_database_error
+    def edit_bid(self, *_):
+        chosen = self._selected()
+        if len(chosen) != 1:
+            return
+        bid = self.repo.get(chosen[0].id)
+        if bid is None:
+            self.load_data()
+            return
+        from slate.gui.tabs.bid_editor_dialog import BidEditorDialog
+        from slate.gui.components.screen_fit import fit_to_screen
+        dialog = BidEditorDialog(self, repo=self.repo, bid=bid, lines=self.repo.lines(bid.id),
+                                 username=self.username)
+        fit_to_screen(dialog, 1180, 760)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-
-        days = dialog.days_input.value()
-        result = database_manager.execute_update(
-            "UPDATE prod_bidding SET complexity = %s, shot_count = %s, "
-            "estimated_days = %s, target_margin = %s, estimated_cost = %s, "
-            "estimated_budget = %s, currency = %s WHERE id = %s",
-            (dialog.complexity_input.currentText(), dialog.shot_count_input.value(),
-             days, dialog.margin_input.value(), days * dialog.cost_input.value(),
-             dialog.budget_input.value(), dialog.currency(), bid_id))
         self.load_data()
-        select_row_by_id(self.grid, bid_id)
-        if not result.changed:
-            QMessageBox.warning(self, "Not saved", "The bid was not changed:\n\n%s"
-                                % (result.error or "it no longer exists"))
+        from slate.gui.components.feedback import toast
+        if dialog.revision_id is not None:
+            select_keys(self.grid, [dialog.revision_id])
+            toast(self, f"{bid.project_code} v{bid.revision + 1} is a new draft; "
+                        f"v{bid.revision} is kept as it was.", "success")
+        else:
+            select_keys(self.grid, [bid.id])
+            toast(self, f"Saved {bid.title}.", "success")
 
-    def delete_bid(self):
-        bid_id = self._selected_bid_id()
-        if bid_id is None:
-            QMessageBox.warning(self, "Selection Empty", "Please select a bid to delete.")
+    @on_database_error
+    def revise_bid(self, *_):
+        chosen = self._selected()
+        if len(chosen) != 1:
             return
-        if QMessageBox.question(
-            self, "Delete bid",
-            "Delete this bid? It disappears from the pipeline value as well.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        ) != QMessageBox.StandardButton.Yes:
+        bid = chosen[0]
+        from slate.gui.components.feedback import toast, warn
+        try:
+            new_id = self.repo.revise(bid.id, by=self.username)
+        except DatabaseUnavailableError:
+            raise
+        except (DB.BidError, PermissionError) as exc:
+            warn(self, "New revision", str(exc))
             return
-        result = database_manager.execute_update(
-            "DELETE FROM prod_bidding WHERE id = %s", (bid_id,))
         self.load_data()
-        if not result:
-            QMessageBox.warning(self, "Not deleted", "The bid was not deleted:\n\n%s"
-                                % (result.error or "the database refused it"))
+        select_keys(self.grid, [new_id])
+        toast(self, f"{bid.project_code} v{bid.revision + 1} is a new draft; v{bid.revision} is kept.",
+              "success")
+        self.edit_bid()
 
-    def update_status(self, new_status):
+    @on_database_error
+    def update_status(self, new_status, *_):
         # By bid id, never by row number.
-        bid_ids = [k for k in selected_keys(self.grid) if k is not None]
-        if not bid_ids:
-            QMessageBox.warning(self, "%s bid" % ("Approve" if new_status == "Approved" else "Reject"),
-                                "Select the bid first.")
+        chosen = [b for b in self._selected() if not b.archived]
+        if not chosen:
             return
-
-        failed = []
-        for bid in bid_ids:
-            query = "UPDATE prod_bidding SET status = %s WHERE id = %s"
-            result = database_manager.execute_update(query, (new_status, int(bid)))
-            if not result.changed:
-                failed.append(result.error or "that bid no longer exists")
+        from slate.gui.components.feedback import confirm, toast, warn
+        word = DB.status_label(new_status)
+        names = ", ".join(b.title for b in chosen[:5]) + (" …" if len(chosen) > 5 else "")
+        decided = [b for b in chosen if b.status in DB.DECIDED and b.status != new_status]
+        if new_status in DB.DECIDED or decided:
+            question = f"Mark {len(chosen)} bid{'s' if len(chosen) != 1 else ''} as {word}: {names}?"
+            if decided:
+                question = (f"Change the decision on {', '.join(b.title for b in decided[:5])} "
+                            f"({', '.join(DB.status_label(b.status) for b in decided[:5])}) to {word}?")
+            if not confirm(self, f"Mark as {word}", question,
+                           yes_label=("Change decision" if decided else f"Mark {word}")):
+                return
+        try:
+            previous = self.repo.set_status([b.id for b in chosen], new_status, by=self.username)
+        except DatabaseUnavailableError:
+            raise
+        except (DB.BidError, PermissionError) as exc:
+            warn(self, f"Mark as {word}", str(exc))
+            self.load_data()
+            return
+        except Exception as exc:
+            logger.exception("Bid status not changed")
+            warn(self, f"Mark as {word}", f"No bid was changed: {exc}")
+            self.load_data()
+            return
+        changed = sum(1 for old in previous.values() if old != DB.normalise_status(new_status))
         self.load_data()
-        if failed:
-            QMessageBox.warning(self, "Not all updated",
-                                "%d bid(s) were not marked %s:\n\n%s"
-                                % (len(failed), new_status, failed[0]))
-            
-    def style_table(self, table: QTableWidget):
-        """The shared table setup: the project takes the spare width, counts
-        and money are as wide as their content and right-aligned."""
-        style_table(table, {
-            "Project Code": "stretch",
-            "Shots": "numeric",
-            "Complexity": "contents",
-            "Est. Days": "numeric",
-            "Margin": "numeric",
-            "Est. Cost": "numeric",
-            "Final Budget": "numeric",
-            "Status": "contents",
-        })
+        toast(self, f"{changed} bid{'s' if changed != 1 else ''} marked {word}." if changed
+              else f"Nothing changed - already {word}.", "success" if changed else "info")
+
+    @on_database_error
+    def archive_bids(self, *_):
+        chosen = [b for b in self._selected() if not b.archived]
+        if not chosen:
+            return
+        from slate.gui.components.feedback import confirm, toast, warn
+        names = ", ".join(b.title for b in chosen[:5]) + (" …" if len(chosen) > 5 else "")
+        if not confirm(self, "Archive bids",
+                       f"Archive {len(chosen)} bid{'s' if len(chosen) != 1 else ''}: {names}?",
+                       yes_label=f"Archive {len(chosen)}",
+                       informative="Archived bids leave the list and the pipeline but are kept "
+                                   "with their history; tick Archived to see or restore them."):
+            return
+        ids = [b.id for b in chosen]
+        try:
+            count = self.repo.archive(ids, by=self.username)
+        except DatabaseUnavailableError:
+            raise
+        except Exception as exc:
+            logger.exception("Bids not archived")
+            warn(self, "Archive bids", f"Nothing was archived: {exc}")
+            return
+        self.load_data()
+
+        def undo():
+            try:
+                self.repo.restore(ids, by=self.username)
+            except DatabaseUnavailableError:
+                raise
+            except Exception as exc:
+                warn(self, "Undo archive", f"The bids could not be restored: {exc}")
+            self.load_data()
+
+        toast(self, f"Archived {count} bid{'s' if count != 1 else ''}.", "success", action=("Undo", undo))
+
+    @on_database_error
+    def restore_bids(self, *_):
+        chosen = [b for b in self._selected() if b.archived]
+        if not chosen:
+            return
+        from slate.gui.components.feedback import toast, warn
+        try:
+            count = self.repo.restore([b.id for b in chosen], by=self.username)
+        except DatabaseUnavailableError:
+            raise
+        except Exception as exc:
+            warn(self, "Restore bids", f"Nothing was restored: {exc}")
+            return
+        self.load_data()
+        toast(self, f"Restored {count} bid{'s' if count != 1 else ''}.", "success")
+
+    @on_database_error
+    def delete_draft(self, *_):
+        chosen = self._selected()
+        if len(chosen) != 1:
+            return
+        bid = chosen[0]
+        from slate.gui.components.feedback import toast, warn
+        typed, ok = QInputDialog.getText(
+            self, "Delete draft permanently",
+            f"This deletes {bid.title} and its lines for good - there is no undo, and archiving "
+            f"keeps it instead.\n\nType DELETE to confirm:")
+        if not ok or typed.strip() != "DELETE":
+            return
+        try:
+            self.repo.delete_draft(bid.id, by=self.username)
+        except DatabaseUnavailableError:
+            raise
+        except (DB.BidError, PermissionError) as exc:
+            warn(self, "Delete draft", str(exc))
+            return
+        self.load_data()
+        toast(self, f"Deleted {bid.title}.", "success")
+
+    @on_database_error
+    def duplicate_bid(self, *_):
+        chosen = self._selected()
+        if len(chosen) != 1:
+            return
+        bid = chosen[0]
+        projects = self._projects() or []
+        choices = [f"{c} – {n}" if n and n.casefold() != c.casefold() else c for c, n in projects]
+        if not choices:
+            return
+        text, ok = QInputDialog.getItem(self, "Duplicate to project",
+                                        f"Copy the lines of {bid.title} into a new draft for:",
+                                        choices, 0, False)
+        if not ok:
+            return
+        code = projects[choices.index(text)][0]
+        from slate.gui.components.feedback import toast, warn
+        try:
+            new_id = self.repo.duplicate_to_project(bid.id, code, by=self.username)
+        except DatabaseUnavailableError:
+            raise
+        except (DB.BidError, PermissionError) as exc:
+            warn(self, "Duplicate to project", str(exc))
+            return
+        self.load_data()
+        select_keys(self.grid, [new_id])
+        toast(self, f"New draft for {code} from {bid.title}.", "success")
+
+    @on_database_error
+    def compare_revisions(self, *_):
+        chosen = self._selected()
+        if len(chosen) != 1:
+            return
+        from slate.gui.tabs.bid_compare_dialog import CompareDialog
+        revisions = self.repo.revisions(chosen[0].bid_group or chosen[0].id)
+        if len(revisions) < 2:
+            from slate.gui.components.feedback import inform
+            inform(self, "Compare revisions", f"{chosen[0].project_code} has only one revision.")
+            return
+        CompareDialog(self, revisions, self.repo.lines).exec()
+
+    @on_database_error
+    def export_pdf(self, *_, path=None):
+        chosen = self._selected()
+        if len(chosen) != 1:
+            return None
+        bid = self.repo.get(chosen[0].id)
+        lines = self.repo.lines(bid.id)
+        totals = DB.price_bid(lines, bid.margin, bid.discount, bid.tax)
+        return export_bid_pdf(self, bid, lines, totals, path=path)
+
+    def export_list(self, *_, path=None):
+        """The bids shown (visible rows), amounts as plain numbers with a currency column."""
+        from PySide6.QtWidgets import QFileDialog
+        from slate.core.domain.bid_export import bid_list_rows
+        from slate.core.domain.table_export import default_filename, export_rows
+        from slate.gui.components.feedback import toast
+        if path is None:
+            default = str(Path.home() / "Documents" / default_filename("bids"))
+            path, _ = QFileDialog.getSaveFileName(self, "Export bids", default,
+                                                  "CSV (*.csv);;Excel workbook (*.xlsx)")
+            if not path:
+                return None
+        headers, rows = bid_list_rows(self.visible_bids())
+        try:
+            count = export_rows(path, headers, rows)
+        except OSError as exc:
+            toast(self, f"Could not write {path}: {exc}", "error")
+            return None
+        toast(self, f"Exported {count} bid{'s' if count != 1 else ''} to {Path(path).name}.", "success")
+        return path
+
+    @on_database_error
+    def create_shots(self, *_):
+        chosen = self._selected()
+        if len(chosen) != 1 or chosen[0].status != DB.WON:
+            return
+        bid = chosen[0]
+        from slate.gui.components.feedback import confirm, inform, warn
+        wanted = DB.shots_to_create(self.repo.lines(bid.id))
+        if not wanted:
+            inform(self, "Create shots", f"{bid.title} names no shots.",
+                   "Give lines a shot name (the Shot column of the bid) to create them on the dashboard.")
+            return
+        if not confirm(self, "Create shots",
+                       f"Add the {len(wanted)} shot{'s' if len(wanted) != 1 else ''} {bid.title} names "
+                       f"to the {bid.project_code} dashboard, with their bid days?",
+                       yes_label="Create shots",
+                       informative="Shots already on the dashboard are left exactly as they are."):
+            return
+        try:
+            result = self.repo.create_shots(bid.id, by=self.username)
+        except DatabaseUnavailableError:
+            raise
+        except (DB.BidError, PermissionError) as exc:
+            warn(self, "Create shots", str(exc))
+            return
+        if result["error"]:
+            warn(self, "Create shots", f"Not all shots were created: {result['error']}")
+        lines = [f"Created {len(result['created'])} shot{'s' if len(result['created']) != 1 else ''}."]
+        if result["existing"]:
+            lines.append(f"{len(result['existing'])} were already on the dashboard and were left as they were.")
+        if result["group_lines"]:
+            lines.append(f"{result['group_lines']} line{'s' if result['group_lines'] != 1 else ''} "
+                         "without a shot name created nothing.")
+        inform(self, "Create shots", lines[0], " ".join(lines[1:]))
+        self._selection_changed()
+
+    def open_settings(self, *_):
+        from slate.gui.tabs.bid_settings_dialog import BiddingSettingsDialog
+        from slate.gui.components.feedback import toast
+        dialog = BiddingSettingsDialog(self, username=self.username)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            toast(self, "Bidding settings saved for the studio.", "success")

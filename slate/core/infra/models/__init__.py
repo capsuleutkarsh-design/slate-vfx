@@ -34,6 +34,7 @@ from slate.core.infra.models.operations import (
     OnboardingWorkflowModel,
     ProdSchedulingModel,
     ProdBiddingModel,
+    ProdBidLineModel,
 )
 
 __all__ = [
@@ -62,4 +63,5 @@ __all__ = [
     "OnboardingWorkflowModel",
     "ProdSchedulingModel",
     "ProdBiddingModel",
+    "ProdBidLineModel",
 ]
