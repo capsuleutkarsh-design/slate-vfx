@@ -19,14 +19,14 @@ TEMPLATE = (
 )
 
 
-def _run(source, target, mock_db, project="PRJ", overwrite=False):
+def _run(source, target, mock_db, project="PRJ", overwrite=False, operation="move"):
     import slate.core.workers.structure as structure_module
     structure_module.database_manager = mock_db
 
     worker = FolderCreationWorker(
         target_dir=target, source_scan_path=source, project_name=project,
         template_data=TEMPLATE, fast_mode=True, format_mapping={},
-        overwrite=overwrite,
+        overwrite=overwrite, operation=operation,
     )
     logs = []
     worker.log_signal.connect(logs.append)

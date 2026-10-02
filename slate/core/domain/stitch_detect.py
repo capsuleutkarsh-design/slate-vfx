@@ -31,6 +31,31 @@ MAX_TAIL_LENGTH = 8
 # A prefix must look like a shot: shot names carry a number.
 _HAS_DIGIT = re.compile(r"\d")
 
+# What a part of a stitch is called. Anything else after the shared name - a
+# second shot code (EP01_SH010 / EP01_SH020), a version (SH010_v2) or a state
+# (SH020_final / SH020_temp) - is not a part, however short it is.
+_PART_WORDS = {"left", "right", "l", "r", "lt", "rt", "fg", "bg", "mg", "top", "bottom",
+               "upper", "lower", "front", "back", "near", "far"}
+_PART_PATTERN = re.compile(r"^(?:[a-z]|pt\d{1,2}|part\d{1,2}|p\d{1,2}|\d{1,2})$", re.IGNORECASE)
+# A prefix made only of episode / sequence codes does not name a shot.
+_GROUPING_CODE = re.compile(r"^(?:ep|episode|sq|seq|sc|scene|e|s)\d+$", re.IGNORECASE)
+
+
+def is_part_marker(token: str) -> bool:
+    token = str(token or "")
+    return token.lower() in _PART_WORDS or bool(_PART_PATTERN.match(token))
+
+
+def _is_numbered_only(token: str) -> bool:
+    """'1', '02': a part marker, but a weak one - it is also how takes are numbered."""
+    return str(token or "").isdigit()
+
+
+def _names_a_shot(prefix: List[str]) -> bool:
+    if not _HAS_DIGIT.search("".join(prefix)):
+        return False
+    return not all(_GROUPING_CODE.match(t) for t in prefix)
+
 
 def _tokens(name: str) -> List[str]:
     return [t for t in _SEPARATORS.split(str(name or "").strip()) if t]
@@ -51,6 +76,9 @@ class StitchGroup:
     shot_name: str
     parts: List[str] = field(default_factory=list)
     reel: str = ""
+    # False when the parts are only told apart by a bare number (SH010_1 /
+    # SH010_2): offered, but not ticked, because takes are numbered that way.
+    confident: bool = True
 
     @property
     def part_labels(self) -> List[str]:
@@ -90,8 +118,9 @@ def _pair_is_stitch(a: str, b: str) -> Optional[str]:
         return None
 
     # The shared part has to look like a shot identifier, otherwise names such
-    # as "plate_one" and "plate_two" would fuse.
-    if not _HAS_DIGIT.search("".join(prefix)):
+    # as "plate_one" and "plate_two" would fuse - and an episode code on its
+    # own (EP01) is not a shot either.
+    if not _names_a_shot(prefix):
         return None
 
     tail_a = tokens_a[len(prefix):]
@@ -106,7 +135,7 @@ def _pair_is_stitch(a: str, b: str) -> Optional[str]:
         return None
 
     for tail in (tail_a, tail_b):
-        if tail and len(tail[0]) > MAX_TAIL_LENGTH:
+        if tail and (len(tail[0]) > MAX_TAIL_LENGTH or not is_part_marker(tail[0])):
             return None
 
     if [t.lower() for t in tail_a] == [t.lower() for t in tail_b]:
@@ -149,17 +178,35 @@ def find_stitch_groups(folder_names: Iterable[str],
         if rx != ry:
             parent[ry] = rx
 
+    # Only names that could pair are compared: a part is "<shot>_<marker>",
+    # so parts are bucketed by the shot they would belong to, and a whole
+    # plate joins the bucket of its own name. Comparing every name with every
+    # other took 1.5 s for 1,500 folders, on the UI thread.
+    buckets: Dict[Tuple[str, ...], List[str]] = {}
+    wholes: Dict[Tuple[str, ...], List[str]] = {}
+    for name in names:
+        tokens = [t.lower() for t in _tokens(name)]
+        wholes.setdefault(tuple(tokens), []).append(name)
+        if len(tokens) >= 2 and is_part_marker(tokens[-1]):
+            buckets.setdefault(tuple(tokens[:-1]), []).append(name)
+
     shot_names: Dict[str, str] = {}
-    for i, left in enumerate(names):
-        for right in names[i + 1:]:
-            shot = _pair_is_stitch(left, right)
-            if shot:
+    weak: Dict[str, bool] = {}
+    for key, parts in buckets.items():
+        members = parts + [w for w in wholes.get(key, []) if w not in parts]
+        for i, left in enumerate(members):
+            for right in members[i + 1:]:
+                shot = _pair_is_stitch(left, right)
+                if not shot:
+                    continue
                 union(left, right)
-                # Keep the shortest shot name proposed for this cluster.
                 root = find(left)
                 current = shot_names.get(root)
                 if current is None or len(shot) < len(current):
                     shot_names[root] = shot
+                tails = [_tokens(n)[len(_tokens(shot)):] for n in (left, right)]
+                if any(t and _is_numbered_only(t[0]) for t in tails):
+                    weak[root] = True
 
     clusters: Dict[str, List[str]] = {}
     for name in names:
@@ -170,7 +217,8 @@ def find_stitch_groups(folder_names: Iterable[str],
         if len(parts) < 2:
             continue
         shot = shot_names.get(root) or min(parts, key=len)
-        groups.append(StitchGroup(shot_name=shot, parts=sorted(parts), reel=reel))
+        groups.append(StitchGroup(shot_name=shot, parts=sorted(parts), reel=reel,
+                                  confident=not weak.get(root, False)))
 
     groups.sort(key=lambda g: g.shot_name)
     return groups
@@ -213,23 +261,10 @@ def apply_groups(collected: List[Tuple[object, str]],
 
 def survey_source(source_path, target_reel_name: str = "") -> List[StitchGroup]:
     """
-    Look at a client drive and report the stitches it appears to contain.
-
-    This walks the source exactly the way the ingest will - same shot
-    detection, same reel grouping - so what a coordinator is asked to confirm
-    is what would actually be moved.
+    The stitches a client drive appears to contain, worked out by the same
+    survey the ingest runs on (slate.core.domain.ingest_survey), so what a
+    coordinator is asked to confirm is what would actually be moved.
     """
-    # Imported here: the ingest worker pulls in Qt, and this module is used by
-    # tests and tools that have no GUI.
-    from slate.core.workers.structure import (
-        collect_shot_folders, group_shots_by_reel,
-    )
+    from slate.core.domain.ingest_survey import survey_drive
 
-    shots = collect_shot_folders(source_path)
-    if not shots:
-        return []
-
-    by_reel = group_shots_by_reel(shots, source_path, target_reel_name)
-    return group_by_reel({
-        reel: [path.name for path in paths] for reel, paths in by_reel.items()
-    })
+    return survey_drive(source_path, target_reel_name).stitch_groups

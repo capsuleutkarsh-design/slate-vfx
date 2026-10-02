@@ -39,6 +39,7 @@ class IngestedShot:
     source_folder: str = ""
     first_frame: int = 0
     last_frame: int = 0
+    client_version: str = ""      # the client's own version tail, e.g. 'v02'
 
 
 @dataclass
@@ -122,9 +123,16 @@ def _ensure_project(db, project_code: str, project_name: str,
     return True
 
 
-def _scan_status_text(version: str) -> str:
-    """What the dashboard's Scan Status column shows after a delivery."""
-    return f"{version} received {date.today().isoformat()}"
+def _scan_status_text(version: str, client_version: str = "") -> str:
+    """
+    What the dashboard's Scan Status column shows after a delivery:
+    'v001 received 2 Oct 2026', or 'v002 (client v02) received ...' when the
+    client numbered the delivery themselves.
+    """
+    from slate.core.domain.dates import format_date
+
+    client = f" (client {client_version})" if client_version else ""
+    return f"{version}{client} received {format_date(date.today())}"
 
 
 def _flag_new_scan(db, project_code: str, entry: "IngestedShot",
@@ -151,7 +159,7 @@ def _flag_new_scan(db, project_code: str, entry: "IngestedShot",
     try:
         shot = Shot.from_dict(row)
         shot.shot_name = row.get("shot_name") or entry.shot
-        shot.scan_status = _scan_status_text(entry.scan_version)
+        shot.scan_status = _scan_status_text(entry.scan_version, entry.client_version)
 
         # A re-delivered plate can be a different length from the last one.
         if entry.last_frame:
@@ -159,6 +167,8 @@ def _flag_new_scan(db, project_code: str, entry: "IngestedShot",
             shot.last_frame = entry.last_frame
 
         detail = f"New scan {entry.scan_version} ingested"
+        if entry.client_version:
+            detail += f" (client {entry.client_version})"
         if entry.source_folder and entry.source_folder != entry.shot:
             detail += f" (from {entry.source_folder})"
         shot.feedback_internal.append(FeedbackEntry(
@@ -231,6 +241,7 @@ def register_ingested_shots(
                 source_folder=str(raw.get("source_folder", "") or ""),
                 first_frame=int(raw.get("first_frame") or 0),
                 last_frame=int(raw.get("last_frame") or 0),
+                client_version=str(raw.get("client_version", "") or ""),
             )
         else:
             continue
@@ -285,7 +296,8 @@ def register_ingested_shots(
                 shot_name=entry.shot,
                 reel_episode=entry.reel,
                 status=NEW_SHOT_STATUS,
-                scan_status=_scan_status_text(entry.scan_version or "v001"),
+                scan_status=(_scan_status_text(entry.scan_version, entry.client_version)
+                             if entry.scan_version else ""),
                 folder_paths=_shot_folder_paths(entry.reel, entry.shot),
                 first_frame=entry.first_frame,
                 last_frame=entry.last_frame,

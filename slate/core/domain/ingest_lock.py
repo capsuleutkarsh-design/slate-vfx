@@ -90,6 +90,8 @@ class IngestLock:
 
     def __init__(self, project_root, holder: str = ""):
         self.path = _lock_path(project_root)
+        # The Slate user, as the screen passes it; the Windows login only when
+        # nobody is signed in (tools, tests).
         self.holder = holder or os.environ.get("USERNAME") or "unknown"
         self.machine = socket.gethostname()
         self.acquired = False
@@ -158,3 +160,31 @@ def current_holder(project_root) -> Optional[LockInfo]:
     if not path.exists() or _is_stale(path):
         return None
     return _read(path)
+
+
+def lock_info(project_root) -> Optional[LockInfo]:
+    """The lock on this project as it stands, stale or not."""
+    path = _lock_path(project_root)
+    if not path.exists():
+        return None
+    return _read(path)
+
+
+def clear_lock(project_root) -> bool:
+    """
+    Remove a lock left behind by a crashed or killed run.
+
+    Only offered to admins and developers on screen, with who held it and
+    since when, because clearing a live lock lets two ingests mix their
+    deliveries.
+    """
+    path = _lock_path(project_root)
+    try:
+        path.unlink()
+        logging.warning("Ingest lock cleared by hand at %s", path)
+        return True
+    except FileNotFoundError:
+        return True
+    except OSError as exc:
+        logging.warning("Could not clear the ingest lock at %s: %s", path, exc)
+        return False
