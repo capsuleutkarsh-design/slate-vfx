@@ -1,19 +1,37 @@
-import re
+"""
+Bringing folders of stock into the library.
+
+One IngestWorker takes any number of folders (MED-008: a drop of several
+folders used to ingest only the first), finds the stills, movies and image
+sequences in them, stores each one at once as "being analysed" so the gallery
+can show it, then analyses them a few at a time: thumbnail, proxy (unless Fast
+mode), technical metadata, tags and visual tags. What each analysis finds is
+written to the database by file path, in groups, as it goes (MED-001), and the
+run ends with a summary the person is shown (MED-021).
+
+Sequences follow the shared rules in slate.utils.sequence_utils, plus one of
+the library's own: numbered stills only count as a sequence when they really
+run on (MED-010). fire_burst_01/03/05/07/09.png are five textures, not one
+clip, and IMG_2045.jpg is a photograph.
+"""
+
 import copy
 import hashlib
 import logging
+import threading
+import time
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
-from collections import defaultdict
 
 from PySide6.QtCore import QThread, Signal, QMutex, QWaitCondition
 
 from .metadata_engine import SmartMetadataManager
 from slate.core.infra.database_manager import database_manager
-from slate.core.domain.proxy_manager import proxy_manager 
+from slate.core.domain.proxy_manager import proxy_manager
 from slate.core.domain.asset_api import create_asset_api
 from slate.core.infra.task_registry import task_registry
 
-# --- PROXY WORKER ---
+
 def current_memory_mb() -> float:
     """This process's working set, in MB; 0 when it cannot be read."""
     try:
@@ -54,7 +72,6 @@ def describe_memory() -> str:
     """
     try:
         import gc
-        import threading
         import psutil
         proc = psutil.Process()
         info = proc.memory_info()
@@ -95,91 +112,97 @@ def _normalise_path(path) -> str:
     return str(path).replace("\\", "/").rstrip("/").lower()
 
 
-class ProxyWorker(QThread):
-    progress_signal = Signal(str, int) # status, percent (fake)
-    proxy_ready_signal = Signal(str, str) # asset_id, proxy_path
-    finished_signal = Signal()
+# What the stock library takes. 3D files were removed on request.
+VALID_EXTENSIONS = frozenset({
+    '.mov', '.mp4', '.mkv', '.avi', '.m4v', '.webm', '.mxf',
+    '.exr', '.dpx', '.png', '.jpg', '.jpeg', '.tif', '.tiff', '.webp', '.hdr', '.tga',
+    '.r3d', '.ari',
+})
 
-    def __init__(self):
-        super().__init__()
-        self.queue = []
-        self.is_running = True
-        self.mutex = QMutex()
-        self.wait_condition = QWaitCondition()
-        self.task_info = task_registry.register_task(
-            name="Proxy Generation (FFmpeg)",
-            description="Waiting for jobs..."
-        )
-        self.task_info.cancel_hook = self.stop
+# Camera raw: stored and searchable, but nothing in Slate can decode them.
+RAW_EXTENSIONS = frozenset({'.r3d', '.ari'})
 
-    def add_job(self, asset_id, file_path):
-        self.mutex.lock()
-        self.queue.append((asset_id, file_path))
-        self.wait_condition.wakeAll()
-        self.mutex.unlock()
-        task_registry.update_progress(self.task_info.task_id, 0, f"Queued {len(self.queue)} jobs")
+from .sequence_rules import MIN_COVERAGE, is_real_sequence  # noqa: F401 (shared with the player)
 
-    def run(self):
-        while self.is_running:
-            self.mutex.lock()
-            while not self.queue and self.is_running:
-                task_registry.update_progress(self.task_info.task_id, 100, "Idle")
-                self.wait_condition.wait(self.mutex)
-            
-            if not self.is_running:
-                self.mutex.unlock()
-                break
-                
-            asset_id, f_path = self.queue.pop(0)
-            self.mutex.unlock()
-            
-            # Process
-            try:
-                self.progress_signal.emit(f"Proxy: {Path(f_path).name}", 0)
-                task_registry.update_progress(self.task_info.task_id, 50, f"Encoding {Path(f_path).name}...")
-                success, path = proxy_manager.generate_proxy(Path(f_path))
-                if success:
-                    self.proxy_ready_signal.emit(asset_id, str(path))
-            except Exception as e:
-                logging.exception(f"Proxy Job Failed for {f_path}: {e}")
 
-    def stop(self):
-        self.is_running = False
-        task_registry.update_progress(self.task_info.task_id, 100, "Cancelled")
-        task_registry.finish_task(self.task_info.task_id)
-        self.mutex.lock()
-        self.wait_condition.wakeAll()
-        self.mutex.unlock()
-        self.wait(1000)  # Wait up to 1 second for thread to finish
+def sequence_display_name(seq) -> str:
+    """'muzzle_flash_A.[1001-1024].png' - name, range, extension."""
+    return f"{seq.head}[{seq.start}-{seq.end}]{seq.tail}"
 
-# --- INGEST WORKER ---
+
+def group_media(files):
+    """
+    (sequences, stills) for the ingest: sequences only where is_real_sequence.
+    """
+    from slate.utils.sequence_utils import group_frames
+    sequences, stills = group_frames(files)
+    real = []
+    for seq in sequences:
+        if is_real_sequence(seq):
+            real.append(seq)
+        else:
+            stills.extend(seq.files)
+    stills = sorted(set(Path(s) for s in stills), key=lambda p: str(p).lower())
+    return real, stills
+
+
 class IngestWorker(QThread):
-    progress_signal = Signal(int, str)
+    progress_signal = Signal(int, str)          # percent (-1 = still scanning), text
     asset_processed_signal = Signal(dict)
-    assets_batch_signal = Signal(list) # For initial discovery
-    asset_update_signal = Signal(dict) # Legacy: For immediate UI feedback if needed
-    assets_update_batch_signal = Signal(list) # NEW: For batched DB/JSON updates
+    assets_batch_signal = Signal(list)          # new assets, shown as "being analysed"
+    asset_update_signal = Signal(dict)          # legacy: one analysed asset
+    assets_update_batch_signal = Signal(list)   # analysed assets, in groups
     finished_signal = Signal(bool, str)
+    # What happened, for the person: added, refreshed, skipped, failed, stopped.
+    summary_ready = Signal(dict)
     # The ingest has paused itself because the program's memory is far above
     # anything it should need. Carries a sentence for the person.
     memory_alarm = Signal(str)
 
-    def __init__(self, root_path=None, single_file=None, fast_mode=False):
+    # How many files are analysed at once. Each one is mostly waiting on
+    # ffmpeg or the network, so a few in parallel is several times faster;
+    # more than this only competes for the same share.
+    WORKERS = 3
+    # Analysed assets are written and shown in groups of this many.
+    BATCH = 25
+
+    def __init__(self, root_path=None, single_file=None, fast_mode=False,
+                 root_paths=None, username=""):
         super().__init__()
         self._memory_alarm_raised = False
-        self.root_path = Path(root_path) if root_path else None
+        roots = list(root_paths or [])
+        if root_path:
+            roots.insert(0, root_path)
+        seen = set()
+        self.root_paths = []
+        for r in roots:
+            key = _normalise_path(r)
+            if key not in seen:
+                seen.add(key)
+                self.root_paths.append(Path(r))
+        self.root_path = self.root_paths[0] if self.root_paths else None
         self.single_file = Path(single_file) if single_file else None
         self.fast_mode = fast_mode
+        self.username = str(username or "")
         self.is_running = True
         self.is_paused = False
         self.mutex = QMutex()
         self.wait_condition = QWaitCondition()
-        self._buffer = [] 
-        self._update_buffer = [] # NEW: Buffer for deep analysis updates
+        self._buffer = []
+        self._update_buffer = []
+        self._last_progress = 0.0
+        self.summary = {"found": 0, "added": 0, "refreshed": 0, "skipped": 0,
+                        "failed": 0, "failed_names": [], "stopped": False, "roots": []}
         self.lib_manager = create_asset_api(db_manager=database_manager)
-        
+        if self.username and hasattr(self.lib_manager, "set_user"):
+            try:
+                self.lib_manager.set_user(self.username)
+            except Exception:
+                pass
+
         # Register with Task Manager
-        target = self.root_path.name if self.root_path else (self.single_file.name if self.single_file else "Unknown")
+        target = (", ".join(p.name for p in self.root_paths) if self.root_paths
+                  else (self.single_file.name if self.single_file else "Unknown"))
         self.task_info = task_registry.register_task(
             name="Stock Asset Ingest",
             description=f"Scanning {target}"
@@ -209,7 +232,7 @@ class IngestWorker(QThread):
 
     def stop(self):
         self.is_running = False
-        self.resume() 
+        self.resume()
 
     def _memory_guard(self, done, total) -> bool:
         """
@@ -243,212 +266,225 @@ class IngestWorker(QThread):
         self.pause()
         return True
 
-    def run(self):
-        all_files = []
-        if self.single_file:
-            all_files = [self.single_file]
-        elif self.root_path:
-            # EXPANDED EXTENSIONS (Removed 3D extensions per user request)
-            valid_exts = {
-                '.mov', '.mp4', '.mkv', '.avi', 
-                '.exr', '.dpx', '.png', '.jpg', '.jpeg', '.tif', '.tiff', '.webp',
-                '.r3d', '.ari'
-            }
-            # Use scandir or simpler walk? rglob is fine for now.
-            try:
-                for f in self.root_path.rglob("*"):
-                    if not self.is_running: return
-                    if f.suffix.lower() in valid_exts:
-                        all_files.append(f)
-            except Exception as e:
-                 self.finished_signal.emit(False, f"Scan Error: {e}")
-                 return
-        
-        if not all_files:
-            self.finished_signal.emit(True, "No files found.")
+    # ------------------------------------------------------------- progress
+
+    def _progress(self, pct, text, force=False):
+        """At most five updates a second, plus the ones that matter (force)."""
+        now = time.monotonic()
+        if not force and now - self._last_progress < 0.2:
             return
+        self._last_progress = now
+        self.progress_signal.emit(int(pct), text)
+        if pct >= 0:
+            task_registry.update_progress(self.task_info.task_id, int(pct), text)
+
+    def _wait_while_paused(self):
+        self.mutex.lock()
+        while self.is_paused and self.is_running:
+            self.wait_condition.wait(self.mutex)
+        self.mutex.unlock()
+
+    # ------------------------------------------------------------------ scan
+
+    def _discover(self):
+        """Every file worth ingesting under the roots; None when stopped."""
+        found = []
+        if self.single_file:
+            return [self.single_file]
+        for root in self.root_paths:
+            try:
+                for f in root.rglob("*"):
+                    if not self.is_running:
+                        return None
+                    if f.name.startswith("._"):
+                        continue
+                    if f.suffix.lower() in VALID_EXTENSIONS:
+                        found.append(f)
+                        if len(found) % 50 == 0:
+                            # The bar has nothing to measure yet: say how many
+                            # have been found so far instead of sitting at 0%.
+                            self._progress(-1, f"Scanning… {len(found):,} files found")
+            except OSError as e:
+                logging.warning("Could not read %s: %s", root, e)
+                self.summary["failed"] += 1
+                self.summary["failed_names"].append(f"{root} (could not be read)")
+        return found
+
+    def _root_of(self, path: Path) -> str:
+        key = _normalise_path(path)
+        for root in self.root_paths:
+            if key.startswith(_normalise_path(root) + "/"):
+                return str(root)
+        return str(self.root_paths[0]) if self.root_paths else ""
+
+    def run(self):
+        self._progress(-1, "Scanning…", force=True)
+        all_files = self._discover()
+        if all_files is None:
+            return self._finish(False, "Stopped before anything was added.", stopped=True)
+        if not all_files:
+            return self._finish(True, "No media files found in that folder.")
+
+        # Remember where the library comes from, so Rescan can look again.
+        for root in self.root_paths:
+            remember = getattr(self.lib_manager, "remember_root", None)
+            if callable(remember):
+                remember(str(root))
+            self.summary["roots"].append(str(root))
 
         from slate.utils.media_capabilities import is_video
-        # BROADER REGEX: Captures "Name0001.ext" or "Name.0001.ext"
-        re.compile(r'^(.*?)(_|-|\.)?(\d+)(\.[a-zA-Z0-9]+)$')
-        sequences = defaultdict(list)
-        standalone = []
+        movies = [f for f in all_files if is_video(f.suffix.lower())]
+        others = [f for f in all_files if not is_video(f.suffix.lower())]
+        sequences, stills = group_media(others)
+        standalone = sorted(movies + stills, key=lambda p: str(p).lower())
+        self.summary["found"] = len(standalone) + len(sequences)
+        self._progress(-1, f"Found {self.summary['found']:,} items. Checking the library…",
+                       force=True)
 
-        for f in all_files:
-            if not self.is_running: return
-            
-            is_video_file = is_video(f.suffix.lower())
-            
-            # ROBUST SEQUENCE PARSING (Right-to-Left)
-            # Instead of a complex regex, we simply look for trailing digits in the stem.
-            parsed = None
-            if not is_video_file:
-                stem = f.stem
-                # Find all trailing digits
-                # \d+$ matches digits at end of string
-                trailing_digits = re.search(r'(\d+)$', stem)
-                if trailing_digits:
-                    frame_str = trailing_digits.group(1)
-                    # Base is everything up to the digits
-                    base = stem[:-len(frame_str)]
-                    
-                    # Cleanup visible separator if present (e.g. Tank.001 -> Base: Tank)
-                    # We strip . _ - from the right side of base
-                    base = base.rstrip('._-')
-                    
-                    parsed = (base, frame_str, f.suffix.lower())
-
-            if parsed:
-                base, frame, ext = parsed
-                # Key: (BaseName, Extension, ParentFolder)
-                key = (base, ext, f.parent) 
-                sequences[key].append(f)
-            else:
-                standalone.append(f)
-
-        len(standalone) + len(sequences)
-
-        # --- PHASE 0: LOAD EXISTING STATE FOR DEDUPLICATION ---
-        self.mutex.lock()
+        # --- PHASE 0: what the library already has ---
         try:
-            logging.info("Ingest: Fetching existing paths for deduplication...")
             # Paths only. Reading every column of every row - including the
             # similarity vectors - meant a large library had to be pulled across
             # the network in full before the first new file was looked at.
             existing_assets = self.lib_manager.list_known_paths()
-
             # Normalised in memory rather than through the file system.
-            # Path.resolve() asks the file system to canonicalise every path,
-            # which on a shared drive is a network round trip each - tens of
-            # thousands of them before the scan even starts.
             self.existing_map = {}
-            for a in existing_assets:
+            for a in existing_assets or []:
                 p = a.get('file_path') or a.get('path')
                 if p:
                     self.existing_map[_normalise_path(p)] = a
         except Exception as e:
             logging.exception(f"Ingest Dedupe Init Failed: {e}")
             self.existing_map = {}
-        self.mutex.unlock()
 
-        # --- PHASE 1: DISCOVERY & FAST EMIT ---
-        # We process logical items (files/sequences), emit them as "pending", then analyze.
-        
-        pending_analysis = []
-        skipped_count = 0
-        
+        # --- PHASE 1: store everything new as "being analysed" ---
+        pending = []
         for f in standalone:
-            if not self.is_running: break
-            
-            # DEDUPLICATION CHECK
-            norm_path = _normalise_path(f)
-            if norm_path in self.existing_map:
-                existing = self.existing_map[norm_path]
-                # Check if healthy (has thumbnail)
-                thumb_p = existing.get('thumb_path')
-                if thumb_p and Path(thumb_p).exists():
-                    skipped_count += 1
-                    continue # SKIP HEALTHY ASSET
-                else:
-                    logging.info(f"Re-ingesting broken asset: {f.name}")
-                    # Validate ID reuse to prevent visual duplicates?
-                    # Ideally we update the EXISTING ID.
-                    # For now, let's treat as new/update and rely on DB merge.
-                    pass
-
-            # Fast Emit
+            if not self.is_running:
+                break
+            known = self.existing_map.get(_normalise_path(f))
+            if known is not None and self._healthy(known):
+                self.summary["skipped"] += 1
+                continue
             asset = self._create_basic_asset(f, is_sequence=False)
+            asset['ingest_root'] = self._root_of(f)
             self._buffer.append(asset)
-            pending_analysis.append((asset, f, False)) # asset_dict, path, is_seq
-            
+            pending.append((asset, f, None, known is not None))
             if len(self._buffer) >= 100:
                 self._flush_buffer()
 
-        for (base, ext, parent), frames in sequences.items():
-            if not self.is_running: break
-            frames.sort()
-            first_frame = frames[0]
-            display_name = f"{base}[{len(frames)}]{ext}"
-            
-            # DEDUPLICATION CHECK (Sequence)
-            # Same spelling as the map was built with. It used to resolve the
-            # path here, which on Windows gives back backslashes while the map
-            # holds forward slashes - so no sequence ever matched, and every
-            # image sequence in the library was ingested again from scratch on
-            # every run.
-            norm_path = _normalise_path(first_frame)
-            if norm_path in self.existing_map:
-                existing = self.existing_map[norm_path]
-                thumb_p = existing.get('thumb_path')
-                if thumb_p and Path(thumb_p).exists():
-                    skipped_count += 1
-                    continue
-                else:
-                    logging.info(f"Re-ingesting broken sequence: {display_name}")
-
-            asset = self._create_basic_asset(first_frame, is_sequence=True, display_name=display_name)
+        for seq in sequences:
+            if not self.is_running:
+                break
+            first_frame = seq.files[0]
+            # Same spelling as the map was built with, or no sequence would
+            # ever match and every one would be ingested again on every run.
+            known = self.existing_map.get(_normalise_path(first_frame))
+            if known is not None and self._healthy(known):
+                self.summary["skipped"] += 1
+                continue
+            asset = self._create_basic_asset(first_frame, is_sequence=True,
+                                             display_name=sequence_display_name(seq))
+            asset.update({
+                'is_sequence': True, 'frame_first': seq.start, 'frame_last': seq.end,
+                'frame_count': seq.frame_count, 'pattern': seq.pattern,
+                'ingest_root': self._root_of(first_frame),
+            })
             self._buffer.append(asset)
-            pending_analysis.append((asset, first_frame, True))
-
+            pending.append((asset, first_frame, seq, known is not None))
             if len(self._buffer) >= 100:
                 self._flush_buffer()
-        
-        self._flush_buffer() # Emit remaining "Pending" assets
-        
-        if skipped_count > 0:
-            logging.info(f"Smart Ingest: Skipped {skipped_count} existing healthy assets.")
-            self.progress_signal.emit(0, f"Skipped {skipped_count} existing files...")
-        
-        # --- PHASE 2: DEEP ANALYSIS (Slow) ---
-        total_analyze = len(pending_analysis)
-        if total_analyze == 0:
-             self.finished_signal.emit(True, f"Scan Complete. Skipped {skipped_count} existing.")
-             return
+        self._flush_buffer()
 
-        logging.info("Ingest Phase 2: Starting Deep Analysis for %d items (%s).",
-                     total_analyze, describe_memory())
-        analyzed_count = 0
-        
-        for asset, f_path, is_seq in pending_analysis:
-            self.mutex.lock()
-            while self.is_paused:
-                self.wait_condition.wait(self.mutex)
-            self.mutex.unlock()
-            if not self.is_running: break
-            
-            # Perform Analysis
-            updated_asset = self._perform_deep_analysis(asset, f_path, is_seq=is_seq)
-            
-            # Collect, and hand them over in groups. One message per asset
-            # with no pacing floods the interface on a large ingest, which looks
-            # exactly like the scan having hung.
-            self._update_buffer.append(updated_asset)
-            if len(self._update_buffer) >= 25:
-                self._flush_update_buffer()
-            logging.debug("Ingest Phase 2: %s | %s",
-                          asset.get('file_name'), updated_asset.get('status'))
+        if not self.is_running:
+            return self._finish(False, "Stopped.", stopped=True)
 
-            analyzed_count += 1
-            if analyzed_count % 5 == 0:
-                pct = int((analyzed_count / total_analyze) * 100)
-                self.progress_signal.emit(pct, f"Analyzed: {asset['file_name']}")
-                task_registry.update_progress(self.task_info.task_id, pct, f"Analyzed: {asset['file_name']}")
-            if analyzed_count % 250 == 0:
-                logging.info("Ingest Phase 2: %d/%d analysed, %s",
-                             analyzed_count, total_analyze, describe_memory())
-            if analyzed_count % 25 == 0:
-                self._memory_guard(analyzed_count, total_analyze)
+        total = len(pending)
+        if total == 0:
+            return self._finish(True, "Nothing new: everything in that folder is already in the library.")
 
-            # THROTTLING REMOVED: User requested full batch processing
-            # We rely on the UI thread checking to keep app responsive
-            pass
+        logging.info("Ingest: analysing %d items with %d workers (%s).",
+                     total, self.WORKERS, describe_memory())
+        self._analyse(pending)
+        self._flush_update_buffer()
 
-        self._flush_update_buffer()      # whatever is left over
-        logging.info("Ingest Phase 2: All items processed (%s). Emitting finished signal.",
-                     describe_memory())
-        task_registry.update_progress(self.task_info.task_id, 100, "Ingest Complete")
+        stopped = not self.is_running
+        logging.info("Ingest finished (%s). %s", describe_memory(), self.summary)
+        return self._finish(not stopped, "Stopped." if stopped else "Ingest complete.",
+                            stopped=stopped)
+
+    @staticmethod
+    def _healthy(known) -> bool:
+        """Already ingested properly: a thumbnail on disk and metadata stored."""
+        thumb = known.get('thumb_path')
+        meta = known.get('metadata')
+        if isinstance(meta, str):
+            has_meta = meta.strip() not in ("", "{}")
+        else:
+            has_meta = bool(meta)
+        if not thumb or not has_meta:
+            return False
+        try:
+            return Path(proxy_manager.long_path(str(thumb))).exists()
+        except OSError:
+            return False
+
+    def _analyse(self, pending):
+        """Run the analyses on a small pool; write and report in groups."""
+        total = len(pending)
+        done = 0
+        queue = list(pending)
+        with ThreadPoolExecutor(max_workers=self.WORKERS,
+                                thread_name_prefix="slate-stock-ingest") as pool:
+            running = {}
+            while (queue or running) and self.is_running:
+                self._wait_while_paused()
+                while queue and len(running) < self.WORKERS * 2 and self.is_running:
+                    asset, path, seq, refresh = queue.pop(0)
+                    future = pool.submit(self._perform_deep_analysis, asset, path,
+                                         seq is not None, seq)
+                    running[future] = (asset, refresh)
+                if not running:
+                    break
+                finished, _ = wait(list(running), timeout=0.5, return_when=FIRST_COMPLETED)
+                for future in finished:
+                    asset, refresh = running.pop(future)
+                    try:
+                        updated = future.result()
+                    except Exception as exc:
+                        logging.exception("Analysis failed for %s: %s", asset.get('file_name'), exc)
+                        updated = dict(asset, status='corrupt')
+                    if updated.get('status') == 'corrupt':
+                        self.summary["failed"] += 1
+                        self.summary["failed_names"].append(updated.get('file_name') or "")
+                    elif refresh:
+                        self.summary["refreshed"] += 1
+                    else:
+                        self.summary["added"] += 1
+                    self._update_buffer.append(updated)
+                    if len(self._update_buffer) >= self.BATCH:
+                        self._flush_update_buffer()
+                    done += 1
+                    self._progress(done * 100 / total,
+                                   f"Analysed {done:,} of {total:,}: {asset.get('file_name')}",
+                                   force=(done == total))
+                    if done % 250 == 0:
+                        logging.info("Ingest: %d/%d analysed, %s", done, total, describe_memory())
+                    if done % 25 == 0:
+                        self._memory_guard(done, total)
+            if not self.is_running:
+                for future in running:
+                    future.cancel()
+
+    def _finish(self, ok, message, stopped=False):
+        self._flush_buffer()
+        self._flush_update_buffer()
+        self.summary["stopped"] = bool(stopped)
+        self.summary["message"] = message
+        task_registry.update_progress(self.task_info.task_id, 100, message)
         task_registry.finish_task(self.task_info.task_id)
-        self.finished_signal.emit(True, "Ingest Complete")
+        self.summary_ready.emit(dict(self.summary))
+        self.finished_signal.emit(bool(ok), message)
 
     def _create_basic_asset(self, f, is_sequence=False, display_name=None):
         # Deterministic, and unique. This is the key the interface uses to
@@ -461,22 +497,27 @@ class IngestWorker(QThread):
         # when that happened one asset's picture and details were written over
         # another's. The full fingerprint costs nothing and cannot collide.
         asset_id = hashlib.md5((str(f.name) + str(f)).encode('utf-8')).hexdigest()
-        
-        # Auto-Classify immediately
+
         category = SmartMetadataManager.classify_category(f)
 
         return {
             'id': asset_id,
-            'name': display_name if display_name else f.name, # FIX: Add 'name' key for StockModel
-            'file_name': display_name if display_name else f.name,
+            'name': display_name if display_name else f.name,
+            'display_name': display_name if display_name else f.name,
+            'file_name': f.name,
             'file_path': str(f),
-            'path': str(f), # Legacy compatibility key for UI
-            'thumb_path': None, # Pending
+            'path': str(f),  # Legacy compatibility key for UI
+            'file_type': f.suffix.lower(),
+            'thumb_path': None,
             'proxy_path': None,
-            'tags': ["Pending"],
+            # No tags until they are known. "Pending" used to be stored as a
+            # tag, and stayed there whenever the analysis was not saved.
+            'tags': [],
             'category': category,
             'metadata': {},
-            'status': 'ingesting' # UI can use this to show spinner
+            'is_sequence': bool(is_sequence),
+            'added_by': self.username,
+            'status': 'ingesting',
         }
 
     @staticmethod
@@ -494,127 +535,175 @@ class IngestWorker(QThread):
 
     def _flush_buffer(self):
         if self._buffer:
-            # Batch add to DB via LibraryManager
             try:
                 self.lib_manager.add_assets_batch(self._buffer)
-                # Only emit signal if DB save succeeds
+                # Only shown once they are stored.
                 self.assets_batch_signal.emit(self._handover(self._buffer))
             except Exception as e:
                 logging.exception(f"Failed to save batch to DB: {e}")
-                # Don't emit signal if save failed
-                
+                self.summary["failed"] += len(self._buffer)
+                self.summary["failed_names"].extend(
+                    a.get('file_name') or "" for a in self._buffer)
             self._buffer = []
 
     def _flush_update_buffer(self):
         if self._update_buffer:
+            # Written first, in one transaction, then shown.
+            writer = getattr(self.lib_manager, "update_assets_batch", None)
+            try:
+                if callable(writer):
+                    writer(self._update_buffer)
+                else:
+                    for asset in self._update_buffer:
+                        self.lib_manager.update_asset(asset.get('id'), asset)
+            except Exception as e:
+                logging.exception("Analysed assets were not saved: %s", e)
             self.assets_update_batch_signal.emit(self._handover(self._update_buffer))
             self._update_buffer = []
 
-    def _perform_deep_analysis(self, asset, f_path, is_seq=False):
+    def _perform_deep_analysis(self, asset, f_path, is_seq=False, seq=None):
+        """Thumbnail, proxy, metadata and tags for one asset (runs on the pool)."""
+        asset = dict(asset)
+        f_path = Path(f_path)
         try:
-            # 1. Generate Thumb/Proxy
-            # Capture errors individually
+            if f_path.suffix.lower() in RAW_EXTENSIONS:
+                # Camera raw: kept and searchable; there is no decoder for a
+                # picture, so none is attempted.
+                primary_cat, tags = SmartMetadataManager.get_smart_tags(f_path)
+                asset.update({'metadata': {"raw": True}, 'tags': tags + ["Camera raw"],
+                              'status': 'ready'})
+                return asset
+
+            thumb_source = f_path
+            if seq is not None and seq.frames:
+                # A frame a little way in, past any slate or black lead-in.
+                thumb_source = seq.frame_path(seq.frames[min(4, len(seq.frames) - 1)])
             thumb_success, thumb_path = False, None
             try:
-                # Always generate thumbnail (it's fast-ish and needed)
-                logging.debug(f"Generating Thumb for {f_path} (is_seq={is_seq})")
-                thumb_success, thumb_path = proxy_manager.generate_thumbnail(f_path, is_seq=is_seq)
-                logging.debug(f"Thumb Result: Success={thumb_success}, Path={thumb_path}")
+                thumb_success, thumb_path = proxy_manager.generate_thumbnail(thumb_source)
             except Exception as e:
-                 logging.exception(f"Thumb Gen Error {f_path}: {e}")
-                 logging.exception(f"Thumb Gen EXCEPTION: {e}")
+                logging.warning("Thumbnail failed for %s: %s", f_path.name, e)
 
-            proxy_success, proxy_path = False, None
-            
-            # ONLY Generate Proxy if NOT Fast Mode
+            proxy_path = None
             if not self.fast_mode:
                 try:
-                    proxy_success, proxy_path = proxy_manager.generate_proxy(f_path, is_seq=is_seq)
+                    if seq is not None:
+                        _ok, proxy_path = proxy_manager.generate_proxy(
+                            f_path, is_seq=True, sequence=(seq.pattern, seq.start))
+                    else:
+                        _ok, proxy_path = proxy_manager.generate_proxy(f_path)
                 except Exception as e:
-                    logging.warning(f"Proxy generation failed for {f_path}: {e}") 
-            
-            # 2. Extract Metadata
+                    logging.warning(f"Proxy generation failed for {f_path}: {e}")
+
             meta = {}
             try:
                 meta = SmartMetadataManager.extract_tech_metadata(str(f_path))
             except Exception as e:
-                logging.exception(f"Meta Error {f_path}: {e}")
+                logging.warning("Metadata failed for %s: %s", f_path.name, e)
+            if seq is not None:
+                meta.update({"is_still": False, "is_sequence": True,
+                             "frame_count": seq.frame_count,
+                             "frame_first": seq.start, "frame_last": seq.end,
+                             # A sequence has no rate of its own; ffprobe's
+                             # figure for one frame is meaningless.
+                             "fps": 0.0, "duration_sec": 0.0})
 
-            # 3. Tags
             primary_cat, tags = SmartMetadataManager.get_smart_tags(f_path)
-            if asset.get('file_name', '').count('[') > 0: tags.append("Sequence")
-            
+            if seq is not None:
+                tags.append("Sequence")
+            visual = []
             if thumb_success and thumb_path:
-                # DISABLE VISUAL TAGS FOR STABILITY
-                # visual_tags = SmartMetadataManager.extract_visual_tags(str(thumb_path))
-                # tags.extend(visual_tags)
-                pass
-            
-            # Update Asset Dict
-            asset['thumb_path'] = str(thumb_path) if thumb_path else None
-            asset['proxy_path'] = str(proxy_path) if proxy_path else None
-            asset['metadata'] = meta
-            asset['status'] = 'ready'
-            
-            # Merge tags logic (keep category)
-            # We overwrite "Pending" tags
-            asset['tags'] = tags
-            
-            # DB Update in background thread to prevent UI freezing
-            try:
-                self.lib_manager.update_asset(asset['id'], asset)
-            except Exception as e:
-                logging.error(f"DB Update error for {f_path}: {e}")
-            
-            return asset
+                visual = SmartMetadataManager.extract_visual_tags(str(thumb_path))
 
+            asset.update({
+                'thumb_path': str(thumb_path) if thumb_path else None,
+                'proxy_path': str(proxy_path) if proxy_path else None,
+                'metadata': meta,
+                'tags': tags,
+                'visual_tags': visual,
+                'category': asset.get('category') or primary_cat,
+                'status': 'ready' if (thumb_success or meta.get('width')) else 'corrupt',
+            })
+            return asset
         except Exception as e:
             logging.exception(f"Deep Analysis Critical Fail {f_path}: {e}")
             asset['status'] = 'corrupt'
-            asset['tags'] = ['Corrupt']
             return asset
 
 
 # --- IMPORT LIB WORKER ---
 class ImportLibWorker(QThread):
-    progress_signal = Signal(int, str)
-    asset_imported_signal = Signal(dict)
-    finished_signal = Signal(bool, str)
+    """
+    Bring a library export back in, off the interface thread (MED-027).
 
-    def __init__(self, json_data):
+    The file is checked first; anything that is not a Slate library export is
+    refused with a sentence, never a Python error. Each entry is stored the
+    same way the ingest stores it (the same path spelling, tags as a list),
+    and an entry already in the library keeps what was learned about it.
+    """
+    progress_signal = Signal(int, str)
+    finished_signal = Signal(bool, str)
+    summary_ready = Signal(dict)
+
+    def __init__(self, json_data, username=""):
         super().__init__()
         self.data = json_data
+        self.username = username
         self.is_running = True
+        self.lib_manager = create_asset_api(db_manager=database_manager)
+
+    @staticmethod
+    def validate(data):
+        """(entries, error). entries are the dicts with a path; error is a sentence or ''."""
+        if not isinstance(data, list):
+            return [], ("This file is not a Slate library export. An export is a list of "
+                        "assets; this file holds something else.")
+        entries = [d for d in data if isinstance(d, dict)
+                   and (d.get('file_path') or d.get('path'))]
+        if data and not entries:
+            return [], ("This file is not a Slate library export: none of its entries "
+                        "has a file path.")
+        return entries, ""
 
     def run(self):
-        total = len(self.data)
-        for i, asset in enumerate(self.data):
-            if not self.is_running: break
-            
-            f_path = Path(asset.get('file_path', ''))
-            if f_path.exists():
-                thumb_path = asset.get('thumb_path')
-                proxy_path = asset.get('proxy_path')
-                tags = asset.get('tags', [])
-                asset.get('metadata', {})
-                category = asset.get('category')
-                if not category:
-                     category, _ = SmartMetadataManager.get_smart_tags(f_path)
+        entries, error = self.validate(self.data)
+        if error:
+            self.summary_ready.emit({"imported": 0, "missing": 0, "error": error})
+            self.finished_signal.emit(False, error)
+            return
+        total = len(entries)
+        imported = missing = 0
+        batch = []
+        for i, entry in enumerate(entries, start=1):
+            if not self.is_running:
+                break
+            path = Path(str(entry.get('file_path') or entry.get('path')))
+            if not path.exists():
+                missing += 1
+            else:
+                record = {k: v for k, v in entry.items()
+                          if k in ('thumb_path', 'proxy_path', 'tags', 'metadata', 'category',
+                                   'display_name', 'name', 'visual_tags', 'is_sequence',
+                                   'frame_first', 'frame_last', 'frame_count', 'pattern')}
+                record['file_path'] = str(path)
+                record['added_by'] = entry.get('added_by') or self.username
+                if not record.get('category'):
+                    record['category'] = SmartMetadataManager.classify_category(path)
+                batch.append(record)
+                imported += 1
+            if len(batch) >= 200:
+                self.lib_manager.add_assets_batch(batch)
+                batch = []
+            if i % 25 == 0 or i == total:
+                self.progress_signal.emit(int(i * 100 / max(1, total)), f"Importing {i:,} of {total:,}")
+        if batch:
+            self.lib_manager.add_assets_batch(batch)
+        summary = {"imported": imported, "missing": missing, "error": "",
+                   "stopped": not self.is_running}
+        self.summary_ready.emit(summary)
+        self.finished_signal.emit(True, f"Imported {imported:,}")
 
-                new_id = database_manager.add_stock_asset(
-                    f_path, 
-                    thumb_path=Path(thumb_path) if thumb_path else None, 
-                    proxy_path=Path(proxy_path) if proxy_path else None, 
-                    tags=tags
-                )
-                asset['id'] = new_id
-                asset['category'] = category
-                self.asset_imported_signal.emit(asset)
-            
-            if i % 10 == 0:
-                self.progress_signal.emit(int(((i+1)/total)*100), f"Importing {i+1}/{total}")
-        
-        self.finished_signal.emit(True, "Library Import Complete")
     def stop(self):
         """Request the thread to stop at its next safe checkpoint."""
+        self.is_running = False
         self.requestInterruption()

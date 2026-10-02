@@ -130,15 +130,18 @@ class TestOpenExrFilesShowAPicture:
         assert "_load_via_oiio" in inspect.getsource(ImageEngine._load_standard)
 
 
-class TestClickingAnAssetPlaysIt:
+class TestSelectingShowsTheFirstFrame:
 
-    def test_the_selection_arms_playback(self):
+    def test_the_selection_does_not_start_playback(self):
         """
-        Selecting a clip loaded it into the player but left it stopped, so it had
-        to be started by hand every time.
+        Selecting used to start every clip at once, even while arrowing
+        through the grid (MED-073). It now shows the first frame; Enter, a
+        double-click or the "Play when selected" preference play it.
         """
         from slate.gui.tabs.stock_browser_tab import StockBrowserTab
+        from slate.gui.tabs.stock_browser.ui.inspector import StockInspectorPanel
 
         source = inspect.getsource(StockBrowserTab.on_selection_changed)
-
-        assert "_pending_autoplay" in source
+        assert "_pending_autoplay = True" not in source
+        preview = inspect.getsource(StockInspectorPanel._show_preview)
+        assert "_pending_autoplay = bool(autoplay)" in preview

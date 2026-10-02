@@ -142,7 +142,7 @@ class TestALargeIngestExplainsItsMemory:
     def test_it_is_written_as_the_analysis_goes(self):
         source = (ROOT / "slate" / "core" / "domain" / "asset_ingestor.py").read_text(encoding="utf-8")
         assert "describe_memory()" in source
-        assert "analyzed_count % 250 == 0" in source
+        assert "% 250 == 0" in source
 
 
 class TestTheGalleryWaitsForTheIngestsThumbnail:

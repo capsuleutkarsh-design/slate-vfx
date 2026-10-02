@@ -12,6 +12,11 @@ class BaseMediaEngine(QObject):
     duration_changed = Signal(int)
     finished = Signal()
     error_occurred = Signal(str)
+    # Playing or not - the player's button follows this, not its own text
+    # (MED-109).
+    state_changed = Signal(bool)
+    # Playback wrapped from the last frame back to the first.
+    looped = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -24,6 +29,14 @@ class BaseMediaEngine(QObject):
     def load(self, source_path: str):
         """Load the media source."""
         raise NotImplementedError
+
+    def is_playing(self) -> bool:
+        """Whether frames are advancing right now."""
+        return False
+
+    def position_seconds(self) -> float:
+        """Where playback is, in seconds (for keeping the sound in step)."""
+        return 0.0
 
     def play(self):
         """Start playback."""

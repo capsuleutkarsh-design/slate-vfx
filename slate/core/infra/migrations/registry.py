@@ -137,6 +137,11 @@ DASHBOARD = (
 
 # ---- media (Stock, review, players) ----
 MEDIA = (
+    # Stock library: categories, sequences, visual tags, search text, soft
+    # delete, favourites, studio picks, ingest roots. See media_schema.py.
+    step("media_schema", "slate.core.infra.migrations.media_schema:apply_migration"),
+    step("repair_stock_library",
+         "slate.core.infra.migrations.media_schema:repair_stock_library", once=True),
 )
 
 # ---- ingest (Ingest, CAP Rename, Timeline) ----

@@ -116,7 +116,8 @@ class TestOneShotBecomesATimelineEntry:
 
         entry = build_lineup_shot(shot, tmp_path)
 
-        assert entry.layers == ["scan", "comp", "prep"]
+        # Departments in their order in departments.json.
+        assert entry.layers == ["scan", "prep", "comp"]
 
     def test_a_shot_with_no_plate_is_not_put_on_the_timeline(self, tmp_path):
         """A clip pointing at nothing is worse than a gap."""
@@ -138,16 +139,47 @@ class TestOneShotBecomesATimelineEntry:
 
         assert build_lineup_shot(shot, tmp_path).get_frame_count() == 10
 
-    def test_a_department_the_layout_does_not_use_is_left_out(self, tmp_path):
+    def test_every_department_that_renders_gets_a_layer(self, tmp_path):
+        """DMP, CG, Roto... used to be left out of a fixed four-layer layout (MED-085)."""
         shot = _shot(tmp_path)
         root = tmp_path / "05_Reels" / "ReelA" / "SH010"
         _movie(root / "04_Roto" / "Output", "SH010_roto.mov")
         shot.folder_paths["roto"] = "05_Reels/ReelA/SH010/04_Roto"
 
-        assert "roto" not in build_lineup_shot(shot, tmp_path).layers
+        assert "roto" in build_lineup_shot(shot, tmp_path).layers
+        keys = [key for _label, key in TRACK_LAYOUT]
+        assert keys[0] == "scan" and {"dmp", "cg", "roto", "comp"} <= set(keys)
 
 
 class TestEditOrder:
+
+    def test_reels_then_every_number(self, tmp_path):
+        """The audit's five shots came out interleaved by their last number (MED-079)."""
+        names = [("R2", "SEQ030_SH005"), ("R1", "SEQ010_SH010"), ("R1", "SEQ020_SH010"),
+                 ("R2", "SEQ030_SH015"), ("R1", "SEQ010_SH020")]
+        shots = [_shot(tmp_path, name, reel=reel) for reel, name in names]
+        order = [(e.reel, e.name) for e in build_lineup(shots, tmp_path)]
+        assert order == [("R1", "SEQ010_SH010"), ("R1", "SEQ010_SH020"), ("R1", "SEQ020_SH010"),
+                         ("R2", "SEQ030_SH005"), ("R2", "SEQ030_SH015")]
+
+    def test_an_unknown_length_is_marked(self, tmp_path):
+        from slate.core.domain.olive_lineup import fps_mismatches
+        shot = _shot(tmp_path, "SH010")
+        root = tmp_path / "05_Reels" / "ReelA" / "SH010" / "01_Scan" / "v001" / "EXR"
+        for f in root.iterdir():
+            f.unlink()
+        _movie(root, "plate.mov")
+        entry = build_lineup_shot(shot, tmp_path)
+        assert not entry.length_known and entry.get_frame_count() == 100        # MED-089
+        assert "unknown" in entry.frames_text()
+        late = _shot(tmp_path, "SH020")
+        late.fps = 25.0
+        other = build_lineup_shot(late, tmp_path)
+        assert fps_mismatches([entry, entry, other]) == ["SH020"]
+
+    def test_lineups_go_into_the_project(self, tmp_path):
+        from slate.core.domain.olive_lineup import lineup_folder
+        assert lineup_folder(tmp_path, "PRJ") == tmp_path / "editorial" / "lineups"   # MED-093
 
     def test_shots_run_in_shot_number_order(self, tmp_path):
         shots = [_shot(tmp_path, name) for name in ("SH030", "SH010", "SH020")]
@@ -233,7 +265,8 @@ class TestGeneratedTimelines:
         tracks = [n for n in tree.iter("node")
                   if n.attrib.get("id", "").endswith(".track")]
 
-        assert len(tracks) == len(TRACK_LAYOUT)
+        # The plate and the layers the shots fill - not a row of empty tracks.
+        assert len(tracks) == 2
 
     def test_a_render_sits_at_the_same_time_as_its_plate(self, tmp_path):
         """The whole point of the stack: comp directly beneath its scan."""
@@ -273,13 +306,13 @@ class TestGeneratedTimelines:
         result = generate_timelines(shots, tmp_path / "out", "PRJ", tmp_path)
 
         assert result.skipped == ["SH020"]
-        assert "1 shot(s) skipped" in result.summary()
+        assert "1 shot skipped" in result.summary()
 
     def test_nothing_to_build_says_so(self, tmp_path):
         result = generate_timelines([], tmp_path / "out", "PRJ", tmp_path)
 
         assert not result.ok
-        assert "no shot has a scan" in result.summary()
+        assert "No shots loaded" in result.summary()
 
     def test_a_bridge_that_fails_is_reported_not_raised(self, tmp_path):
         class BrokenBridge:

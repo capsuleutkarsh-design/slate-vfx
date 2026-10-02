@@ -1,106 +1,82 @@
 """
-Timeline Viewer - the lineup, in Olive.
+Timeline Viewer - the lineup: watched here, edited in Olive.
 
-This used to be two modes: a Shot Checker built into the software, and the
-Olive lineup editor. The Shot Checker is gone - reviewing happens in OpenRV,
-which is what the studio actually reviews in, and which the dashboard opens
-directly through its "Review in RV" button.
-
-What is left is the timeline: plates laid out reel by reel, with each
-department's render on its own layer directly beneath the plate it came from.
 The shots come from the dashboard, so the timeline is always built from what
-the production is actually tracking.
+the production is actually tracking: plates laid out reel by reel, with each
+department's render on its own layer beneath the plate it came from. The tab
+plays the lineup itself (LineupPreview) and writes Olive timelines; reviewing
+proper happens in OpenRV from the dashboard.
+
+On first show it loads the stored project by itself instead of opening on an
+empty list with an enabled Sync button (MED-086).
 """
 
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel
-)
-from PySide6.QtCore import Qt
 import logging
 
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+
 from .shot_review.lineup_editor_mode import LineupEditorMode
+from ..core.controls import make_button
 from slate.core.infra.gate import Gate
 
 logger = logging.getLogger(__name__)
 
 
 class VFXReviewDualModeTab(QWidget):
-    """The lineup, built from the dashboard and opened in Olive."""
+    """The lineup, built from the dashboard, played here and opened in Olive."""
 
     def __init__(self, config_manager, user_data=None):
         super().__init__()
-
         self.config = config_manager
         self.user_data = user_data or {}
         self._is_closing = False
         self._is_cleaned = False
-
+        self._loaded_once = False
         self.lineup_editor = LineupEditorMode()
-
         self.setup_ui()
-
         logger.info("Timeline Viewer initialized")
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-
         layout.addWidget(self.create_mode_toggle())
-        layout.addWidget(self.lineup_editor)
-    
+        layout.addWidget(self.lineup_editor, 1)
+
     def create_mode_toggle(self):
-        """Create mode toggle buttons & Notification Bell"""
+        """The header: title, what it is, Refresh."""
         header = QWidget()
-        header.setStyleSheet(f"""
-            QWidget {{
-                background-color: {Gate.PANEL};
-                border-bottom: 2px solid {Gate.ACCENT};
-            }}
-        """)
-        
+        header.setObjectName("TimelineHeader")
+        header.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        # Scoped by name, so the line under the header does not land under
+        # every label inside it (MED-099).
+        header.setStyleSheet(f"QWidget#TimelineHeader {{ background: {Gate.PANEL}; "
+                             f"border-bottom: 1px solid {Gate.LINE}; }}")
         layout = QHBoxLayout(header)
-        layout.setContentsMargins(10, 10, 10, 10)
-        
-        # Title
-        title = QLabel("TIMELINE VIEWER")
-        title.setStyleSheet(f"QLabel {{ color: {Gate.TEXT}; font-size: 16px; font-weight: bold; }}")
+        layout.setContentsMargins(14, 10, 14, 10)
+        title = QLabel("Timeline")
+        title.setStyleSheet(f"color: {Gate.TEXT}; font-size: 16px; font-weight: 600;")
         layout.addWidget(title)
-        
+        subtitle = QLabel("The lineup from the dashboard: watch it here, open it in Olive")
+        subtitle.setStyleSheet(f"color: {Gate.TEXT_DIM};")
+        layout.addWidget(subtitle)
         layout.addStretch()
-        
-        # Notifications are in the header now, beside Help, for everybody
-        # (slate/gui/components/notification_center.py). The "N" bell that
-        # lived here was only seen by people with this tab open.
-
-        refresh_btn = QPushButton("Refresh from Dashboard")
-        refresh_btn.setToolTip(
-            "Re-read the shots the dashboard is tracking and rebuild the list."
-        )
-        refresh_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {Gate.ACCENT_SURFACE};
-                color: {Gate.TEXT};
-                font-weight: bold;
-                padding: 10px 20px;
-                border-radius: 4px;
-                border: 2px solid {Gate.ACCENT_SURFACE};
-            }}
-            QPushButton:hover {{
-                background-color: {Gate.ACCENT};
-            }}
-        """)
-        refresh_btn.clicked.connect(self._on_refresh_clicked)
-        layout.addWidget(refresh_btn)
-        self.refresh_btn = refresh_btn
-
+        self.refresh_btn = make_button("Refresh from Dashboard", "secondary", icon="refresh",
+                                       tooltip="Re-read the shots the dashboard is tracking "
+                                               "and rebuild the list")
+        self.refresh_btn.clicked.connect(self._on_refresh_clicked)
+        layout.addWidget(self.refresh_btn)
         return header
 
-    def _on_refresh_clicked(self):
-        """
-        The button: busy while it reads, then say what happened. It dropped
-        the result, so "the dashboard has no shots loaded" was never shown.
-        """
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._loaded_once and not self.lineup_editor.shots:
+            self._loaded_once = True
+            self._on_refresh_clicked(quiet=True)
+
+    def _on_refresh_clicked(self, quiet=False):
+        """Busy while it reads, then say what happened."""
         from PySide6.QtWidgets import QApplication
         from ..components.feedback import report
         button = getattr(self, "refresh_btn", None)
@@ -114,7 +90,10 @@ class VFXReviewDualModeTab(QWidget):
             if button is not None:
                 button.setEnabled(True)
                 button.setText("Refresh from Dashboard")
-        report(self, result)
+        if not quiet or not result:
+            if quiet and not result:
+                return  # the status line already says it; no toast on opening the tab
+            report(self, result)
 
     def show_notifications(self):
         """Open the header's notification list (kept for anything that calls it)."""
@@ -123,13 +102,7 @@ class VFXReviewDualModeTab(QWidget):
 
     def set_shots(self, shots, project_root=None, folder_resolver=None,
                   project_name="", project_path=None):
-        """
-        Hand the timeline the shots the dashboard is tracking.
-
-        This is the only way shots get here now. The Shot Checker used to be
-        the source, which meant the timeline could only ever hold what somebody
-        had approved inside this tab.
-        """
+        """Hand the timeline the shots the dashboard is tracking."""
         self.lineup_editor.set_project_context(project_name, project_path)
         self.lineup_editor.set_project_source(project_root, folder_resolver)
         self.lineup_editor.set_shots(shots)
@@ -137,17 +110,7 @@ class VFXReviewDualModeTab(QWidget):
     def refresh_from_dashboard(self):
         """
         Pull the current shots - from the dashboard tab if it is open, and from
-        the database if it is not.
-
-        Tabs are built on first use, so this used to work only if somebody had
-        already visited the dashboard this session. Otherwise it said "open the
-        VFX Dashboard and pick a project first", which is a reasonable sentence
-        and a poor answer: the project is already chosen and stored, and this
-        tab can read it.
-
-        Returns a Result (slate/gui/components/feedback.py) saying what really
-        happened. It returned nothing, so the command palette announced
-        "Timeline rebuilt from the dashboard." even when it had failed.
+        the database if it is not. Returns a Result saying what really happened.
         """
         from PySide6.QtWidgets import QApplication
         from ..components.feedback import Result
@@ -168,8 +131,7 @@ class VFXReviewDualModeTab(QWidget):
                     return Result.failure(
                         "The dashboard has no shots loaded, so there is no lineup to build.")
                 return Result.success(
-                    "Timeline rebuilt from the dashboard: %d shot(s)." % len(shots))
-
+                    f"Timeline rebuilt from the dashboard: {len(shots)} shot{'s' if len(shots) != 1 else ''}.")
             return self._refresh_from_database()
         finally:
             QApplication.restoreOverrideCursor()
@@ -186,7 +148,7 @@ class VFXReviewDualModeTab(QWidget):
             if not projects:
                 message = ("No projects yet. Build one in Build & Ingest, or add it on "
                            "the VFX Dashboard.")
-                self.lineup_editor.status_label.setText(message)
+                self.lineup_editor._set_status(message)
                 return Result.failure(message)
 
             code = getattr(manager, "default_project", None) or projects[0].code
@@ -194,9 +156,8 @@ class VFXReviewDualModeTab(QWidget):
 
             shots = SQLiteHandler(project.code).read_shots()
             if not shots:
-                message = ("%s has no shots yet, so there is no lineup to build."
-                           % project.code)
-                self.lineup_editor.status_label.setText(message)
+                message = f"{project.code} has no shots yet, so there is no lineup to build."
+                self.lineup_editor._set_status(message)
                 return Result.failure(message)
 
             self.set_shots(
@@ -205,13 +166,13 @@ class VFXReviewDualModeTab(QWidget):
                 folder_resolver=None,
                 project_name=project.code or "",
             )
-            return Result.success("Timeline rebuilt for %s: %d shot(s)."
-                                  % (project.code, len(shots)))
+            return Result.success(f"Timeline rebuilt for {project.code}: "
+                                  f"{len(shots)} shot{'s' if len(shots) != 1 else ''}.")
         except Exception as exc:
             logger.warning("Could not load the lineup from the database: %s", exc)
             message = ("Could not read the project from the database. Open the VFX "
                        "Dashboard to load it, or check the connection.")
-            self.lineup_editor.status_label.setText(message)
+            self.lineup_editor._set_status(message)
             return Result.failure(message, detail=str(exc))
 
     def _find_dashboard(self):
@@ -225,34 +186,27 @@ class VFXReviewDualModeTab(QWidget):
         except Exception as exc:
             logger.debug("Could not reach the dashboard: %s", exc)
             return None
-
         if tab is None:
             return None
-        # The tab may wrap the widget that actually holds the shots.
         if hasattr(tab, "all_shots"):
             return tab
         return getattr(tab, "dashboard_widget", None)
 
+    # ------------------------------------------------------------- work guard
+    def busy_reason(self):
+        return self.lineup_editor.busy_reason()
+
+    def shutdown(self, timeout_ms=15000) -> bool:
+        return self.lineup_editor.shutdown(timeout_ms)
+
     def closeEvent(self, event):
-        """Propagate close event to child widgets for cleanup."""
         self.cleanup_resources()
         super().closeEvent(event)
 
     def cleanup_resources(self):
-        """Release timers/widgets used by both review modes."""
         if self._is_cleaned:
             return
-
         self._is_closing = True
-
-        if hasattr(self, "notif_timer") and self.notif_timer.isActive():
-            self.notif_timer.stop()
-
         if hasattr(self, "lineup_editor"):
-            lineup = self.lineup_editor
-            if hasattr(lineup, "cleanup_resources"):
-                lineup.cleanup_resources()
-            lineup.close()
-
+            self.lineup_editor.close()
         self._is_cleaned = True
-

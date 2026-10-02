@@ -321,6 +321,7 @@ class MainWindowBuilderMixin:
                         self.library_manager,
                         user_roles=self.user_roles,
                         user_role=self.user_role,
+                        user_data=self.user_data,
                     ),
                     icon="🎞️",
                     permission_key="Stock Browser",

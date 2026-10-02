@@ -38,13 +38,27 @@ class ReviewOption:
     clip: MediaClip
 
     @property
-    def detail(self) -> str:
-        """A short line saying what would actually open."""
-        if self.clip.scan_version:
-            return f"{self.clip.path.name}  ({self.clip.scan_version})"
+    def version(self) -> str:
+        return self.clip.scan_version or ""
+
+    @property
+    def frames(self) -> str:
+        """'1001-1008 (8 f)' for a sequence, the file name for a movie."""
         if self.clip.is_sequence and self.clip.frame_count:
-            return f"{self.clip.path.name}  ({self.clip.frame_count} frames)"
+            return (f"{self.clip.first_frame}–{self.clip.last_frame} "
+                    f"({self.clip.frame_count} f)")
         return self.clip.path.name
+
+    @property
+    def detail(self) -> str:
+        """
+        What would open, the same way for every row: 'v001 · 1001-1008 (8 f)'.
+
+        It showed a printf pattern with the version for the plate and a frame
+        count without a version for renders (MED-122).
+        """
+        parts = [p for p in (self.version, self.frames) if p]
+        return " · ".join(parts)
 
 
 @dataclass
