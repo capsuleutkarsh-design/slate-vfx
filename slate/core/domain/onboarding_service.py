@@ -530,7 +530,9 @@ class OnboardingService:
             rows = self.db.execute_query(
                 "SELECT machine_name FROM hardware_inventory "
                 "WHERE (assigned_to IS NULL OR assigned_to = '') "
-                "AND COALESCE(status, '') <> 'Repair' "
+                # In for repair, or at the end of its life (IT area: Retired,
+                # Lost, Disposed): not something to hand to anybody.
+                "AND LOWER(COALESCE(status, '')) NOT IN ('repair', 'retired', 'lost', 'disposed') "
                 "ORDER BY machine_name", fetch="all") or []
             return [(r["machine_name"] if isinstance(r, dict) else r[0]) for r in rows]
         except DatabaseUnavailableError:

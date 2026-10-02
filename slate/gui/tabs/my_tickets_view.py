@@ -562,6 +562,8 @@ class TicketThreadDialog(QDialog):
         try:
             fresh = self.repo.get(self.ticket.get("id"))
             rows = self.repo.comments(self.ticket.get("id"), include_internal=self.side == "it")
+        except DatabaseUnavailableError:
+            return          # the tab behind says so on its next refresh
         except Exception as exc:
             logger.debug("Thread poll skipped: %s", exc)
             return

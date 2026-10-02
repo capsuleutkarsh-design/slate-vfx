@@ -74,7 +74,9 @@ def test_add_pc_enter_saves_not_auto_fill(app):
     from slate.gui.tabs.it_inventory_tab import AddPCDialog
     dialog = AddPCDialog(hub=None)
     dialog.accept = lambda: None
-    assert_enter_presses(app, dialog, "Save PC")
+    # Save waits for a usable machine name (IT-023), then takes Enter.
+    dialog.inp_name.setText("WS-COMP-07")
+    assert_enter_presses(app, dialog, "Save")
 
 
 def test_record_deployment_enter_records(app):
