@@ -227,3 +227,24 @@ def test_play_lineup_moves_on_when_a_shot_ends(qtbot, editor, tmp_path):
     preview._seen_playing = True
     preview._on_finished()                          # the last one: stops
     assert not preview.btn_play_all.isChecked()
+
+
+def test_the_rv_picker_reads_the_same_on_every_row(qtbot, tmp_path):
+    """MED-122: printf patterns and mixed details; Select all / none."""
+    from pathlib import Path
+    from slate.core.domain.rv_review import ReviewOption, ReviewRequest
+    from slate.core.domain.shot_media import MediaClip
+    from slate.gui.dialogs.rv_review_dialog import RVReviewDialog
+    plate = ReviewOption("scan", "Scan", MediaClip(path=Path("C:/s/SH010.%04d.exr"), department="scan",
+                                                   is_sequence=True, first_frame=1001, last_frame=1008,
+                                                   scan_version="v001"))
+    comp = ReviewOption("comp", "Comp", MediaClip(path=Path("C:/s/SH010_comp.mov"), department="comp"))
+    assert plate.detail == "v001 \u00b7 1001\u20131008 (8 f)" and "%" not in plate.detail
+    assert comp.detail == "SH010_comp.mov"
+    dialog = RVReviewDialog(ReviewRequest("SH010", [plate, comp]), launcher=object())
+    qtbot.addWidget(dialog)
+    assert dialog.selected_keys() == ["scan"]
+    dialog.btn_all.click()
+    assert dialog.selected_keys() == ["scan", "comp"] and dialog.open_btn.text() == "Open 2 in RV"
+    dialog.btn_none.click()
+    assert dialog.selected_keys() == [] and not dialog.open_btn.isEnabled()
