@@ -99,8 +99,10 @@ def friendly_time(timestamp, now: datetime = None) -> str:
         return ""
     now = now or datetime.now()
     delta = now - moment
-    if delta < timedelta(0):
+    if delta < timedelta(minutes=-5):
         return moment.strftime("%d %b %Y %H:%M")
+    if delta < timedelta(0):
+        delta = timedelta(0)        # another workstation's clock runs a little ahead
     if delta < timedelta(minutes=1):
         return "Just now"
     if delta < timedelta(hours=1):

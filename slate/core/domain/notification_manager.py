@@ -38,15 +38,19 @@ class NotificationManager:
         return True if self._is_postgres() else 1
 
     def _ensure_schema(self):
+        # Epoch seconds need a double. On PostgreSQL REAL is four bytes, which
+        # keeps about seven digits - a notification's time was rounded by up
+        # to a minute either way, so "just now" could read as the future.
+        stamp_type = "DOUBLE PRECISION" if self._is_postgres() else "REAL"
         try:
             # Create notifications table if it doesn't exist
-            self.db.execute_update("""
+            self.db.execute_update(f"""
                 CREATE TABLE IF NOT EXISTS notifications (
                     id TEXT PRIMARY KEY,
                     user_id TEXT NOT NULL,
                     message TEXT NOT NULL,
                     type TEXT NOT NULL,
-                    timestamp REAL NOT NULL,
+                    timestamp {stamp_type} NOT NULL,
                     read BOOLEAN NOT NULL DEFAULT FALSE
                 )
             """)
@@ -54,7 +58,23 @@ class NotificationManager:
             logging.error(f"Failed to initialize Notifications Schema: {e}")
         if not NotificationManager._repaired:
             NotificationManager._repaired = True
+            self._widen_timestamp()
             self.repair_recipients()
+
+    def _widen_timestamp(self):
+        """Existing PostgreSQL tables: REAL -> DOUBLE PRECISION (values kept)."""
+        if not self._is_postgres():
+            return
+        try:
+            row = self.db.execute_query(
+                "SELECT data_type FROM information_schema.columns "
+                "WHERE table_name = 'notifications' AND column_name = 'timestamp'", fetch="one")
+            kind = str((row.get("data_type") if isinstance(row, dict) else row[0]) if row else "")
+            if kind.lower() == "real":
+                self.db.execute_update(
+                    "ALTER TABLE notifications ALTER COLUMN timestamp TYPE DOUBLE PRECISION")
+        except Exception as exc:
+            logging.debug("Notification timestamp not widened: %s", exc)
 
     # ------------------------------------------------------------ identities
     def resolve_recipient(self, identity):
