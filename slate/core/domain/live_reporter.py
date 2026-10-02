@@ -42,10 +42,12 @@ class LiveReporter(QThread):
         try:
             now = time.time()
             
-            # --- MANUAL MODE ONLY ---
-            # Only gather specs if we have NONE (Startup) or if FORCED.
-            # No automatic time-based updates.
-            if force_full or not self.cached_dynamic_specs:
+            # Drive usage is re-read every update_interval (5 minutes). It
+            # used to be read once when Slate started, so Live Ops showed how
+            # full a disk was days ago. shutil.disk_usage is cheap, and this
+            # runs on the reporter's own thread.
+            stale = now - self.last_dynamic_update >= self.update_interval
+            if force_full or not self.cached_dynamic_specs or stale:
                 self.cached_dynamic_specs = HardwareInfo.get_dynamic_specs()
                 self.last_dynamic_update = now
             
@@ -53,10 +55,11 @@ class LiveReporter(QThread):
             import getpass
             data = {
                 "pc_name": self.pc_name, 
-                "user": self.user_name,       # UT Login (Software)
+                "user": self.user_name,       # Slate sign-in (fleet reports keep the old key ut_user)
                 "os_user": getpass.getuser(), # Windows Login (System)
                 "status": "Online", 
                 "last_seen": now,
+                "drives_updated": self.last_dynamic_update,   # when the disk figures were read
                 **self.static_specs,       # Static (boot time)
                 **self.cached_dynamic_specs # Dynamic (Startup or Forced)
             }
