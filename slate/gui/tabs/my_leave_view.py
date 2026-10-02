@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from slate.core.infra.db_results import DatabaseUnavailableError
 from slate.core.infra.gate import Gate
 from slate.core.infra.leave_repository import LeaveRepository, NO_APPROVER
 from slate.core.domain import leave_policy as lp
@@ -297,6 +298,8 @@ class RequestLeaveDialog(QDialog):
         """Comp-off still valid on the day of the leave, less what is already asked for."""
         try:
             valid = self.repo.comp_off_balance(self.username, on=start)
+        except DatabaseUnavailableError:
+            raise   # the screen's outage notice, not an empty panel
         except Exception:
             valid = self.comp_off
         return max(0.0, valid - self.comp_off_pending)

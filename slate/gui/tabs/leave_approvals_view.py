@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QTableWidget, QVBoxLayout, QWidget,
 )
 
+from slate.core.infra.db_results import DatabaseUnavailableError
 from slate.core.infra.gate import Gate
 from slate.core.infra.leave_repository import LeaveRepository, as_date, NO_APPROVER
 from slate.core.domain import leave_policy as lp
@@ -276,6 +277,8 @@ class LeaveApprovalsView(QWidget):
             return
         try:
             year = self.repo.unclosed_year()
+        except DatabaseUnavailableError:
+            raise   # the screen's outage notice, not an empty panel
         except Exception:
             year = None
         if year is None:
@@ -316,6 +319,8 @@ class LeaveApprovalsView(QWidget):
         if key not in self._balances:
             try:
                 self._balances[key] = self.repo.balance(username)
+            except DatabaseUnavailableError:
+                raise   # the screen's outage notice, not an empty panel
             except Exception:
                 self._balances[key] = {}
         return self._balances[key]
@@ -392,6 +397,8 @@ class LeaveApprovalsView(QWidget):
         row = picked[0]
         try:
             away = self.repo.also_away(row)
+        except DatabaseUnavailableError:
+            raise   # the screen's outage notice, not an empty panel
         except Exception:
             away = []
         balance = self.balance_of(row.get("user_id"))
@@ -402,6 +409,8 @@ class LeaveApprovalsView(QWidget):
                 charge = lp.days_charged(
                     start, end, self.repo.holidays_for(row.get("user_id"), start, end),
                     half_day=bool(row.get("half_day")) and start == end)
+            except DatabaseUnavailableError:
+                raise   # the screen's outage notice, not an empty panel
             except Exception:
                 charge = None
         self.details.show_request(row, balance, charge, away)

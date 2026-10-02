@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
+from slate.core.infra.db_results import DatabaseUnavailableError
 from slate.core.infra.gate import Gate
 from slate.core.domain.onboarding_service import (
     OnboardingService, JOINING, LEAVING, HR, IT, EMPLOYMENT_TYPES,
@@ -224,6 +225,8 @@ class StartPersonDialog(QDialog):
             joined = None
             try:
                 joined = self.service.joined_on(username)
+            except DatabaseUnavailableError:
+                raise   # the screen's outage notice, not an empty panel
             except Exception:
                 joined = None
             self._existing_joined = joined

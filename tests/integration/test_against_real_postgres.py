@@ -268,7 +268,7 @@ class TestLeaveRequestsOnPostgres:
 
         repo = LeaveRepository(db=pg_db)
         start = date.today() + timedelta(days=40)
-        assert repo.submit("EMP0090", "Casual", start, start, True, "dentist") is True
+        assert repo.submit("EMP0090", "Casual", start, start, True, "dentist"), "saved (an Outcome, truthy)"
 
         rows = pg_db.execute_query(
             "SELECT id, half_day, days_charged FROM leave_requests WHERE user_id = %s",
@@ -287,7 +287,7 @@ class TestLeaveRequestsOnPostgres:
         repo = LeaveRepository(db=pg_db)
         monkeypatch.setattr(pg_db, "execute_update", lambda *a, **k: False)
         start = date.today() + timedelta(days=50)
-        assert repo.submit("EMP0091", "Casual", start, start, False, "x") is False
+        assert not repo.submit("EMP0091", "Casual", start, start, False, "x")
 
     def test_an_older_integer_column_is_converted_so_requests_still_save(self, pg_db):
         """
@@ -309,7 +309,7 @@ class TestLeaveRequestsOnPostgres:
         assert workplace_schema._column_type(pg_db, "leave_requests", "half_day") == "boolean"
 
         start = date.today() + timedelta(days=60)
-        assert LeaveRepository(db=pg_db).submit("EMP0092", "Casual", start, start, True, "x") is True
+        assert LeaveRepository(db=pg_db).submit("EMP0092", "Casual", start, start, True, "x")
         row = pg_db.execute_query(
             "SELECT half_day FROM leave_requests WHERE user_id = %s", ("EMP0092",), fetch="one")
         assert row["half_day"] is True
