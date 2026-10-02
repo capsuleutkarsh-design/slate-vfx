@@ -310,8 +310,11 @@ class TestAutoScanOnlyTab:
         assert hasattr(tab, "scan_source_input")
         assert hasattr(tab, "target_reel_input")
         assert hasattr(tab, "dry_run_cb")
-        assert hasattr(tab, "overwrite_cb")
         assert hasattr(tab, "fast_mode_cb")
+        # 'Overwrite Existing' is gone: every delivery gets its own scan
+        # version, so it could never act (ING-029). Copy / Move replaced it.
+        assert not hasattr(tab, "overwrite_cb")
+        assert tab.copy_radio.isChecked()
 
     @patch('slate.gui.tabs.folder_creator_tab.ConfigManager')
     def test_clear_all_still_works(self, mock_config, qapp_folder, qtbot):
@@ -326,6 +329,6 @@ class TestAutoScanOnlyTab:
         qtbot.addWidget(tab)
 
         assert not hasattr(tab, "set_mode")
-        assert tab.project_card.title() == "Project Settings"
+        assert tab.project_card.title() == "Project"
 
         tab.clear_all()   # would AttributeError if it still cleared excel_input

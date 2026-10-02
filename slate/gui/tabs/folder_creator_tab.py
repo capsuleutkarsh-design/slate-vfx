@@ -1,48 +1,159 @@
+"""
+Build & Ingest: turn a client drive into a project, and keep feeding it.
+
+The order of a run:
+
+1. **Check.** The project code, the projects folder and the client drive are
+   checked as they are typed; the button stays off, with the reason beside
+   the field, until they make sense. Nothing is changed silently.
+2. **Survey.** The drive is walked once, in the background (Stop cancels it).
+3. **Stitches.** Folders that look like parts of one shot are offered for
+   merging.
+4. **Pre-flight.** A summary of exactly what will happen - copy or move, every
+   shot and the name it gets, anything odd - and nothing starts without it.
+5. **Run.** The worker does what the pre-flight showed. Pause and Stop act
+   between files. The progress, the status and the buttons stay on screen.
+6. **Result.** A last-run line that stays, the delivery report one click
+   away, and "Retry failed files" for whatever did not make it - also after a
+   restart.
+"""
+
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+import html
 import logging
 
+from PySide6.QtCore import Qt, QThread, QTimer, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QFont
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
-    QLabel, QPushButton, QLineEdit, QTextEdit, QProgressBar,
-    QCheckBox, QComboBox, QGroupBox, QScrollArea, QFrame,
-    QFileDialog, QMessageBox, QSplitter, QTreeWidget, QTreeWidgetItem, QDialog
+    QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QGridLayout,
+    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
+    QProgressBar, QRadioButton, QScrollArea, QSplitter, QTextEdit, QTreeWidget,
+    QTreeWidgetItem, QVBoxLayout, QWidget,
 )
-from PySide6.QtCore import Qt, Signal, QTimer
 
 from ...core.infra.config_manager import ConfigManager
 from ...core.worker_threads import FolderCreationWorker
-from ...utils.security import SecurityValidator, SecurityError
-from ...utils.text_utils import get_resolved_project_root
-
-# Import design tokens for theming
-from ...core.infra.design_tokens import ColorTokens as C, TypographyTokens as T
-from ...gui.dialogs.custom_template_dialog import CustomTemplateDialog
+from ...core.domain.naming import name_problem
+from ...utils.text_utils import normalize_name
+from ...gui.dialogs.custom_template_dialog import CustomTemplateDialog, template_key
 from ...gui.dialogs.stitch_confirm_dialog import StitchConfirmDialog
+from ...gui.dialogs.ingest_preflight_dialog import IngestPreflightDialog, size_text
 from slate.core.infra.gate import Gate
-from slate.gui.core.controls import plain
+from slate.gui.core.controls import form_layout, make_button, plain
 
+logger = logging.getLogger(__name__)
+
+IDLE_STATUS = "Ready"
+IDLE_HINT = "Enter a project code, choose the projects folder and the client drive."
+DEFAULT_SHOT_FOLDERS = ("01_Scan", "07_Comp", "08_Output")
+COPY, MOVE = "copy", "move"
+
+_LOG_COLOURS = {"ERR": "BAD", "SKIP": "WARN", "WARN": "WARN", "STOP": "WARN", "WAIT": "WARN",
+                "DRY": "INFO", "START": "ACCENT", "DOCS": "TEXT_2", "STITCH": "TEXT_2"}
+
+
+class SurveyWorker(QThread):
+    """Walks the client drive in the background (see ingest_survey.survey_drive)."""
+
+    progress = Signal(int, str)
+    done = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, source, target_reel=""):
+        super().__init__()
+        self.source = source
+        self.target_reel = target_reel
+        self._stop = False
+        self.survey = None
+
+    def stop(self):
+        self._stop = True
+
+    def run(self):
+        from slate.core.domain.ingest_survey import survey_drive
+        try:
+            self.survey = survey_drive(self.source, self.target_reel,
+                                       should_stop=lambda: self._stop,
+                                       progress=lambda n, folder: self.progress.emit(n, folder))
+            self.done.emit(self.survey)
+        except Exception as exc:
+            logger.exception("Survey of %s failed: %s", self.source, exc)
+            self.failed.emit(str(exc))
+
+
+class RetryWorker(QThread):
+    """Re-attempts the files a run could not bring in (ingest_retry.retry_failures)."""
+
+    progress = Signal(int, int, str)
+    done = Signal(object)
+
+    def __init__(self, manifest, fast_mode=False):
+        super().__init__()
+        self.manifest = manifest
+        self.fast_mode = fast_mode
+        self._stop = False
+        self.result = None
+
+    def stop(self):
+        self._stop = True
+
+    def run(self):
+        from slate.core.domain.ingest_retry import RetryResult, retry_failures
+        try:
+            self.result = retry_failures(self.manifest, fast_mode=self.fast_mode,
+                                         progress=lambda d, t, n: self.progress.emit(d, t, n),
+                                         should_stop=lambda: self._stop)
+        except Exception as exc:
+            logger.exception("Retry failed: %s", exc)
+            self.result = RetryResult(error=str(exc))
+        self.done.emit(self.result)
+
+
+def find_project_folder(root: str, code: str) -> Optional[Path]:
+    """
+    A folder at or above `root` that is this project, by name - 'My-Show'
+    for MYSHOW. The coordinator may have picked a folder inside the project.
+    """
+    if not root or not code:
+        return None
+    wanted = normalize_name(code)
+    current = Path(root)
+    while True:
+        if normalize_name(current.name) == wanted:
+            return current
+        if current.parent == current:
+            return None
+        current = current.parent
 
 
 class FolderCreatorTab(QWidget):
-    """Builds the project folder structure and moves the client scans into it."""
+    """Builds the project folder structure and brings the client scans into it."""
 
-    # Signal to notify other tabs about template changes
+    # A template was created, changed or deleted here (a person did it).
     template_changed = Signal(dict)
 
-    def __init__(self, config_manager: ConfigManager = None):
+    def __init__(self, config_manager: ConfigManager = None, user_data: Optional[dict] = None):
         super().__init__()
         if config_manager is None:
             config_manager = ConfigManager()
         self.config_manager = config_manager
+        self.user_data = dict(user_data or {})
         self.format_mapping = getattr(self.config_manager, "format_mapping", {})
         self.is_processing = False
         self.folder_creation_thread = None
-        self.security_validator = SecurityValidator()
+        self.survey_thread = None
+        self.retry_thread = None
         self.folder_preview_tree = None
-        # Manifest of the last run, so a failed file can be retried on its own.
+        self._phase = "idle"
+        self._paused = False
         self._last_manifest = None
+        self._last_report = None
         self._ingest_lock = None
+        self._last_survey = None
+        self._log_lines: List[Tuple[str, str]] = []
+        self._pending: Dict[str, Any] = {}
 
         self.setup_ui()
         self.load_templates_to_ui()
@@ -50,6 +161,20 @@ class FolderCreatorTab(QWidget):
         settings_dict = getattr(self.config_manager, "settings", {}) or {}
         if isinstance(settings_dict, dict):
             self.apply_global_settings(settings_dict.get("global_settings", {}))
+        self.check_destination_status()
+
+    # ================================================================ settings
+    def _settings(self) -> dict:
+        settings = getattr(self.config_manager, "settings", None)
+        return settings if isinstance(settings, dict) else {}
+
+    def _save_settings(self):
+        save = getattr(self.config_manager, "save_settings", None)
+        if callable(save):
+            try:
+                save(self._settings())
+            except Exception as exc:
+                logger.debug("Settings not saved: %s", exc)
 
     def apply_global_settings(self, global_settings: Dict[str, Any]):
         """Apply global app settings relevant to this tab."""
@@ -58,17 +183,11 @@ class FolderCreatorTab(QWidget):
         if hasattr(self, "dry_run_cb"):
             self.dry_run_cb.setChecked(bool(global_settings.get("dry_run_enabled", False)))
 
-    def _extract_template_lists(self, template_info: Dict[str, Any]) -> Tuple[list, list, list, list]:
-        """
-        Normalize template schema to flat folder lists.
-
-        Supports both:
-        - Flat config schema: template['base_folders']
-        - Nested schema: template['structure']['base_folders']
-        """
+    @staticmethod
+    def _extract_template_lists(template_info: Dict[str, Any]) -> Tuple[list, list, list, list]:
+        """Flat folder lists from either template shape (flat, or under 'structure')."""
         if not isinstance(template_info, dict):
             return [], [], [], []
-
         structure = template_info.get("structure")
         source = structure if isinstance(structure, dict) else template_info
 
@@ -76,198 +195,162 @@ class FolderCreatorTab(QWidget):
             value = source.get(key, [])
             return value if isinstance(value, list) else []
 
-        base_folders = _safe_list("base_folders")
-        production_subfolders = _safe_list("production_subfolders")
-        outsource_subfolders = _safe_list("outsource_subfolders")
-        shot_folders = _safe_list("shot_folders")
+        return (_safe_list("base_folders"), _safe_list("production_subfolders"),
+                _safe_list("outsource_subfolders"), _safe_list("shot_folders"))
 
-        return base_folders, production_subfolders, outsource_subfolders, shot_folders
-
+    # ================================================================ layout
     def setup_ui(self):
-        """Setup the user interface."""
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(15)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(Gate.SPACE_3, Gate.SPACE_3, Gate.SPACE_3, Gate.SPACE_2)
+        layout.setSpacing(Gate.SPACE_2)
 
-        # Create main splitter
         splitter = QSplitter(Qt.Orientation.Horizontal)
-
-        # Left panel - Controls
-        left_panel = self.create_left_panel()
-        splitter.addWidget(left_panel)
-
-        # Right panel - Preview and logs
-        right_panel = self.create_right_panel()
-        splitter.addWidget(right_panel)
-
-        splitter.setStretchFactor(0, 4) # 40% Control Panel
-        splitter.setStretchFactor(1, 6) # 60% Logs/Preview
+        splitter.addWidget(self.create_left_panel())
+        splitter.addWidget(self.create_right_panel())
+        splitter.setStretchFactor(0, 4)
+        splitter.setStretchFactor(1, 6)
         splitter.setCollapsible(0, False)
         splitter.setCollapsible(1, False)
+        layout.addWidget(splitter, 1)
 
-        layout.addWidget(splitter)
+        # Everything needed during a run stays on screen, under both panels:
+        # it used to sit at the bottom of the scrolling left panel, off-screen
+        # at 1600x900 and below.
+        layout.addWidget(self._create_run_bar())
 
     def create_left_panel(self):
-        """Create the left panel with controls."""
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
-        left_layout.setContentsMargins(10, 10, 10, 10)
-        left_layout.setSpacing(10)
+        left_layout.setContentsMargins(0, 0, Gate.SPACE_2, 0)
+        left_layout.setSpacing(Gate.SPACE_3)
 
-        # 1. Project Settings
-        self.project_card = QGroupBox("Project Settings")
-        project_layout = QFormLayout(self.project_card)
-        
+        # 1. Project
+        self.project_card = QGroupBox("Project")
+        project_layout = form_layout(self.project_card)
+
         self.project_name_input = QLineEdit()
-        self.project_name_input.setPlaceholderText("Enter Project Code / Name (e.g. PRJ_001)")
-        
-        project_layout.addRow("Project Code:", self.project_name_input)
+        self.project_name_input.setPlaceholderText("e.g. PRJ_001")
+        self.project_name_input.setToolTip("The project code. It becomes the project's top folder and its code "
+                                           "on the dashboard, exactly as typed.")
+        self.project_error = self._error_label()
+        project_layout.addRow("Project code", self.project_name_input)
+        project_layout.addRow("", self.project_error)
 
-        project_dir_layout = QHBoxLayout()
+        root_row = QHBoxLayout()
         self.project_dir_input = QLineEdit()
-        self.project_dir_input.setReadOnly(True)
-        
-        # Debounce timer for status check
-        self.typing_timer = QTimer()
-        self.typing_timer.setSingleShot(True)
-        self.typing_timer.setInterval(500) # 500ms delay
-        self.typing_timer.timeout.connect(self.check_destination_status)
+        self.project_dir_input.setPlaceholderText("Select the studio projects folder…")
+        self.project_dir_input.setToolTip("The folder the project folder goes in (or already is in). "
+                                          "Paste a path or use Browse.")
+        browse_project_btn = make_button("Browse…", "secondary", on_click=self.browse_project_directory,
+                                         tooltip="Choose the projects folder.")
+        root_row.addWidget(self.project_dir_input, 1)
+        root_row.addWidget(browse_project_btn)
+        self.root_error = self._error_label()
+        self.destination_label = QLabel("")
+        self.destination_label.setWordWrap(True)
+        self.destination_label.setStyleSheet(f"color: {Gate.TEXT_DIM};")
+        project_layout.addRow("Projects folder", root_row)
+        project_layout.addRow("", self.root_error)
+        project_layout.addRow("", self.destination_label)
 
-        # Connect signals to timer
-        self.project_name_input.textChanged.connect(self.start_typing_timer)
-        self.project_dir_input.textChanged.connect(self.start_typing_timer)
-
-        browse_project_btn = QPushButton("Browse")
-        browse_project_btn.setMinimumWidth(80)
-        browse_project_btn.clicked.connect(self.browse_project_directory)
-        project_dir_layout.addWidget(self.project_dir_input)
-        project_dir_layout.addWidget(browse_project_btn)
-        project_layout.addRow("Target Root:", project_dir_layout)
+        template_row = QHBoxLayout()
+        self.template_combo = QComboBox()
+        self.template_combo.setToolTip("The folder structure every project and shot gets.")
+        self.create_custom_btn = make_button("Templates…", "secondary",
+                                             tooltip="New, edit, duplicate or delete templates.")
+        self.templates_menu = QMenu(self.create_custom_btn)
+        self.templates_menu.aboutToShow.connect(self._fill_templates_menu)
+        self.create_custom_btn.setMenu(self.templates_menu)
+        template_row.addWidget(self.template_combo, 1)
+        template_row.addWidget(self.create_custom_btn)
+        project_layout.addRow("Template", template_row)
+        self.template_description_label = QLabel()
+        self.template_description_label.setWordWrap(True)
+        self.template_description_label.setStyleSheet(f"color: {Gate.TEXT_DIM};")
+        project_layout.addRow("", self.template_description_label)
+        self.template_combo.activated.connect(self.on_template_activated)
         left_layout.addWidget(self.project_card)
 
-        # 2. Template Selection
-        template_card = QGroupBox("Template Configuration")
-        template_layout = QVBoxLayout(template_card)
-        combo_layout = QHBoxLayout()
-        self.template_combo = QComboBox()
-        combo_layout.addWidget(QLabel("Pipeline Template:"))
-        combo_layout.addWidget(self.template_combo)
-        template_layout.addLayout(combo_layout)
-        self.template_description_label = QLabel()
-        self.template_description_label.setStyleSheet(f"color: {C.TEXT_GRAY_LIGHT}; font-style: italic;")
-        template_layout.addWidget(self.template_description_label)
-        self.template_combo.currentTextChanged.connect(self.on_template_change)
-        left_layout.addWidget(template_card)
+        # 2. Client drive
+        self.scan_card = QGroupBox("Client drive")
+        scan_layout = form_layout(self.scan_card)
 
-        # 3. Source Inputs (Stacked - one visible at a time)
-        
-        # 3. Client scan source
-        self.scan_card = QGroupBox("Client Scan Source")
-        scan_layout = QFormLayout(self.scan_card)
-        scan_layout.setContentsMargins(12, 16, 12, 12)
-        scan_layout.setSpacing(10)
-        scan_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        
-        # Source Folder Input
-        scan_input_layout = QHBoxLayout()
+        scan_row = QHBoxLayout()
         self.scan_source_input = QLineEdit()
-        self.scan_source_input.setPlaceholderText("Select the Client/Incoming Drive...")
-        browse_scan_btn = QPushButton("Browse")
-        browse_scan_btn.setMinimumWidth(80)
-        browse_scan_btn.clicked.connect(self.browse_scan_source)
-        scan_input_layout.addWidget(self.scan_source_input)
-        scan_input_layout.addWidget(browse_scan_btn)
-        scan_layout.addRow("Client Drive:", scan_input_layout)
-        
-        # Target Reel Input (New Feature)
+        self.scan_source_input.setPlaceholderText("Select the client drive…")
+        self.scan_source_input.setToolTip("The client's delivery: a drive or a folder with reels and shots in it.")
+        browse_scan_btn = make_button("Browse…", "secondary", on_click=self.browse_scan_source,
+                                      tooltip="Choose the client drive.")
+        scan_row.addWidget(self.scan_source_input, 1)
+        scan_row.addWidget(browse_scan_btn)
+        self.source_error = self._error_label()
+        scan_layout.addRow("Client drive", scan_row)
+        scan_layout.addRow("", self.source_error)
+
         self.target_reel_input = QLineEdit()
-        self.target_reel_input.setPlaceholderText("e.g. REEL_01 (Leave empty to Auto-Detect)")
-        scan_layout.addRow("Target Reel:", self.target_reel_input)
-        
-        # Options - Clean 2x2 Grid Layout
-        options_layout = QGridLayout()
-        options_layout.setHorizontalSpacing(14)
-        options_layout.setVerticalSpacing(8)
-        self.overwrite_cb = QCheckBox("Overwrite Existing")
-        self.dry_run_cb = QCheckBox("Dry Run (Simulate)")
-        
-        # --- NEW: FAST MODE TOGGLE ---
-        self.fast_mode_cb = QCheckBox("Fast Mode (verify by size)")
+        self.target_reel_input.setPlaceholderText("Leave empty to use the reels on the drive")
+        self.target_reel_input.setToolTip("Put every shot in this reel (e.g. REEL_01) instead of the reel "
+                                          "folders found on the client drive.")
+        self.reel_error = self._error_label()
+        scan_layout.addRow("Target reel", self.target_reel_input)
+        scan_layout.addRow("", self.reel_error)
+
+        op_row = QHBoxLayout()
+        self.copy_radio = QRadioButton("Copy")
+        self.copy_radio.setToolTip("Copy and check every file; the client drive is left exactly as it was.")
+        self.move_radio = QRadioButton("Move")
+        self.move_radio.setToolTip("Copy and check every file, then remove it from the client drive.")
+        self.operation_group = QButtonGroup(self)
+        self.operation_group.addButton(self.copy_radio)
+        self.operation_group.addButton(self.move_radio)
+        self.copy_radio.setChecked(True)
+        op_row.addWidget(self.copy_radio)
+        op_row.addWidget(self.move_radio)
+        op_row.addStretch()
+        scan_layout.addRow("Files", op_row)
+
+        options = QGridLayout()
+        options.setHorizontalSpacing(Gate.SPACE_4)
+        options.setVerticalSpacing(Gate.SPACE_2)
+        self.dry_run_cb = QCheckBox("Dry run")
+        self.dry_run_cb.setToolTip("Go through everything and write a report, without copying or "
+                                   "creating anything.")
+        self.fast_mode_cb = QCheckBox("Fast mode (check by size)")
         self.fast_mode_cb.setToolTip(
-            "Every copy is still checked against the source size, which "
-            "catches a truncated or partial file.\n"
-            "Only the slower MD5 comparison is skipped. "
-            "Leave this off for a client delivery."
-        )
-        self.fast_mode_cb.setChecked(False)
-
-        self.add_to_dashboard_cb = QCheckBox("Add shots to Dashboard")
+            "Every copy is still checked against the source size, which catches a truncated or partial "
+            "file.\nOnly the slower MD5 comparison is skipped. Leave this off for a client delivery.")
+        self.add_to_dashboard_cb = QCheckBox("Add shots to the Dashboard")
         self.add_to_dashboard_cb.setToolTip(
-            "Create a tracking record for every shot found on the client "
-            "drive.\nShots already tracked are left exactly as they are."
-        )
+            "Create a tracking record for every new shot.\nShots already tracked are left exactly as "
+            "they are; a new scan is noted on them.")
         self.add_to_dashboard_cb.setChecked(True)
-        # -----------------------------
-        
-        options_layout.addWidget(self.overwrite_cb, 0, 0)
-        options_layout.addWidget(self.dry_run_cb, 0, 1)
-        options_layout.addWidget(self.fast_mode_cb, 1, 0)
-        options_layout.addWidget(self.add_to_dashboard_cb, 1, 1)
-        scan_layout.addRow("Options:", options_layout)
-        
-        # Add a note explaining what happens
-        note_label = QLabel("Info: Scans Drive > Finds Shots > Builds Structure > Moves Files")
+        options.addWidget(self.dry_run_cb, 0, 0)
+        options.addWidget(self.fast_mode_cb, 0, 1)
+        options.addWidget(self.add_to_dashboard_cb, 1, 0, 1, 2)
+        scan_layout.addRow("Options", options)
+
+        note_label = QLabel("Slate looks at the drive, shows you the plan, then builds the folders "
+                            "and brings the plates in.")
         note_label.setWordWrap(True)
-        note_label.setStyleSheet(f"color: {C.ACCENT_CYAN_ALT}; font-size: {T.SIZE_XS}pt; margin-top: 4px;")
-        scan_layout.addRow(note_label)
-        
+        note_label.setStyleSheet(f"color: {Gate.TEXT_DIM};")
+        scan_layout.addRow("", note_label)
+        self.note_label = note_label
         left_layout.addWidget(self.scan_card)
-
-        # 4. Actions
-        action_card = QGroupBox("Execution")
-        action_layout = QHBoxLayout(action_card)
-        action_layout.setContentsMargins(12, 16, 12, 12)
-        action_layout.setSpacing(8)
-        
-        self.create_custom_btn = QPushButton("Edit Template")
-        self.create_custom_btn.clicked.connect(self.create_custom_template)
-        action_layout.addWidget(self.create_custom_btn)
-
-        self.create_btn = QPushButton("Run Process")
-        self.create_btn.setObjectName("primaryButton")
-        self.create_btn.clicked.connect(self.start_creation_process)
-        action_layout.addWidget(self.create_btn)
-        self.create_button = self.create_btn
-
-        # --- PAUSE BUTTON (NEW) ---
-        self.pause_btn = QPushButton("Pause")
-        self.pause_btn.clicked.connect(self.toggle_pause)
-        self.pause_btn.setEnabled(False)
-        action_layout.addWidget(self.pause_btn)
-        # --------------------------
-
-        self.stop_btn = QPushButton("Stop")
-        self.stop_btn.clicked.connect(self.stop_creation_process)
-        self.stop_btn.setEnabled(False)
-        action_layout.addWidget(self.stop_btn)
-
-        clear_btn = QPushButton("Reset")
-        clear_btn.clicked.connect(self.clear_all)
-        action_layout.addWidget(clear_btn)
-        left_layout.addWidget(action_card)
-
-        # Progress
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setValue(0)
-        left_layout.addWidget(self.progress_bar)
-        self.progress_label = QLabel("Ready")
-        left_layout.addWidget(self.progress_label)
-        self.stats_label = QLabel("Waiting for input...")
-        left_layout.addWidget(self.stats_label)
-
         left_layout.addStretch()
 
-        # Wrap in smooth scroll area to eliminate squashing on smaller screens
+        # Typing is checked after a short pause, not on every key.
+        self.typing_timer = QTimer(self)
+        self.typing_timer.setSingleShot(True)
+        self.typing_timer.setInterval(400)
+        self.typing_timer.timeout.connect(self.check_destination_status)
+        for field in (self.project_name_input, self.project_dir_input, self.scan_source_input,
+                      self.target_reel_input):
+            field.textChanged.connect(self.start_typing_timer)
+            field.returnPressed.connect(self._enter_pressed)
+        for path_field in (self.project_dir_input, self.scan_source_input):
+            path_field.textChanged.connect(lambda text, f=path_field: f.setToolTip(text or f.placeholderText()))
+        self.project_name_input.textChanged.connect(self._refresh_preview_root)
+
         left_scroll = QScrollArea()
         left_scroll.setWidgetResizable(True)
         left_scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -275,47 +358,161 @@ class FolderCreatorTab(QWidget):
         left_scroll.setWidget(left_widget)
         return left_scroll
 
-    # --- CLOSING SLATE WHILE WORKING (slate/gui/components/work_guard.py) ---
+    @staticmethod
+    def _error_label() -> QLabel:
+        label = QLabel("")
+        label.setWordWrap(True)
+        label.setStyleSheet(f"color: {Gate.BAD};")
+        label.setVisible(False)
+        return label
+
+    def create_right_panel(self):
+        self.right_splitter = QSplitter(Qt.Orientation.Vertical)
+
+        preview_card = QGroupBox("Structure preview")
+        preview_layout = QVBoxLayout(preview_card)
+        preview_layout.setContentsMargins(Gate.SPACE_2, Gate.SPACE_3, Gate.SPACE_2, Gate.SPACE_2)
+        self.folder_preview_tree = QTreeWidget()
+        self.folder_preview_tree.setHeaderHidden(True)
+        self.folder_preview_tree.setToolTip("What a project built from this template looks like.")
+        preview_layout.addWidget(self.folder_preview_tree)
+        self.preview_warning = QLabel("")
+        self.preview_warning.setWordWrap(True)
+        self.preview_warning.setStyleSheet(f"color: {Gate.WARN};")
+        self.preview_warning.setVisible(False)
+        preview_layout.addWidget(self.preview_warning)
+        self.preview_tree = self.folder_preview_tree
+        self.right_splitter.addWidget(preview_card)
+
+        log_card = QGroupBox("Process log")
+        log_layout = QVBoxLayout(log_card)
+        log_layout.setContentsMargins(Gate.SPACE_2, Gate.SPACE_3, Gate.SPACE_2, Gate.SPACE_2)
+        tools = QHBoxLayout()
+        self.errors_only_cb = QCheckBox("Problems only")
+        self.errors_only_cb.setToolTip("Show only failures, skips and warnings.")
+        self.errors_only_cb.toggled.connect(self._render_log)
+        self.save_log_btn = make_button("Save log…", "ghost", on_click=self.save_log,
+                                        tooltip="Save the log as a text file.")
+        self.open_report_btn = make_button("Open report", "ghost", on_click=self.open_last_report,
+                                           tooltip="Open the delivery report of the last run.")
+        self.open_report_btn.setEnabled(False)
+        tools.addWidget(self.errors_only_cb)
+        tools.addStretch()
+        tools.addWidget(self.save_log_btn)
+        tools.addWidget(self.open_report_btn)
+        log_layout.addLayout(tools)
+        self.log_text = QTextEdit()
+        self.log_text.setReadOnly(True)
+        self.log_text.setPlaceholderText("What each run did appears here.")
+        log_layout.addWidget(self.log_text)
+        self.right_splitter.addWidget(log_card)
+        self.right_splitter.setStretchFactor(0, 3)
+        self.right_splitter.setStretchFactor(1, 1)
+        self.right_splitter.setSizes([520, 160])
+        return self.right_splitter
+
+    def _create_run_bar(self) -> QWidget:
+        bar = QFrame()
+        bar.setObjectName("ingestRunBar")
+        bar.setStyleSheet(f"#ingestRunBar {{ background: {Gate.PANEL}; border: 1px solid {Gate.LINE}; "
+                          f"border-radius: {Gate.RADIUS_MD}px; }}")
+        outer = QVBoxLayout(bar)
+        outer.setContentsMargins(Gate.SPACE_3, Gate.SPACE_2, Gate.SPACE_3, Gate.SPACE_2)
+        outer.setSpacing(Gate.SPACE_1)
+
+        status_row = QHBoxLayout()
+        self.progress_label = QLabel(IDLE_STATUS)
+        self.progress_label.setStyleSheet(f"color: {Gate.TEXT}; font-weight: 600;")
+        self.stats_label = QLabel(IDLE_HINT)
+        self.stats_label.setWordWrap(True)
+        self.stats_label.setStyleSheet(f"color: {Gate.TEXT_2};")
+        status_row.addWidget(self.progress_label)
+        status_row.addSpacing(Gate.SPACE_3)
+        status_row.addWidget(self.stats_label, 1)
+        outer.addLayout(status_row)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setFixedHeight(8)
+        outer.addWidget(self.progress_bar)
+
+        self.last_run_label = QLabel("")
+        self.last_run_label.setTextFormat(Qt.TextFormat.RichText)
+        self.last_run_label.setOpenExternalLinks(False)
+        self.last_run_label.linkActivated.connect(lambda *_: self.open_last_report())
+        self.last_run_label.setWordWrap(True)
+        self.last_run_label.setVisible(False)
+        outer.addWidget(self.last_run_label)
+
+        buttons = QHBoxLayout()
+        buttons.setSpacing(Gate.SPACE_2)
+        self.clear_btn = make_button("Reset", "ghost", on_click=self.clear_all,
+                                     tooltip="Clear the project code, client drive, target reel and options. "
+                                             "The projects folder and the log are kept.")
+        self.retry_btn = make_button("Retry failed files", "secondary", on_click=self.retry_failed_files,
+                                     icon="refresh",
+                                     tooltip="Bring in the files the last run of this project could not.")
+        self.retry_btn.setEnabled(False)
+        self.pause_btn = make_button("Pause", "secondary", on_click=self.toggle_pause, icon="pause",
+                                     tooltip="Pause after the file being copied now.")
+        self.pause_btn.setEnabled(False)
+        self.stop_btn = make_button("Stop", "secondary", on_click=self.stop_creation_process, icon="stop",
+                                    tooltip="Stop after the file being copied now. Nothing is left half "
+                                            "copied; the report lists what did not come in.")
+        self.stop_btn.setEnabled(False)
+        self.create_btn = make_button("Build project", "primary", on_click=self.start_creation_process,
+                                      tooltip="Look at the client drive and show the plan before anything is copied.")
+        self.create_btn.setMinimumWidth(170)
+        self.create_button = self.create_btn
+        buttons.addWidget(self.clear_btn)
+        buttons.addWidget(self.retry_btn)
+        buttons.addStretch()
+        buttons.addWidget(self.pause_btn)
+        buttons.addWidget(self.stop_btn)
+        buttons.addWidget(self.create_btn)
+        outer.addLayout(buttons)
+        return bar
+
+    # ================================================================ closing
     def busy_reason(self):
         """What would be cut short if Slate closed now, or None when idle."""
-        thread = getattr(self, "folder_creation_thread", None)
-        try:
-            running = bool(self.is_processing and thread is not None and thread.isRunning())
-        except RuntimeError:
-            running = False
-        if not running:
-            return None
-        project = self.project_name_input.text().strip() or "the project"
-        return f"Build & Ingest is still bringing files into {project}."
+        for attr, text in (("folder_creation_thread", "Build & Ingest is still bringing files into {p}."),
+                           ("retry_thread", "Build & Ingest is retrying failed files for {p}."),
+                           ("survey_thread", "Build & Ingest is looking at the client drive.")):
+            thread = getattr(self, attr, None)
+            try:
+                if thread is not None and thread.isRunning():
+                    project = self.project_name_input.text().strip() or "the project"
+                    return text.format(p=project)
+            except RuntimeError:
+                continue
+        return None
 
     def shutdown(self, timeout_ms: int = 15000) -> bool:
-        """
-        Stop the ingest at its next safe point and wait for it, so closing
-        Slate never deletes a worker in the middle of a file. True once stopped.
-        """
-        thread = getattr(self, "folder_creation_thread", None)
-        if thread is None:
-            return True
-        try:
-            if not thread.isRunning():
-                return True
-            self.stop_creation_process()
-            from PySide6.QtCore import QDeadlineTimer
-            from PySide6.QtWidgets import QApplication
-            deadline = QDeadlineTimer(int(timeout_ms))
-            while thread.isRunning() and not deadline.hasExpired():
-                thread.wait(100)
-                QApplication.processEvents()
-            return not thread.isRunning()
-        except RuntimeError:
-            return True
+        """Stop at the next file boundary and wait, so nothing is left half-copied."""
+        from PySide6.QtCore import QDeadlineTimer
+        from PySide6.QtWidgets import QApplication
+        deadline = QDeadlineTimer(int(timeout_ms))
+        stopped = True
+        for attr in ("survey_thread", "retry_thread", "folder_creation_thread"):
+            thread = getattr(self, attr, None)
+            try:
+                if thread is None or not thread.isRunning():
+                    continue
+                thread.stop()
+                while thread.isRunning() and not deadline.hasExpired():
+                    thread.wait(100)
+                    QApplication.processEvents()
+                stopped = stopped and not thread.isRunning()
+            except RuntimeError:
+                continue
+        if stopped:
+            self._release_ingest_lock()
+        return stopped
 
-    # --- SMART BUTTON UPDATE ---
     def closeEvent(self, event):
-        """Ensure background workers are stopped when tab closes."""
-        self.stop_creation_process()
-        self._cleanup_worker("folder_creation_thread", timeout_ms=2000)
-        self._release_ingest_lock()
+        self.shutdown(2000)
         if hasattr(self, "typing_timer") and self.typing_timer.isActive():
             self.typing_timer.stop()
         super().closeEvent(event)
@@ -324,686 +521,689 @@ class FolderCreatorTab(QWidget):
         worker = getattr(self, attr_name, None)
         if worker is None:
             return
-
-        if worker.isRunning():
-            stop = getattr(worker, "stop", None)
-            if callable(stop):
-                stop()
-            else:
-                worker.requestInterruption()
-            worker.wait(timeout_ms)
-
-        worker.deleteLater()
+        try:
+            if worker.isRunning():
+                worker.stop()
+                worker.wait(timeout_ms)
+            if not worker.isRunning():
+                worker.deleteLater()
+        except RuntimeError:
+            pass
         if getattr(self, attr_name, None) is worker:
             setattr(self, attr_name, None)
 
-    def _release_finished_worker(self, attr_name: str, worker) -> bool:
-        if worker is not getattr(self, attr_name, None):
-            return False
-        setattr(self, attr_name, None)
-        worker.deleteLater()
-        return True
+    # ================================================================ checking
+    def start_typing_timer(self, *_):
+        if hasattr(self, "typing_timer"):
+            self.typing_timer.start()
+
+    def _inputs(self):
+        return (self.project_name_input.text().strip(), self.project_dir_input.text().strip(),
+                self.scan_source_input.text().strip(), self.target_reel_input.text().strip())
+
+    def _field_problems(self) -> Dict[str, str]:
+        """What is wrong with what has been typed. Empty fields are not 'wrong'."""
+        code, root, source, reel = self._inputs()
+        out = {}
+        if code:
+            problem = name_problem(code, "The project code")
+            if problem:
+                out["code"] = problem
+        if root:
+            root_path = Path(root)
+            if not root_path.exists():
+                out["root"] = "This folder does not exist."
+            elif not root_path.is_dir():
+                out["root"] = "This is a file, not a folder."
+        if reel:
+            problem = name_problem(reel, "The target reel")
+            if problem:
+                out["reel"] = problem
+        if source:
+            source_path = Path(source)
+            if not source_path.exists():
+                out["source"] = "This folder does not exist."
+            elif not source_path.is_dir():
+                out["source"] = "This is a file, not a folder."
+            elif root and code and "root" not in out and "code" not in out:
+                clash = self._source_clash(source_path, self._planned_project_path())
+                if clash:
+                    out["source"] = clash
+        return out
+
+    @staticmethod
+    def _source_clash(source: Path, project: Path) -> str:
+        """A drive that is, or is inside, the project - or holds it - cannot be ingested into it."""
+        try:
+            source, project = source.resolve(), project.resolve()
+        except OSError:
+            return ""
+        if source == project or source == project.parent:
+            return "The client drive and the project are the same folder."
+        if source.is_relative_to(project):
+            return "The client drive is inside the project - choose the client's folder."
+        if project.is_relative_to(source):
+            return "The project would be inside the client drive."
+        return ""
+
+    def _planned_project_path(self) -> Path:
+        """Where the project folder is (or will be), before any question is asked."""
+        code, root, _source, _reel = self._inputs()
+        found = find_project_folder(root, code)
+        if found is not None:
+            return found
+        return Path(root) / code
+
+    def _missing(self) -> str:
+        code, root, source, _reel = self._inputs()
+        if not code:
+            return "Enter a project code."
+        if not root:
+            return "Choose the projects folder."
+        if not source:
+            return "Choose the client drive."
+        if self.template_combo.currentData() is None:
+            return "Choose a template."
+        return ""
 
     def check_destination_status(self):
-        """Dynamically check if project exists and update button text to 'Update'."""
-        name = self.project_name_input.text().strip()
-        root = self.project_dir_input.text().strip()
-        
-        if not name or not root:
-            return
+        """Check the inputs, say where the project goes, and set the button."""
+        problems = self._field_problems()
+        for key, label in (("code", self.project_error), ("root", self.root_error),
+                           ("source", self.source_error), ("reel", self.reel_error)):
+            text = problems.get(key, "")
+            label.setText(text)
+            label.setVisible(bool(text))
+        self.project_name_input.setStyleSheet(
+            f"QLineEdit {{ border: 1px solid {Gate.BAD}; }}" if "code" in problems else "")
 
-        # Sanitize name to match what the worker uses
-        _, sanitized_name, _ = self.security_validator.sanitize_filename(name)
-        
-        try:
-            resolved_root = get_resolved_project_root(root, sanitized_name)
-            target_path = resolved_root / sanitized_name
-            
-            # Check if this specific project folder already exists
-            if target_path.exists() and target_path.is_dir():
-                # IT EXISTS -> SWITCH TO UPDATE MODE VISUALS
-                # plain(): a bare "&" is a Qt shortcut marker, and showed as "Update_Ingest".
-                self.create_btn.setText(plain("Update & Ingest New Files"))
-                
-                # Make it look distinct (Green for safe update)
-                self.create_btn.setStyleSheet(f"background-color: {C.ACCENT_TEAL}; color: {Gate.TEXT_ON_ACCENT}; font-weight: {T.WEIGHT_STYLE_BOLD}; border: 1px solid {Gate.ACCENT_SURFACE};")
-                self.stats_label.setText("Info: Project exists. Running in SAFE UPDATE mode (No overwrites).")
-                self.stats_label.setStyleSheet(f"color: {C.ACCENT_TEAL}; font-weight: {T.WEIGHT_STYLE_BOLD};")
-                
+        code, root, _source, _reel = self._inputs()
+        exists = False
+        if code and root and "code" not in problems and "root" not in problems:
+            target = self._planned_project_path()
+            exists = target.is_dir()
+            found = find_project_folder(root, code)
+            if found is not None and found.name != code:
+                self.destination_label.setText(
+                    f"Found the project folder '{found.name}' at {found.parent}. You will be asked "
+                    f"whether to use it or create '{code}'.")
+            elif exists:
+                self.destination_label.setText(f"Updates {target}")
             else:
-                # IT DOES NOT EXIST -> SWITCH TO CREATE MODE VISUALS
-                self.create_btn.setText(plain("Build & Move Files"))
-                
-                # Revert to default primary button style (preserve gradient effect)
-                self.create_btn.setStyleSheet(f"background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {Gate.ACCENT}, stop:1 {Gate.ACCENT}); border: 1px solid {Gate.ACCENT}; color: {Gate.TEXT_ON_ACCENT}; font-weight: bold;")
-                self.stats_label.setText("Ready to create new project.")
-                self.stats_label.setStyleSheet(f"color: {C.TEXT_GRAY_LIGHTER};")
-                
-        except (OSError, ValueError) as exc:
-            logging.debug("Project path status update skipped while typing: %s", exc)
-
-    def toggle_pause(self):
-        """Toggle pause state of the worker."""
-        if getattr(self, "folder_creation_thread", None) is None:
-            return
-
-        if self.pause_btn.text() == "Pause":
-            self.folder_creation_thread.pause()
-            self.pause_btn.setText("Resume")
-            self.progress_label.setText("Paused")
+                self.destination_label.setText(f"Builds {target}")
         else:
-            self.folder_creation_thread.resume()
-            self.pause_btn.setText("Pause")
-            self.progress_label.setText("Resuming...")
+            self.destination_label.setText("")
+        self.destination_label.setVisible(bool(self.destination_label.text()))
 
-    def create_right_panel(self):
-        """Create the right panel with preview and logs."""
-        right_widget = QWidget()
-        right_layout = QVBoxLayout(right_widget)
-        right_layout.setContentsMargins(0, 0, 0, 0)
+        busy = self._phase != "idle"
+        self.create_btn.setText("Update project" if exists else "Build project")
+        missing = self._missing()
+        blocked = next(iter(problems.values()), "") or missing
+        self.create_btn.setEnabled(not blocked and not busy)
+        if busy:
+            self.create_btn.setToolTip("A run is in progress.")
+        elif blocked:
+            self.create_btn.setToolTip(blocked)
+        else:
+            self.create_btn.setToolTip("Look at the client drive and show the plan before anything is copied.")
 
-        preview_card = QGroupBox("Structure Preview")
-        preview_layout = QVBoxLayout(preview_card)
-        self.folder_preview_tree = QTreeWidget()
-        self.folder_preview_tree.setHeaderLabel("Template Structure")
-        preview_layout.addWidget(self.folder_preview_tree)
-        self.preview_tree = self.folder_preview_tree
-        right_layout.addWidget(preview_card, 1)
+        if not busy:
+            if blocked:
+                self.stats_label.setText(blocked if problems else IDLE_HINT)
+            elif exists:
+                self.stats_label.setText("Project exists - new files go into a new scan version (v002, "
+                                         "v003 …). Nothing in the project is overwritten.")
+            else:
+                self.stats_label.setText("New project - Slate builds the folders and brings the plates in.")
+        self._refresh_retry_button()
+        self._refresh_preview_root()
 
-        log_card = QGroupBox("Process Logs")
-        log_layout = QVBoxLayout(log_card)
-        self.log_text = QTextEdit()
-        self.log_text.setReadOnly(True)
-        log_layout.addWidget(self.log_text)
-        right_layout.addWidget(log_card, 2)
+    def _enter_pressed(self):
+        self.check_destination_status()
+        if self.create_btn.isEnabled():
+            self.start_creation_process()
 
-        return right_widget
+    # ================================================================ templates
+    def _templates(self) -> dict:
+        templates = getattr(self.config_manager, "templates", None)
+        return templates if isinstance(templates, dict) else {}
+
+    def _builtin_keys(self) -> set:
+        builtin = getattr(self.config_manager, "default_templates", None)
+        return set(builtin) if isinstance(builtin, dict) else {"standard"}
+
+    def _user_keys(self) -> set:
+        return set(self._templates()) - self._builtin_keys()
+
+    def load_templates_to_ui(self, select_key: Optional[str] = None):
+        """
+        Fill the template combo from the configuration without firing anything.
+
+        The old version re-emitted 'template changed' from in here; the main
+        window answered by reloading this tab, which re-emitted - an endless
+        loop that crashed Slate when a studio had a second template.
+        """
+        previous = self.template_combo.currentData()
+        self.template_combo.blockSignals(True)
+        try:
+            self.template_combo.clear()
+            if hasattr(self.config_manager, "get_templates") and callable(self.config_manager.get_templates):
+                keys = self.config_manager.get_templates() or []
+            elif callable(getattr(self.config_manager, "get_available_templates", None)):
+                keys = self.config_manager.get_available_templates() or []
+            else:
+                keys = []
+            for key in keys:
+                info = self._templates().get(key)
+                name = info.get("name", key) if isinstance(info, dict) else str(key)
+                self.template_combo.addItem(str(name), key)
+            last = ((self._settings().get("global_settings") or {}).get("last_template_used")
+                    if isinstance(self._settings().get("global_settings"), dict) else None)
+            for wanted in (select_key, previous, last, "standard"):
+                index = self.template_combo.findData(wanted) if wanted else -1
+                if index >= 0:
+                    self.template_combo.setCurrentIndex(index)
+                    break
+            else:
+                if self.template_combo.count():
+                    self.template_combo.setCurrentIndex(0)
+        finally:
+            self.template_combo.blockSignals(False)
+        self._show_template(self.template_combo.currentData())
+
+    def on_template_activated(self, index: int):
+        """A person picked a template: show it and remember it."""
+        key = self.template_combo.itemData(index)
+        self._show_template(key)
+        settings = self._settings()
+        global_settings = settings.setdefault("global_settings", {})
+        if isinstance(global_settings, dict) and global_settings.get("last_template_used") != key:
+            global_settings["last_template_used"] = key
+            self._save_settings()
+        self.check_destination_status()
+
+    def on_template_change(self, text=None):
+        """Older name, kept for callers: show the selected template."""
+        self._show_template(self.template_combo.currentData())
+
+    def _show_template(self, key):
+        info = self._templates().get(key) if key else None
+        description = str(info.get("description", "")) if isinstance(info, dict) else ""
+        self.template_description_label.setText(description)
+        self.template_description_label.setVisible(bool(description))
+        self.update_preview(key)
+
+    def _fill_templates_menu(self):
+        menu = self.templates_menu
+        menu.clear()
+        key = self.template_combo.currentData()
+        name = self.template_combo.currentText()
+        builtin = key in self._builtin_keys()
+        menu.addAction("New template…", self.create_custom_template)
+        edit = menu.addAction(plain(f"Edit '{name}'…"), self.edit_current_template)
+        edit.setEnabled(bool(key) and not builtin)
+        if builtin:
+            edit.setToolTip("Built-in templates cannot be changed - duplicate it instead.")
+        dup = menu.addAction(plain(f"Duplicate '{name}'…"), self.duplicate_current_template)
+        dup.setEnabled(bool(key))
+        menu.addSeparator()
+        delete = menu.addAction(plain(f"Delete '{name}'"), self.delete_current_template)
+        delete.setEnabled(bool(key) and not builtin)
+        menu.setToolTipsVisible(True)
+
+    def _template_dialog(self, template=None, original_key="", title=""):
+        return CustomTemplateDialog(self, template, original_key=original_key,
+                                    builtin_keys=self._builtin_keys(), user_keys=self._user_keys(),
+                                    title=title)
 
     def create_custom_template(self):
-        """SECURE: Create a custom template with security validation."""
-        dialog = CustomTemplateDialog(self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            try:
-                template_data = dialog.get_template_data()
-                if template_data["name"]:
-                    # SECURITY: Validate template key
-                    template_key = template_data["name"].lower().replace(" ", "_")
-                    key_valid, sanitized_key, key_error = self.security_validator.sanitize_filename(template_key)
-                    
-                    if not key_valid:
-                        QMessageBox.critical(self, "Security Error", 
-                                           f"Invalid template key:\n{key_error}")
-                        return
-                    
-                    # Add to config manager (this will save it)
-                    self.config_manager.templates[sanitized_key] = template_data
+        self._edit_template(None, "", "New template")
 
-                    # Save to file
-                    success = self.config_manager.save_templates(self.config_manager.templates)
-                    if success:
-                        # Add to combo box and select it
-                        self.template_combo.addItem(template_data["name"], sanitized_key)
-                        self.template_combo.setCurrentText(template_data["name"])
+    def edit_current_template(self):
+        key = self.template_combo.currentData()
+        if key and key not in self._builtin_keys():
+            self._edit_template(self._templates().get(key), key, "Edit template")
 
-                        # Notify other tabs
-                        self.template_changed.emit(template_data)
+    def duplicate_current_template(self):
+        key = self.template_combo.currentData()
+        info = dict(self._templates().get(key) or {})
+        base = info.get("structure") if isinstance(info.get("structure"), dict) else info
+        copy = {k: list(v) if isinstance(v, list) else v for k, v in base.items()}
+        copy["name"] = f"{info.get('name', key)} copy"
+        copy["description"] = info.get("description", "")
+        self._edit_template(copy, "", "Duplicate template")
 
-                        QMessageBox.information(self, "Success", f"Custom template '{template_data['name']}' created and saved successfully!")
-                    else:
-                        QMessageBox.critical(self, "Error", f"Could not save custom template '{template_data['name']}'. Check logs.")
-                else:
-                    QMessageBox.warning(self, "Invalid Name", "Please enter a template name.")
-            except SecurityError as e:
-                QMessageBox.critical(self, "Security Error", f"Security violation:\n{str(e)}")
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Unexpected error creating template:\n{str(e)}")
-
-    def load_templates_to_ui(self):
-        """Load available templates into the combobox."""
-        # Clear existing items
-        self.template_combo.clear()
-
-        # Get all available templates (defaults + user-defined)
-        if hasattr(self.config_manager, "get_templates") and callable(self.config_manager.get_templates):
-            available_templates = self.config_manager.get_templates() or []
-        elif hasattr(self.config_manager, "get_available_templates") and callable(self.config_manager.get_available_templates):
-            available_templates = self.config_manager.get_available_templates() or []
-        else:
-            available_templates = []
-
-        # Add templates to combo box
-        for key in available_templates:
-            template_info = None
-            if hasattr(self.config_manager, "templates") and isinstance(self.config_manager.templates, dict):
-                template_info = self.config_manager.templates.get(key)
-            display_name = template_info.get("name", key) if template_info else str(key)
-            self.template_combo.addItem(display_name, key)
-
-        # Set default selection to "Standard" if it exists
-        standard_index = self.template_combo.findData("standard")
-        if standard_index >= 0:
-            self.template_combo.setCurrentIndex(standard_index)
-            # Trigger change to update preview and description
-            self.on_template_change(self.template_combo.currentText())
-        elif self.template_combo.count() > 0:
-            # If standard doesn't exist, select the first available
-            self.template_combo.setCurrentIndex(0)
-            self.on_template_change(self.template_combo.currentText())
-
-    def on_template_change(self, text):
-        """Update template description and preview when selection changes."""
-        current_index = self.template_combo.currentIndex()
-        template_key = self.template_combo.itemData(current_index)
-
-        if template_key:
-            template_info = None
-            if hasattr(self.config_manager, "templates") and isinstance(self.config_manager.templates, dict):
-                template_info = self.config_manager.templates.get(template_key)
-            if template_info and isinstance(template_info, dict):
-                description = str(template_info.get("description", "No description available"))
-            else:
-                description = "No description available"
-            self.template_description_label.setText(str(description))
-
-            # Update preview
-            self.update_preview(template_key)
-
-            # Persist template preference for cross-tab/session consistency.
-            try:
-                if hasattr(self.config_manager, "settings") and isinstance(self.config_manager.settings, dict):
-                    global_settings = self.config_manager.settings.setdefault("global_settings", {})
-                    global_settings["last_template_used"] = template_key
-                    if hasattr(self.config_manager, "save_settings") and callable(self.config_manager.save_settings):
-                        self.config_manager.save_settings(self.config_manager.settings)
-            except Exception as e:
-                logging.debug(f"Failed to persist last template '{template_key}': {e}")
-
-            # Notify other tabs about template change
-            if template_info and isinstance(template_info, dict):
-                self.template_changed.emit(template_info)
-            else:
-                self.template_changed.emit({"name": str(template_key)})
-
-    def update_preview(self, template_key):
-        """Update the folder structure preview."""
-        # Check if folder_preview_tree exists before trying to use it
-        if not hasattr(self, 'folder_preview_tree') or self.folder_preview_tree is None:
+    def _edit_template(self, template, original_key, title):
+        from slate.gui.components.feedback import confirm, toast, warn
+        dialog = self._template_dialog(template, original_key, title)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-
-        # Clear existing tree
-        self.folder_preview_tree.clear()
-
-        template_info = None
-        if hasattr(self.config_manager, "templates") and isinstance(self.config_manager.templates, dict):
-            template_info = self.config_manager.templates.get(template_key)
-        if not template_info or not isinstance(template_info, dict):
+        data = dialog.get_template_data()
+        key = dialog.template_key()
+        if key in self._builtin_keys():
+            warn(self, "Save template", f"'{data['name']}' is the name of a built-in template.")
             return
+        if dialog.overwrites_another() and not confirm(
+                self, "Save template", f"A template called '{data['name']}' already exists. Replace it?",
+                yes_label="Replace it", destructive=True):
+            return
+        templates = dict(self._templates())
+        templates[key] = data
+        if original_key and original_key != key:
+            templates.pop(original_key, None)          # renamed
+        if not self.config_manager.save_templates(templates) or key not in self._templates():
+            warn(self, "Save template", f"'{data['name']}' could not be saved. Nothing was changed.")
+            return
+        self.load_templates_to_ui(select_key=key)
+        self.on_template_activated(self.template_combo.currentIndex())
+        self.template_changed.emit(data)
+        toast(self, f"Template '{data['name']}' saved.", "success")
 
-        # Create root item
-        root_item = QTreeWidgetItem(self.folder_preview_tree)
-        root_item.setText(0, "Project_Root")
-        root_item.setExpanded(True)
+    def delete_current_template(self):
+        from slate.gui.components.feedback import confirm, toast, warn
+        key = self.template_combo.currentData()
+        if not key or key in self._builtin_keys():
+            return
+        name = self.template_combo.currentText()
+        if not confirm(self, "Delete template", f"Delete the template '{name}'? Projects already built "
+                       "with it are not changed.", yes_label="Delete template", destructive=True):
+            return
+        templates = dict(self._templates())
+        templates.pop(key, None)
+        if not self.config_manager.save_templates(templates) or key in self._templates():
+            warn(self, "Delete template", f"'{name}' could not be deleted.")
+            return
+        self.load_templates_to_ui(select_key="standard")
+        self.on_template_activated(self.template_combo.currentIndex())
+        self.template_changed.emit({"name": name, "deleted": True})
+        toast(self, f"Template '{name}' deleted.", "success")
 
-        # Add base folders
-        base_folders, production_subfolders, outsource_subfolders, shot_folders = self._extract_template_lists(template_info)
-        for folder in base_folders:
-            base_item = QTreeWidgetItem(root_item)
-            base_item.setText(0, folder)
+    # ================================================================ preview
+    def _reels_relative(self, code: str) -> Path:
+        from slate.core.workers.structure import reels_root_for
+        root = Path("/__root__")
+        try:
+            return reels_root_for(root / (code or "PROJECT"), code or "PROJECT", root).relative_to(
+                root / (code or "PROJECT"))
+        except Exception:
+            return Path("05_Reels")
 
-        # Add production / outsource subfolders (both live under 04_Production)
-        if production_subfolders or outsource_subfolders:
-            prod_item = QTreeWidgetItem(root_item)
-            prod_item.setText(0, "04_Production")
-            for folder in list(production_subfolders) + list(outsource_subfolders):
-                sub_item = QTreeWidgetItem(prod_item)
-                sub_item.setText(0, folder)
+    def _refresh_preview_root(self, *_):
+        tree = self.folder_preview_tree
+        if tree is not None and tree.topLevelItemCount():
+            tree.topLevelItem(0).setText(0, self.project_name_input.text().strip() or "Project")
 
-        # Add shot folders (example under a reel)
-        if shot_folders:
-            reels_item = QTreeWidgetItem(root_item)
-            reels_item.setText(0, "05_Reels")
-            shot_root = QTreeWidgetItem(reels_item)
-            shot_root.setText(0, "SHOT_XXX")
+    def update_preview(self, template_key, survey=None):
+        """The project this template builds, folder by folder, merged by path."""
+        tree = self.folder_preview_tree
+        if tree is None:
+            return
+        tree.clear()
+        info = self._templates().get(template_key)
+        if not isinstance(info, dict):
+            self.preview_warning.setVisible(False)
+            return
+        base, production, outsource, shots = self._extract_template_lists(info)
+        structure = info.get("structure") if isinstance(info.get("structure"), dict) else info
+        version_folders = structure.get("scan_version_folders") or ["Denoise"]
+        code = self.project_name_input.text().strip()
+        root = QTreeWidgetItem(tree, [code or "Project"])
+        bold = QFont(root.font(0))
+        bold.setBold(True)
+        root.setFont(0, bold)
+
+        def add(parent, path, note=""):
+            node = parent
+            for part in [p for p in str(path).replace("\\", "/").split("/") if p]:
+                found = next((node.child(i) for i in range(node.childCount())
+                              if node.child(i).text(0) == part), None)
+                if found is None:
+                    found = QTreeWidgetItem(node, [part])
+                node = found
+            if note:
+                node.setText(0, f"{node.text(0)}   ({note})")
+                node.setForeground(0, Gate.qcolor(Gate.TEXT_DIM))
+            return node
+
+        for folder in base:
+            add(root, folder)
+        for folder in list(production) + list(outsource):
+            add(root, f"04_Production/{folder}")
+
+        defaulted = not shots
+        shot_folders = list(shots) or list(DEFAULT_SHOT_FOLDERS)
+        reels = add(root, self._reels_relative(code).as_posix())
+        examples = []
+        survey = survey or self._last_survey
+        if survey is not None:
+            for shot in survey.active_shots()[:4]:
+                examples.append((shot.reel, shot.name))
+        examples = examples or [("<reel>", "<shot>")]
+        for reel, shot in examples:
+            shot_node = add(reels, f"{reel}/{shot}")
             for folder in shot_folders:
-                shot_item = QTreeWidgetItem(shot_root)
-                shot_item.setText(0, folder)
+                add(shot_node, folder, "added by Slate" if defaulted else "")
+            scan_root = next((f.split("/")[0] for f in shot_folders if "scan" in f.lower()), "01_Scan")
+            version = add(shot_node, f"{scan_root}/v001")
+            for folder in version_folders:
+                add(version, folder)
+            add(version, "EXR")
+        tree.expandToDepth(3)
+        self.preview_warning.setText(
+            "This template has no shot folders - every shot gets " + ", ".join(DEFAULT_SHOT_FOLDERS) + "."
+            if defaulted else "")
+        self.preview_warning.setVisible(defaulted)
 
+    # ================================================================ paths
     def browse_project_directory(self):
-        """Browse for project directory."""
-        directory = QFileDialog.getExistingDirectory(
-            self,
-            "Select Project Directory",
-            self.config_manager.settings.get('last_project_directory', str(Path.home()))
-        )
+        start = self.project_dir_input.text().strip() or self._settings().get('last_project_directory',
+                                                                               str(Path.home()))
+        directory = QFileDialog.getExistingDirectory(self, "Choose the projects folder", start)
         if directory:
-            # SECURITY: Validate directory path
-            dir_path = Path(directory)
-            dir_valid, dir_error = self.security_validator.validate_directory_path(dir_path, must_exist=True)
-            
-            if not dir_valid:
-                QMessageBox.critical(self, "Security Error", f"Invalid directory:\n{dir_error}")
-                return
-                
             self.project_dir_input.setText(directory)
-            self.config_manager.settings['last_project_directory'] = directory
-            self.config_manager.save_settings(self.config_manager.settings)
+            self._settings()['last_project_directory'] = directory
+            self._save_settings()
 
     def browse_scan_source(self):
-        """SECURE: Browse for Client Scan directory."""
-        directory = QFileDialog.getExistingDirectory(
-            self,
-            "Select Client/Scan Source Directory",
-            self.config_manager.settings.get('last_scan_source_directory', str(Path.home()))
-        )
+        start = self.scan_source_input.text().strip() or self._settings().get('last_scan_source_directory',
+                                                                              str(Path.home()))
+        directory = QFileDialog.getExistingDirectory(self, "Choose the client drive", start)
         if directory:
-            dir_path = Path(directory)
-            dir_valid, dir_error = self.security_validator.validate_directory_path(dir_path, must_exist=True)
-            
-            if not dir_valid:
-                QMessageBox.critical(self, "Security Error", f"Invalid directory:\n{dir_error}")
-                return
-            
             self.scan_source_input.setText(directory)
-            self.config_manager.settings['last_scan_source_directory'] = directory
-            self.config_manager.save_settings(self.config_manager.settings)
+            self._settings()['last_scan_source_directory'] = directory
+            self._save_settings()
 
+    def restore_last_paths(self):
+        settings = self._settings()
+        if not (settings.get('global_settings') or {}).get("restore_last_paths", True):
+            return
+        try:
+            for key, field in (('last_project_directory', self.project_dir_input),
+                               ('last_scan_source_directory', self.scan_source_input)):
+                value = settings.get(key, '')
+                if value and Path(value).exists():
+                    field.setText(value)
+        except Exception as e:
+            logger.warning(f"Could not restore last paths: {e}")
+
+    # ================================================================ the log
     def log_message(self, message: str):
-        """Log a message to the log area with timestamp."""
-        from datetime import datetime
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        formatted_message = f"[{timestamp}] {message}"
-        self.log_text.append(formatted_message)
-        logging.info(message)
+        """Add a line to the log, coloured by what it says."""
+        stamp = datetime.now().strftime("%H:%M:%S")
+        text = str(message)
+        tag = text[1:text.index("]")] if text.startswith("[") and "]" in text else ""
+        self._log_lines.append((tag, f"[{stamp}] {text}"))
+        if len(self._log_lines) > 5000:
+            self._log_lines = self._log_lines[-4000:]
+        if self._log_visible(tag):
+            self.log_text.append(self._log_html(tag, f"[{stamp}] {text}"))
+        logger.info(text)
 
+    def _log_visible(self, tag: str) -> bool:
+        if not self.errors_only_cb.isChecked():
+            return True
+        return tag in ("ERR", "SKIP", "WARN", "STOP", "RUN")
+
+    @staticmethod
+    def _log_html(tag: str, text: str) -> str:
+        if tag == "RUN":
+            return (f"<p style='margin-top:8px; color:{Gate.ACCENT}; font-weight:600'>"
+                    f"{html.escape(text)}</p>")
+        colour = getattr(Gate, _LOG_COLOURS.get(tag, "TEXT"), Gate.TEXT)
+        return f"<span style='color:{colour}'>{html.escape(text)}</span>"
+
+    def _render_log(self, *_):
+        self.log_text.clear()
+        for tag, text in self._log_lines:
+            if self._log_visible(tag):
+                self.log_text.append(self._log_html(tag, text))
+
+    def _log_run_header(self, text: str):
+        self.log_message(f"[RUN] ---- {text} ----")
+
+    def save_log(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Save the log", str(Path.home() / "ingest_log.txt"),
+                                              "Text files (*.txt)")
+        if not path:
+            return
+        from slate.gui.components.feedback import toast, warn
+        try:
+            Path(path).write_text("\n".join(text for _tag, text in self._log_lines), encoding="utf-8")
+            toast(self, "Log saved.", "success")
+        except OSError as exc:
+            warn(self, "Save the log", f"The log could not be saved: {exc}")
+
+    def open_last_report(self):
+        if self._last_report and Path(self._last_report).exists():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._last_report)))
+
+    def _status_bar(self):
+        window = self.window()
+        if isinstance(window, QMainWindow):
+            try:
+                return window.statusBar()
+            except RuntimeError:
+                return None
+        return None
+
+    # ================================================================ progress
     def update_folder_creator_progress(self, value: int, text: str):
-        """Update the folder creator progress bar and label."""
         self.progress_bar.setValue(value)
+        if self._paused:
+            return                       # stays "Paused" until resumed
         self.progress_label.setText(text)
-        if hasattr(self.parent(), 'statusBar'):
-            self.parent().statusBar().showMessage(text, 2000)
+        bar = self._status_bar()
+        if bar is not None:
+            bar.showMessage(text, 2000)
 
     def _on_folder_worker_progress(self, value: int, text: str):
-        if self.sender() is not self.folder_creation_thread:
+        if self.sender() is not None and self.sender() is not self.folder_creation_thread:
             return
         self.update_folder_creator_progress(value, text)
 
-    def _on_folder_worker_finished(self, success: bool, total_projects: int,
-                                   reels_created: int, shots_created: int,
-                                   folders_created: int, message: str):
-        worker = self.sender()
-        self._release_ingest_lock()
-
-        # Read the detailed counters off the worker before it is released.
-        stats = {
-            "moved": getattr(worker, "files_moved", 0),
-            "skipped": getattr(worker, "files_skipped", 0),
-            "errors": getattr(worker, "errors", 0),
-            "dry_run": bool(getattr(worker, "dry_run", False)),
-        }
-        ingested_shots = list(getattr(worker, "ingested_shots", []) or [])
-
-        # The report and the dashboard registration happen after the worker is
-        # let go, so a failure in either cannot hold anything open - and both are
-        # surfaced in the completion dialog rather than only in the log, which is
-        # where an ingest that moved every frame and registered nothing used to
-        # report plain success.
-        if not self._release_finished_worker("folder_creation_thread", worker):
-            return
-
-        stats["report"] = self._write_delivery_report(worker)
-        if stats["report"] is None:
-            stats["report_failed"] = True
-
-        if success and not stats["dry_run"]:
-            try:
-                stats["dashboard"] = self._register_shots_on_dashboard(ingested_shots)
-            except Exception as exc:
-                logging.exception("Dashboard registration failed: %s", exc)
-                stats["dashboard_error"] = str(exc)
-        self.on_folder_creation_finished(
-            success, total_projects, reels_created, shots_created, folders_created,
-            message, stats
-        )
-
-    def retry_failed_files(self):
-        """Re-attempt the files that failed on the last run, and nothing else."""
-        from ...core.domain.ingest_retry import retry_failures
-
-        manifest = getattr(self, "_last_manifest", None)
-        if not manifest:
-            QMessageBox.information(self, "Nothing to retry",
-                                    "No record of a failed run was found.")
-            return
-
-        self.log_message("Retrying the files that failed...")
-        result = retry_failures(
-            manifest,
-            fast_mode=self.fast_mode_cb.isChecked(),
-            progress=lambda done, total, name: self.update_folder_creator_progress(
-                int((done / max(total, 1)) * 100), f"Retrying {name}"
-            ),
-        )
-
-        self.log_message(f"Retry: {result.summary()}")
-        for entry in result.still_failing[:10]:
-            self.log_message(f"  [ERR] {entry['file']}: {entry['error']}")
-
-        self.progress_bar.setValue(100)
-        self.progress_label.setText("Ready")
-
-        if result.still_failing:
-            QMessageBox.warning(self, "Some files still failing",
-                                result.summary())
+    def _on_worker_state(self, state: str):
+        self._paused = state == "paused"
+        if self._paused:
+            self.progress_label.setText("Paused")
+            self.progress_label.setStyleSheet(f"color: {Gate.WARN}; font-weight: 600;")
         else:
-            QMessageBox.information(self, "Retry complete", result.summary())
+            self.progress_label.setStyleSheet(f"color: {Gate.TEXT}; font-weight: 600;")
 
-    def _release_ingest_lock(self):
-        """Let go of the project lock, however the run ended."""
-        lock = getattr(self, "_ingest_lock", None)
-        if lock is None:
+    def toggle_pause(self):
+        worker = self.folder_creation_thread
+        if worker is None:
             return
-        try:
-            lock.release()
-        except Exception as exc:
-            logging.warning("Could not release the ingest lock: %s", exc)
-        finally:
-            self._ingest_lock = None
-
-    def _write_delivery_report(self, worker):
-        """
-        Record what arrived, so the client can be answered the same day.
-
-        A report that cannot be written must never fail the ingest that
-        produced it.
-        """
-        try:
-            from ...core.domain.delivery_report import (
-                build_report, frame_summary, write_report,
-            )
-
-            project_code = getattr(self, "_pending_project_code", "")
-            project_root = getattr(self, "_pending_project_root", "")
-            if not project_code or not project_root:
-                return None
-
-            report = build_report(
-                worker, project_code, getattr(worker, "source_scan_path", ""),
-            )
-            paths = write_report(report, Path(project_root) / project_code)
-
-            self.log_message(f"Delivery: {report.headline()}")
-            for entry in report.incomplete[:10]:
-                self.log_message(
-                    f"  SHORT: {entry['shot']} / {entry['name']} "
-                    f"missing {frame_summary(entry['missing'])}"
-                )
-            if paths:
-                self.log_message(f"Report saved: {paths['report']}")
-                self._last_manifest = paths.get("manifest")
-            return {"report": report, "paths": paths}
-        except Exception as exc:
-            logging.warning("Delivery report failed: %s", exc)
-            return None
-
-    def _register_shots_on_dashboard(self, ingested_shots):
-        """Create dashboard tracking records for the shots just ingested."""
-        if not ingested_shots:
-            return None
-        if not getattr(self, "add_to_dashboard_cb", None) or                 not self.add_to_dashboard_cb.isChecked():
-            return None
-
-        project_code = getattr(self, "_pending_project_code", "")
-        if not project_code:
-            return None
-
-        from ...core.domain.shot_registry import register_ingested_shots
-
-        result = register_ingested_shots(
-            project_code=project_code,
-            shots=ingested_shots,
-            project_name=project_code,
-            folder_base=getattr(self, "_pending_project_root", ""),
-        )
-        self.log_message(result.summary())
-        return result
-
-    def on_folder_creation_finished(self, success: bool, total_projects: int,
-                                   reels_created: int, shots_created: int,
-                                   folders_created: int, message: str,
-                                   stats: Dict[str, Any] = None):
-        """Handle folder creation completion."""
-        stats = stats or {}
-        moved = stats.get("moved", 0)
-        skipped = stats.get("skipped", 0)
-        errors = stats.get("errors", 0)
-        dry_run = stats.get("dry_run", False)
-
-        self.is_processing = False
-        self.create_btn.setEnabled(True)
-        self.stop_btn.setEnabled(False)
-        self.pause_btn.setEnabled(False) # Disable pause
-        self.pause_btn.setText("Pause") # Reset text
-        self.progress_bar.setValue(100)
-        self.progress_label.setText("Ready")
-
-        if not success:
-            self.log_message(f"ERROR: Process failed: {message}")
-            QMessageBox.critical(self, "Error", f"Operation failed:\n{message}")
-            self.check_destination_status()
-            return
-
-        prefix = "DRY RUN - nothing was moved" if dry_run else "Completed"
-        verb = "would move" if dry_run else "moved"
-
-        summary_lines = [
-            f"Reels: {reels_created}",
-            f"Shots: {shots_created}",
-            f"Folders: {folders_created}",
-            f"Files {verb}: {moved}",
-        ]
-        if skipped:
-            summary_lines.append(f"Skipped (already present): {skipped}")
-        if errors:
-            summary_lines.append(f"FAILED: {errors}")
-        if stats.get("report_failed"):
-            summary_lines.append("The delivery report could not be written")
-        if stats.get("dashboard_error"):
-            summary_lines.append("Dashboard not updated: %s" % stats["dashboard_error"])
-
-        delivery = stats.get("report") or {}
-        report = delivery.get("report")
-        if report is not None:
-            if report.incomplete:
-                summary_lines.append(
-                    f"SHORT DELIVERY: {len(report.incomplete)} sequence(s) "
-                    f"missing {report.missing_frame_count} frame(s)"
-                )
-            if delivery.get("paths"):
-                summary_lines.append("Delivery report saved to the project")
-
-        dashboard = stats.get("dashboard")
-        if dashboard is not None:
-            if dashboard.ok:
-                summary_lines.append(f"Dashboard: {len(dashboard.created)} new shot(s)")
-                if dashboard.already_present:
-                    summary_lines.append(
-                        f"Already tracked: {len(dashboard.already_present)}"
-                    )
-            else:
-                summary_lines.append(f"Dashboard update FAILED: {dashboard.error}")
-
-        self.log_message(f"{prefix}: {message}")
-        self.stats_label.setText(" | ".join(summary_lines))
-
-        body = f"{prefix}.\n\n" + "\n".join(summary_lines)
-
-        short_delivery = bool(report is not None and report.incomplete)
-
-        if errors or short_delivery:
-            # Files did not make it across, or the client shorted us frames.
-            # Never dress either up as a clean run.
-            self.stats_label.setStyleSheet(f"color: {C.ERROR_BRIGHT}; font-weight: {T.WEIGHT_STYLE_BOLD};")
-            if errors and self._last_manifest:
-                answer = QMessageBox.question(
-                    self,
-                    "Completed with errors",
-                    body + "\n\nRetry just the files that failed?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                    QMessageBox.StandardButton.Yes,
-                )
-                if answer == QMessageBox.StandardButton.Yes:
-                    self.retry_failed_files()
-                    return
-
-            QMessageBox.warning(
-                self, "Completed with errors" if errors else "Short delivery",
-                body + "\n\nCheck the Process Logs for the files that failed."
-            )
-        elif dry_run:
-            self.stats_label.setStyleSheet(f"color: {C.ACCENT_CYAN_ALT};")
-            QMessageBox.information(
-                self, "Dry Run Complete",
-                body + "\n\nUncheck 'Dry Run (Simulate)' to run it for real."
-            )
+        if not self._paused:
+            worker.pause()
+            self._on_worker_state("paused")
+            self.pause_btn.setText("Resume")
         else:
-            self.stats_label.setStyleSheet(f"color: {C.ACCENT_TEAL}; font-weight: {T.WEIGHT_STYLE_BOLD};")
-            QMessageBox.information(self, "Success", body)
+            worker.resume()
+            self._on_worker_state("running")
+            self.pause_btn.setText("Pause")
+            self.progress_label.setText("Resuming…")
 
-        # Project now exists - refresh the Create/Update button.
+    # ================================================================ phases
+    def _set_phase(self, phase: str):
+        """One place that says what the buttons do in each phase."""
+        self._phase = phase
+        busy = phase != "idle"
+        self.is_processing = busy
+        self.stop_btn.setEnabled(phase in ("survey", "run", "retry"))
+        self.pause_btn.setEnabled(phase == "run")
+        if phase != "run":
+            self._paused = False
+            self.pause_btn.setText("Pause")
+            self.progress_label.setStyleSheet(f"color: {Gate.TEXT}; font-weight: 600;")
+        for widget in (self.project_card, self.scan_card, self.clear_btn):
+            widget.setEnabled(not busy)
         self.check_destination_status()
 
-    def finalize_creation_process(self, source_path=None):
-        """Phase 2: Start the actual FolderCreationWorker."""
-        
-        # --- RE-GATHER SETTINGS (Guaranteed to be valid as UI was locked) ---
-        project_name = self.project_name_input.text().strip()
-        _, sanitized_name, _ = self.security_validator.sanitize_filename(project_name)
-        
-        project_dir_str = self.project_dir_input.text().strip()
+    def _reset_run_ui(self, status: str = IDLE_STATUS):
+        """Back to idle after any early return - the log and last run are kept."""
+        self._set_phase("idle")
+        self.progress_label.setText(status)
 
-        # --- SMART PATH FIX ---
-        final_target_dir = get_resolved_project_root(project_dir_str, sanitized_name)
-        if str(final_target_dir) != project_dir_str:
-            self.log_message(f"Info: Smart Fix: Detected project folder selected directly. Adjusted root to: {final_target_dir}")
-
-        # --- TEMPLATE DATA ---
-        template_key = self.template_combo.currentData()
-        template_info = self.config_manager.templates.get(template_key)
-        base_folders, production_subfolders, outsource_subfolders, shot_folders = self._extract_template_lists(template_info)
-        if not shot_folders:
-            # Guardrail: avoid creating empty shot trees when template schema is mismatched.
-            logging.warning(
-                "Template '%s' has no shot_folders in resolved schema; using minimal defaults.",
-                template_key
-            )
-            shot_folders = ["01_Scan", "07_Comp", "08_Output"]
-
-        template_data = (
-            base_folders,
-            production_subfolders,
-            outsource_subfolders,
-            shot_folders,
-        )
-        
-        target_reel = self.target_reel_input.text().strip()
-        fast_mode = self.fast_mode_cb.isChecked()
-
-        # Ask about stitch shots before anything moves. Cancelling here has to
-        # leave the run un-started, not half-done.
-        stitch_mapping = self._confirm_stitch_shots(source_path, target_reel)
-        if stitch_mapping is None:
-            self.is_processing = False
-            self.create_btn.setEnabled(True)
-            self.log_message("Ingest cancelled at the stitch confirmation.")
+    # ================================================================ the run
+    def start_creation_process(self):
+        """Check, then survey the drive in the background."""
+        if self._phase != "idle":
+            return
+        self.check_destination_status()
+        problems = self._field_problems()
+        blocked = next(iter(problems.values()), "") or self._missing()
+        if blocked:
+            from slate.gui.components.feedback import warn
+            warn(self, "Build project", blocked)
             return
 
-        # Folders to create inside each scan version (e.g. Denoise).
-        structure = template_info.get("structure") if isinstance(template_info, dict) else None
-        source = structure if isinstance(structure, dict) else (template_info or {})
-        scan_version_folders = source.get("scan_version_folders") or ["Denoise"]
+        code, root, source, reel = self._inputs()
+        self._pending = {"code": code, "root": root, "source": Path(source), "reel": reel,
+                         "template": self.template_combo.currentData()}
+        self._set_phase("survey")
+        self.progress_bar.setValue(0)
+        self.progress_label.setText("Looking at the client drive…")
+        self.right_splitter.setSizes([360, 320])
+        self._log_run_header(f"{datetime.now():%d %b %Y %H:%M}  {code} from {source}")
 
-        # Update UI for Phase 2
-        self.create_btn.setEnabled(False)
-        self.stop_btn.setEnabled(True)
-        self.pause_btn.setEnabled(True)
-        self.log_text.clear()
-        
-        self.log_message("Building project structure and moving scans")
-        self.log_message(f"Target: {final_target_dir / sanitized_name}")
+        self._cleanup_worker("survey_thread")
+        worker = SurveyWorker(Path(source), reel)
+        worker.progress.connect(self._on_survey_progress)
+        worker.done.connect(self._on_survey_done)
+        worker.failed.connect(self._on_survey_failed)
+        self.survey_thread = worker
+        worker.start()
 
-        # Needed by the finish handler to register shots against the project.
-        self._pending_project_code = sanitized_name
-        self._pending_project_root = str(final_target_dir)
+    def _on_survey_progress(self, seen: int, folder: str):
+        if self._phase == "survey":
+            self.progress_label.setText(f"Looking at the client drive… {seen:,} files so far")
+
+    def _on_survey_failed(self, message: str):
+        from slate.gui.components.feedback import show_error
+        self.survey_thread = None
+        self._reset_run_ui()
+        self.log_message(f"[ERR] Could not read the client drive: {message}")
+        show_error(self, "Could not read the client drive.", message)
+
+    def _on_survey_done(self, survey):
+        self.survey_thread = None
+        if survey.cancelled:
+            self.log_message("[STOP] Stopped while looking at the drive - nothing was copied.")
+            self._reset_run_ui("Stopped")
+            return
+        self._last_survey = survey
+        self.log_message(f"[INFO] Found {len(survey.shots)} shot folder(s), {survey.total_files:,} file(s), "
+                         f"{size_text(survey.total_bytes)} in {survey.seconds:.1f} s.")
+        self.update_preview(self._pending.get("template"), survey)
+        try:
+            self.finalize_creation_process(survey)
+        except Exception as exc:
+            logger.exception("Could not start the ingest: %s", exc)
+            from slate.gui.components.feedback import show_error
+            show_error(self, "Could not start the ingest.", exc=exc)
+            self._release_ingest_lock()
+            self._reset_run_ui()
+
+    def _template_data(self, key):
+        info = self._templates().get(key)
+        base, production, outsource, shots = self._extract_template_lists(info)
+        defaulted = not shots
+        structure = info.get("structure") if isinstance(info, dict) and isinstance(info.get("structure"), dict) \
+            else (info or {})
+        version_folders = structure.get("scan_version_folders") or ["Denoise"]
+        return (base, production, outsource, list(shots) or list(DEFAULT_SHOT_FOLDERS)), defaulted, \
+            version_folders, (info or {}).get("name", key)
+
+    def finalize_creation_process(self, survey=None):
+        """Stitches, pre-flight, lock - then the worker. Any 'no' leaves everything untouched."""
+        pending = self._pending
+        code, root = pending["code"], pending["root"]
+        template_data, defaulted, version_folders, template_name = self._template_data(pending["template"])
+
+        stitch_mapping = self._confirm_stitch_shots(survey)
+        if stitch_mapping is None:
+            self.log_message("[STOP] Cancelled at the stitch question - nothing was copied.")
+            self._reset_run_ui()
+            return
+
+        found = find_project_folder(root, code)
+        project_choice = None
+        if found is not None and found.name != code:
+            project_choice = {"existing": found, "created": found.parent / code}
+            project_path = found
+        elif found is not None:
+            project_path = found
+        else:
+            project_path = Path(root) / code
+        target_root = project_path.parent
+
+        from slate.core.workers.structure import reels_root_for
+        reels_root = reels_root_for(project_path, code, target_root)
+        scan_root = next((f.split("/")[0] for f in template_data[3] if "scan" in f.lower()), "01_Scan")
+        if project_path.is_dir():
+            skipped = survey.mark_unchanged(reels_root, scan_root, stitch_mapping)
+            if skipped:
+                self.log_message(f"[INFO] {skipped} shot(s) are already in the project unchanged.")
+
+        dialog = IngestPreflightDialog(
+            survey, project_code=code, project_path=project_path,
+            operation=MOVE if self.move_radio.isChecked() else COPY,
+            dry_run=self.dry_run_cb.isChecked(), template_name=template_name,
+            shot_folders_defaulted=defaulted, stitch_mapping=stitch_mapping,
+            long_paths=survey.long_paths(project_path, reels_root, scan_root),
+            project_choice=project_choice, project_exists=project_path.is_dir(), parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            self.log_message("[STOP] Cancelled at the check - nothing was copied.")
+            self._reset_run_ui()
+            return
+        if dialog.problems():
+            from slate.gui.components.feedback import warn
+            warn(self, "Build project", dialog.problems()[0])
+            self._reset_run_ui()
+            return
+
+        dry_run = dialog.dry_run
+        operation = dialog.operation
+        project_path = dialog.chosen_project_dir()
+        target_root = project_path.parent
 
         # One ingest per project: two runs would both claim the same scan
-        # version and mix two deliveries into one folder.
-        from ...core.domain.ingest_lock import IngestLock, IngestLocked
+        # version. Taken before anything on screen says "running".
+        if not dry_run:
+            if not self._take_lock(project_path):
+                self._reset_run_ui()
+                return
 
-        project_path = final_target_dir / sanitized_name
-        try:
-            self._ingest_lock = IngestLock(project_path).acquire()
-        except IngestLocked as exc:
-            self.is_processing = False
-            self.create_btn.setEnabled(True)
-            QMessageBox.warning(self, "Ingest already running", str(exc))
-            return
-
-        # --- START WORKER ---
+        self._pending.update({"project_path": project_path, "dry_run": dry_run, "operation": operation})
+        self._set_phase("run")
+        verb = "Simulating" if dry_run else ("Moving" if operation == MOVE else "Copying")
+        self.log_message(f"[START] {verb} into {project_path}")
         self._cleanup_worker("folder_creation_thread")
-        self.folder_creation_thread = FolderCreationWorker(
-            target_dir=final_target_dir,
-            source_scan_path=source_path,
-            project_name=sanitized_name,
-            template_data=template_data,
-            mode="full",
-            template_type=template_key,
-            target_reel_name=target_reel,
-            overwrite=self.overwrite_cb.isChecked(),
-            dry_run=self.dry_run_cb.isChecked(),
-            format_mapping=getattr(self.config_manager, 'format_mapping', {}) or {},
-            fast_mode=fast_mode,
-            scan_version_folders=scan_version_folders,
-            stitch_mapping=stitch_mapping,
+        worker = FolderCreationWorker(
+            target_dir=target_root, source_scan_path=pending["source"], project_name=code,
+            project_dir=project_path, template_data=template_data, mode="full",
+            template_type=pending["template"], target_reel_name=pending["reel"],
+            dry_run=dry_run, format_mapping=getattr(self.config_manager, 'format_mapping', {}) or {},
+            fast_mode=self.fast_mode_cb.isChecked(), scan_version_folders=version_folders,
+            stitch_mapping=stitch_mapping, operation=operation, survey=survey,
+            lock=self._ingest_lock, register_shots=self.add_to_dashboard_cb.isChecked(),
         )
+        worker.log_signal.connect(self.log_message)
+        worker.progress_signal.connect(self._on_folder_worker_progress)
+        worker.state_signal.connect(self._on_worker_state)
+        worker.finished_signal.connect(self._on_folder_worker_finished)
+        self.folder_creation_thread = worker
+        worker.start()
 
-        self.folder_creation_thread.log_signal.connect(self.log_message)
-        self.folder_creation_thread.progress_signal.connect(self._on_folder_worker_progress)
-        self.folder_creation_thread.finished_signal.connect(self._on_folder_worker_finished)
-        self.folder_creation_thread.start()
-
-    def _confirm_stitch_shots(self, source_path, target_reel):
-        """
-        Ask which folders are parts of one shot, before any file moves.
-
-        Returns the confirmed mapping, or None if the coordinator cancelled the
-        whole ingest. An empty mapping is a normal answer: it means nothing
-        looked like a stitch, or every suggestion was rejected.
-        """
-        if not source_path:
-            return {}
-
-        from ...core.domain.stitch_detect import survey_source
-
-        try:
-            groups = survey_source(source_path, target_reel)
-        except Exception as exc:
-            # A drive we cannot survey is not a reason to block an ingest; it
-            # just means no merging, which is the old behaviour.
-            logging.warning("Stitch survey failed on %s: %s", source_path, exc)
-            self.log_message(f"Warning: could not check for stitch shots: {exc}")
-            return {}
-
+    def _confirm_stitch_shots(self, survey):
+        """The confirmed {(reel, folder): shot} mapping, {} when none, None when cancelled."""
+        groups = list(getattr(survey, "stitch_groups", []) or [])
         if not groups:
             return {}
-
-        self.log_message(
-            f"Found {len(groups)} possible stitch shot(s) - asking before moving."
-        )
-
-        dialog = StitchConfirmDialog(groups, self)
+        self.log_message(f"[INFO] {len(groups)} possible stitch shot(s) - asking before anything is copied.")
+        dialog = StitchConfirmDialog(groups, self, survey=survey)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return None
-
         mapping = dialog.mapping()
         for group in dialog.accepted_groups():
             self.log_message(f"[STITCH] {group.describe()}")
@@ -1011,119 +1211,281 @@ class FolderCreatorTab(QWidget):
             self.log_message("[STITCH] Nothing merged - every folder stays its own shot.")
         return mapping
 
-    def start_creation_process(self):
-        """SECURE: Start the folder creation process with security validation."""
-        
-        if hasattr(self, 'folder_creation_thread') and self.folder_creation_thread is not None:
-            if self.folder_creation_thread.isRunning():
-                QMessageBox.warning(self, "Please Wait", "The previous process is still stopping.\nPlease wait a few seconds and try again.")
-                return
-
-        if self.is_processing:
-            QMessageBox.warning(self, "Already Processing", "A process is already running.")
-            return
-
-        # SECURITY: Validate project name
-        project_name = self.project_name_input.text().strip()
-        name_valid, sanitized_name, name_error = self.security_validator.sanitize_filename(project_name)
-        if not name_valid:
-            QMessageBox.critical(self, "Security Error", f"Invalid project name:\n{name_error}")
-            return
-        self.project_name_input.setText(sanitized_name)
-
-        # SECURITY: Validate project directory
-        project_dir_str = self.project_dir_input.text().strip()
-        if not project_dir_str:
-            QMessageBox.critical(self, "Validation Error", "Please select a target directory.")
-            return
-
-        target_path_obj = Path(project_dir_str)
-        dir_valid, dir_error = self.security_validator.validate_directory_path(target_path_obj, must_exist=True)
-        if not dir_valid:
-            QMessageBox.critical(self, "Security Error", f"Invalid project directory:\n{dir_error}")
-            return
-            
-        # Validate Template
-        template_key = self.template_combo.currentData()
-        if not template_key:
-            QMessageBox.critical(self, "Template Error", "No template selected.")
-            return
-
-        scan_source = self.scan_source_input.text().strip()
-        if not scan_source:
-            QMessageBox.warning(self, "Missing Input", "Please select the Client Source folder.")
-            return
-
-        source_path = Path(scan_source)
-        if not source_path.exists():
-            QMessageBox.critical(self, "Error", "Source folder does not exist.")
-            return
-
-        # Ingesting a drive into itself would move files onto themselves.
+    # ---------------------------------------------------------------- the lock
+    def _holder(self) -> str:
+        username = str(self.user_data.get("username") or self.user_data.get("user_id") or "")
+        if not username:
+            return ""
         try:
-            same_place = source_path.resolve() == target_path_obj.resolve()
-        except OSError:
-            same_place = False
-        if same_place:
-            QMessageBox.critical(
-                self, "Error",
-                "The client source and the target root are the same folder."
-            )
+            from slate.core.domain.people import label
+            return label(username) or username
+        except Exception:
+            return username
+
+    def _is_admin(self) -> bool:
+        roles = self.user_data.get("roles") or self.user_data.get("role") or []
+        try:
+            from slate.core.domain.access import is_superuser
+            return is_superuser(roles)
+        except Exception:
+            return False
+
+    def _take_lock(self, project_path: Path) -> bool:
+        from slate.core.domain.ingest_lock import IngestLock, IngestLocked, clear_lock
+        from slate.gui.components.feedback import confirm, warn
+        try:
+            self._ingest_lock = IngestLock(project_path, holder=self._holder()).acquire()
+            return True
+        except IngestLocked as exc:
+            info = exc.info.describe()
+            if self._is_admin():
+                if confirm(self, "Ingest already running",
+                           f"{exc}\n\nIf that ingest is not really running (Slate crashed or was closed), "
+                           "you can clear the lock. Clearing a lock that is in use lets two deliveries "
+                           "mix in one scan version.", yes_label="Clear the lock and continue",
+                           no_label="Cancel", destructive=True):
+                    if clear_lock(project_path):
+                        self.log_message(f"[WARN] Ingest lock held by {info} cleared by hand.")
+                        return self._take_lock(project_path)
+                return False
+            warn(self, "Ingest already running",
+                 f"{exc}\n\nWait for it to finish. If it is not really running, ask an admin to "
+                 "clear the lock.")
+            return False
+
+    def _release_ingest_lock(self):
+        lock = getattr(self, "_ingest_lock", None)
+        if lock is None:
             return
+        try:
+            lock.release()
+        except Exception as exc:
+            logger.warning("Could not release the ingest lock: %s", exc)
+        finally:
+            self._ingest_lock = None
 
-        self.is_processing = True
-        self.create_btn.setEnabled(False)   # Lock UI only once we are committed
-        self.finalize_creation_process(source_path=source_path)
+    # ---------------------------------------------------------------- finished
+    def _on_folder_worker_finished(self, success, total_projects, reels_created, shots_created,
+                                   folders_created, message):
+        worker = self.sender() if isinstance(self.sender(), FolderCreationWorker) else self.folder_creation_thread
+        if worker is None or worker is not self.folder_creation_thread:
+            return
+        self._release_ingest_lock()
+        self.folder_creation_thread = None
+        try:
+            worker.wait(2000)
+            if not worker.isRunning():
+                worker.deleteLater()
+        except RuntimeError:
+            pass
+        report = self._write_delivery_report(worker)
+        self.on_folder_creation_finished(worker, report, message)
 
+    def _write_delivery_report(self, worker):
+        """Write the report; a report that cannot be written never fails the ingest."""
+        try:
+            from ...core.domain.delivery_report import build_report, frame_summary, write_report
+            project_path = getattr(worker, "project_dir", None) or self._pending.get("project_path")
+            if not project_path:
+                return None
+            report = build_report(worker, worker.project_name, getattr(worker, "source_scan_path", ""))
+            paths = write_report(report, project_path, getattr(worker, "client_folder", ""))
+            self.log_message(f"[INFO] Delivery: {report.headline()}")
+            for entry in report.incomplete[:10]:
+                self.log_message(f"[WARN] SHORT: {entry['shot']} / {entry['name']} missing "
+                                 f"{frame_summary(entry['missing'])}")
+            if paths:
+                self.log_message(f"[INFO] Report saved: {paths['report']}")
+                self._last_report = paths["report"]
+                if not report.dry_run:
+                    self._last_manifest = paths.get("manifest")
+                self.open_report_btn.setEnabled(True)
+            return {"report": report, "paths": paths}
+        except Exception as exc:
+            logger.warning("Delivery report failed: %s", exc)
+            return None
+
+    def on_folder_creation_finished(self, worker, delivery, message=""):
+        """Say what happened - on screen for good, and once in a box with the report a click away."""
+        report = (delivery or {}).get("report")
+        paths = (delivery or {}).get("paths") or {}
+        outcome = getattr(worker, "outcome", "completed")
+        dry = bool(getattr(worker, "dry_run", False))
+        moved = getattr(worker, "files_moved", 0)
+        total = getattr(worker, "_total_files", 0)
+        errors = getattr(worker, "errors", 0)
+        skipped = getattr(worker, "files_skipped", 0)
+        verb = "would be " if dry else ""
+        verb += {"move": "moved", "copy": "copied"}.get(getattr(worker, "operation", "copy"), "copied")
+
+        lines = [f"Shots: {getattr(worker, 'shots_count', 0)} in {getattr(worker, 'reels_count', 0)} reel(s)",
+                 f"Files {verb}: {moved:,} of {total:,}"]
+        if skipped:
+            lines.append(f"Skipped (already there): {skipped:,}")
+        if errors:
+            lines.append(f"Failed: {errors:,} - 'Retry failed files' tries them again")
+        if getattr(worker, "documents_filed", None):
+            lines.append(f"Documents filed: {len(worker.documents_filed)}")
+        if getattr(worker, "skipped_shots", None):
+            lines.append(f"Shots already in the project: {len(worker.skipped_shots)}")
+        new_folders = getattr(worker, "folders_created", 0)
+        lines.append(f"New folders: {new_folders:,}")
+        if report is not None and report.incomplete:
+            lines.append(f"Short delivery: {len(report.incomplete)} sequence(s) missing "
+                         f"{report.missing_frame_count} frame(s)")
+        registration = getattr(worker, "registration", None)
+        if registration is not None:
+            if registration.ok:
+                lines.append(f"Dashboard: {len(registration.created)} new shot(s)")
+                for name in registration.new_scans[:8]:
+                    entry = next((e for e in worker.ingested_shots if e.get("shot") == name), {})
+                    lines.append(f"  {name}: new scan {entry.get('scan_version', '')}".rstrip())
+                if registration.already_present:
+                    lines.append(f"Already tracked: {len(registration.already_present)}")
+            else:
+                lines.append(f"Dashboard not updated: {registration.error}")
+        elif getattr(worker, "registration_error", ""):
+            lines.append(f"Dashboard not updated: {worker.registration_error}")
+        if delivery is None or not paths:
+            lines.append("The delivery report could not be written - see the log.")
+
+        if outcome == "stopped":
+            left = max(total - moved - errors - skipped, 0)
+            where = "still on the client drive" if getattr(worker, "operation", "copy") == "move" else "not copied"
+            title, level = "Stopped", "warn"
+            head = f"Stopped - {moved:,} of {total:,} files {verb}, {left:,} {where}."
+        elif outcome == "failed":
+            title, level = "Ingest failed", "bad"
+            head = f"The ingest stopped with an error: {message}"
+        elif dry:
+            title, level = "Dry run finished", "info"
+            head = "Dry run - nothing was copied or created."
+        elif errors:
+            title, level = "Finished with problems", "bad"
+            head = f"{errors:,} file(s) could not be brought in."
+        elif report is not None and report.incomplete:
+            title, level = "Short delivery", "warn"
+            head = f"Frames are missing in {len(report.incomplete)} sequence(s) - see the report."
+        else:
+            title, level = "Ingest finished", "ok"
+            head = "Everything arrived."
+
+        stamp = datetime.now().strftime("%H:%M")
+        colour = {"ok": Gate.OK, "warn": Gate.WARN, "bad": Gate.BAD, "info": Gate.INFO}[level]
+        link = " &middot; <a href='report'>Open report</a>" if paths.get("report") else ""
+        self.last_run_label.setText(
+            f"<span style='color:{colour}; font-weight:600'>Last run {stamp}: {html.escape(title)}</span>"
+            f" &middot; {html.escape(lines[1])}"
+            + (f" &middot; failed {errors:,}" if errors else "") + link)
+        self.last_run_label.setVisible(True)
+        self.log_message(("[STOP] " if outcome != "completed" else "[INFO] ") + head)
+
+        if outcome == "completed":
+            self.progress_bar.setValue(100)
+        self._reset_run_ui("Ready")
+        self._refresh_retry_button()
+        self._message(title, head + "\n\n" + "\n".join(lines), level,
+                      report=paths.get("report"), folder=paths.get("folder"))
+
+    def _message(self, title, text, level, report=None, folder=None):
+        """The completion box, with the report and its folder a click away."""
+        box = QMessageBox(self)
+        box.setIcon({"bad": QMessageBox.Icon.Warning, "warn": QMessageBox.Icon.Warning}.get(
+            level, QMessageBox.Icon.Information))
+        box.setWindowTitle(title)
+        box.setText(text)
+        open_report = box.addButton("Open report", QMessageBox.ButtonRole.ActionRole) if report else None
+        open_folder = box.addButton("Open folder", QMessageBox.ButtonRole.ActionRole) if folder else None
+        box.addButton(QMessageBox.StandardButton.Close)
+        box.exec()
+        clicked = box.clickedButton()
+        if open_report is not None and clicked is open_report:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(report)))
+        elif open_folder is not None and clicked is open_folder:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
+    # ---------------------------------------------------------------- stop
     def stop_creation_process(self):
-        """Stop the folder creation process."""
-        if self.is_processing and self.folder_creation_thread is not None:
-            self.folder_creation_thread.stop()
-            if hasattr(self.parent(), "statusBar"):
-                self.parent().statusBar().showMessage("Stopping process...", 3000)
-            self.log_message("Sending stop signal to worker...")
+        """Stop the survey, the run or the retry, at the next file."""
+        for attr in ("survey_thread", "folder_creation_thread", "retry_thread"):
+            worker = getattr(self, attr, None)
+            if worker is not None:
+                try:
+                    if worker.isRunning():
+                        worker.stop()
+                except RuntimeError:
+                    continue
+        if self._phase != "idle":
+            self.progress_label.setText("Stopping after the current file…")
             self.stop_btn.setEnabled(False)
             self.pause_btn.setEnabled(False)
+            bar = self._status_bar()
+            if bar is not None:
+                bar.showMessage("Stopping Build & Ingest…", 3000)
 
+    # ---------------------------------------------------------------- retry
+    def _project_path_for_retry(self) -> Optional[Path]:
+        code, root, _s, _r = self._inputs()
+        if not code or not root:
+            return None
+        return self._planned_project_path()
+
+    def _refresh_retry_button(self):
+        if not hasattr(self, "retry_btn"):
+            return
+        from slate.core.domain.ingest_retry import latest_manifest, load_failures
+        path = self._project_path_for_retry()
+        manifest = latest_manifest(path) if path is not None and path.is_dir() else None
+        failures = load_failures(manifest) if manifest else []
+        self._last_manifest = str(manifest) if failures else None
+        self.retry_btn.setEnabled(bool(failures) and self._phase == "idle")
+        self.retry_btn.setText(f"Retry {len(failures)} failed file(s)" if failures else "Retry failed files")
+
+    def retry_failed_files(self):
+        """Re-attempt the files the newest run could not bring in, in the background."""
+        manifest = self._last_manifest
+        if not manifest or self._phase != "idle":
+            return
+        project = self._project_path_for_retry()
+        if project is None or not self._take_lock(project):
+            return
+        self._set_phase("retry")
+        self._log_run_header(f"{datetime.now():%d %b %Y %H:%M}  retry")
+        worker = RetryWorker(manifest, fast_mode=self.fast_mode_cb.isChecked())
+        worker.progress.connect(lambda d, t, n: self.update_folder_creator_progress(
+            int(d / max(t, 1) * 100), f"Retrying {d} of {t}: {n}"))
+        worker.done.connect(self._on_retry_done)
+        self.retry_thread = worker
+        worker.start()
+
+    def _on_retry_done(self, result):
+        self.retry_thread = None
+        self._release_ingest_lock()
+        self.log_message(f"[INFO] Retry: {result.summary()}")
+        for entry in result.still_failing[:10]:
+            self.log_message(f"[ERR] {entry['file']}: {entry['error']}")
+        self._reset_run_ui()
+        self._refresh_retry_button()
+        level = "ok" if result.ok and not result.still_failing else "warn"
+        self._message("Retry finished" if level == "ok" else "Some files still failing",
+                      result.summary(), level)
+
+    # ---------------------------------------------------------------- reset
     def clear_all(self):
-        """Clear all inputs on the Folder Creator tab."""
-        self.project_name_input.clear()
-        self.scan_source_input.clear()
-        self.target_reel_input.clear()
-        self.log_text.clear()
+        """Back to a clean form; the projects folder and the log stay."""
+        if self._phase != "idle":
+            return
+        for field in (self.project_name_input, self.scan_source_input, self.target_reel_input):
+            field.clear()
+        self.copy_radio.setChecked(True)
+        global_settings = self._settings().get("global_settings") or {}
+        self.dry_run_cb.setChecked(bool(global_settings.get("dry_run_enabled", False))
+                                   if isinstance(global_settings, dict) else False)
+        self.fast_mode_cb.setChecked(False)
+        self.add_to_dashboard_cb.setChecked(True)
         self.progress_bar.setValue(0)
-        self.progress_label.setText("Ready to start")
-        self.stats_label.setText("-")
-        self.stats_label.setStyleSheet(f"color: {C.TEXT_GRAY_LIGHTER};")
+        self.progress_label.setText(IDLE_STATUS)
+        self._last_survey = None
         self.check_destination_status()
-
-    def restore_last_paths(self):
-        """SECURE: Restore last used paths from settings with validation."""
-        if self.config_manager.settings.get('global_settings', {}).get("restore_last_paths", True):
-            try:
-                # Restore project directory
-                project_dir = self.config_manager.settings.get('last_project_directory', '')
-                if project_dir and Path(project_dir).exists():
-                    self.project_dir_input.setText(project_dir)
-
-                # Restore Scan Source
-                scan_source = self.config_manager.settings.get('last_scan_source_directory', '')
-                if scan_source and Path(scan_source).exists():
-                    self.scan_source_input.setText(scan_source)
-
-                # Restore template selection
-                last_template = self.config_manager.settings.get('global_settings', {}).get('last_template_used', 'standard')
-                if last_template in self.config_manager.get_available_templates():
-                    index = self.template_combo.findData(last_template)
-                    if index >= 0:
-                        self.template_combo.setCurrentIndex(index)
-
-                logging.info("Restored last used paths")
-            except Exception as e:
-                logging.warning(f"Could not restore last paths: {e}")
-
-    # --- DEBOUNCE HELPERS ---
-    def start_typing_timer(self):
-        """Restart the typing timer for debounced validation."""
-        if hasattr(self, 'typing_timer'):
-            self.typing_timer.start()
+        self.stats_label.setText(IDLE_HINT)
+        self.update_preview(self.template_combo.currentData())
