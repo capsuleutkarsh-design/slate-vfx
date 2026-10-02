@@ -185,6 +185,20 @@ class IngestSurvey:
     def total_bytes(self) -> int:
         return sum(s.size for s in self.active_shots()) + sum(d.size for d in self.documents)
 
+    def destination_shots(self, stitch_mapping: Dict = None) -> List[Tuple[str, str]]:
+        """
+        The shots this delivery becomes: one per (reel, destination name).
+        Stitch parts are one shot; two deliveries of a shot (ScanA, ScanB)
+        are one shot with two scan versions. The pre-flight, the result and
+        the dashboard all count this.
+        """
+        seen = []
+        for shot in self.active_shots():
+            key = (shot.reel, self.destination_of(shot, stitch_mapping))
+            if key not in seen:
+                seen.append(key)
+        return seen
+
     @property
     def reels(self) -> List[str]:
         seen = []
@@ -308,7 +322,8 @@ def mark_documents_filed(survey: "IngestSurvey", client_dir: Path) -> int:
     time in one of the client folder's *_docs folders). Returns how many.
     """
     try:
-        folders = [d for d in Path(client_dir).iterdir() if d.is_dir() and d.name.endswith("_docs")]
+        from slate.core.infra.file_operations import long_path
+        folders = [d for d in Path(long_path(client_dir)).iterdir() if d.is_dir() and d.name.endswith("_docs")]
     except OSError:
         return 0
     keep, filed = [], []
@@ -320,7 +335,7 @@ def mark_documents_filed(survey: "IngestSurvey", client_dir: Path) -> int:
         match = False
         for folder in folders:
             try:
-                stat = os.stat(folder / relative)
+                stat = os.stat(str(folder / relative))
             except OSError:
                 continue
             if stat.st_size == doc.size and abs(stat.st_mtime - doc.mtime) <= MTIME_TOLERANCE:
@@ -335,13 +350,18 @@ def mark_documents_filed(survey: "IngestSurvey", client_dir: Path) -> int:
 def existing_versions(scan_dir: Path) -> Dict[str, List[Tuple[str, int, float]]]:
     """{'v001': [(file name, size, modified time)]} for each scan version in a shot."""
     out: Dict[str, List[Tuple[str, int, float]]] = {}
+    # Read through the long-path form: a shot deep in a project is past 260
+    # characters, and without it its versions looked empty - so every re-run
+    # copied it again as a new scan version.
+    from slate.core.infra.file_operations import long_path
     try:
-        children = [c for c in Path(scan_dir).iterdir() if c.is_dir() and _SCAN_VERSION.fullmatch(c.name)]
+        children = [c for c in Path(long_path(scan_dir)).iterdir()
+                    if c.is_dir() and _SCAN_VERSION.fullmatch(c.name)]
     except OSError:
         return out
     for version in children:
         found = []
-        for root, _dirs, files in os.walk(version):
+        for root, _dirs, files in os.walk(str(version)):
             for name in files:
                 if is_junk_file(name):
                     continue

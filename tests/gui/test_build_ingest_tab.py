@@ -468,3 +468,41 @@ def test_admins_can_clear_a_stale_lock(tab, tmp_path, monkeypatch):
 def test_closing_while_busy_is_announced(tab):
     """ING-061 (foundation) still holds with the new threads."""
     assert tab.busy_reason() is None
+
+
+def test_a_bad_code_is_not_shown_as_the_project_folder(tab):
+    """NEW-ingest-4."""
+    tab.project_name_input.setText("BAD/NAME")
+    assert tab.folder_preview_tree.topLevelItem(0).text(0) == "Project"
+    tab.project_name_input.setText("GOOD")
+    assert tab.folder_preview_tree.topLevelItem(0).text(0) == "GOOD"
+
+
+def test_preflight_shot_names_are_not_dimmed(qtbot, tmp_path):
+    """NEW-ingest-3: names that will be used read as normal text."""
+    from slate.core.domain.ingest_survey import survey_drive
+    from slate.core.infra.gate import Gate
+    drive = _drive(tmp_path / "d")
+    survey = survey_drive(drive)
+    dialog = ipd.IngestPreflightDialog(survey, project_code="P", project_path=tmp_path / "P")
+    qtbot.addWidget(dialog)
+    item = dialog.table.item(0, dialog.COL_SHOT)
+    brush = item.foreground()
+    assert brush.style() == Qt.BrushStyle.NoBrush or brush.color().name().lower() != Gate.TEXT_DIM.lower()
+    assert "3 shot(s)" in dialog.headline.text()
+
+
+def test_stitch_merge_is_a_real_checkbox(qtbot):
+    """ING-048."""
+    from slate.core.domain.stitch_detect import StitchGroup
+    from slate.gui.dialogs.stitch_confirm_dialog import StitchConfirmDialog
+    from PySide6.QtWidgets import QCheckBox
+    dialog = StitchConfirmDialog([StitchGroup("SH010", ["SH010_A", "SH010_B"], "R1")])
+    qtbot.addWidget(dialog)
+    item = dialog.tree.topLevelItem(0)
+    box = dialog.tree.itemWidget(item, 0).findChild(QCheckBox)
+    assert box.isChecked()
+    box.setChecked(False)
+    assert dialog.mapping() == {}
+    item.setCheckState(0, Qt.CheckState.Checked)
+    assert box.isChecked() and dialog.mapping()

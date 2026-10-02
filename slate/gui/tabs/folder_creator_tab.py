@@ -849,7 +849,12 @@ class FolderCreatorTab(QWidget):
     def _refresh_preview_root(self, *_):
         tree = self.folder_preview_tree
         if tree is not None and tree.topLevelItemCount():
-            tree.topLevelItem(0).setText(0, self.project_name_input.text().strip() or "Project")
+            tree.topLevelItem(0).setText(0, self._preview_code() or "Project")
+
+    def _preview_code(self) -> str:
+        """The typed code, when it can be a folder name; '' otherwise."""
+        code = self.project_name_input.text().strip()
+        return code if code and not name_problem(code) else ""
 
     def update_preview(self, template_key, survey=None):
         """The project this template builds, folder by folder, merged by path."""
@@ -864,7 +869,7 @@ class FolderCreatorTab(QWidget):
         base, production, outsource, shots = self._extract_template_lists(info)
         structure = info.get("structure") if isinstance(info.get("structure"), dict) else info
         version_folders = structure.get("scan_version_folders") or ["Denoise"]
-        code = self.project_name_input.text().strip()
+        code = self._preview_code()
         root = QTreeWidgetItem(tree, [code or "Project"])
         bold = QFont(root.font(0))
         bold.setBold(True)

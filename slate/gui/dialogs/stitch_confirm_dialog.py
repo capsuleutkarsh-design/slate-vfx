@@ -16,7 +16,7 @@ the reason, instead of building a shot outside the project.
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QTreeWidget,
+    QCheckBox, QDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QTreeWidget,
     QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -51,6 +51,7 @@ class StitchConfirmDialog(QDialog):
         self.groups = list(groups or [])
         self.survey = survey
         self._rows = []
+        self._boxes = {}
 
         self.setWindowTitle("Stitch shots found in this delivery")
         self.resize(820, 480)
@@ -72,6 +73,7 @@ class StitchConfirmDialog(QDialog):
 
         self.tree = QTreeWidget()
         self.tree.setRootIsDecorated(False)
+        self.tree.setStyleSheet('QTreeWidget::indicator { width: 0px; height: 0px; }')
         self.tree.setHeaderLabels(["Merge", "Reel", "Parts", "Becomes one shot"])
         header = self.tree.header()
         header.setStretchLastSection(False)
@@ -103,7 +105,7 @@ class StitchConfirmDialog(QDialog):
         layout.addLayout(buttons)
 
         self._populate()
-        self.tree.itemChanged.connect(lambda *_: self._validate())
+        self.tree.itemChanged.connect(self._item_changed)
         self._validate()
 
     def _populate(self):
@@ -120,6 +122,21 @@ class StitchConfirmDialog(QDialog):
             item.setToolTip(0, "Ticked: these folders become one shot.")
             self.tree.addTopLevelItem(item)
 
+            # A real, themed check box: the tree's own indicator drew as a
+            # faint grey tick on Dark that did not read as something to click.
+            # The item's check state stays the answer; the box mirrors it.
+            box = QCheckBox()
+            box.setToolTip("Ticked: these folders become one shot.")
+            box.setChecked(item.checkState(0) == Qt.CheckState.Checked)
+            box.toggled.connect(lambda on, it=item: it.setCheckState(
+                0, Qt.CheckState.Checked if on else Qt.CheckState.Unchecked))
+            box_holder = QWidget()
+            box_layout = QHBoxLayout(box_holder)
+            box_layout.setContentsMargins(8, 0, 4, 0)
+            box_layout.addWidget(box)
+            self.tree.setItemWidget(item, 0, box_holder)
+            self._boxes[id(item)] = box
+
             # The proposed name is the shared prefix, which is usually right,
             # but a client naming scheme can put the real shot name elsewhere.
             name_edit = QLineEdit(group.shot_name)
@@ -133,6 +150,16 @@ class StitchConfirmDialog(QDialog):
             self.tree.setItemWidget(item, 3, holder)
 
             self._rows.append((group, item, name_edit))
+
+    def _item_changed(self, item, column=0):
+        box = self._boxes.get(id(item))
+        if box is not None:
+            checked = item.checkState(0) == Qt.CheckState.Checked
+            if box.isChecked() != checked:
+                box.blockSignals(True)
+                box.setChecked(checked)
+                box.blockSignals(False)
+        self._validate()
 
     def _set_all(self, state):
         for _, item, _ in self._rows:

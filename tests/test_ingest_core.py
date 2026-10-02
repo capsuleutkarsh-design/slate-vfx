@@ -525,3 +525,43 @@ def test_documents_filed_by_an_earlier_run_are_left_out(tmp_path, db):
     survey = isv.survey_drive(drive)
     assert isv.mark_documents_filed(survey, target / "PRJ" / "01_Frm Client") == 1
     assert survey.documents == [] and len(survey.documents_filed_before) == 1
+
+
+# ------------------------------------------------------------------ verify round
+def test_a_shot_past_260_characters_is_recognised_on_a_rerun(tmp_path, db):
+    """NEW-ingest-1: long project paths looked empty, so every re-run copied again."""
+    drive = tmp_path / "drive"
+    _plates(drive, "REEL_02/SH_095_" + "very_long_client_name_" * 4, name="SH_095_frame_with_a_long_name")
+    target = tmp_path / ("p" * 120)
+    _run(drive, target)
+    survey = isv.survey_drive(drive)
+    assert survey.mark_unchanged(target / "PRJ" / "05_Reels") == 1
+
+
+def test_one_count_of_shots_everywhere(tmp_path, db):
+    """NEW-ingest-2: stitch parts and ScanA/ScanB are one shot each."""
+    drive = tmp_path / "drive"
+    _plates(drive, "REEL_01/SH_010")
+    _plates(drive, "REEL_01/SH_9990_A", name="p")
+    _plates(drive, "REEL_01/SH_9990_B", name="q")
+    _plates(drive, "REEL_02/SH_050_ScanA", name="s")
+    _plates(drive, "REEL_02/SH_050_ScanB", name="s", body=b"other")
+    survey = isv.survey_drive(drive)
+    mapping = apply_groups([], survey.stitch_groups)
+    assert len(survey.destination_shots(mapping)) == 3
+    worker, _ = _run(drive, tmp_path / "P", survey=survey, stitch_mapping=mapping, register_shots=True)
+    assert worker.shots_count == 3
+    assert len(worker.registration.created) == 3
+
+
+def test_dry_and_real_runs_count_the_same_new_folders_with_the_lock(tmp_path, db):
+    """ING-034: the lock made the project folder before the real run counted it."""
+    drive = _drive(tmp_path)
+    target = tmp_path / "P"
+    target.mkdir()
+    dry, _ = _run(drive, target, dry_run=True)
+    lock = IngestLock(target / "PRJ", holder="t").acquire()
+    real, _ = _run(drive, target, lock=lock)
+    lock.release()
+    assert lock.created_folder
+    assert dry.folders_created == real.folders_created
