@@ -472,18 +472,16 @@ class MainWindowBuilderMixin:
                 # Licences. Not an inventory - a compliance and renewal read,
                 # which is the only version of this question anybody asks.
                 #
-                # Also read-only for people with view_licences (a Production
-                # Head who approves renewals) - once the view can be read-only.
-                import inspect
-                licence_read_only = (not it_screens
-                                     and can_view_licences(roles_now, self.allowed_tabs)
-                                     and "read_only" in inspect.signature(LicenceView).parameters)
+                # Open to IT and to people with view_licences (a Production
+                # Head who approves renewals). Changing anything needs
+                # manage_it; everybody else reads it.
+                licence_visible = it_screens or can_view_licences(roles_now, self.allowed_tabs)
+                licence_read_only = not manages_it(roles_now, self.allowed_tabs)
                 self.tab_coordinator.register_tab_factory(
                     "Licences",
-                    (lambda: LicenceView(self._current_username(), read_only=True))
-                    if licence_read_only else (lambda: LicenceView(self._current_username())),
+                    lambda: LicenceView(self._current_username(), read_only=licence_read_only),
                     icon="🔑",
-                    permission_key=None if (it_screens or licence_read_only) else "IT",
+                    permission_key=None if licence_visible else "IT",
                     user_role=self.user_role,
                     allowed_tabs=self.allowed_tabs,
                     tooltip="Seats bought against seats used, and what each renewal needs"

@@ -250,7 +250,10 @@ def test_every_finding_says_something_actionable():
 
 
 def test_utilisation_survives_a_licence_with_no_seats():
-    assert lc.utilisation(3, 0) == 0.0
+    # No seats bought: there is no percentage (IT-053), and 3 in use is
+    # over-subscribed rather than 'Healthy'.
+    assert lc.utilisation(3, 0) is None
+    assert lc.state(0, 3, _in(300)) == lc.OVER
 
 
 # ------------------------------------------------------------------- spine
