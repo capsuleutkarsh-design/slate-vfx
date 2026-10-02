@@ -79,6 +79,15 @@ def hours_between(punch_in, punch_out) -> float:
     return round(delta, 2)
 
 
+def _metadata(raw) -> dict:
+    """An attendance row's metadata as a dict (JSONB on PostgreSQL, text on SQLite)."""
+    try:
+        from ..infra.migrations.foundation_data import merge_json_objects
+        return merge_json_objects(raw)
+    except Exception:
+        return {}
+
+
 class CompOffService:
     def __init__(self, db=None, repo=None):
         if db is None:
@@ -97,7 +106,7 @@ class CompOffService:
             # text. ISO strings sort correctly, which is the only reason this
             # works - it is not a date comparison the database understands.
             rows = self.db.execute_query(
-                "SELECT user_id, day_date, punch_in, punch_out FROM attendance_log "
+                "SELECT user_id, day_date, punch_in, punch_out, metadata FROM attendance_log "
                 "WHERE day_date >= %s ORDER BY day_date",
                 (since.isoformat(),), fetch="all") or []
             return [dict(r) for r in rows]
@@ -139,8 +148,18 @@ class CompOffService:
             return []
 
         since = since or (date.today() - timedelta(days=90))
-        holidays = self.repo.holidays()
         done = self._already_credited()
+
+        # Each person's own holidays. Every location's holidays used to apply
+        # to everybody, so Chennai's Onam earned Mumbai staff a comp-off day
+        # for an ordinary working day.
+        by_location = {}
+
+        def holidays_of(user):
+            place = (self.repo.location_of(user) or "").strip().lower()
+            if place not in by_location:
+                by_location[place] = self.repo.holidays(location=place or None) if place                     else self.repo.holidays(location="All")
+            return by_location[place]
 
         found = []
         for row in self._attendance(since):
@@ -151,8 +170,18 @@ class CompOffService:
             if (user.lower(), day) in done:
                 continue
 
-            hours = hours_between(row.get("punch_in"), row.get("punch_out"))
-            earned = lp.comp_off_earned(day, hours, holidays, rules)
+            # A day closed by the automatic punch-out, or flagged as missing its
+            # punch-out, has invented hours: a forgotten 20:15 punch-in closed
+            # at 19:30 read as a 23-hour shift and earned a full day.
+            meta = _metadata(row.get("metadata"))
+            if meta.get("auto_logout") or meta.get("missing_punch_out"):
+                continue
+            # Every session of the day, overnight ones included (the same
+            # rule the attendance screens use).
+            from .attendance_rules import day_hours
+            hours = round(day_hours({"in": row.get("punch_in"), "out": row.get("punch_out"),
+                                     "sessions": meta.get("sessions")}), 2)
+            earned = lp.comp_off_earned(day, hours, holidays_of(user), rules)
             if earned["days"] <= 0:
                 continue
 
