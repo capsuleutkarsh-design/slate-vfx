@@ -64,6 +64,10 @@ class FakeRepo:
         self.rows = [r for r in self.rows if r["id"] != holiday_id]
         return True
 
+    def all_requests(self):
+        # No leave waiting, so nothing to re-cost after a change.
+        return []
+
 
 CALENDAR = [
     {"id": 1, "holiday_date": date(2025, 12, 25), "name": "Christmas",
