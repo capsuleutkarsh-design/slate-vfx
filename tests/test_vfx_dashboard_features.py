@@ -19,6 +19,13 @@ from slate.gui.tabs.vfx_dashboard_pro.ui.status_delegate import StatusDelegate
 from slate.gui.tabs.vfx_dashboard_pro.ui.artist_delegate import ArtistDelegate
 from slate.gui.tabs.vfx_dashboard_pro.ui.batch_edit_dialog import BatchEditDialog
 from slate.gui.tabs.vfx_dashboard_pro.ui.group_header_delegate import GROUP_HEADER_ROLE
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def online(monkeypatch):
+    import slate.core.domain.access as access
+    monkeypatch.setattr(access, "is_offline_fallback", lambda: False)
 
 
 def create_sample_shots():
@@ -119,10 +126,22 @@ def test_artist_delegate():
     print("ArtistDelegate passed!")
 
 
+def _grouped(shots):
+    """Grouping is the top layer of the grid's model stack."""
+    from slate.gui.tabs.vfx_dashboard_pro.ui.shot_proxy_models import ShotFilterProxy, ShotGroupModel
+    source = ShotTableModel(shots, user_role="supervisor")
+    proxy = ShotFilterProxy()
+    proxy.setSourceModel(source)
+    group = ShotGroupModel()
+    group.setSourceModel(proxy)
+    group._keep = (source, proxy)
+    return group
+
+
 def test_group_by_sequence():
     print("Testing Group-By Reel/Sequence...")
     shots = create_sample_shots()
-    model = ShotTableModel(shots, user_role="supervisor")
+    model = _grouped(shots)
     
     # Default: Flat list
     assert model.rowCount() == 3
@@ -166,7 +185,7 @@ def test_group_by_sequence():
 def test_group_by_status():
     print("Testing Group-By Status...")
     shots = create_sample_shots()
-    model = ShotTableModel(shots, user_role="supervisor")
+    model = _grouped(shots)
     model.set_group_by("Status")
     # Statuses: WIP (1 shot), APPROVED (1 shot), RETAKE (1 shot)
     # 3 groups * 2 (header + 1 shot) = 6 rows

@@ -125,11 +125,21 @@ class VersionStore:
     """Reads and writes versions. Uses the generic query API, so it works on
     both the Postgres and the SQLite backend."""
 
-    def __init__(self, db=None):
+    def __init__(self, db=None, roles=None):
         if db is None:
             from slate.core.infra.database_manager import database_manager
             db = database_manager
         self.db = db
+        # The acting person's roles. When given, a status change (a verdict:
+        # Approved, Retake) needs dashboard_write - the Review Queue let any
+        # artist approve versions while the shot panel refused them.
+        self.roles = roles
+
+    def can_give_verdicts(self) -> bool:
+        if self.roles is None:
+            return True
+        from slate.core.domain.access import can_edit_dashboard
+        return can_edit_dashboard(self.roles)
 
     # -- reading -------------------------------------------------------
     def list_for_shot(self, project_code: str, shot_name: str,
@@ -243,6 +253,8 @@ class VersionStore:
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates or version_id is None or int(version_id) < 0:
             return False
+        if "status" in updates and not self.can_give_verdicts():
+            raise PermissionError("You don't have permission to change a version's status.")
 
         # Marking a version as sent stamps the date if none was given.
         if updates.get("sent_to") and not updates.get("sent_date"):

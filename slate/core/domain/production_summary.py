@@ -17,13 +17,14 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Dict, Iterable, List, Optional
 
+from slate.core.domain import shot_status
 from slate.core.domain.departments import load_departments
 
 
-# Statuses that mean the work is finished and should not count as outstanding.
-DONE_STATUSES = {"APPROVED", "DONE", "COMPLETE", "COMPLETED", "FINAL"}
-# Statuses that mean nobody has started.
-NOT_STARTED_STATUSES = {"", "YTS", "NOT STARTED", "TBD"}
+# The one vocabulary (shot_status): finished, not started, and cut from the show.
+DONE_STATUSES = set(shot_status.DONE_STATUSES)
+NOT_STARTED_STATUSES = set(shot_status.NOT_STARTED_STATUSES)
+OMITTED_STATUSES = set(shot_status.OMITTED_STATUSES)
 
 
 def _parse_date(value) -> Optional[date]:
@@ -48,11 +49,15 @@ def _parse_date(value) -> Optional[date]:
 
 
 def _is_done(status) -> bool:
-    return str(status or "").strip().upper() in DONE_STATUSES
+    return shot_status.is_done(status)
 
 
 def _is_not_started(status) -> bool:
-    return str(status or "").strip().upper() in NOT_STARTED_STATUSES
+    return shot_status.is_not_started(status)
+
+
+def _is_omitted(status) -> bool:
+    return shot_status.is_omitted(status)
 
 
 @dataclass
@@ -109,13 +114,15 @@ class ProductionSummary:
     unassigned: List[str] = field(default_factory=list)
     total_bid_days: float = 0.0
     outstanding_bid_days: float = 0.0
+    # Cut from the show: listed in the status counts, left out of everything else.
+    omitted: int = 0
 
     @property
     def percent_complete(self) -> float:
         if not self.total_shots:
             return 0.0
         done = sum(count for status, count in self.status_counts.items()
-                   if _is_done(status))
+                   if _is_done(status) and not _is_omitted(status))
         return round((done / self.total_shots) * 100, 1)
 
 
@@ -129,9 +136,13 @@ def build_summary(shots: Iterable, today: Optional[date] = None,
     today = today or date.today()
     summary = ProductionSummary()
 
-    shots = [s for s in (shots or []) if s is not None]
+    everything = [s for s in (shots or []) if s is not None]
+    # Omitted shots are not work: they used to count as outstanding, overdue,
+    # and in the "% approved" denominator.
+    shots = [s for s in everything if not _is_omitted(getattr(s, "status", ""))]
+    summary.omitted = len(everything) - len(shots)
     summary.total_shots = len(shots)
-    if not shots:
+    if not everything:
         return summary
 
     status_counts: Dict[str, int] = defaultdict(int)
@@ -141,8 +152,12 @@ def build_summary(shots: Iterable, today: Optional[date] = None,
     }
     artist_rows: Dict[str, ArtistLoad] = {}
 
+    for shot in everything:
+        if _is_omitted(getattr(shot, "status", "")):
+            status_counts[shot_status.label(shot.status)] += 1
+
     for shot in shots:
-        status = str(getattr(shot, "status", "") or "").strip() or "(none)"
+        status = shot_status.label(getattr(shot, "status", ""))
         status_counts[status] += 1
 
         # --- per-department work -------------------------------------
@@ -160,8 +175,11 @@ def build_summary(shots: Iterable, today: Optional[date] = None,
                 bid = 0.0
 
             # A department counts as "in play" if someone is on it, it has a
-            # status, or days have been bid against it.
+            # status, or days have been bid against it - and is not N/A or
+            # omitted (that work is not going to happen).
             if not artist and not str(dept_status or "").strip() and bid <= 0:
+                continue
+            if _is_omitted(dept_status):
                 continue
 
             assigned_anywhere = assigned_anywhere or bool(artist)
@@ -207,7 +225,8 @@ def build_summary(shots: Iterable, today: Optional[date] = None,
                 summary.due_soon.append(entry)
 
     summary.status_counts = dict(sorted(status_counts.items(),
-                                        key=lambda kv: (-kv[1], kv[0])))
+                                        key=lambda kv: shot_status.order_key(
+                                            "" if kv[0] == shot_status.NO_STATUS else kv[0])))
 
     summary.departments = [row for row in dept_rows.values() if row.shots]
     summary.departments.sort(key=lambda r: (-r.bid_days, r.label))

@@ -257,7 +257,10 @@ class TestStatusMirroring:
     used to write into a legacy key the reader now ignores.
     """
 
-    def test_status_change_mirrors_into_comp(self, handler):
+    # FIX_PLAN: a shot's status and artist stay independent of the Comp
+    # department. The board used to copy them into Comp; the grid did not,
+    # so Comp showed whatever the last screen used had done (DSH-023).
+    def test_status_change_leaves_comp_alone(self, handler):
         handler.write_shots([_sample_shot()])
         before = handler.read_shots()[0]
 
@@ -265,9 +268,9 @@ class TestStatusMirroring:
 
         after = handler.read_shots()[0]
         assert after.status == "APPROVED"
-        assert after.dept("comp").status == "APPROVED"
+        assert after.dept("comp").status == "WIP"
 
-    def test_artist_change_mirrors_into_comp(self, handler):
+    def test_artist_change_leaves_comp_alone(self, handler):
         handler.write_shots([_sample_shot()])
         before = handler.read_shots()[0]
 
@@ -275,7 +278,7 @@ class TestStatusMirroring:
 
         after = handler.read_shots()[0]
         assert after.assigned_artist == "Vikram"
-        assert after.dept("comp").artist == "Vikram"
+        assert after.dept("comp").artist == "Rahul"
 
     def test_new_departments_survive_a_full_save_cycle(self, handler):
         """matchmove/deage/ai must persist like any other department."""
@@ -309,15 +312,16 @@ class TestOperationalWiring:
         widget = self._widget(qtbot, "Coordinator")
 
         assert widget._user_can_edit() is True
-        assert hasattr(widget, "add_shots_btn"), "no Add Shots button"
-        assert widget.save_btn.isEnabled() is True
+        assert widget.add_shots_btn is not None, "no Add Shots button"
+        assert widget.save_btn.isVisibleTo(widget) is True
 
     def test_artist_gets_a_read_only_dashboard(self, qtbot, mock_db):
         widget = self._widget(qtbot, "Artist")
 
         assert widget._user_can_edit() is False
-        assert not hasattr(widget, "add_shots_btn")
+        assert getattr(widget, "add_shots_btn", None) is None
         assert widget.save_btn.isEnabled() is False
+        assert widget.save_btn.isVisibleTo(widget) is False
 
     def test_actions_are_present(self, qtbot, mock_db):
         widget = self._widget(qtbot, "Supervisor")

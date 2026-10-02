@@ -70,12 +70,26 @@ class Delivery:
 class DeliveryStore:
     """Reads and writes delivery packages."""
 
-    def __init__(self, db=None):
+    def __init__(self, db=None, roles=None):
         if db is None:
             from slate.core.infra.database_manager import database_manager
             db = database_manager
         self.db = db
+        # The acting person's roles. When given, making or deleting a package
+        # needs production rights (dashboard_write, not department-scoped):
+        # an artist could create delivery packages for the client.
+        self.roles = roles
         self._ensure_schema()
+
+    def can_manage(self) -> bool:
+        if self.roles is None:
+            return True
+        from slate.core.domain.access import can_edit_dashboard, is_department_scoped
+        return can_edit_dashboard(self.roles) and not is_department_scoped(self.roles)
+
+    def _require_manage(self):
+        if not self.can_manage():
+            raise PermissionError("You don't have permission to create or delete delivery packages.")
 
     def _ensure_schema(self):
         try:
@@ -87,6 +101,7 @@ class DeliveryStore:
                         recipient: str = "", notes: str = "", created_by: str = "",
                         delivery_date: str = "") -> Optional[Delivery]:
         """Create a delivery batch and attach the given version IDs."""
+        self._require_manage()
         project_code = str(project_code or "").strip()
         name = str(name or "").strip()
         if not project_code or not name or not version_ids:
@@ -199,6 +214,7 @@ class DeliveryStore:
 
     def delete_delivery(self, delivery_id: int) -> bool:
         """Delete delivery and its associated item records."""
+        self._require_manage()
         if not delivery_id or int(delivery_id) <= 0:
             return False
         try:

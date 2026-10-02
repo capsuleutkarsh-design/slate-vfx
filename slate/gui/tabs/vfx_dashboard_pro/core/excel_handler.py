@@ -107,6 +107,11 @@ class ExcelHandler:
             return max(max(self._row_map.values()) + 1, start_row)
         return start_row
 
+    @staticmethod
+    def _row_key(shot):
+        return (str(getattr(shot, "reel_episode", "") or "").strip().casefold(),
+                str(getattr(shot, "shot_name", "") or "").strip().casefold())
+
     def _get_col_idx(self, field_name: str) -> int:
         if not self.project_config:
             return -1
@@ -182,14 +187,21 @@ class ExcelHandler:
                 "Edit Project before saving to the sheet."
             )
 
+        # Rows are keyed by (reel, shot): SH010 in R01 and SH010 in R02 used to
+        # share one row of the passbook. A row with no reel is also found by
+        # its name alone, for sheets written before the reel was mapped.
+        reel_col = self._get_col_idx("reel")
         for row_idx, row in enumerate(
             self.worksheet.iter_rows(min_row=start_row, values_only=True), start=start_row
         ):
             if not row or shot_col >= len(row):
                 continue
             shot_name = self._normalize_text(row[shot_col])
-            if shot_name:
-                self._row_map[shot_name.casefold()] = row_idx
+            if not shot_name:
+                continue
+            reel = self._normalize_text(row[reel_col]) if 0 <= reel_col < len(row) else ""
+            self._row_map[(reel.casefold(), shot_name.casefold())] = row_idx
+            self._row_map.setdefault(shot_name.casefold(), row_idx)
 
     def _find_row_idx_by_shot_name(self, shot_name: str) -> int:
         self._build_row_map()
@@ -203,7 +215,11 @@ class ExcelHandler:
             return row_idx
         if not shot.shot_name:
             return 0
-        row_idx = self._find_row_idx_by_shot_name(shot.shot_name)
+        self._build_row_map()
+        row_idx = (self._row_map or {}).get(self._row_key(shot), 0)
+        if not row_idx and self._row_map and ("", self._row_key(shot)[1]) in self._row_map:
+            # A row written without its reel: claim it for this shot.
+            row_idx = self._row_map[("", self._row_key(shot)[1])]
         if row_idx > 0:
             shot._row_idx = row_idx
         return row_idx
@@ -220,6 +236,15 @@ class ExcelHandler:
                 self.worksheet.cell(row=row_idx, column=col_idx + 1, value=value if value is not None else "")
                 wrote = True
         return wrote
+
+    @staticmethod
+    def _shareable_thumbnail(path) -> bool:
+        text = str(path or "").strip().lower().replace("\\", "/")
+        if not text:
+            return False
+        if "placeholder_" in text or "/appdata/local/" in text or "vfx_dashboard_pro/" in text:
+            return False
+        return True
 
     @staticmethod
     def _latest_feedback_text(entries: List[FeedbackEntry]) -> str:
@@ -260,7 +285,10 @@ class ExcelHandler:
         self._write_mapped_field(row_idx, "scan_status", shot.scan_status)
         self._write_mapped_field(row_idx, "edit_status", shot.edit_status)
         self._write_mapped_field(row_idx, "in_os", shot.in_os)
-        self._write_mapped_field(row_idx, "thumbnail", shot.thumbnail_path)
+        # A real thumbnail only: never a placeholder or a path inside one
+        # machine's own cache (those reached the backup sheet).
+        if self._shareable_thumbnail(shot.thumbnail_path):
+            self._write_mapped_field(row_idx, "thumbnail", shot.thumbnail_path)
         self._write_mapped_field(row_idx, "wip_date", shot.wip_date)
         self._write_mapped_field(row_idx, "shot_done_date", shot.shot_done_date)
         self._write_mapped_field(row_idx, "submission_date", shot.submission_date)
@@ -500,7 +528,11 @@ class ExcelHandler:
                 row_idx = self._next_free_row()
                 shot._row_idx = row_idx
                 if self._row_map is not None:
-                    self._row_map[shot.shot_name.casefold()] = row_idx
+                    self._row_map[self._row_key(shot)] = row_idx
+                    self._row_map.setdefault(shot.shot_name.casefold(), row_idx)
+                # The serial column was left empty on every new row.
+                start_row = int(getattr(self.project_config, "data_start_row", 3) or 3)
+                self._write_mapped_field(row_idx, "serial", row_idx - start_row + 1)
             self._write_shot_to_row(row_idx, shot)
         
         self._write_ut_data(shots)

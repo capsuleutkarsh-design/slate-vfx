@@ -18,6 +18,13 @@ from slate.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
 from slate.gui.tabs.vfx_dashboard_pro.ui.shot_table_model import ShotTableModel
 
 
+@pytest.fixture(autouse=True)
+def online(monkeypatch):
+    """These tests are about permissions, not about an outage."""
+    import slate.core.domain.access as access
+    monkeypatch.setattr(access, "is_offline_fallback", lambda: False)
+
+
 PROJECT = "SELF_PRJ"
 RAHUL = ["rahul", "Rahul"]
 PRIYA = ["priya"]
@@ -275,15 +282,18 @@ class TestUnsavedChanges:
         first._modified = second._modified = True
         widget.all_shots = [first, second]
 
+        widget.current_project = object()
         widget.update_unsaved_indicator()
-        assert "2 unsaved" in widget.unsaved_label.text()
+        # The count is on the Save button (DSH-056).
+        assert widget.save_btn.text() == "Save 2 changes"
 
     def test_the_indicator_clears_when_nothing_is_pending(self, qtbot, mock_db):
         widget = self._widget(qtbot)
         widget.all_shots = [_shot()]
 
         widget.update_unsaved_indicator()
-        assert widget.unsaved_label.text() == ""
+        assert widget.save_btn.text() == "Save changes"
+        assert widget.save_btn.isEnabled() is False
 
     def test_closing_a_clean_board_is_not_interrupted(self, qtbot, mock_db):
         widget = self._widget(qtbot)

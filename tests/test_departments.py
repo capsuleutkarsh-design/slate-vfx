@@ -19,6 +19,13 @@ from slate.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot, DepartmentI
 
 
 @pytest.fixture(autouse=True)
+def online(monkeypatch):
+    """Editing rights, not an outage, are what these tests check."""
+    import slate.core.domain.access as access
+    monkeypatch.setattr(access, "is_offline_fallback", lambda: False)
+
+
+@pytest.fixture(autouse=True)
 def clean_cache():
     reset_cache()
     yield
@@ -184,9 +191,13 @@ class TestDetailPanel:
         qtbot.addWidget(panel)
 
         widgets = panel.depts["matchmove"]
+        applied = []
+        panel.apply_requested.connect(lambda s, changes: applied.append(changes))
         widgets["artist_combo"].setCurrentText("Vikram")
-        widgets["status_combo"].setCurrentText("WIP")
+        widgets["status_combo"].setCurrentIndex(widgets["status_combo"].findData("WIP"))
         panel.save_data()
 
-        assert shot.dept("matchmove").artist == "Vikram"
-        assert shot.dept("matchmove").status == "WIP"
+        # The panel hands the dashboard exactly what changed; the dashboard
+        # stages it as a pending edit (one save model).
+        assert applied == [{"departments.matchmove.artist": "Vikram",
+                            "departments.matchmove.status": "WIP"}]

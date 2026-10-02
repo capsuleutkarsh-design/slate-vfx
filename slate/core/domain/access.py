@@ -46,7 +46,7 @@ _DEFAULTS = {
     ],
     # May import from and export to the project Excel backup.
     "excel_sync": [
-        "admin", "developer", "supervisor", "coordinator", "lead",
+        "admin", "developer", "supervisor", "coordinator", "lead", "producer",
     ],
     # May force-save over another user's concurrent edit.
     "force_save": [
@@ -57,6 +57,10 @@ _DEFAULTS = {
     # person who actually knows the answer.
     "artist_own_status": [
         "artist", "lead", "coordinator", "supervisor", "developer", "admin",
+        # Every artist-type role, not only the one called "Artist": a
+        # Compositor could not set the status of their own comp row.
+        "team lead", "generalist", "compositor", "roto artist", "paint artist",
+        "deage artist", "ai artist", "dmp", "cg", "producer",
     ],
     # What somebody with only artist_own_status may set. Approved, Retake and
     # Omit are verdicts other people give; an artist approving their own work

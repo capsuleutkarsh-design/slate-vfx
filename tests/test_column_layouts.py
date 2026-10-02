@@ -31,6 +31,14 @@ def qapp():
     return app
 
 
+@pytest.fixture(autouse=True)
+def scratch_settings(tmp_path, monkeypatch):
+    """Layouts go to a scratch file, never the registry."""
+    from slate.gui.tabs.vfx_dashboard_pro.ui.components import column_layout_manager as clm
+    path = str(tmp_path / "layouts.ini")
+    monkeypatch.setattr(clm, "settings_factory", lambda: QSettings(path, QSettings.Format.IniFormat))
+
+
 @pytest.fixture
 def table_and_model(qapp):
     shot = Shot(shot_name="SH010", reel_episode="Reel01", status="WIP", priority=1)
@@ -58,13 +66,14 @@ def test_capture_and_apply_layout(table_and_model):
     table, model = table_and_model
     manager = ColumnLayoutManager(table, model, user_id="user_1", project_code="PRJ_TEST")
 
-    # Hide column 0 ("reel") and set width of column 1 ("shot_name") to 250
-    table.setColumnHidden(0, True)
+    # Hide "plate_range" and set width of column 1 ("shot_name") to 250
+    plate = [c[0] for c in model.COLUMNS].index("plate_range")
+    table.setColumnHidden(plate, True)
     table.setColumnWidth(1, 250)
 
     layout = manager.capture_layout()
     assert "columns" in layout
-    assert layout["columns"]["reel"]["visible"] is False
+    assert layout["columns"]["plate_range"]["visible"] is False
     assert layout["columns"]["shot_name"]["visible"] is True
     assert layout["columns"]["shot_name"]["width"] == 250
 
@@ -73,13 +82,64 @@ def test_capture_and_apply_layout(table_and_model):
         table.setColumnHidden(i, False)
         table.setColumnWidth(i, 100)
 
-    assert table.isColumnHidden(0) is False
+    assert table.isColumnHidden(plate) is False
 
     # Apply layout
     ok = manager.apply_layout(layout)
     assert ok is True
-    assert table.isColumnHidden(0) is True
+    assert table.isColumnHidden(plate) is True
     assert table.columnWidth(1) == 250
+
+
+def test_reel_and_shot_name_are_always_shown(table_and_model):
+    """DSH-132: a layout can never hide the grid's identity columns."""
+    table, model = table_and_model
+    manager = ColumnLayoutManager(table, model, user_id="u", project_code="P")
+    layout = manager.capture_layout()
+    layout["columns"]["reel"]["visible"] = False
+    layout["columns"]["shot_name"]["visible"] = False
+    manager.apply_layout(layout)
+    assert not table.isColumnHidden(0) and not table.isColumnHidden(1)
+
+
+def test_widths_and_order_are_saved_and_restored(table_and_model):
+    """DSH-039/074: a widened column and a moved one come back after a refresh."""
+    table, model = table_and_model
+    manager = ColumnLayoutManager(table, model, user_id="u", project_code="P")
+    sow = [c[0] for c in model.COLUMNS].index("sow")
+    table.setColumnWidth(sow, 480)
+    header = table.horizontalHeader()
+    header.moveSection(header.visualIndex(sow), 2)
+    assert manager.save_user_layout() is True
+    table.setColumnWidth(sow, 100)
+    header.moveSection(2, sow)
+    assert manager.restore_layout() is True
+    assert table.columnWidth(sow) == 480
+    assert header.visualIndex(sow) == 2
+
+
+def test_reset_forgets_the_personal_layout(table_and_model):
+    """DSH-040."""
+    table, model = table_and_model
+    manager = ColumnLayoutManager(table, model, user_id="u", project_code="P")
+    plate = [c[0] for c in model.COLUMNS].index("plate_range")
+    table.setColumnHidden(plate, True)
+    manager.save_user_layout()
+    manager.reset_to_defaults()
+    assert manager.load_user_layout() is None
+    assert table.isColumnHidden(plate) is False
+
+
+def test_a_refused_project_default_is_reported(table_and_model):
+    """DSH-014: the result of the save is the answer."""
+    table, model = table_and_model
+
+    class Refusing(FakeDbManager):
+        def save_tracking_project(self, code, name, config_json):
+            return False
+
+    manager = ColumnLayoutManager(table, model, project_code="P", db_manager=Refusing())
+    assert manager.save_project_default() is False
 
 
 def test_user_layout_persistence(table_and_model):

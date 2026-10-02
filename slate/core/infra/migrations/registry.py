@@ -131,6 +131,8 @@ SYSTEM = (
 
 # ---- dashboard (VFX Dashboard, versions, deliveries) ----
 DASHBOARD = (
+    step("dashboard_placeholder_thumbnails",
+         "slate.core.infra.migrations.dashboard_repairs:clear_placeholder_thumbnails", once=True),
 )
 
 # ---- media (Stock, review, players) ----

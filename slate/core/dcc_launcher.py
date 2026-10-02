@@ -215,6 +215,18 @@ def app_label(dcc_id: str, nuke_mode: str = DEFAULT_NUKE_MODE) -> str:
     return info["name"] if info else dcc_id
 
 
+# The apps a shot can be opened in from the VFX Dashboard, in menu order. The
+# shot's context menu and its detail panel both read this, so they offer the
+# same apps (they used to differ: four in one, seven in the other).
+SHOT_APPS = ("nuke", "natron", "silhouette", "blender", "after_effects", "premiere")
+
+
+def dashboard_apps(config_manager=None):
+    """[(app id, label)] for the dashboard, ending with RV (which reviews rather than opens)."""
+    mode = get_nuke_mode(config_manager)
+    return [(app, app_label(app, mode)) for app in SHOT_APPS] + [("rv", "RV (review)")]
+
+
 def build_command(dcc_id: str, executable: str, file_path=None,
                   nuke_mode: str = DEFAULT_NUKE_MODE) -> List[str]:
     """The command line: the program, then Nuke's mode flag, then the file."""

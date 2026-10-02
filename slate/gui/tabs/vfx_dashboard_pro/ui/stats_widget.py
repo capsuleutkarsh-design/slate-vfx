@@ -1,121 +1,169 @@
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QFrame, QSizePolicy
-from PySide6.QtCore import Qt
-from typing import List, Dict
-import logging
-from ..models.shot_model import Shot
+"""
+The status counters above the grid.
+
+They used to be colour-blind to the rest of the screen (WIP amber here, cyan in
+the grid), said REVIEW where the filter said SENT FOR REVIEW and UNKNOWN where
+grouping said NO STATUS, looked like filter chips but did nothing when clicked,
+and below ~1500 px were cut to '!5 APPROVEI' and 'RETA'.
+
+Now: one colour per status (Gate.status_color), the same names as the filter
+and the grid (shot_status), and each counter is a toggle - click RETAKE to see
+only the retakes, click it again to see everything. Counters that do not fit go
+into a "+N more" menu rather than being cut.
+"""
+
+from typing import Dict, List, Optional
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QAction
+from PySide6.QtWidgets import QHBoxLayout, QMenu, QPushButton, QSizePolicy, QWidget
+
+from slate.core.domain import shot_status
 from slate.core.infra.gate import Gate
 
+
 class StatsWidget(QWidget):
-    def __init__(self):
-        super().__init__()
-        self.stat_containers: Dict[str, QFrame] = {}
-        
+    # A counter was clicked: the status it counts ('' for "No status"), or
+    # None for the total (which clears the status filter).
+    status_clicked = Signal(object)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
         self.main_layout = QHBoxLayout(self)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
-        self.main_layout.setSpacing(8)
-        
-        # Sleek neon-style colors based on the reference
-        self.status_colors = {
-            'APPROVED': Gate.OK, # Neon Green
-            'DONE': Gate.OK,
-            'WIP': Gate.WARN,      # Neon Yellow
-            'YTS': Gate.ACCENT,      # Light Blue
-            'REVIEW': Gate.ACCENT,   # Cyan
-            'SENT FOR REVIEW': Gate.ACCENT,
-            'RETAKE': Gate.BAD,   # Neon Red
-            'SI': Gate.BAD,
-            'OMIT': Gate.TEXT_2,     # Gray
-            'OMITTED': Gate.TEXT_2,
-            'DEFAULT': Gate.ACCENT_HI
-        }
-        
-    def create_pill(self, label_text, count, color_hex):
-        container = QFrame()
-        # Pill styling: transparent background, subtle border, fully rounded
-        container.setStyleSheet(f"""
-            QFrame {{
-                background-color: {Gate.overlay(0.03)};
-                border: 1px solid {Gate.overlay(0.1)};
-                border-radius: 12px;
-                padding-left: 4px;
-                padding-right: 4px;
-            }}
-        """)
-        container.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Fixed)
-        container.setFixedHeight(24)
-        
-        layout = QHBoxLayout(container)
-        layout.setContentsMargins(6, 0, 6, 0)
-        layout.setSpacing(4)
-        
-        # A small colored dot to act as the icon
-        dot = QLabel("•")
-        dot.setStyleSheet(f"color: {color_hex}; font-size: 16px; font-weight: bold; background: transparent; border: none;")
-        dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
-        # The text combining count and label (e.g. "18 APPR")
-        text_label = QLabel(f"{count} {label_text}")
-        text_label.setStyleSheet(f"color: {color_hex}; font-size: 10px; font-weight: 700; background: transparent; border: none;")
-        text_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
-        # If it's TOTAL, we don't need the dot, just grey text
-        if label_text == "SHOTS":
-            dot.hide()
-            text_label.setStyleSheet(f"color: {Gate.TEXT_2}; font-size: 10px; font-weight: 700; background: transparent; border: none;")
-        
-        layout.addWidget(dot)
-        layout.addWidget(text_label)
-        
-        return container
-        
-    def update_stats(self, shots: List[Shot]):
-        logging.debug(f"StatsWidget.update_stats called with {len(shots)} shots")
-        status_counts = {}
-        for s in shots:
-            status = s.status.upper() if s.status else "UNKNOWN"
-            if status == "SENT FOR REVIEW": status = "REVIEW"
-            if status == "OMITTED": status = "OMIT"
-            # Keep APPROVED as APPROVED instead of mapping to DONE
-            status_counts[status] = status_counts.get(status, 0) + 1
-        
-        # Clear existing widgets.
-        #
-        # deleteLater() only schedules the deletion for the next trip round the
-        # event loop. Taking the item out of the layout does not take the widget
-        # off the screen, so the previous set of pills carried on painting at
-        # their old positions while the new set was laid out over the top -
-        # which is why the row showed two generations of counts on top of each
-        # other. Unparenting removes them from the display immediately.
+        self.main_layout.setSpacing(6)
+        self.stat_containers: Dict[str, QPushButton] = {}
+        self._order: List[str] = []
+        self._active: Optional[str] = None
+        self.more_button = QPushButton("")
+        self.more_button.setObjectName("statsMore")
+        self.more_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.more_button.hide()
+        self.more_button.clicked.connect(self._show_more)
+        self._hidden: List[str] = []
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+    # ------------------------------------------------------------ building
+    @staticmethod
+    def _pill_style(colour: str, active: bool) -> str:
+        background = Gate.tint(colour, 0.20) if active else Gate.tint(colour, 0.06)
+        border = colour if active else Gate.tint(colour, 0.35)
+        return (
+            f"QPushButton {{ color: {colour}; background: {background}; border: 1px solid {border};"
+            f" border-radius: 11px; padding: 2px 10px; font-weight: 700; font-size: {Gate.SIZE_XS}px;"
+            f" min-height: 18px; }}"
+            f"QPushButton:hover {{ background: {Gate.tint(colour, 0.16)}; }}"
+        )
+
+    def create_pill(self, key, text, colour, tooltip=""):
+        button = QPushButton(text)
+        button.setCheckable(True)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        button.setProperty("statusKey", key)
+        button.setProperty("pillColour", colour)
+        button.setToolTip(tooltip)
+        button.setStyleSheet(self._pill_style(colour, False))
+        button.clicked.connect(lambda _checked=False, k=key: self._clicked(k))
+        return button
+
+    def _clicked(self, key):
+        if key == "__total__":
+            self.status_clicked.emit(None)
+        elif self._active is not None and key == self._active:
+            self.status_clicked.emit(None)          # a second click clears
+        else:
+            self.status_clicked.emit(key)
+
+    def set_active(self, status: Optional[str]):
+        """Show which status the grid is filtered to (None: none)."""
+        self._active = None if status is None else shot_status.canonical(status)
+        for key, button in self.stat_containers.items():
+            active = key != "__total__" and self._active is not None and key == self._active
+            button.setChecked(active)
+            button.setStyleSheet(self._pill_style(button.property("pillColour"), active))
+
+    def update_stats(self, shots):
+        counts: Dict[str, int] = {}
+        for s in shots or []:
+            key = shot_status.canonical(getattr(s, "status", ""))
+            counts[key] = counts.get(key, 0) + 1
+
         while self.main_layout.count():
             item = self.main_layout.takeAt(0)
-            old = item.widget()
-            if old is not None:
-                old.setParent(None)
-                old.deleteLater()
-        self.stat_containers.clear()
-        
-        # 1. Add Total Shots Pill
-        total_count = len(shots)
-        total_pill = self.create_pill("SHOTS", total_count, Gate.TEXT_2)
-        self.main_layout.addWidget(total_pill)
-        self.stat_containers["TOTAL"] = total_pill
+            widget = item.widget()
+            if widget is not None and widget is not self.more_button:
+                widget.setParent(None)
+                widget.deleteLater()
+        self.stat_containers = {}
+        self._order = []
 
-        # Priority order for standard VFX workflow
-        display_order = ['APPROVED', 'WIP', 'REVIEW', 'YTS', 'RETAKE', 'OMIT']
-        
-        # 2. Add Fixed Statuses
-        for status in display_order:
-            count = status_counts.get(status, 0)
-            # Always display standard statuses even if 0, so users can see the metrics
-            color = self.status_colors.get(status, self.status_colors['DEFAULT'])
-            pill = self.create_pill(status, count, color)
+        total = len(shots or [])
+        total_pill = self.create_pill("__total__", f"{total} {'shot' if total == 1 else 'shots'}",
+                                      Gate.TEXT_2, "Every shot on screen. Click to clear the status filter.")
+        self.main_layout.addWidget(total_pill)
+        self.stat_containers["__total__"] = total_pill
+        self._order.append("__total__")
+
+        for key in sorted(counts, key=shot_status.order_key):
+            count = counts[key]
+            if not count:
+                continue
+            name = shot_status.label(key)
+            pill = self.create_pill(
+                key, f"{count} {name}", Gate.status_color(key) if key else Gate.TEXT_DIM,
+                f"{shot_status.describe(key)}. Click to show only these; click again to show all.")
             self.main_layout.addWidget(pill)
-            self.stat_containers[status] = pill
-                
-        # 3. Add any custom statuses that weren't in the standard order
-        for status, count in status_counts.items():
-            if status not in display_order and count > 0:
-                color = self.status_colors.get(status, self.status_colors['DEFAULT'])
-                pill = self.create_pill(status, count, color)
-                self.main_layout.addWidget(pill)
-                self.stat_containers[status] = pill
+            self.stat_containers[key] = pill
+            self._order.append(key)
+
+        self.main_layout.addWidget(self.more_button)
+        self.main_layout.addStretch(1)
+        self.set_active(self._active)
+        self._reflow()
+
+    # ------------------------------------------------------------ fitting
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reflow()
+
+    def _reflow(self):
+        """Hide counters that do not fit whole; list them under '+N more'."""
+        available = self.width()
+        if available <= 0:
+            return
+        spacing = self.main_layout.spacing()
+        used = 0
+        self._hidden = []
+        self.more_button.setText("+9 more")
+        more_width = self.more_button.sizeHint().width() + spacing
+        for i, key in enumerate(self._order):
+            button = self.stat_containers[key]
+            need = button.sizeHint().width() + spacing
+            reserve = more_width if i < len(self._order) - 1 else 0
+            if key != "__total__" and (self._hidden or used + need + reserve > available):
+                button.hide()
+                self._hidden.append(key)
+            else:
+                button.show()
+                used += need
+        if self._hidden:
+            self.more_button.setText(f"+{len(self._hidden)} more")
+            self.more_button.setToolTip(", ".join(
+                self.stat_containers[k].text() for k in self._hidden))
+            self.more_button.setStyleSheet(self._pill_style(Gate.TEXT_2, False))
+            self.more_button.show()
+        else:
+            self.more_button.hide()
+
+    def _show_more(self):
+        menu = QMenu(self)
+        for key in self._hidden:
+            action = QAction(self.stat_containers[key].text(), menu)
+            action.triggered.connect(lambda _c=False, k=key: self._clicked(k))
+            menu.addAction(action)
+        menu.exec(self.more_button.mapToGlobal(self.more_button.rect().bottomLeft()))
+
+    def visible_texts(self) -> List[str]:
+        return [self.stat_containers[k].text() for k in self._order
+                if not self.stat_containers[k].isHidden()]

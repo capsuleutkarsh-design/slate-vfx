@@ -182,7 +182,7 @@ class ReviewPlayerDialog(QDialog):
         sidebar_layout.addWidget(new_note_label)
 
         self.note_edit = QTextEdit()
-        self.note_edit.setPlaceholderText("Enter feedback or revision notes...")
+        self.note_edit.setPlaceholderText("Feedback or revision notes…")
         self.note_edit.setMaximumHeight(90)
         self.note_edit.setStyleSheet(f"""
             QTextEdit {{
@@ -238,6 +238,9 @@ class ReviewPlayerDialog(QDialog):
         verdict_layout.addWidget(self.retake_btn)
 
         sidebar_layout.addLayout(verdict_layout)
+        can_verdict = getattr(self.store, "can_give_verdicts", lambda: True)()
+        self.approve_btn.setVisible(can_verdict)
+        self.retake_btn.setVisible(can_verdict)
         splitter.addWidget(sidebar)
 
         splitter.setStretchFactor(0, 7)  # 70% Player
@@ -349,9 +352,13 @@ class ReviewPlayerDialog(QDialog):
             return
 
         try:
-            ok = self.store.update_version(self.version.id, status=status)
+            try:
+                ok = self.store.update_version(self.version.id, status=status)
+            except PermissionError as exc:
+                QMessageBox.warning(self, "Give a verdict", str(exc))
+                return
             if not ok:
-                QMessageBox.critical(self, "Error", f"Failed to update version status to {status}.")
+                QMessageBox.critical(self, "Give a verdict", f"The version could not be set to {status}.")
                 return
 
             if note_text:
@@ -377,7 +384,7 @@ class ReviewPlayerDialog(QDialog):
                 self.accept()
         except Exception as exc:
             logging.exception("Failed to submit verdict: %s", exc)
-            QMessageBox.critical(self, "Error", f"An unexpected error occurred: {exc}")
+            QMessageBox.critical(self, "Give a verdict", f"The verdict could not be saved: {exc}")
 
     def _on_previous_clicked(self):
         if self.current_index > 0:
