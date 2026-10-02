@@ -59,3 +59,17 @@ def test_every_failed_day_is_listed(app, mock_db, tmp_path, monkeypatch):
     dialog.show_failures([("EMP0001", "2026-09-01", "refused"), ("EMP0002", "2026-09-02", "refused")])
     assert not dialog.failures_table.isHidden()
     assert dialog.failures_table.rowCount() == 2
+
+
+def test_one_unknown_code_matches_and_the_toggle_says_hide(app, mock_db, tmp_path, monkeypatch):
+    from slate.core.domain import biometric_import as bio
+    from slate.gui.dialogs.biometric_import_dialog import BiometricImportDialog
+    monkeypatch.setattr(bio, "find_profile", lambda header, profiles=None: None)
+    path = tmp_path / "door.csv"
+    path.write_text(FILE + "GUEST9,Guest,2026-09-02 10:00:00,C/In\n", encoding="utf-8")
+    dialog = BiometricImportDialog(attendance=None, known_ids=["EMP0001"])
+    dialog.load_file(path)
+    assert "1 code matches nobody" in dialog.mapping_status.text()
+    dialog.btn_skipped.setChecked(True)
+    assert dialog.btn_skipped.text().startswith("Hide")
+    assert dialog.unknown_table.minimumHeight() >= 90

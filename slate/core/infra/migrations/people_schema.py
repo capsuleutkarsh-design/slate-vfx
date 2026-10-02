@@ -120,6 +120,38 @@ def split_decision_notes(db) -> bool:
     return bool(first) and bool(second)
 
 
+def clear_corrected_flags(db) -> bool:
+    """
+    Days HR already corrected while they were flagged auto-closed or missing a
+    punch-out kept the flag (update_record merged it in). Clear it on rows
+    that were hand-edited and have both times, marking them corrected.
+    """
+    import json
+    from .foundation_data import merge_json_objects
+    table_exists, _ = _helpers()
+    if not table_exists(db, "attendance_log"):
+        return False
+    rows = db.execute_query(
+        "SELECT id, punch_in, punch_out, metadata FROM attendance_log "
+        "WHERE punch_out IS NOT NULL", fetch="all") or []
+    ok = True
+    postgres = is_postgres(db)
+    for raw in rows:
+        row = dict(raw)
+        meta = merge_json_objects(row.get("metadata"))
+        if not (meta.get("admin_edit") or meta.get("edited_by")):
+            continue
+        if not (meta.get("auto_logout") or meta.get("missing_punch_out")):
+            continue
+        meta.update({"auto_logout": False, "missing_punch_out": False, "corrected": True})
+        meta.pop("cutoff", None)
+        result = db.execute_update(
+            "UPDATE attendance_log SET metadata = %s" + ("::jsonb" if postgres else "")
+            + " WHERE id = %s", (json.dumps(meta), row["id"]))
+        ok = ok and bool(result)
+    return ok
+
+
 EMPLOYMENT_VALUES = ("Staff", "Freelance", "Contract")
 
 

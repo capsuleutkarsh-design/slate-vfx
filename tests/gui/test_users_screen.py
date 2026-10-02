@@ -57,7 +57,7 @@ def test_actions_wait_for_a_selection(um):
     panel = _panel(um)
     assert not any(b.isEnabled() for b in panel._needs_selection)
     panel.grid.selectRow(0)
-    assert all(b.isEnabled() for b in panel._needs_selection)
+    assert panel.edit_btn.isEnabled() and panel.reset_btn.isEnabled()
 
 
 def test_location_is_shown_and_search_covers_every_column(um):
@@ -112,3 +112,18 @@ def test_clearing_a_field_in_the_edit_dialog_clears_it(um):
     assert values["reports_to"] == UserManager.CLEAR
     assert values["employment"] == UserManager.CLEAR
     assert values["location"] == "Mumbai"
+
+
+def test_each_action_follows_the_selected_account(um):
+    """NEW-people-5."""
+    um.deactivate_user("diya")
+    panel = _panel(um)
+    panel.show_inactive.setChecked(True)
+    rows = {panel.grid.item(r, 0).text(): r for r in range(panel.grid.rowCount())}
+    panel.grid.selectRow(rows["aarav"])
+    assert panel.deactivate_btn.isEnabled() and not panel.reactivate_btn.isEnabled()
+    panel.grid.selectRow(rows["diya"])
+    assert panel.reactivate_btn.isEnabled() and not panel.deactivate_btn.isEnabled()
+    panel.grid.selectRow(rows["admin"])
+    assert not panel.deactivate_btn.isEnabled() and not panel.delete_btn.isEnabled()
+    assert panel.edit_btn.isEnabled()

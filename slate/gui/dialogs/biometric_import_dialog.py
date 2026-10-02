@@ -80,6 +80,13 @@ class BiometricImportDialog(QDialog):
 
         self.setWindowTitle("Import attendance from the biometric machine")
         self.setMinimumSize(900, 640)
+        # Room for the preview, the skipped lines and the unknown codes at once
+        # (at 900x640 the preview shrank to one row and the code row was cut).
+        try:
+            from slate.gui.components.screen_fit import fit_to_screen
+            fit_to_screen(self, 1040, 820)
+        except Exception:
+            self.resize(1040, 820)
         self._build()
 
     # ------------------------------------------------------------------ ui
@@ -146,7 +153,7 @@ class BiometricImportDialog(QDialog):
         self.btn_skipped = QPushButton("Show skipped lines")
         self.btn_skipped.setCheckable(True)
         self.btn_skipped.setVisible(False)
-        self.btn_skipped.toggled.connect(lambda on: self.skipped_table.setVisible(on))
+        self.btn_skipped.toggled.connect(self._toggle_skipped)
         root.addWidget(self.btn_skipped, 0, Qt.AlignmentFlag.AlignLeft)
         self.skipped_table = QTableWidget(0, 3)
         self.skipped_table.setHorizontalHeaderLabels(["Line", "Text", "Why it was skipped"])
@@ -170,6 +177,7 @@ class BiometricImportDialog(QDialog):
         self.unknown_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.unknown_table.verticalHeader().setVisible(False)
         self.unknown_table.setMaximumHeight(160)
+        self.unknown_table.setMinimumHeight(90)
         root.addWidget(self.unknown_table, 1)
 
         self.summary = QLabel("")
@@ -303,8 +311,9 @@ class BiometricImportDialog(QDialog):
                 % (count(len(punches), "punch", "punches"), len(skipped),
                    count(len(self.days), "day"), count(people, "person", "people")))
         if self.unknown:
-            text += " %s match nobody in Slate (%s)." % (
+            text += " %s %s nobody in Slate (%s)." % (
                 count(len(self.unknown), "code"),
+                "matches" if len(self.unknown) == 1 else "match",
                 count(sum(self.unknown.values()), "punch", "punches"))
         if self.days:
             first = min(d.day for d in self.days)
@@ -326,9 +335,15 @@ class BiometricImportDialog(QDialog):
                 item.setToolTip(text)
                 self.skipped_table.setItem(r, c, item)
         self.btn_skipped.setVisible(bool(skipped))
-        self.btn_skipped.setText("Show %s" % count(len(skipped), "skipped line"))
+        self._skipped_count = len(skipped)
+        self._toggle_skipped(self.btn_skipped.isChecked())
         if not skipped:
             self.btn_skipped.setChecked(False)
+
+    def _toggle_skipped(self, shown):
+        self.skipped_table.setVisible(bool(shown))
+        n = getattr(self, "_skipped_count", 0)
+        self.btn_skipped.setText(("Hide " if shown else "Show ") + count(n, "skipped line"))
 
     def _people_snapshot(self):
         """

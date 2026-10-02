@@ -116,3 +116,11 @@ def test_the_machine_picker_shows_specs(app):
     assert dialog.table.item(0, 2).text() == "RTX 4090"
     dialog.table.selectRow(1)
     assert dialog.machine() == "WS-2"
+
+
+def test_who_gets_which_half(app, mock_db):
+    """NEW-people-4: admins and people who are HR and IT work both halves."""
+    from slate.gui.tabs.joining_leaving_view import joining_teams
+    assert joining_teams(["Developer"], ["ALL"]) == ["HR", "IT"]
+    assert joining_teams(["HR"], ["HRMS"]) == ["HR"]
+    assert joining_teams(["IT"], ["IT"]) == ["IT"]

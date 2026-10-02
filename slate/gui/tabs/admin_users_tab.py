@@ -424,10 +424,29 @@ class UsersPanel(QWidget):
             self.grid.setRowHidden(row, hidden)
         self._sync_buttons()
 
+    def _selected_active(self):
+        """Whether the selected account is active (None when nothing is selected)."""
+        username = self._selected_username()
+        if not username:
+            return None
+        return bool((self.users.get(username) or {}).get("active", True))
+
     def _sync_buttons(self, *_):
-        picked = bool(self._selected_username())
-        for button in self._needs_selection:
-            button.setEnabled(picked)
+        """
+        Each action only where it can work: Reactivate on a deactivated account,
+        Deactivate on an active one, and neither Deactivate nor Delete on the
+        protected system accounts. Every button used to light up for any row.
+        """
+        username = self._selected_username()
+        active = self._selected_active()
+        protected = username.lower() in PROTECTED_USERNAMES if username else False
+        self.edit_btn.setEnabled(bool(username))
+        self.reset_btn.setEnabled(bool(username))
+        self.deactivate_btn.setEnabled(bool(username) and bool(active) and not protected)
+        self.reactivate_btn.setEnabled(bool(username) and active is False)
+        self.delete_btn.setEnabled(bool(username) and not protected)
+        if protected:
+            self.deactivate_btn.setToolTip("%s is a system account." % username)
 
     def import_users(self):
         from slate.gui.dialogs.import_users_dialog import ImportUsersDialog
