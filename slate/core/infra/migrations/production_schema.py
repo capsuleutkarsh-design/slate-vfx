@@ -375,7 +375,7 @@ def repair_bid_budgets(db):
         tolerance = exact * Decimal(2) ** -23 + cent
         if abs(exact - budget) <= tolerance:
             if db.execute_update("UPDATE prod_bidding SET estimated_budget = %s WHERE id = %s",
-                                 (exact, row["id"])):
+                                 (str(exact), row["id"])):
                 fixed += 1
     if fixed:
         logger.info("Restored the exact budget of %d bid(s) that float4 had rounded.", fixed)
