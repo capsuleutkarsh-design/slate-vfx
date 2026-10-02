@@ -104,6 +104,13 @@ PEOPLE = (
 
 # ---- it (Hardware, Licences, Service desk, Deployment) ----
 IT = (
+    step("it_schema", "slate.core.infra.migrations.it_schema:apply_migration"),
+    step("it_normalise_ticket_values",
+         "slate.core.infra.migrations.it_schema:normalise_ticket_values", once=True),
+    step("it_normalise_hardware",
+         "slate.core.infra.migrations.it_schema:normalise_hardware", once=True),
+    step("it_adopt_legacy_licences",
+         "slate.core.infra.migrations.it_schema:adopt_legacy_licences", once=True),
 )
 
 # ---- system (Settings, Data Center, Audit logs, Live Ops) ----

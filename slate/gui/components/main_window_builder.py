@@ -75,9 +75,22 @@ class MainWindowBuilderMixin:
         from ..tabs.my_tickets_view import MyTicketsView
         from ...core.domain.workplace_access import manages_it
 
-        if manages_it(getattr(self, "user_roles", None), self.allowed_tabs):
-            return ServiceDeskView(self._current_username())
-        return MyTicketsView(self._current_username())
+        username = self._current_username()
+        if not manages_it(getattr(self, "user_roles", None), self.allowed_tabs):
+            return MyTicketsView(username)
+        # IT get both, like Leave: the queue, and their own tickets. They used
+        # to get the queue only, so IT staff could not report a problem of
+        # their own (the queue's New ticket logs one for somebody else).
+        from PySide6.QtWidgets import QTabWidget
+        queue = ServiceDeskView(username)
+        mine = MyTicketsView(username)
+        mine.show_badge = False          # the sidebar count is the queue's
+        queue.changed.connect(mine.refresh)
+        mine.changed.connect(queue.refresh)
+        both = QTabWidget()
+        both.addTab(queue, "Queue")
+        both.addTab(mine, "My tickets")
+        return both
 
     def _attendance_tooltip(self) -> str:
         """
@@ -459,18 +472,16 @@ class MainWindowBuilderMixin:
                 # Licences. Not an inventory - a compliance and renewal read,
                 # which is the only version of this question anybody asks.
                 #
-                # Also read-only for people with view_licences (a Production
-                # Head who approves renewals) - once the view can be read-only.
-                import inspect
-                licence_read_only = (not it_screens
-                                     and can_view_licences(roles_now, self.allowed_tabs)
-                                     and "read_only" in inspect.signature(LicenceView).parameters)
+                # Open to IT and to people with view_licences (a Production
+                # Head who approves renewals). Changing anything needs
+                # manage_it; everybody else reads it.
+                licence_visible = it_screens or can_view_licences(roles_now, self.allowed_tabs)
+                licence_read_only = not manages_it(roles_now, self.allowed_tabs)
                 self.tab_coordinator.register_tab_factory(
                     "Licences",
-                    (lambda: LicenceView(self._current_username(), read_only=True))
-                    if licence_read_only else (lambda: LicenceView(self._current_username())),
+                    lambda: LicenceView(self._current_username(), read_only=licence_read_only),
                     icon="🔑",
-                    permission_key=None if (it_screens or licence_read_only) else "IT",
+                    permission_key=None if licence_visible else "IT",
                     user_role=self.user_role,
                     allowed_tabs=self.allowed_tabs,
                     tooltip="Seats bought against seats used, and what each renewal needs"

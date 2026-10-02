@@ -20,17 +20,24 @@ evidence instead of instinct.
 
 from __future__ import annotations
 
+import math
 from datetime import date, datetime
+from decimal import Decimal
+from typing import Optional
 
 
 # A renewal that lands inside this window needs a decision now - purchasing and
-# vendor paperwork do not turn round in a week.
+# vendor paperwork do not turn round in a week. The studio can change it
+# (studio setting "licence_renewal_days"); this is the default.
 RENEWAL_SOON_DAYS = 45
 
 # Peak use this far below what was bought is the studio paying for air. Set
 # generously: headroom is deliberate, and a licence used at 80% of its seats is
 # correctly sized, not wasteful.
 UNDER_USED_RATIO = 0.6
+
+# When suggesting a smaller renewal, keep this much above the peak.
+HEADROOM = 0.2
 
 OVER = "Over-subscribed"
 EXPIRED = "Expired"
@@ -45,6 +52,34 @@ SEVERITY = {OVER: 0, EXPIRED: 1, SOON: 2, UNDER: 3, UNKNOWN: 4, OK: 5}
 
 TONE = {OVER: "BAD", EXPIRED: "BAD", SOON: "WARN",
         UNDER: "INFO", UNKNOWN: "IDLE", OK: "OK"}
+
+
+def _register_setting():
+    """The renewal window as a studio-wide setting (Settings, studio cards)."""
+    try:
+        from slate.core.infra.studio_settings import register_key
+    except Exception:                                   # pragma: no cover
+        return
+
+    def check(value):
+        days = int(value)
+        if not 1 <= days <= 365:
+            raise ValueError("The renewal window is between 1 and 365 days.")
+        return days
+
+    register_key("licence_renewal_days", RENEWAL_SOON_DAYS, check)
+
+
+_register_setting()
+
+
+def renewal_window(db=None) -> int:
+    """The studio's renewal window in days (default 45)."""
+    try:
+        from slate.core.infra.studio_settings import get_setting
+        return int(get_setting("licence_renewal_days", RENEWAL_SOON_DAYS, db=db) or RENEWAL_SOON_DAYS)
+    except Exception:
+        return RENEWAL_SOON_DAYS
 
 
 def as_date(value):
@@ -68,33 +103,66 @@ def days_until(expiry, today: date = None):
     return (expiry - (today or date.today())).days
 
 
-def utilisation(peak, seats) -> float:
-    """Peak concurrent use as a fraction of what was bought."""
+def utilisation(peak, seats) -> Optional[float]:
+    """
+    Peak concurrent use as a fraction of what was bought. None when no seats
+    were bought - 3 in use of 0 is not "0% used".
+    """
     seats = int(seats or 0)
     if seats <= 0:
-        return 0.0
+        return None
     return float(peak or 0) / float(seats)
 
 
-def state(seats, peak, expiry, today: date = None) -> str:
+def plural(count, word: str, many: str = None) -> str:
+    """'1 seat', '3 seats'."""
+    count = int(count)
+    return "%d %s" % (count, word if count == 1 else (many or word + "s"))
+
+
+def renewal_phrase(left) -> str:
+    """'Renews today' / 'tomorrow' / 'in 31 days'; 'Expired yesterday' / '10 days ago'."""
+    if left is None:
+        return "No expiry"
+    left = int(left)
+    if left == 0:
+        return "Renews today"
+    if left == 1:
+        return "Renews tomorrow"
+    if left > 1:
+        return "Renews in %d days" % left
+    if left == -1:
+        return "Expired yesterday"
+    return "Expired %d days ago" % abs(left)
+
+
+def is_renewal_due(left, renewal_days: int = RENEWAL_SOON_DAYS) -> bool:
+    """Expired, or renewing inside the window - whatever else is wrong with it."""
+    return left is not None and left <= renewal_days
+
+
+def state(seats, peak, expiry, today: date = None, renewal_days: int = RENEWAL_SOON_DAYS) -> str:
     """
     One word for where this licence stands.
 
     Order matters: being short of seats outranks an expiry date, because an
-    expiry is a diary entry and a shortfall is people unable to work.
+    expiry is a diary entry and a shortfall is people unable to work. A peak
+    above the seats bought is over-subscribed even when nothing was bought:
+    3 in use against 0 seats was reported Healthy.
     """
     seats = int(seats or 0)
     left = days_until(expiry, today)
 
-    if peak is not None and seats and int(peak) > seats:
+    if peak is not None and int(peak) > seats:
         return OVER
     if left is not None and left < 0:
         return EXPIRED
-    if left is not None and left <= RENEWAL_SOON_DAYS:
+    if left is not None and left <= renewal_days:
         return SOON
     if peak is None:
         return UNKNOWN
-    if seats and utilisation(peak, seats) < UNDER_USED_RATIO:
+    use = utilisation(peak, seats)
+    if use is not None and use < UNDER_USED_RATIO:
         return UNDER
     return OK
 
@@ -103,42 +171,82 @@ def tone(state_name: str) -> str:
     return TONE.get(state_name, "IDLE")
 
 
-def describe(seats, peak, expiry, today: date = None) -> str:
+def keep_seats(peak) -> int:
+    """A renewal size that leaves headroom above the peak."""
+    return max(1, int(math.ceil(int(peak) * (1 + HEADROOM))))
+
+
+def seat_cost(annual_cost, seats) -> Optional[Decimal]:
+    """What one seat costs a year, or None without a cost."""
+    from slate.core.domain.money import to_decimal
+    seats = int(seats or 0)
+    if annual_cost in (None, "") or seats <= 0:
+        return None
+    try:
+        return to_decimal(annual_cost) / Decimal(seats)
+    except Exception:
+        return None
+
+
+def spare_cost(annual_cost, seats, peak) -> Optional[Decimal]:
+    """The yearly cost of the seats above the peak, or None."""
+    per_seat = seat_cost(annual_cost, seats)
+    if per_seat is None or peak is None:
+        return None
+    spare = max(0, int(seats or 0) - int(peak))
+    from slate.core.domain.money import quantize
+    return quantize(per_seat * spare)
+
+
+def describe(seats, peak, expiry, today: date = None, renewal_days: int = RENEWAL_SOON_DAYS,
+             spare_cost_text: str = "") -> str:
     """
     The finding, in a sentence somebody can act on.
 
     Each one says what was observed and what it means for the renewal - a
     status word on its own tells IT nothing they can take to purchasing.
+    spare_cost_text ("₹1,20,000") adds what the unused seats cost a year.
     """
     seats = int(seats or 0)
     left = days_until(expiry, today)
-    name = state(seats, peak, expiry, today)
+    name = state(seats, peak, expiry, today, renewal_days)
+    renewal = ""
+    if left is not None and left <= renewal_days:
+        renewal = " %s - decide before purchasing needs lead time." % renewal_phrase(left)
+    cost = (" That is about %s a year." % spare_cost_text) if spare_cost_text else ""
 
     if name == OVER:
-        return ("Peak use reached %d against %d seats. That is %d more than we "
-                "own - either seats are shared or we are out of compliance."
-                % (int(peak), seats, int(peak) - seats))
+        return ("Peak use reached %d against %s. That is %d more than we own - either "
+                "seats are shared or we are out of compliance.%s"
+                % (int(peak), plural(seats, "seat"), int(peak) - seats, renewal))
     if name == EXPIRED:
-        return "Expired %d day(s) ago. Anyone relying on it is already stuck." % abs(left)
+        return ("%s. Anyone relying on it is already stuck." % renewal_phrase(left))
     if name == SOON:
-        # Only raise the idea of dropping seats when there are some to drop -
-        # "0 could be dropped" reads as a bug, and a fully used licence wants
-        # the opposite advice.
-        spare = 0 if peak is None else max(0, seats - int(peak))
         if peak is None:
             detail = " Nothing has been measured, so there is no case for changing the seat count."
-        elif spare:
-            detail = (" Peak use has been %d of %d seats - %d could come off the renewal."
-                      % (int(peak), seats, spare))
         else:
-            detail = (" Every one of the %d seats has been in use at once, so renew "
-                      "at least at this size." % seats)
-        return "Renews in %d day(s) - decide before purchasing needs lead time.%s" % (left, detail)
+            use = utilisation(peak, seats) or 0.0
+            spare = max(0, seats - int(peak))
+            if use < UNDER_USED_RATIO and spare:
+                keep = min(seats, keep_seats(peak))
+                detail = (" Peak use has been %d of %s - renewing %s would still leave "
+                          "headroom.%s" % (int(peak), plural(seats, "seat"), plural(keep, "seat"), cost))
+            elif spare:
+                detail = (" Peak use has been %d of %s - sized about right, so renew at this size."
+                          % (int(peak), plural(seats, "seat")))
+            else:
+                # Only raise the idea of dropping seats when there are some to
+                # drop - "0 could be dropped" reads as a bug, and a fully used
+                # licence wants the opposite advice.
+                detail = (" Every one of the %s has been in use at once, so renew "
+                          "at least at this size." % plural(seats, "seat"))
+        return "%s - decide before purchasing needs lead time.%s" % (renewal_phrase(left), detail)
     if name == UNDER:
-        return ("Never more than %d of %d seats in use at once. %d seat(s) are "
-                "being paid for and not worked with."
-                % (int(peak), seats, seats - int(peak)))
+        spare = seats - int(peak)
+        return ("Never more than %d of %s in use at once. %s %s being paid for and not "
+                "worked with.%s" % (int(peak), plural(seats, "seat"), plural(spare, "seat"),
+                                    "is" if spare == 1 else "are", cost))
     if name == UNKNOWN:
         return ("No usage has been recorded, so there is nothing to renew "
                 "against except the invoice.")
-    return "Peak use %d of %d seats. Sized about right." % (int(peak), seats)
+    return "Peak use %d of %s. Sized about right." % (int(peak), plural(seats, "seat"))
