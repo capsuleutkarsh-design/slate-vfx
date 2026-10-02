@@ -15,14 +15,48 @@ from .header_filter_view import FilterHeaderView
 from .shot_table_model import COLUMN_KEY_ROLE
 
 
+class _FrozenView(QTableView):
+    """
+    The overlay itself: no frame, and its right edge drawn as a line on shot
+    rows only - a frame cut straight through the group heading rows, splitting
+    their "x/y approved" pill and totals.
+    """
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        from PySide6.QtGui import QPainter
+        from slate.core.infra.gate import Gate
+        model = self.model()
+        if model is None:
+            return
+        painter = QPainter(self.viewport())
+        painter.setPen(Gate.qcolor(Gate.LINE))
+        x = self.viewport().width() - 1
+        is_header = getattr(model, "is_group_header", lambda r: False)
+        top = self.rowAt(0)
+        bottom = self.rowAt(self.viewport().height() - 1)
+        if top < 0:
+            painter.end()
+            return
+        if bottom < 0:
+            bottom = model.rowCount() - 1
+        for row in range(top, bottom + 1):
+            if self.isRowHidden(row) or is_header(row):
+                continue
+            y = self.rowViewportPosition(row)
+            painter.drawLine(x, y, x, y + self.rowHeight(row) - 1)
+        painter.end()
+
+
 class FrozenColumnTable(QTableView):
     """A QTableView whose first columns (by key) stay put when it scrolls sideways."""
 
     def __init__(self, parent=None, frozen_keys=("reel", "shot_name")):
         super().__init__(parent)
         self.frozen_keys = tuple(frozen_keys)
-        self.frozen = QTableView(self)
+        self.frozen = _FrozenView(self)
         self.frozen.setObjectName("frozenColumns")
+        self.frozen.setFrameShape(QTableView.Shape.NoFrame)
         self.frozen.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.frozen.verticalHeader().hide()
         self.frozen.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)

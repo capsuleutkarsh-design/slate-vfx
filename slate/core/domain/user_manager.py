@@ -38,6 +38,7 @@ class UserManager:
         self._run_migration()
         self._ensure_default_roles()
         self._upgrade_role_abilities()
+        self._upgrade_producer_dashboard()
         self._ensure_essential_accounts()
 
     def _get_db(self):
@@ -275,6 +276,42 @@ class UserManager:
             self._forget_cached_abilities()
         except Exception as exc:
             logging.warning("Could not upgrade role abilities: %s", exc)
+
+    def _upgrade_producer_dashboard(self):
+        """
+        Once per database: a role named Producer gets the Dashboard tab.
+        access.json gives producers dashboard_write, but a Producer role made
+        before had no Dashboard tab, so they never saw it. Only adds.
+        """
+        from slate.core.domain.permissions_catalog import has_all
+        try:
+            db = self._get_db()
+            db.execute_update(
+                "CREATE TABLE IF NOT EXISTS ut_role_upgrades ("
+                "name TEXT PRIMARY KEY, applied_at TEXT)")
+            done = {str(r["name"]) for r in
+                    (db.execute_query("SELECT name FROM ut_role_upgrades", fetch="all") or [])}
+            if "2026-10-producer-dashboard" in done:
+                return
+            rows = db.execute_query("SELECT role_name, permissions FROM ut_roles", fetch="all") or []
+            for row in rows:
+                role = str(row["role_name"])
+                if "producer" not in role.strip().lower():
+                    continue
+                try:
+                    perms = list(json.loads(row["permissions"] or "[]"))
+                except Exception:
+                    continue
+                if has_all(perms) or "Dashboard" in perms:
+                    continue
+                db.execute_update("UPDATE ut_roles SET permissions=%s WHERE role_name=%s",
+                                  (json.dumps(perms + ["Dashboard"]), role))
+                logging.info("Role %s upgraded: Dashboard tab", role)
+            from datetime import datetime
+            db.execute_update("INSERT INTO ut_role_upgrades (name, applied_at) VALUES (%s, %s)",
+                              ("2026-10-producer-dashboard", datetime.now().isoformat(timespec="seconds")))
+        except Exception as exc:
+            logging.warning("Could not give producer roles the Dashboard tab: %s", exc)
 
     @classmethod
     def upgraded_permissions(cls, role, perms):

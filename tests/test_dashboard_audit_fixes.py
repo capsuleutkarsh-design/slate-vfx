@@ -569,3 +569,102 @@ def test_row_colours_are_real_colours():
     model.setData(model.index(0, _col(model, "sow")), "x")
     colour = model.index(0, 0).data(Qt.ItemDataRole.BackgroundRole)
     assert colour.isValid() and colour.alpha() < 255
+
+
+# ------------------------------------------------------------------ verifier round
+class TestVerifierRound:
+
+    def test_delivery_batches_open_from_reports(self, qtbot, mock_db, monkeypatch):
+        """DSH-029/118: the dialog opened from the dashboard used to raise TypeError."""
+        from slate.gui.tabs.vfx_dashboard_pro.ui import delivery_batches_dialog as dbd
+        _project(mock_db, [_shot()])
+        artist = _open(_widget(qtbot, role="Artist", username="rahul", display_name="Rahul"))
+        opened = []
+        monkeypatch.setattr(dbd.DeliveryBatchesDialog, "exec", lambda self: opened.append(self) or 0)
+        artist.open_delivery_batches_dialog()
+        dialog = opened[0]
+        qtbot.addWidget(dialog)
+        assert dialog.store.roles == artist.access_roles
+        assert not dialog.create_btn.isVisibleTo(dialog)
+        with pytest.raises(PermissionError):
+            dialog.store.create_delivery(PROJECT, "DEL", [1])
+        sup = _open(_widget(qtbot))
+        sup.open_delivery_batches_dialog()
+        assert opened[1].create_btn.isVisibleTo(opened[1])
+
+    def test_long_project_names_end_in_an_ellipsis(self, qtbot):
+        """DSH-055."""
+        from slate.gui.tabs.vfx_dashboard_pro.ui.eliding_combo import ElidingComboBox
+        combo = ElidingComboBox()
+        qtbot.addWidget(combo)
+        combo.addItem("KLC - Kaalchakra – The Wheel of Time (कालचक्र) Season 1 Final Delivery")
+        combo.setFixedWidth(200)
+        combo.show()
+        assert combo.elided_text().endswith("…")
+        assert combo.toolTip() == combo.currentText() or combo.toolTip() == ""
+
+    def test_counters_fit_and_do_not_double_count(self, qtbot):
+        """DSH-061: the row collapsed to '262 shots +14 more' at 1280."""
+        from slate.gui.tabs.vfx_dashboard_pro.ui.stats_widget import StatsWidget
+        stats = StatsWidget()
+        qtbot.addWidget(stats)
+        shots = [_shot(f"S{i}", status=s) for i, s in enumerate(
+            ["YTS", "READY", "WIP", "SENT FOR REVIEW", "RETAKE", "APPROVED", "OMIT", ""] * 30)]
+        stats.resize(900, 30)
+        stats.show()
+        stats.update_stats(shots)
+        qtbot.wait(50)
+        hidden = stats._hidden
+        assert len(hidden) == len(set(hidden))
+        assert len(stats.visible_texts()) >= 5
+        stats.resize(2000, 30)
+        qtbot.wait(50)
+        assert stats._hidden == []
+
+    def test_publish_messages_name_the_real_folder(self, qtbot, mock_db, tmp_path):
+        """DSH-095: new projects deliver to 08_Deliver, not '08_Output'."""
+        _project(mock_db, [_shot()])
+        widget = _open(_widget(qtbot))
+        widget.project_manager.set_project_folder_base(PROJECT, str(tmp_path))
+        widget.current_project = widget.project_manager.get_project(PROJECT)
+        assert widget.output_folder_name(widget.all_shots[0]) == "08_Deliver"
+
+    def test_board_card_text_is_whole_lines(self):
+        """NEW-dashboard-1: SOW on a card is two whole lines, the second elided."""
+        from PySide6.QtGui import QFont, QFontMetrics
+        from slate.gui.widgets.kanban_board import KanbanCard
+        fm = QFontMetrics(QFont())
+        text = KanbanCard.two_lines("remove rig and add sky " * 20, fm, 150)
+        lines = text.split("\n")
+        assert len(lines) == 2 and lines[1].endswith("…")
+        assert all(fm.horizontalAdvance(l) <= 150 for l in lines)
+
+    def test_frozen_overlay_has_no_frame_across_headings(self, qtbot, mock_db):
+        """NEW-dashboard-2."""
+        from PySide6.QtWidgets import QFrame
+        _project(mock_db, [_shot("A", "R01"), _shot("B", "R02")])
+        widget = _open(_widget(qtbot))
+        widget.groupby_combo.setCurrentIndex(widget.groupby_combo.findData("Reel / Sequence"))
+        assert widget.table.frozen.frameShape() == QFrame.Shape.NoFrame
+        widget.resize(1200, 600)
+        widget.show()
+        qtbot.wait(100)
+        widget.table.frozen.viewport().repaint()
+
+    def test_a_producer_gets_the_dashboard_tab(self, mock_db):
+        """NEW-dashboard-3: new installs and upgrades agree."""
+        import json
+        from slate.core.domain.permissions_catalog import STUDIO_ROLES
+        from slate.core.domain.user_manager import UserManager
+        assert "Dashboard" in STUDIO_ROLES["Producer"]
+        mock_db.execute_update("DELETE FROM ut_roles WHERE LOWER(role_name)='producer'")
+        mock_db.execute_update("INSERT INTO ut_roles (role_name, permissions) VALUES (%s, %s)",
+                               ("Producer", json.dumps(["Reports", "Settings"])))
+        mock_db.execute_update("CREATE TABLE IF NOT EXISTS ut_role_upgrades (name TEXT PRIMARY KEY, applied_at TEXT)")
+        mock_db.execute_update("DELETE FROM ut_role_upgrades WHERE name='2026-10-producer-dashboard'")
+        manager = UserManager.__new__(UserManager)
+        manager._get_db = lambda: mock_db
+        manager._upgrade_producer_dashboard()
+        row = mock_db.execute_query("SELECT permissions FROM ut_roles WHERE role_name='Producer'", fetch="one")
+        perms = json.loads(row["permissions"])
+        assert "Dashboard" in perms and "Reports" in perms

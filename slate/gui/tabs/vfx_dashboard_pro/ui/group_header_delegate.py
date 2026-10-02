@@ -18,8 +18,16 @@ class GroupHeaderDelegate(QStyledItemDelegate):
     draw the same thing at the same place, so the row reads as one.
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, frozen_width=None, frozen=False):
+        """
+        frozen_width: callable giving the frozen columns' width (0 when none).
+        The name and count sit inside the frozen part; the progress pill and
+        the totals start after it, so the frozen edge never cuts through them.
+        frozen=True is the overlay's own copy: it draws only the name part.
+        """
         super().__init__(parent)
+        self._frozen_width = frozen_width
+        self._is_frozen = frozen
 
     @staticmethod
     def colours(hovered: bool) -> dict:
@@ -76,7 +84,17 @@ class GroupHeaderDelegate(QStyledItemDelegate):
         painter.setFont(title_font)
         painter.setPen(c["title"])
         fm = QFontMetrics(title_font)
-        title_width = min(fm.horizontalAdvance(title_text) + 8, 420)
+        fw = 0
+        if callable(self._frozen_width):
+            try:
+                fw = int(self._frozen_width() or 0)
+            except Exception:
+                fw = 0
+        count_preview = int(group_data.get("count", 0) or 0)
+        count_width = QFontMetrics(base).horizontalAdvance(
+            "1 shot" if count_preview == 1 else f"{count_preview} shots") + 16
+        limit = 420 if fw <= 0 else max(30, fw - 32 - 8 - count_width - 8)
+        title_width = min(fm.horizontalAdvance(title_text) + 8, limit)
         title_rect = QRect(left + 32, rect.top(), title_width, rect.height())
         painter.drawText(title_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
                          fm.elidedText(title_text, Qt.TextElideMode.ElideRight, title_width))
@@ -97,6 +115,11 @@ class GroupHeaderDelegate(QStyledItemDelegate):
         painter.setPen(c["muted"])
         painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, count_text)
         cursor = badge_rect.right() + 10
+        if self._is_frozen:
+            painter.restore()
+            return
+        if fw > 0:
+            cursor = max(cursor, left + fw + 10)
 
         # Approved so far (omitted shots are not counted). Not shown when the
         # grouping is by status - every group would read 0/33 or 33/33.

@@ -331,16 +331,31 @@ class DashboardProjectMixin:
         return kept, dropped
 
     # ------------------------------------------------------------ auto-publish
+    def output_folder_name(self, shot=None) -> str:
+        """The name of the project's output folder for a shot ('08_Deliver' on new projects)."""
+        import os
+        if self.current_project is None:
+            return "the output folder"
+        try:
+            path = self.project_manager.get_folder_path(
+                self.current_project.code, "output",
+                getattr(shot, "reel_episode", "") or "", getattr(shot, "shot_name", "") or "")
+        except Exception:
+            path = ""
+        name = os.path.basename(str(path or "").rstrip("/\\"))
+        return name or "the output folder"
+
     def _offer_auto_publish(self, shots):
-        """Approved just now: offer to copy the comp renders to 08_Output."""
+        """Approved just now: offer to copy the comp renders to the shot's output folder."""
         if not self.current_project:
             return
         from slate.gui.components.feedback import confirm
+        folder = self.output_folder_name(shots[0])
         names = ", ".join(s.shot_name for s in shots[:5]) + (f" and {len(shots) - 5} more" if len(shots) > 5 else "")
         if not confirm(self, "Publish approved shots",
                        f"{names} {'was' if len(shots) == 1 else 'were'} just approved. Copy "
-                       "the comp renders to 08_Output now? Files with the same name there are replaced.",
-                       yes_label="Copy to 08_Output", no_label="Not now"):
+                       f"the comp renders to {folder} now? Files with the same name there are replaced.",
+                       yes_label=f"Copy to {folder}", no_label="Not now"):
             return
         self._start_auto_publish(shots)
 

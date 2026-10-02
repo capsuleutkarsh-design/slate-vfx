@@ -55,7 +55,7 @@ except ImportError:                                  # pragma: no cover
 
 
 class AutoPublishWorker(QThread):
-    """Copies an approved shot's comp renders into 08_Output, off the UI thread."""
+    """Copies an approved shot's comp renders into its output folder, off the UI thread."""
 
     finished_signal = Signal(bool, str)
 
@@ -101,7 +101,8 @@ class AutoPublishWorker(QThread):
                     False, f"{name}: copied {copied} file(s); {len(failed)} could not be copied: "
                            + ", ".join(failed[:3]) + ("…" if len(failed) > 3 else ""))
             else:
-                self.finished_signal.emit(True, f"{name}: copied {copied} file(s) to 08_Output.")
+                self.finished_signal.emit(
+                    True, f"{name}: copied {copied} file(s) to {Path(final_path).name or 'the output folder'}.")
         except Exception as e:
             self.finished_signal.emit(False, f"{name}: {e}")
 
@@ -1713,12 +1714,12 @@ class DashboardWidget(
                                     if w in self.publish_workers else None)
             self.publish_workers.append(worker)
             worker.start()
-        self._notify(f"Copying renders for {len(shots)} shot(s) to 08_Output…", "info")
+        self._notify(f"Copying renders for {len(shots)} shot(s) to {self.output_folder_name(shots[0])}…", "info")
 
     def busy_reason(self):
         running = [w for w in getattr(self, "publish_workers", []) if w.isRunning()]
         if running:
-            return f"The VFX Dashboard is still copying renders for {len(running)} shot(s) to 08_Output."
+            return f"The VFX Dashboard is still copying renders for {len(running)} shot(s) to their output folder."
         return None
 
     def cleanup_resources(self):

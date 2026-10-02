@@ -128,33 +128,45 @@ class StatsWidget(QWidget):
         self._reflow()
 
     def _reflow(self):
-        """Hide counters that do not fit whole; list them under '+N more'."""
+        """
+        Hide counters that do not fit whole; list them under '+N more'.
+
+        Showing or hiding a counter resizes this widget, which calls _reflow
+        again; that inner call is ignored, and the hidden list is built fresh
+        each time (it was counted twice and collapsed the row to "+14 more").
+        """
+        if getattr(self, "_reflowing", False):
+            return
         available = self.width()
         if available <= 0:
             return
-        spacing = self.main_layout.spacing()
-        used = 0
-        self._hidden = []
-        self.more_button.setText("+9 more")
-        more_width = self.more_button.sizeHint().width() + spacing
-        for i, key in enumerate(self._order):
-            button = self.stat_containers[key]
-            need = button.sizeHint().width() + spacing
-            reserve = more_width if i < len(self._order) - 1 else 0
-            if key != "__total__" and (self._hidden or used + need + reserve > available):
-                button.hide()
-                self._hidden.append(key)
+        self._reflowing = True
+        try:
+            spacing = self.main_layout.spacing()
+            needs = {k: self.stat_containers[k].sizeHint().width() + spacing for k in self._order}
+            hidden = []
+            if sum(needs.values()) > available:
+                self.more_button.setText(f"+{len(self._order)} more")
+                reserve = self.more_button.sizeHint().width() + spacing
+                used = 0
+                for key in self._order:
+                    if key != "__total__" and (hidden or used + needs[key] + reserve > available):
+                        hidden.append(key)
+                    else:
+                        used += needs[key]
+            self._hidden = hidden
+            for key in self._order:
+                self.stat_containers[key].setVisible(key not in hidden)
+            if hidden:
+                self.more_button.setText(f"+{len(hidden)} more")
+                self.more_button.setToolTip(", ".join(
+                    self.stat_containers[k].text() for k in hidden))
+                self.more_button.setStyleSheet(self._pill_style(Gate.TEXT_2, False))
+                self.more_button.show()
             else:
-                button.show()
-                used += need
-        if self._hidden:
-            self.more_button.setText(f"+{len(self._hidden)} more")
-            self.more_button.setToolTip(", ".join(
-                self.stat_containers[k].text() for k in self._hidden))
-            self.more_button.setStyleSheet(self._pill_style(Gate.TEXT_2, False))
-            self.more_button.show()
-        else:
-            self.more_button.hide()
+                self.more_button.hide()
+        finally:
+            self._reflowing = False
 
     def _show_more(self):
         menu = QMenu(self)

@@ -95,9 +95,10 @@ class KanbanCard(QFrame):
 
         task_name = str(self.task_data.get("task_name", "") or "").strip()
         if task_name:
-            lbl_task = QLabel(task_name)
-            lbl_task.setWordWrap(True)
-            lbl_task.setMaximumHeight(QFontMetrics(lbl_task.font()).lineSpacing() * 2 + 2)
+            # Up to two whole lines, the second ending in an ellipsis - never a
+            # line cut through the middle of its letters.
+            lbl_task = QLabel(self.two_lines(task_name, QFontMetrics(self.font()), inner))
+            lbl_task.setObjectName("cardTask")
             lbl_task.setToolTip(task_name)
             lbl_task.setStyleSheet(f"color: {Gate.TEXT_2}; font-size: {Gate.SIZE_SM}px;")
             layout.addWidget(lbl_task)
@@ -140,6 +141,24 @@ class KanbanCard(QFrame):
             pending = QLabel("Not saved yet")
             pending.setStyleSheet(f"color: {Gate.WARN}; font-size: {Gate.SIZE_XS}px; font-weight: 600;")
             layout.addWidget(pending)
+
+    @staticmethod
+    def two_lines(text: str, fm, width: int) -> str:
+        """The text in at most two lines of `width`, the second elided."""
+        words = " ".join(str(text or "").split()).split(" ")
+        first = ""
+        while words:
+            trial = (first + " " + words[0]).strip()
+            if fm.horizontalAdvance(trial) > width:
+                break
+            first = trial
+            words.pop(0)
+        if not first:            # one long word: elide it on the first line
+            return fm.elidedText(" ".join(words), Qt.TextElideMode.ElideRight, width)
+        if not words:
+            return first
+        rest = fm.elidedText(" ".join(words), Qt.TextElideMode.ElideRight, width)
+        return first + "\n" + rest
 
     def dragEnterEvent(self, event):
         if self.editable and event.mimeData().hasFormat(USER_MIME):
