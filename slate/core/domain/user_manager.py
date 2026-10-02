@@ -425,6 +425,36 @@ class UserManager:
 
     # --- DOMAIN API ---
 
+    # ------------------------------------------------------------ passwords
+    #
+    # One rule for spaces, everywhere a password is typed or set: spaces at the
+    # start or end are trimmed. Sign-in used to trim and changing a password did
+    # not, so "secret99 " could be saved and then never typed again - and a
+    # password of six spaces was accepted and locked the account out for good.
+
+    @staticmethod
+    def clean_password(password) -> str:
+        """The password as it is stored and checked: trimmed of outer spaces."""
+        return str(password or "").strip()
+
+    def password_problem(self, password) -> Optional[str]:
+        """Why this new password cannot be used, or None when it is fine."""
+        cleaned = self.clean_password(password)
+        if not cleaned:
+            return "A password cannot be empty or only spaces."
+        if len(cleaned) < self.MIN_PASSWORD_LENGTH:
+            return f"Use at least {self.MIN_PASSWORD_LENGTH} characters."
+        return None
+
+    def _password_matches(self, stored_hash, password) -> bool:
+        cleaned = self.clean_password(password)
+        if cleaned and self._check_password(stored_hash, cleaned):
+            return True
+        # A password saved with outer spaces before the rule above existed
+        # still opens its account when typed exactly.
+        raw = str(password or "")
+        return bool(raw.strip()) and raw != cleaned and self._check_password(stored_hash, raw)
+
     def authenticate(self, username: str, password: str) -> Optional[Dict[str, Any]]:
         db = self._get_db()
         search_id = username.strip()
@@ -443,7 +473,7 @@ class UserManager:
         uid = user_row['username']
         stored_hash = user_row['password_hash']
         
-        if self._check_password(stored_hash, password):
+        if self._password_matches(stored_hash, password):
             logging.info(f"Authentication successful for user '{uid}'")
             try:
                 roles_raw = user_row.get('roles', '["Artist"]')
@@ -563,7 +593,11 @@ class UserManager:
             else:
                 pw_hash = self._hash_password("password123")
         else:
-            pw_hash = self._hash_password(p)
+            # Trimmed like every other password, and never empty: an account
+            # whose password is spaces can never be signed in to.
+            if not self.clean_password(p):
+                raise ValueError("A password cannot be empty or only spaces.")
+            pw_hash = self._hash_password(self.clean_password(p))
 
         roles_str = json.dumps(roles if isinstance(roles, list) else [roles])
         display_name = n.strip() if n and n.strip() else (existing.get('display_name', uid) if existing else uid)
@@ -627,9 +661,11 @@ class UserManager:
         """
         if not self.authenticate(username, current):
             return False, "The current password is not right."
-        if len(new or "") < self.MIN_PASSWORD_LENGTH:
-            return False, f"Use at least {self.MIN_PASSWORD_LENGTH} characters."
-        if new == current:
+        problem = self.password_problem(new)
+        if problem:
+            return False, problem
+        new = self.clean_password(new)
+        if new == self.clean_password(current):
             return False, "Choose a password different from the current one."
         db = self._get_db()
         ok = db.execute_update(

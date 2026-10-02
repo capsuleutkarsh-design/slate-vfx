@@ -158,7 +158,13 @@ def apply_import(user_manager, plan: ImportPlan, role: str, first_password: str)
     """
     if not role:
         raise ValueError("Choose a role for the imported people.")
-    if len(first_password or "") < user_manager.MIN_PASSWORD_LENGTH:
+    # Trimmed and checked the way every password is (UserManager.clean_password):
+    # six spaces used to pass this check and lock every imported person out.
+    clean = getattr(user_manager, "clean_password", lambda value: str(value or "").strip())
+    first_password = clean(first_password)
+    if not first_password:
+        raise ValueError("The first password cannot be empty or only spaces.")
+    if len(first_password) < user_manager.MIN_PASSWORD_LENGTH:
         raise ValueError(f"The first password needs at least {user_manager.MIN_PASSWORD_LENGTH} characters.")
 
     # Checked again now, in case someone was added while the preview was open.

@@ -2,9 +2,10 @@
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout
+    QDialog, QHBoxLayout, QLabel, QLineEdit, QVBoxLayout
 )
 from slate.core.infra.gate import Gate
+from slate.gui.core.controls import form_layout, make_button, set_default_button
 
 
 class ChangePasswordDialog(QDialog):
@@ -29,14 +30,14 @@ class ChangePasswordDialog(QDialog):
 
         layout = QVBoxLayout(self)
         intro = QLabel(
-            f"Welcome, {username}. You signed in with the first password you were given.\n"
-            "Choose your own password to continue." if forced else
-            f"Change the password for {username}.")
+            f"Welcome, {username}. You signed in with the first password you were given. "
+            "Choose your own password to continue. Cancel takes you back to the sign-in screen."
+            if forced else f"Change the password for {username}.")
         intro.setWordWrap(True)
         intro.setStyleSheet(f"color: {Gate.TEXT_2}; margin-bottom: 6px;")
         layout.addWidget(intro)
 
-        form = QFormLayout()
+        form = form_layout()
         self.current_input = None
         if not forced:
             self.current_input = self._password_field()
@@ -47,42 +48,65 @@ class ChangePasswordDialog(QDialog):
         form.addRow("New password again:", self.repeat_input)
         layout.addLayout(form)
 
-        hint = QLabel(f"At least {user_manager.MIN_PASSWORD_LENGTH} characters.")
-        hint.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: 11px;")
-        layout.addWidget(hint)
+        # One line for the length rule: it turns red and says what is wrong,
+        # rather than a second red line repeating it underneath.
+        self.hint_text = f"At least {user_manager.MIN_PASSWORD_LENGTH} characters."
+        self.hint = QLabel(self.hint_text)
+        self.hint.setWordWrap(True)
+        self._set_hint(self.hint_text, error=False)
+        layout.addWidget(self.hint)
 
         self.error_label = QLabel("")
         self.error_label.setWordWrap(True)
         self.error_label.setStyleSheet(f"color: {Gate.BAD};")
+        self.error_label.setVisible(False)
         layout.addWidget(self.error_label)
 
         buttons = QHBoxLayout()
         buttons.addStretch()
-        cancel = QPushButton("Don't sign in" if forced else "Cancel")
-        cancel.clicked.connect(self.reject)
-        save = QPushButton("Save password")
-        save.setDefault(True)
-        save.setStyleSheet(f"background-color: {Gate.ACCENT}; color: {Gate.TEXT_ON_ACCENT}; font-weight: bold; padding: 5px 12px;")
-        save.clicked.connect(self._save)
-        buttons.addWidget(cancel)
-        buttons.addWidget(save)
+        self.cancel_button = make_button("Cancel", "secondary", on_click=self.reject)
+        self.save_button = make_button("Save password", "primary", on_click=self._save)
+        buttons.addWidget(self.cancel_button)
+        buttons.addWidget(self.save_button)
         layout.addLayout(buttons)
+        set_default_button(self, self.save_button)
 
     @staticmethod
     def _password_field():
         field = QLineEdit()
         field.setEchoMode(QLineEdit.EchoMode.Password)
-        field.setStyleSheet(f"background: {Gate.RAISED_HI}; padding: 4px;")
         return field
+
+    def _set_hint(self, text, error):
+        self.hint.setText(text)
+        colour = Gate.BAD if error else Gate.TEXT_DIM
+        self.hint.setStyleSheet(f"color: {colour}; font-size: 11px;")
+
+    def _show_error(self, message):
+        self.error_label.setText(message)
+        self.error_label.setVisible(bool(message))
 
     def _save(self):
         new = self.new_input.text()
-        if new != self.repeat_input.text():
-            self.error_label.setText("The two new passwords are not the same.")
+        self._set_hint(self.hint_text, error=False)
+        self._show_error("")
+
+        # The rule for an acceptable password lives with the accounts
+        # (UserManager.password_problem); its answer goes on the hint line.
+        checker = getattr(self.user_manager, "password_problem", None)
+        problem = checker(new) if callable(checker) else None
+        if problem:
+            self._set_hint(problem, error=True)
+            self.new_input.setFocus()
+            return
+        clean = getattr(self.user_manager, "clean_password", lambda value: str(value or "").strip())
+        if clean(new) != clean(self.repeat_input.text()):
+            self._show_error("The two new passwords are not the same.")
+            self.repeat_input.setFocus()
             return
         current = self._known_current if self.forced else self.current_input.text()
         ok, message = self.user_manager.change_own_password(self.username, current or "", new)
         if not ok:
-            self.error_label.setText(message)
+            self._show_error(message)
             return
         self.accept()
