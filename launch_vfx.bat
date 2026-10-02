@@ -1,4 +1,6 @@
 @echo off
+REM Run from this folder, whatever "Start in" a shortcut gives.
+cd /d "%~dp0"
 REM One Python for every launcher, looked for in this order:
 REM   1. runtime\python        - what setup.bat installs, inside this checkout
 REM   2. ..\python_portable    - the shared environment beside the checkout
@@ -15,10 +17,8 @@ if not exist "%PORTABLE_PYTHON%" (
 echo [INFO] Using Portable Python Environment...
 echo [INFO] Launching Slate Studio...
 
-set "SLATE_ENABLE_EXR_LOADING=1"
-set "SLATE_ENABLE_OIIO=1"
-echo [INFO] EXR loading enabled (SLATE_ENABLE_EXR_LOADING=1)
-echo [INFO] OIIO path enabled (SLATE_ENABLE_OIIO=1)
+REM EXR and OpenImageIO are settings now (enable_exr_loading / enable_oiio,
+REM on by default); SLATE_ENABLE_EXR_LOADING / SLATE_ENABLE_OIIO still override.
 
 "%PORTABLE_PYTHON%" slate/vfx_studio_main.py
 

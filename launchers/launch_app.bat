@@ -16,10 +16,8 @@ if not exist "%PORTABLE_PYTHON%" (
 echo [INFO] Using Portable Python Environment...
 echo [INFO] Launching Slate Gatekeeper...
 
-set "SLATE_ENABLE_EXR_LOADING=1"
-set "SLATE_ENABLE_OIIO=1"
-echo [INFO] EXR loading enabled (SLATE_ENABLE_EXR_LOADING=1)
-echo [INFO] OIIO path enabled (SLATE_ENABLE_OIIO=1)
+REM EXR and OpenImageIO are settings now (enable_exr_loading / enable_oiio,
+REM on by default); SLATE_ENABLE_EXR_LOADING / SLATE_ENABLE_OIIO still override.
 
 "%PORTABLE_PYTHON%" slate/gatekeeper_main.py
 

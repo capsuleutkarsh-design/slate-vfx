@@ -4,14 +4,12 @@
     <meta charset="UTF-8">
     <title>Slate | Cinematic Core</title>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100;300&display=swap');
-
         body, html {
             margin: 0; padding: 0;
             width: 100%; height: 100%;
             background-color: #000;
             color: white;
-            font-family: 'Inter', sans-serif;
+            font-family: 'Segoe UI', 'Inter', sans-serif;
             overflow: hidden;
             /* Prevent scrolling or selecting */
             user-select: none;
@@ -52,8 +50,7 @@
         /* Shift the brand up slightly once loading finishes */
         .brand.loaded {
             transform: translateY(-80px) scale(0.9);
-            opacity: 0.4;
-            text-shadow: 0 0 20px rgba(255, 140, 40, 0.10);
+            opacity: 0;
         }
 
         .status-area {
@@ -125,20 +122,13 @@
     </div>
 
     <div class="status-area" id="statusArea">
-        <div class="status-text" id="status-msg">Initializing Singularity</div>
+        <div class="status-text" id="status-msg">Loading</div>
         <div class="progress-line">
             <div id="fill"></div>
         </div>
     </div>
 
     <script>
-        const canvas = document.getElementById('glCanvas');
-        const gl = canvas.getContext('webgl');
-
-        if (!gl) {
-            console.error("WebGL not supported");
-        }
-
         // --- SHADER SOURCE ---
         const vertSrc = `
             attribute vec2 position;
@@ -212,114 +202,144 @@
             }
         `;
 
-        // --- WEBGL INITIALIZATION ---
-        function createShader(gl, type, source) {
-            const shader = gl.createShader(type);
-            gl.shaderSource(shader, source);
-            gl.compileShader(shader);
-            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-                console.error(gl.getShaderInfoLog(shader));
-                gl.deleteShader(shader);
-                return null;
-            }
-            return shader;
-        }
-
-        const program = gl.createProgram();
-        gl.attachShader(program, createShader(gl, gl.VERTEX_SHADER, vertSrc));
-        gl.attachShader(program, createShader(gl, gl.FRAGMENT_SHADER, fragSrc));
-        gl.linkProgram(program);
-        gl.useProgram(program);
-
-        const buffer = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
-
-        const pos = gl.getAttribLocation(program, "position");
-        gl.enableVertexAttribArray(pos);
-        gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0);
-
-        const uRes = gl.getUniformLocation(program, "u_res");
-        const uTime = gl.getUniformLocation(program, "u_time");
-        const uIntensity = gl.getUniformLocation(program, "u_intensity");
-
-        let intensityValue = 0.4; // Default baseline intensity
-
-        // --- RENDER LOOP ---
-        function render(time) {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
-            gl.viewport(0, 0, canvas.width, canvas.height);
-
-            gl.uniform2f(uRes, canvas.width, canvas.height);
-            gl.uniform1f(uTime, time * 0.001);
-            gl.uniform1f(uIntensity, intensityValue);
-
-            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-            requestAnimationFrame(render);
-        }
-        requestAnimationFrame(render);
+        const FALLBACK_GLOW = "rgba(200, 80, 40, 0.35)";
 
         // --- EXPOSED API FOR PYSIDE6 ---
+        // Defined before anything WebGL, so it exists even where WebGL does
+        // not (remote desktop, virtual machines, --disable-gpu): there the
+        // page used to throw at gl.createProgram() on null, the API never
+        // existed, and "Initializing" sat behind the Home panels all session.
         const fill = document.getElementById('fill');
         const msg = document.getElementById('status-msg');
         const statusArea = document.getElementById('statusArea');
         const brandText = document.getElementById('brandText');
 
-        // Call this from Python: view.page().runJavaScript(`setLoadingProgress(50, "Loading UI...")`)
+        let intensityValue = 0.4;      // baseline brightness of the sky
+        let running = true;            // the animation loop is wanted
+        let ended = false;             // the intro is over: one still frame
+        let ready = false;
+        let drawFrame = function () {};
+
         window.setLoadingProgress = function(percent, message) {
             percent = Math.min(Math.max(percent, 0), 100);
-            
             fill.style.width = percent + "%";
-            
-            if (message && percent < 100) {
+            if (message) {
                 msg.innerText = message;
             }
-
-            // Increase shader intensity as it loads
             intensityValue = 0.4 + (percent / 100.0) * 0.6;
-
             if (percent >= 100) {
-                // When fully loaded, prompt for ENTER
+                // Slate closes the intro by itself a moment later; click or
+                // Enter skips it. No "press Enter" prompt for a thing that
+                // happens anyway.
+                ready = true;
                 fill.style.display = "none";
                 document.querySelector('.progress-line').style.background = "transparent";
-                msg.innerText = "[ PRESS ENTER ]";
-                msg.classList.add("pulse");
+                msg.innerText = "Ready";
             }
         };
 
-        // Call this from Python on Enter key press
         window.triggerEnter = function() {
-            if (statusArea.style.opacity === "0") return; // Already triggered
-            
+            if (ended) return;
+            ended = true;
             statusArea.style.opacity = "0";
+            // The big name fades out completely: it showed through between
+            // and behind the Home panels.
             brandText.classList.add("loaded");
             document.title = "CINEMATIC_ENDED";
-            
-            // Drop intensity back to ambient background level
-            let fade = setInterval(() => {
-                intensityValue -= 0.02;
-                if (intensityValue <= 0.2) {
-                    intensityValue = 0.2;
-                    clearInterval(fade);
-                }
-            }, 50);
+            intensityValue = 0.2;
+            // One still frame, then nothing: the full-screen shader no longer
+            // runs every frame behind the panels for the whole session.
+            running = false;
+            drawFrame(performance.now());
         };
 
-        // Listen for user interactions since QWebEngineView eats focus
-        window.addEventListener("keydown", (e) => {
-            if (e.key === "Enter" && document.querySelector('.status-text.pulse')) {
-                window.triggerEnter();
-            }
-        });
-        window.addEventListener("mousedown", (e) => {
-            if (document.querySelector('.status-text.pulse')) {
-                window.triggerEnter();
-            }
+        // Behind another screen: stop drawing. Back in front: one frame (or
+        // the animation, while the intro is still on).
+        window.pauseBackground = function() { running = false; };
+        window.resumeBackground = function() {
+            if (ended) { drawFrame(performance.now()); return; }
+            if (!running) { running = true; requestAnimationFrame(loop); }
+        };
+        document.addEventListener("visibilitychange", function () {
+            if (document.hidden) { window.pauseBackground(); } else { window.resumeBackground(); }
         });
 
-        // Initialize state
-        window.setLoadingProgress(0, "Awaiting Telemetry...");
+        window.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" && ready) { window.triggerEnter(); }
+        });
+        window.addEventListener("mousedown", () => {
+            if (ready) { window.triggerEnter(); }
+        });
+
+        function loop(time) {
+            if (!running) return;
+            drawFrame(time);
+            requestAnimationFrame(loop);
+        }
+
+        window.setLoadingProgress(0, "Loading");
+
+        // --- WEBGL ---
+        const canvas = document.getElementById('glCanvas');
+        const gl = canvas.getContext('webgl');
+
+        if (!gl) {
+            // No WebGL: a still gradient, and the API above still works.
+            console.warn("WebGL not available - using a still background");
+            canvas.style.display = "none";
+            document.body.style.background =
+                "radial-gradient(ellipse at 50% 55%, " + FALLBACK_GLOW + " 0%, #000 70%)";
+        } else {
+            function createShader(gl, type, source) {
+                const shader = gl.createShader(type);
+                gl.shaderSource(shader, source);
+                gl.compileShader(shader);
+                if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                    console.error(gl.getShaderInfoLog(shader));
+                    gl.deleteShader(shader);
+                    return null;
+                }
+                return shader;
+            }
+
+            const program = gl.createProgram();
+            gl.attachShader(program, createShader(gl, gl.VERTEX_SHADER, vertSrc));
+            gl.attachShader(program, createShader(gl, gl.FRAGMENT_SHADER, fragSrc));
+            gl.linkProgram(program);
+            gl.useProgram(program);
+
+            const buffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+
+            const pos = gl.getAttribLocation(program, "position");
+            gl.enableVertexAttribArray(pos);
+            gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0);
+
+            const uRes = gl.getUniformLocation(program, "u_res");
+            const uTime = gl.getUniformLocation(program, "u_time");
+            const uIntensity = gl.getUniformLocation(program, "u_intensity");
+
+            // The canvas is sized when the window is, not on every frame
+            // (which also reallocated it every frame), and at one pixel per
+            // CSS pixel: a soft sky gains nothing from a high-DPI backing.
+            function resize() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+                gl.viewport(0, 0, canvas.width, canvas.height);
+                if (ended) { drawFrame(performance.now()); }
+            }
+            window.addEventListener("resize", resize);
+            resize();
+
+            drawFrame = function (time) {
+                gl.uniform2f(uRes, canvas.width, canvas.height);
+                gl.uniform1f(uTime, time * 0.001);
+                gl.uniform1f(uIntensity, intensityValue);
+                gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+            };
+            requestAnimationFrame(loop);
+        }
     </script>
 </body>
 </html>

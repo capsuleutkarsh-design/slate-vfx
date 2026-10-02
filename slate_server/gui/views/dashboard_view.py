@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGridLayout, QPushButton
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGridLayout, QPushButton, QPlainTextEdit
 from PySide6.QtCore import Qt
 
 from ..design_system import C, T
@@ -136,21 +136,6 @@ class DashboardView(QWidget):
 
         self.toggle_power = ToggleSwitch()
         
-        self.btn_force_kill = QPushButton("Force Kill Database")
-        self.btn_force_kill.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {C.STATUS_ERROR};
-                color: {C.TEXT_PRIMARY};
-                font-weight: {T.WEIGHT_BOLD};
-                padding: 6px 12px;
-                border-radius: 4px;
-                border: none;
-            }}
-            QPushButton:hover {{
-                background-color: #D9635F;
-            }}
-        """)
-        
         self.btn_api_dashboard = QPushButton("Open Web Dashboard")
         self.btn_api_dashboard.setStyleSheet(f"""
             QPushButton {{
@@ -183,7 +168,6 @@ class DashboardView(QWidget):
         self.btn_restart_pool.setStyleSheet(self.btn_api_dashboard.styleSheet())
         button_row.addWidget(self.btn_restart_pool)
         button_row.addWidget(self.btn_api_dashboard)
-        button_row.addWidget(self.btn_force_kill)
         button_row.addStretch()
 
         main_layout.addWidget(control_panel)
@@ -253,15 +237,30 @@ class DashboardView(QWidget):
         lbl_log_title = QLabel("SYSTEM LOGS")
         lbl_log_title.setStyleSheet(f"color: {C.TEXT_SECONDARY}; font-size: 11px; font-weight: {T.WEIGHT_BOLD}; letter-spacing: 1px; border: none;")
         
-        self.lbl_logs = QLabel("Waiting for server to start...")
-        self.lbl_logs.setStyleSheet(f"font-family: Consolas, monospace; font-size: 12px; color: {C.TEXT_SECONDARY}; border: none;")
-        self.lbl_logs.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        
+        # A read-only text box with a line limit: it was a label whose text
+        # grew for ever (the page was 1,417 px tall after 40 lines) and could
+        # not be selected or copied.
+        self.lbl_logs = QPlainTextEdit()
+        self.lbl_logs.setReadOnly(True)
+        self.lbl_logs.setMaximumBlockCount(self.LOG_LINES)
+        self.lbl_logs.setPlaceholderText("Waiting for the server to start…")
+        self.lbl_logs.setMinimumHeight(160)
+        self.lbl_logs.setStyleSheet(
+            f"QPlainTextEdit {{ font-family: Consolas, monospace; font-size: 12px; "
+            f"color: {C.TEXT_SECONDARY}; background: transparent; border: none; }}")
+
         log_layout.addWidget(lbl_log_title)
-        log_layout.addWidget(self.lbl_logs)
-        log_layout.addStretch()
+        log_layout.addWidget(self.lbl_logs, 1)
         
         main_layout.addWidget(log_panel, 1) # Give it stretch
+
+    LOG_LINES = 1000
+
+    def append_log(self, message: str):
+        """One line at the end of the log, kept in view."""
+        self.lbl_logs.appendPlainText(str(message))
+        bar = self.lbl_logs.verticalScrollBar()
+        bar.setValue(bar.maximum())
 
     # A card's value is set at 28px, so a figure like "10.100.104.82" wants
     # about 230 pixels with its padding. The column count follows the width

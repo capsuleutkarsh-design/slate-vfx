@@ -21,9 +21,11 @@ class SettingsView(QWidget):
         """
         for field in (self.input_db_path, self.input_port, self.input_pooler_port,
                       self.input_db_name, self.input_db_password,
-                      self.input_max_conn):
+                      self.input_max_conn, self.input_api_port):
             field.ensurePolished()
             field.setMinimumHeight(field.sizeHint().height())
+
+    PORT_WIDTH = 120
 
     def setup_ui(self):
         main_layout = QVBoxLayout(self)
@@ -91,7 +93,8 @@ class SettingsView(QWidget):
         # Port
         self.input_port = QLineEdit()
         self.input_port.setText("5440")
-        self.input_port.setFixedWidth(100)
+        # Every port field the same width (the pool port was full width).
+        self.input_port.setFixedWidth(self.PORT_WIDTH)
 
         lbl_port = QLabel("PostgreSQL Port:")
         lbl_port.setStyleSheet(f"font-size: 14px; font-weight: {T.WEIGHT_SEMI}; color: {C.TEXT_SECONDARY};")
@@ -104,6 +107,7 @@ class SettingsView(QWidget):
         self.input_pooler_port = QLineEdit()
         self.input_pooler_port.setPlaceholderText("6432")
         self.input_pooler_port.setText("6432")
+        self.input_pooler_port.setFixedWidth(self.PORT_WIDTH)
         lbl_pooler = QLabel("Connection Pool Port:")
         lbl_pooler.setStyleSheet(lbl_port.styleSheet())
         form_layout.addRow(lbl_pooler, self.input_pooler_port)
@@ -143,6 +147,18 @@ class SettingsView(QWidget):
         lbl_max_conn = QLabel("Max Connections:")
         lbl_max_conn.setStyleSheet(lbl_port.styleSheet())
         form_layout.addRow(lbl_max_conn, self.input_max_conn)
+
+        # The web API and the dashboard link use this port (it was 8000,
+        # written into the code).
+        self.input_api_port = QLineEdit()
+        self.input_api_port.setPlaceholderText("8000")
+        self.input_api_port.setText("8000")
+        self.input_api_port.setFixedWidth(self.PORT_WIDTH)
+        self.input_api_port.setToolTip("The port the web API and its dashboard listen on. "
+                                       "Restart the server to apply a change.")
+        lbl_api_port = QLabel("Web API Port:")
+        lbl_api_port.setStyleSheet(lbl_port.styleSheet())
+        form_layout.addRow(lbl_api_port, self.input_api_port)
 
         # Nothing here may be shrunk below the height its own text needs. A
         # QLineEdit's minimum is smaller than that, so a window a little too

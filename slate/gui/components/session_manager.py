@@ -1,5 +1,5 @@
 import logging
-from PySide6.QtCore import QRect
+from PySide6.QtCore import QRect, QByteArray
 from PySide6.QtWidgets import QApplication
 
 class SessionManagerMixin:
@@ -37,27 +37,60 @@ class SessionManagerMixin:
             logging.info("Restored paths for tabs: %s", ", ".join(restored_tabs))
 
     def restore_window_geometry(self):
-        """Restore window coordinates from previous session."""
-        geo = getattr(self, "global_settings", {}).get("window_geometry")
+        """
+        Put the window back where it was, maximised or not.
+
+        The size used to be saved as x,y,w,h - a maximised window's size saved
+        as a normal one - and then thrown away, because start-up always called
+        showMaximized(). Qt's own saveGeometry keeps the maximised state too.
+        The old "window_geometry" value is still read once, for an upgrade.
+        """
+        self._geometry_restored = False
+        settings = getattr(self, "global_settings", {}) or {}
+        state = settings.get("window_state")
+        if state:
+            try:
+                if self.restoreGeometry(QByteArray.fromBase64(str(state).encode("ascii"))):
+                    if self._on_some_screen(self.geometry()):
+                        self._geometry_restored = True
+                        return
+                    self.center_window()
+            except Exception as e:
+                logging.warning("Could not restore the window position: %s", e)
+
+        geo = settings.get("window_geometry")
         if geo:
             try:
-                x, y, w, h = map(int, geo.split(','))
-                
-                # Validation: Ensure window is visible on current screens
+                x, y, w, h = map(int, str(geo).split(','))
                 rect = QRect(x, y, w, h)
-                valid = False
-                for screen in QApplication.screens():
-                    if screen.availableGeometry().intersects(rect):
-                        valid = True
-                        break
-                
-                if valid:
+                if self._on_some_screen(rect):
                     self.setGeometry(x, y, w, h)
+                    self._geometry_restored = True
                 else:
                     self.center_window()
             except Exception as e:
-                logging.exception(f"Error restoring window geometry: {e}")
+                logging.warning("Could not restore the old window position: %s", e)
                 self.center_window()
+
+    @staticmethod
+    def _on_some_screen(rect) -> bool:
+        return any(screen.availableGeometry().intersects(rect) for screen in QApplication.screens())
+
+    def show_restored(self):
+        """Show the window as it was left; maximised the very first time."""
+        if getattr(self, "_geometry_restored", False):
+            self.show()
+        else:
+            self.showMaximized()
+
+    def save_window_geometry(self):
+        """Remember position, size and the maximised state for next time."""
+        try:
+            self.global_settings['window_state'] = bytes(self.saveGeometry().toBase64()).decode("ascii")
+            self.global_settings.pop('window_geometry', None)
+            self.config_manager.update_global_settings(self.global_settings)
+        except Exception as e:
+            logging.exception(f"Error saving window geometry: {e}")
 
     def closeEvent(self, event):
         """Cleanup all resources before closing the application."""
@@ -79,23 +112,12 @@ class SessionManagerMixin:
                         logging.exception(f"Error stopping timer '{timer_name}': {e}")
 
             # Save geometry/user settings early in shutdown.
-            try:
-                self.global_settings['window_geometry'] = f"{self.x()},{self.y()},{self.width()},{self.height()}"
-                self.config_manager.update_global_settings(self.global_settings)
-            except Exception as e:
-                logging.exception(f"Error saving window geometry: {e}")
+            self.save_window_geometry()
 
-            # Log user logout event.
-            if getattr(self, "user_data", None):
-                try:
-                    if hasattr(self, "_is_sqlite_fallback_mode") and not self._is_sqlite_fallback_mode():
-                        from ...core.domain.central_attendance import CentralAttendance
-                        att = CentralAttendance()
-                        logout_user = self.user_data.get('user_id', self.user_data.get('username'))
-                        if logout_user:
-                            att.log_action(logout_user, 'out')
-                except Exception as e:
-                    logging.debug(f"Attendance logout failed: {e}")
+            # Closing Slate or signing out never punches anybody out (studio
+            # decision). It used to: somebody restarting Slate at lunch was
+            # punched out at 13:00. A forgotten punch-out is closed by the
+            # end-of-day auto-logout instead.
             
             # Cleanup all tabs that have cleanup_resources method
             if hasattr(self, 'content_stack'):

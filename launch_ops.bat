@@ -1,4 +1,6 @@
 @echo off
+REM Run from this folder, whatever "Start in" a shortcut gives.
+cd /d "%~dp0"
 REM One Python for every launcher, looked for in this order:
 REM   1. runtime\python        - what setup.bat installs, inside this checkout
 REM   2. ..\python_portable    - the shared environment beside the checkout

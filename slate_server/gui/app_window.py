@@ -164,6 +164,33 @@ class DBWorker(QThread):
         except Exception as e:
             self.finished.emit(False, str(e))
 
+# What a click on an Analytics card shows - on the columns these tables really
+# have (they asked for id/status/created_at and type/name, which do not exist,
+# so both cards always failed).
+STAT_QUERIES = {
+    "projects": "SELECT code, name, active, last_updated FROM tracking_projects "
+                "ORDER BY last_updated DESC LIMIT 100",
+    "assets": "SELECT file_name, file_type, tags FROM stock_library ORDER BY file_name LIMIT 100",
+}
+
+
+class StageUpdateWorker(QThread):
+    """SidecarEngine.stage_update() off the UI thread."""
+    done = Signal(bool)
+
+    def __init__(self, engine):
+        super().__init__()
+        self.engine = engine
+
+    def run(self):
+        try:
+            ok = bool(self.engine.stage_update())
+        except Exception as exc:
+            logging.warning("Staging the update failed: %s", exc)
+            ok = False
+        self.done.emit(ok)
+
+
 class UTServerWindow(QMainWindow):
     """
     Main Application Window for Slate Central Server.
@@ -214,6 +241,8 @@ class UTServerWindow(QMainWindow):
         # PostgreSQL's own limit. With the pool in front of it this rarely needs
         # raising, but it was not visible or editable anywhere at all.
         cfg_max_conn = 100
+        # The web API's port (it was 8000 in the code).
+        self._api_port = 8000
 
         if os.path.exists(self.config_path):
             try:
@@ -223,6 +252,7 @@ class UTServerWindow(QMainWindow):
                     port = cfg.get("port", port)
                     pooler_port = cfg.get("pooler_port", pooler_port)
                     cfg_max_conn = cfg.get("max_connections", cfg_max_conn)
+                    self._api_port = int(cfg.get("api_port", self._api_port) or 8000)
             except Exception:
                 pass
 
@@ -301,7 +331,6 @@ class UTServerWindow(QMainWindow):
 
         # Connect Signals
         self.dashboard.toggle_power.stateChanged.connect(self._on_power_toggled)
-        self.dashboard.btn_force_kill.clicked.connect(self._on_force_kill)
         self.dashboard.btn_restart_pool.clicked.connect(self._on_restart_pool)
         self.settings_view.btn_save.clicked.connect(self._on_save_settings)
         self.settings_view.btn_firewall.clicked.connect(self._on_allow_firewall)
@@ -331,6 +360,11 @@ class UTServerWindow(QMainWindow):
         self.operations_view.diagnostics_requested.connect(self._on_diagnostics)
         self.operations_view.open_log_requested.connect(self._on_open_log)
         self.operations_view.clear_log_requested.connect(self._on_trim_log)
+        # Force kill lives in the Operations danger zone, not beside routine
+        # buttons on the Dashboard.
+        self.operations_view.force_kill_requested.connect(self._on_force_kill)
+        self.settings_view.input_api_port.setText(str(self.api_port()))
+        self.dashboard.btn_api_dashboard.setToolTip("Opens %s" % self.dashboard_url())
 
         # Setup Analytics Polling
         self.poll_timer = QTimer(self)
@@ -723,6 +757,7 @@ class UTServerWindow(QMainWindow):
         self.btn_nav_dash.setStyleSheet(active_style if index == 0 else inactive_style)
         self.btn_nav_settings.setStyleSheet(active_style if index == 1 else inactive_style)
         self.btn_nav_analytics.setStyleSheet(active_style if index == 2 else inactive_style)
+        self.btn_nav_operations.setStyleSheet(active_style if index == 3 else inactive_style)
 
     def _on_save_settings(self):
         """
@@ -789,11 +824,16 @@ class UTServerWindow(QMainWindow):
                 except (OSError, ValueError):
                     existing = {}
 
+            try:
+                new_api_port = int(view.input_api_port.text().strip() or 8000)
+            except ValueError:
+                new_api_port = self.api_port()
             existing.update({
                 "db_path": new_path,
                 "port": new_port,
                 "pooler_port": new_pooler,
                 "max_connections": new_max_conn,
+                "api_port": new_api_port,
             })
             with open(self.config_path, "w") as f:
                 json.dump(existing, f, indent=4)
@@ -821,20 +861,44 @@ class UTServerWindow(QMainWindow):
             except Exception as exc:
                 self._log("> Could not write the client settings: %s" % exc)
 
-            self._db_port = new_port
-            self._db_pooler_port = new_pooler
-
-            try:
-                self.db_engine = self._build_engine(new_path, new_port, new_pooler)
-                self.dashboard.status_badge.set_status("Settings Saved", "ok")
-                self.switch_view(0)
-                self._log("> Configuration saved to %s" % self.config_path)
-                self._log("> Restart the server to apply the database path and ports.")
-                self.settings_view.lbl_config_source.setText(str(self.config_path))
-            except Exception as e:
-                self._log(f"CRITICAL ERROR initializing engine: {e}")
+            running = self.server_running()
+            self.settings_view.lbl_config_source.setText(str(self.config_path))
+            self._log("> Configuration saved to %s" % self.config_path)
+            if running:
+                # The running engine is kept: replacing it while it ran left
+                # the old one serving with nothing able to stop it. The new
+                # path and ports apply when the server is next started.
+                self._pending_settings = (new_path, new_port, new_pooler, new_api_port)
+                self._log("> Saved. Restart the server (power off and on) to use the new path and ports.")
+                self._settings_saved_note("Saved - restart the server to apply")
+            else:
+                self._db_port = new_port
+                self._db_pooler_port = new_pooler
+                self._api_port = new_api_port
+                try:
+                    self.db_engine = self._build_engine(new_path, new_port, new_pooler)
+                    self._settings_saved_note("Saved")
+                except Exception as e:
+                    self._log(f"CRITICAL ERROR initializing engine: {e}")
         except Exception as e:
             self._log(f"Failed to save settings: {e}")
+
+    def server_running(self) -> bool:
+        """The database is up (the power switch is on)."""
+        try:
+            return bool(self.dashboard.toggle_power.isChecked())
+        except (AttributeError, RuntimeError):
+            return False
+
+    def _settings_saved_note(self, text):
+        """Save feedback on the Settings screen - never in the Online/Offline badge."""
+        label = getattr(self.settings_view, "lbl_update_status", None)
+        note = getattr(self.settings_view, "lbl_save_note", None) or label
+        try:
+            if note is not None:
+                note.setText(text)
+        except RuntimeError:
+            pass
 
     def _build_engine(self, db_path, port, pooler_port, allow_create=False):
         """The engine and its pool, built the one way, for the one path."""
@@ -987,10 +1051,10 @@ class UTServerWindow(QMainWindow):
                 # The web API, in this process. It used to be a second Python
                 # found relative to the source tree, which an installed build
                 # does not have - so no installed server ever started it.
-                self._log("> Starting the web API on port 8000...")
+                self._log("> Starting the web API on port %d..." % self.api_port())
                 try:
                     from slate_server.core.api_server import ApiServer
-                    self.api_server = ApiServer(port=8000)
+                    self.api_server = ApiServer(port=self.api_port())
                     if self.api_server.start() and self.api_server.wait_until_ready(10):
                         self._log("> Web API is running.")
                         self.dashboard.btn_api_dashboard.setEnabled(True)
@@ -1032,8 +1096,14 @@ class UTServerWindow(QMainWindow):
             self.dashboard.toggle_power.setChecked(not state)
             self.dashboard.toggle_power.blockSignals(False)
 
+    def api_port(self) -> int:
+        return int(getattr(self, "_api_port", 8000) or 8000)
+
+    def dashboard_url(self) -> str:
+        return "http://localhost:%d/admin" % self.api_port()
+
     def _on_open_dashboard(self):
-        webbrowser.open("http://localhost:8000/admin")
+        webbrowser.open(self.dashboard_url())
 
     def _on_restart_pool(self):
         """
@@ -1096,9 +1166,27 @@ class UTServerWindow(QMainWindow):
         except Exception as exc:
             logging.debug("Could not refresh the cluster cards: %s", exc)
 
-    def _on_allow_firewall(self):
-        self._log("> Prompting for Administrator privileges to open Firewall...")
+    FIREWALL_RULE = "Slate Central Server (Database)"
+
+    @classmethod
+    def firewall_rule_exists(cls, run=None) -> bool:
+        """Whether Windows has the database rule (netsh), so we never claim it blindly."""
         import subprocess
+        run = run or subprocess.run
+        try:
+            result = run(["netsh", "advfirewall", "firewall", "show", "rule",
+                          "name=%s" % cls.FIREWALL_RULE],
+                         capture_output=True, text=True,
+                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except Exception as exc:
+            logging.debug("Firewall check failed: %s", exc)
+            return False
+        return result.returncode == 0 and cls.FIREWALL_RULE in (result.stdout or "")
+
+    def _on_allow_firewall(self, run=None):
+        self._log("> Asking Windows for administrator rights to open the firewall...")
+        import subprocess
+        run = run or subprocess.run
         try:
             port = self.settings_view.input_port.text()
             # The pool's port as well. It was left out, so every workstation
@@ -1106,16 +1194,25 @@ class UTServerWindow(QMainWindow):
             # silently dropping, and then connected to the database directly -
             # four times per start-up, twenty seconds before the login screen.
             pooler_port = self.settings_view.input_pooler_port.text() or "6432"
-            cmd = (f"Start-Process cmd -ArgumentList '/c "
-                   f"netsh advfirewall firewall add rule name=\"Slate Central Server (Database)\" dir=in action=allow protocol=TCP localport={port} & "
+            # -Wait: the check below must run after the rules are added, not
+            # while the administrator prompt is still open.
+            cmd = (f"Start-Process cmd -Wait -ArgumentList '/c "
+                   f"netsh advfirewall firewall add rule name=\"{self.FIREWALL_RULE}\" dir=in action=allow protocol=TCP localport={port} & "
                    f"netsh advfirewall firewall add rule name=\"Slate Central Server (Pool)\" dir=in action=allow protocol=TCP localport={pooler_port} & "
                    f"netsh advfirewall firewall add rule name=\"Slate Central Server (Discovery)\" dir=in action=allow protocol=UDP localport=54320' "
                    f"-Verb RunAs -WindowStyle Hidden")
-            subprocess.run(["powershell", "-Command", cmd], creationflags=subprocess.CREATE_NO_WINDOW)
-            self._log("> Firewall exception requested. If accepted, connections are allowed.")
-            self.dashboard.status_badge.set_status("Firewall Allowed", "ok")
+            run(["powershell", "-Command", cmd], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except Exception as e:
-            self._log(f"Failed to open firewall: {e}")
+            self._log(f"Could not ask Windows to open the firewall: {e}")
+        # Said only when Windows has the rule: refusing the prompt used to
+        # show "Firewall Allowed" all the same.
+        if self.firewall_rule_exists(run):
+            self._log("> Firewall rules are in place; workstations can connect.")
+            self._settings_saved_note("Firewall allowed")
+            return True
+        self._log("> The firewall was not changed (the request was refused or failed).")
+        self._settings_saved_note("Firewall not changed")
+        return False
 
     def _on_force_kill(self):
         """
@@ -1202,6 +1299,7 @@ class UTServerWindow(QMainWindow):
                 # 3. Connected IPs List
                 cur.execute("SELECT client_addr, application_name, state, query FROM pg_stat_activity WHERE client_addr IS NOT NULL ORDER BY state ASC LIMIT 50")
                 clients = cur.fetchall()
+                self._client_count = len({c[0] for c in clients if c and c[0]})
 
                 # 4. Total Projects
                 cur.execute("SELECT count(*) FROM tracking_projects")
@@ -1282,9 +1380,9 @@ class UTServerWindow(QMainWindow):
 
         query = ""
         if "Projects" in title:
-            query = "SELECT id, name, status, created_at FROM tracking_projects ORDER BY created_at DESC LIMIT 100"
+            query = STAT_QUERIES["projects"]
         elif "Assets" in title:
-            query = "SELECT id, type, name, tags FROM stock_library LIMIT 100"
+            query = STAT_QUERIES["assets"]
         elif "Active" in title or "Connections" in title:
             query = "SELECT client_addr, application_name, state, query_start FROM pg_stat_activity WHERE client_addr IS NOT NULL"
 
@@ -1294,11 +1392,86 @@ class UTServerWindow(QMainWindow):
 
     def _log(self, message):
         print(f"[Slate Server] {message}")
-        current = self.dashboard.lbl_logs.text()
-        self.dashboard.lbl_logs.setText(f"{current}\n{message}")
+        dashboard = getattr(self, "dashboard", None)
+        if dashboard is not None and hasattr(dashboard, "append_log"):
+            dashboard.append_log(message)
+
+    def ask_before_closing(self) -> str:
+        """
+        'stop', 'tray' or 'cancel'. One click on X used to stop the studio
+        database with no question, taking every workstation offline.
+        """
+        count = int(getattr(self, "_client_count", 0) or 0)
+        if count == 1:
+            who = "1 workstation is connected"
+        elif count:
+            who = "%d workstations are connected" % count
+        else:
+            who = "Workstations may be connected"
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Close Slate Server")
+        box.setText("Stop the studio database?")
+        box.setInformativeText(
+            "%s. Stopping the server takes every workstation offline.\n\n"
+            "Keep it running in the tray to close this window only." % who)
+        tray = box.addButton("Keep running in the tray", QMessageBox.ButtonRole.AcceptRole)
+        stop = box.addButton("Stop server", QMessageBox.ButtonRole.DestructiveRole)
+        cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(tray)
+        box.setEscapeButton(cancel)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is stop:
+            return "stop"
+        if clicked is tray:
+            return "tray"
+        return "cancel"
+
+    def _tray(self):
+        """The tray icon that keeps a running server reachable with its window closed."""
+        from PySide6.QtWidgets import QSystemTrayIcon, QMenu
+        tray = getattr(self, "tray_icon", None)
+        if tray is None:
+            tray = QSystemTrayIcon(self.windowIcon(), self)
+            tray.setToolTip("Slate Server - the studio database is running")
+            menu = QMenu(self)
+            menu.addAction("Show Slate Server", self._show_from_tray)
+            menu.addSeparator()
+            menu.addAction("Stop server and quit", self._quit_from_tray)
+            tray.setContextMenu(menu)
+            tray.activated.connect(lambda _reason: self._show_from_tray())
+            self.tray_icon = tray
+        return tray
+
+    def _show_from_tray(self):
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _quit_from_tray(self):
+        self._closing_confirmed = True
+        self.close()
+        QApplication.quit()
 
     def closeEvent(self, event):
-        """Ensure database is gracefully stopped when the application closes."""
+        """Stop the database only when the person means it (or keep it in the tray)."""
+        if self.server_running() and not getattr(self, "_closing_confirmed", False):
+            answer = self.ask_before_closing()
+            if answer == "cancel":
+                event.ignore()
+                return
+            if answer == "tray":
+                tray = self._tray()
+                tray.show()
+                app = QApplication.instance()
+                if app is not None:
+                    app.setQuitOnLastWindowClosed(False)
+                self._save_window_geometry()
+                self.hide()
+                event.ignore()
+                self._log("> Window closed; the server keeps running in the tray.")
+                return
         self._save_window_geometry()
         try:
             self._log("> Shutting down database engine...")
@@ -1356,26 +1529,32 @@ class UTServerWindow(QMainWindow):
             self._stage_update(manifest)
 
     def _stage_update(self, manifest):
+        """
+        Download and verify the update on a worker thread - it ran on the UI
+        thread, and the window froze for the whole download.
+        """
         from slate.core.updater.sidecar_engine import SidecarEngine
 
         self.settings_view.btn_check_update.setEnabled(False)
-        self.settings_view.btn_check_update.setText("Downloading...")
-        self.settings_view.lbl_update_status.setText("Staging update in background...")
+        self.settings_view.btn_check_update.setText("Downloading\u2026")
+        self.settings_view.lbl_update_status.setText("Downloading the update in the background\u2026")
         self.sidecar_engine = SidecarEngine(manifest)
+        self._stage_worker = StageUpdateWorker(self.sidecar_engine)
+        self._stage_worker.done.connect(self._on_update_staged)
+        self._stage_worker.start()
+        return self._stage_worker
 
-        QApplication.processEvents()
-        success = self.sidecar_engine.stage_update()
+    def _on_update_staged(self, success):
         self.settings_view.btn_check_update.setEnabled(True)
-
         if success:
             self.settings_view.btn_check_update.setText("Restart to Apply")
-            self.settings_view.btn_check_update.setStyleSheet("background-color: #1B3A2C; color: white;")
-            self.settings_view.lbl_update_status.setText("Update staged. Click to restart.")
-            QMessageBox.information(self, "Update Ready", "Update downloaded and verified. Click 'Restart to Apply'.")
+            self.settings_view.lbl_update_status.setText("Update downloaded and checked. Restart to apply it.")
+            QMessageBox.information(self, "Update ready", "The update is downloaded and checked. Choose 'Restart to Apply'.")
         else:
             self.settings_view.btn_check_update.setText("Check for Updates")
-            self.settings_view.lbl_update_status.setText("Failed to stage the update.")
-            QMessageBox.warning(self, "Update Failed", "Failed to stage the update. Check the logs.")
+            self.settings_view.lbl_update_status.setText("The update could not be downloaded.")
+            QMessageBox.warning(self, "Update not downloaded",
+                                "The update could not be downloaded or checked. The server log says why.")
 
     def _apply_staged_update(self):
         if not self.sidecar_engine:
@@ -1395,10 +1574,21 @@ class UTServerWindow(QMainWindow):
         if self.update_checker:
             reason = str(getattr(self.update_checker, "last_result_reason", "") or "")
 
-        if reason in ["missing_latest_pointer", "manifest_missing"]:
-            QMessageBox.information(self, "Update Feed Missing", "No update manifest was found for the server.")
-        elif reason == "invalid_manifest":
-            QMessageBox.information(self, "Update Feed Invalid", "The update manifest exists but is invalid.")
-        else:
-            QMessageBox.information(self, "Up to Date", f"Server is running the latest version: {current_ver}")
-        self.settings_view.lbl_update_status.setText(f"Up to date: v{current_ver}")
+        message, status = self.update_result_text(reason, current_ver)
+        QMessageBox.information(self, "Check for updates", message)
+        self.settings_view.lbl_update_status.setText(status)
+
+    @staticmethod
+    def update_result_text(reason: str, current_ver) -> tuple:
+        """(message, status line) for a check that found no update - or failed."""
+        reason = str(reason or "")
+        if reason in ("missing_latest_pointer", "manifest_missing"):
+            return ("No update information was found for the server.", "Could not check for updates")
+        if reason == "invalid_manifest":
+            return ("The update information is damaged, so no update can be offered.",
+                    "Could not check for updates")
+        if reason in ("", "up_to_date", "no_update", "current", "latest"):
+            return (f"The server is up to date (version {current_ver}).", f"Up to date: v{current_ver}")
+        # 'error' and anything else is a failed check, not "latest version".
+        return ("Could not check for updates. Check the network and the update "
+                "folder, then try again.", "Could not check for updates")

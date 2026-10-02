@@ -44,6 +44,46 @@ class QuickSearchControllerMixin:
         return None
 
     @staticmethod
+    def _word_start_score(query: str, text: str) -> Optional[int]:
+        """
+        Every word of the query starts a word of the text ("cache" -> "Clear
+        cache"). Lower is better; None when it does not match that way.
+        """
+        q_words = re.sub(r"[_\-]+", " ", str(query or "").lower()).split()
+        t_words = re.sub(r"[_\-&/()]+", " ", str(text or "").lower()).split()
+        if not q_words:
+            return 0
+        score = 0
+        for q in q_words:
+            hit = next((i for i, w in enumerate(t_words) if w.startswith(q)), None)
+            if hit is None:
+                return None
+            score += hit
+        return score
+
+    @classmethod
+    def match_rows(cls, query: str, rows):
+        """
+        The rows that match, best first. Words that start a word in the label
+        or keywords win; letters scattered through a label ("head" in "Admin
+        Panel") count only when nothing matches properly.
+        """
+        q = str(query or "").strip().lower()
+        if not q:
+            return [(0, row) for row in rows]
+        strong, weak = [], []
+        for row in rows:
+            haystack = f"{row.get('label', '')} {row.get('keywords', '')}"
+            score = cls._word_start_score(q, haystack)
+            if score is not None:
+                strong.append((score, row))
+                continue
+            score = cls._fuzzy_score(q, row.get("label", ""))
+            if score is not None:
+                weak.append((score + 100, row))
+        return strong if strong else weak
+
+    @staticmethod
     def _extract_shot_query(text: str) -> str:
         """Extract normalized shot query token from omnibar text."""
         raw = str(text or "").strip()
@@ -133,7 +173,7 @@ class QuickSearchControllerMixin:
         if kind == "action":
             return f"a:{payload.get('label', '')}"
         if kind == "tab":
-            return f"t:{payload.get('tab_index', '')}"
+            return f"t:{payload.get('tab_label') or payload.get('tab_index', '')}"
         if kind == "shot":
             return f"s:{payload.get('shot_query', '')}"
         return f"x:{payload.get('label', '')}"
@@ -149,9 +189,11 @@ class QuickSearchControllerMixin:
             "label": str(payload.get("label", "")).strip(),
         }
         if kind == "tab":
-            tab_index = payload.get("tab_index")
-            if isinstance(tab_index, int):
-                clean["tab_index"] = tab_index
+            # By name: row numbers differ between the VFX, Operations and full
+            # windows and between roles, so a remembered row opened another tab.
+            label = str(payload.get("tab_label", "")).strip()
+            if label:
+                clean["tab_label"] = label
         if kind == "shot":
             clean["shot_query"] = str(payload.get("shot_query", "")).strip()
         return clean
@@ -169,9 +211,12 @@ class QuickSearchControllerMixin:
                     if any(token in label for token in ("â", "ðŸ", "Ã", "�")):
                         continue
                     if clean.get("kind") == "tab":
-                        tab_index = clean.get("tab_index")
-                        if isinstance(tab_index, int) and 0 <= tab_index < len(self.tab_coordinator.tab_labels):
-                            clean["label"] = f"Go to Tab: {self.tab_coordinator.tab_labels[tab_index]}"
+                        tab_label = clean.get("tab_label")
+                        # Old entries kept only a row number; a screen this
+                        # person does not have here is left out.
+                        if not tab_label or tab_label not in self._palette_tab_labels():
+                            continue
+                        clean["label"] = f"Go to {tab_label}"
                     if clean.get("label"):
                         cleaned_entries.append(clean)
                 self._omnibar_recent_entries = cleaned_entries
@@ -221,6 +266,81 @@ class QuickSearchControllerMixin:
         shots.insert(0, clean)
         setattr(self, "_omnibar_recent_shots", shots[:max(1, int(limit))])
         self._save_omnibar_state()
+
+    def _palette_tab_labels(self) -> List[str]:
+        """The screens this person has, in sidebar order - never a heading."""
+        tc = getattr(self, "tab_coordinator", None)
+        if tc is None:
+            return []
+        labels = []
+        for entry in tc.nav_items:
+            label = str(entry.get("label") or "").strip()
+            if not label or label.startswith("__HEADER__") or not entry.get("permitted", True):
+                continue
+            if label not in labels:
+                labels.append(label)
+        return labels
+
+    def palette_commands(self) -> List[Dict[str, Any]]:
+        """
+        The palette's commands and screens for this person.
+
+        A command for a screen is offered only when that screen is here for
+        them (an artist was offered Timeline Viewer commands that then said
+        "not available"); the maintenance sweep only to people with the Admin
+        Panel. Each command has its own keywords - they all shared "command
+        maintenance cache diagnostics", so "cache" listed every command.
+        """
+        tabs = self._palette_tab_labels()
+        allowed = list(getattr(self, "allowed_tabs", []) or [])
+        is_dev = str(getattr(self, "user_role", "") or "").strip().lower() == "developer"
+        maintenance = is_dev or "ALL" in allowed or "Admin Panel" in allowed
+
+        actions = [
+            ("Diagnostics (Ctrl+Shift+D)", self.show_runtime_diagnostics,
+             "diagnostics version database support it", None),
+            ("Refresh this screen (F5)", self.refresh_current_tab, "refresh reload update", None),
+            ("Open Settings (Ctrl+Shift+S)", self.show_settings_tab, "settings preferences options", "Settings"),
+            ("Open VFX Dashboard", lambda: self._open_named_tab("VFX Dashboard"),
+             "dashboard shots tracking", "VFX Dashboard"),
+            ("Open Timeline Viewer", lambda: self._open_named_tab("Timeline Viewer"),
+             "timeline lineup olive edit", "Timeline Viewer"),
+            ("Open Stock Viewer", lambda: self._open_named_tab("Stock Viewer"),
+             "stock library assets", "Stock Viewer"),
+            ("Open Help (F1)", self.show_help_dialog, "help manual documentation", None),
+            ("Keyboard shortcuts", getattr(self, "show_shortcuts", None), "keys shortcuts keyboard", None),
+            ("Rebuild Timeline from Dashboard", self._rebuild_timeline_from_dashboard,
+             "timeline rebuild lineup olive", "Timeline Viewer"),
+            ("Refresh Stock Viewer", self._refresh_stock_viewer, "stock rescan library refresh", "Stock Viewer"),
+            ("Full screen (F11)", self.toggle_fullscreen, "fullscreen window maximise", None),
+            ("Clear temporary files (maintenance)", self._run_quick_temp_cleanup,
+             "maintenance cache temp clean sweep", "__maintenance__"),
+        ]
+        rows = []
+        for label, callback, keywords, needs in actions:
+            if not callable(callback):
+                continue
+            if needs == "__maintenance__":
+                if not maintenance:
+                    continue
+            elif needs and needs not in tabs:
+                continue
+            rows.append({"kind": "action", "label": label, "keywords": keywords, "callback": callback})
+        for label in tabs:
+            rows.append({"kind": "tab", "label": f"Go to {label}",
+                         "keywords": f"go open {label}", "tab_label": label})
+        return rows
+
+    def _go_to_tab(self, label: str) -> bool:
+        """Open a screen by name, unfolding its sidebar group first."""
+        tc = self.tab_coordinator
+        for entry in tc.nav_items:
+            if entry.get("label") == label and entry.get("item") is not None:
+                row = tc.sidebar_nav.row(entry["item"])
+                tc._reveal_row(row)
+                self.switch_to_tab_index(row)
+                return True
+        return False
 
     def show_quick_search(self):
         """Show global quick search / command palette."""
@@ -279,37 +399,42 @@ class QuickSearchControllerMixin:
                     self._anim.setEndValue(0.0)
                     self._anim.start()
     
-                # Base background
-                bg_color = QColor(Gate.ACCENT_SURFACE) # Matching omnibarResults bg
-                
-                if is_selected:
-                    bg_color = QColor(Gate.ACCENT_SURFACE)
-                elif self._hover_index == index.row() or (not is_hovered and self._hover_alpha > 0 and self._hover_index == -1):
-                    # Blend hover color
-                    alpha = self._hover_alpha if self._hover_index == index.row() else 0.0
-                    if alpha > 0:
-                        hover_base = QColor(Gate.ACCENT_SURFACE)
-                        r = bg_color.red() + (hover_base.red() - bg_color.red()) * alpha
-                        g = bg_color.green() + (hover_base.green() - bg_color.green()) * alpha
-                        b = bg_color.blue() + (hover_base.blue() - bg_color.blue()) * alpha
-                        bg_color = QColor(int(r), int(g), int(b))
-                
+                # The selected row has a fill of its own and an accent bar:
+                # selection, hover and the panel were one colour, so arrow
+                # keys moved an invisible cursor.
+                bg_color = QColor(Gate.PANEL)
+                payload_here = index.data(Qt.ItemDataRole.UserRole)
+                if is_selected and payload_here:
+                    bg_color = QColor(Gate.SELECTION)
+                elif self._hover_index == index.row() and payload_here:
+                    hover = QColor(Gate.mix(Gate.PANEL, Gate.TEXT, 0.08))
+                    alpha = max(0.0, min(1.0, self._hover_alpha))
+                    bg_color = QColor(
+                        int(bg_color.red() + (hover.red() - bg_color.red()) * alpha),
+                        int(bg_color.green() + (hover.green() - bg_color.green()) * alpha),
+                        int(bg_color.blue() + (hover.blue() - bg_color.blue()) * alpha))
+
                 painter.setBrush(bg_color)
                 painter.setPen(Qt.NoPen)
                 painter.drawRoundedRect(option.rect.adjusted(2, 2, -2, -2), 6, 6)
+                if is_selected and payload_here:
+                    painter.setBrush(QColor(Gate.ACCENT))
+                    bar = option.rect.adjusted(2, 6, 0, -6)
+                    bar.setWidth(3)
+                    painter.drawRoundedRect(bar, 1.5, 1.5)
                 
                 # Text
                 text = index.data(Qt.ItemDataRole.DisplayRole)
                 payload = index.data(Qt.ItemDataRole.UserRole)
                 if not payload: # Section header
-                    painter.setPen(QColor(Gate.INFO))
+                    painter.setPen(QColor(Gate.TEXT_DIM))
                     font = painter.font()
                     font.setBold(True)
                     font.setPointSize(9)
                     painter.setFont(font)
                     painter.drawText(option.rect.adjusted(10, 0, -10, 0), Qt.AlignmentFlag.AlignVCenter, text)
                 else:
-                    painter.setPen(QColor(Gate.ACCENT) if is_selected else QColor(Gate.INFO))
+                    painter.setPen(QColor(Gate.TEXT) if is_selected else QColor(Gate.TEXT_2))
                     painter.drawText(option.rect.adjusted(12, 0, -12, 0), Qt.AlignmentFlag.AlignVCenter, text)
                 
                 painter.restore()
@@ -325,7 +450,11 @@ class QuickSearchControllerMixin:
         dialog.setMinimumSize(760, 520)
         dialog.setModal(True)
         dialog.setWindowFlag(Qt.WindowContextHelpButtonHint, False)
-    
+        # The rounded panel and its shadow margin are drawn on nothing: without
+        # this the corners and margin were painted as an opaque square.
+        dialog.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self._palette_dialog = dialog
+        
         outer_layout = QVBoxLayout(dialog)
         outer_layout.setContentsMargins(20, 20, 20, 20)
         outer_layout.setSpacing(0)
@@ -344,13 +473,13 @@ class QuickSearchControllerMixin:
     
         outer_layout.addWidget(panel)
     
-        header = QLabel("Command Palette")
+        header = QLabel("Search or jump to")
         header.setObjectName("omnibarHeader")
         panel_layout.addWidget(header)
     
         search_input = QLineEdit()
         search_input.setObjectName("omnibarInput")
-        search_input.setPlaceholderText("Type command, tab name, or 'shot 042'...")
+        search_input.setPlaceholderText("Search commands, screens or shots (e.g. shot 042)\u2026")
         panel_layout.addWidget(search_input)
     
         results_list = QListWidget()
@@ -361,21 +490,21 @@ class QuickSearchControllerMixin:
         dialog.setStyleSheet(
             f"""
             QDialog {{
-                background: rgba(0, 0, 0, 0);
+                background: transparent;
             }}
             QFrame#omnibarPanel {{
-                background-color: {Gate.ACCENT_SURFACE};
-                border: 1px solid {Gate.ACCENT_SURFACE};
+                background-color: {Gate.PANEL};
+                border: 1px solid {Gate.LINE};
                 border-radius: 12px;
             }}
             QLabel#omnibarHeader {{
-                color: {Gate.INFO};
+                color: {Gate.TEXT_2};
                 font-size: 12pt;
                 font-weight: 600;
             }}
             QLineEdit#omnibarInput {{
-                background-color: {Gate.ACCENT_SURFACE};
-                color: {Gate.INFO};
+                background-color: {Gate.INPUT};
+                color: {Gate.TEXT};
                 border: 1px solid {Gate.LINE};
                 border-radius: 8px;
                 padding: 8px 10px;
@@ -385,9 +514,9 @@ class QuickSearchControllerMixin:
                 border: 1px solid {Gate.ACCENT};
             }}
             QListWidget#omnibarResults {{
-                background-color: {Gate.ACCENT_SURFACE};
-                color: {Gate.INFO};
-                border: 1px solid {Gate.ACCENT_SURFACE};
+                background-color: {Gate.PANEL};
+                color: {Gate.TEXT_2};
+                border: none;
                 border-radius: 8px;
                 padding: 4px;
                 font-size: 10.5pt;
@@ -397,60 +526,20 @@ class QuickSearchControllerMixin:
                 border-radius: 6px;
             }}
             QListWidget#omnibarResults::item:selected {{
-                background-color: {Gate.ACCENT_SURFACE};
-                color: {Gate.ACCENT};
+                background-color: {Gate.SELECTION};
+                color: {Gate.TEXT};
             }}
             """
         )
     
-        action_items: List[Tuple[str, Callable[[], None]]] = [
-            ("Runtime Diagnostics (Ctrl+Shift+D)", self.show_runtime_diagnostics),
-            ("Refresh Current Tab (F5 / Ctrl+R)", self.refresh_current_tab),
-            ("Open Settings (Ctrl+Shift+S)", self.show_settings_tab),
-            ("Open VFX Dashboard", lambda: self._open_named_tab("VFX Dashboard")),
-            ("Open Timeline Viewer", lambda: self._open_named_tab("Timeline Viewer")),
-            ("Open Stock Viewer", lambda: self._open_named_tab("Stock Viewer")),
-            ("Open Help (F1)", self.show_help_dialog),
-            ("Rebuild Timeline from Dashboard", self._rebuild_timeline_from_dashboard),
-            ("Refresh Stock Viewer", self._refresh_stock_viewer),
-            ("Toggle Fullscreen (F11)", self.toggle_fullscreen),
+        command_rows: List[Dict[str, Any]] = self.palette_commands()
+        action_lookup = {row["label"]: row["callback"] for row in command_rows if row["kind"] == "action"}
 
-            ("Run Maintenance Sweep", self._run_quick_temp_cleanup),
-        ]
-        action_lookup = {label: callback for label, callback in action_items}
-    
-        command_rows: List[Dict[str, Any]] = []
-        for label, callback in action_items:
-            command_rows.append(
-                {
-                    "kind": "action",
-                    "label": label,
-                    "keywords": f"action {label} command maintenance cache diagnostics",
-                    "callback": callback,
-                }
-            )
-    
-        for i, label in enumerate(self.tab_coordinator.tab_labels):
-            item = self.sidebar_nav.item(i)
-            if not item or item.isHidden():
-                continue
-            clean_label = str(label).strip()
-            visible_text = item.text().strip()
-            command_rows.append(
-                {
-                    "kind": "tab",
-                    "label": f"Go to Tab: {clean_label}",
-                    "keywords": f"tab goto switch open {clean_label} {visible_text}",
-                    "tab_index": i,
-                }
-            )
-    
         def add_section(title: str):
             section_item = QListWidgetItem(title)
             section_item.setFlags(Qt.NoItemFlags)
             section_item.setData(Qt.ItemDataRole.UserRole, None)
-            section_item.setForeground(QColor(Gate.INFO))
-            section_item.setBackground(QColor(Gate.ACCENT_SURFACE))
+            section_item.setForeground(QColor(Gate.TEXT_DIM))
             results_list.addItem(section_item)
     
         def accept_current_item():
@@ -469,9 +558,9 @@ class QuickSearchControllerMixin:
                 dialog.accept()
                 return
             if kind == "tab":
-                idx = payload.get("tab_index")
-                if isinstance(idx, int):
-                    self.switch_to_tab_index(idx)
+                label = payload.get("tab_label")
+                if label:
+                    self._go_to_tab(label)
                 self._remember_omnibar_entry(payload)
                 dialog.accept()
                 return
@@ -511,7 +600,7 @@ class QuickSearchControllerMixin:
     
             kind = str(payload.get("kind", "")).strip().lower()
             if kind == "tab":
-                text = str(payload.get("label", "")).replace("Go to Tab: ", "", 1).strip()
+                text = str(payload.get("tab_label") or payload.get("label", "")).strip()
             elif kind == "shot":
                 text = str(payload.get("shot_query", "")).strip()
             else:
@@ -529,10 +618,7 @@ class QuickSearchControllerMixin:
             ranked_tabs: List[Tuple[int, Dict[str, Any]]] = []
             ranked_shots: List[Tuple[int, Dict[str, Any]]] = []
     
-            for row in command_rows:
-                score = self._fuzzy_score(q, row.get("keywords", "")) if q else 0
-                if score is None:
-                    continue
+            for score, row in self.match_rows(q, command_rows):
                 kind = row.get("kind")
                 if kind == "action":
                     ranked_actions.append((score, row))
@@ -543,7 +629,7 @@ class QuickSearchControllerMixin:
             if shot_query:
                 shot_row = {
                     "kind": "shot",
-                    "label": f"Jump to Shot: {shot_query}",
+                    "label": f"Jump to shot {shot_query}",
                     "shot_query": shot_query,
                 }
                 shot_score = self._fuzzy_score(q, f"jump shot {shot_query}")
@@ -552,24 +638,25 @@ class QuickSearchControllerMixin:
             if not q:
                 recent_entries: List[Dict[str, Any]] = list(getattr(self, "_omnibar_recent_entries", []))
                 if recent_entries:
-                    add_section("Recent Commands")
+                    add_section("Recent")
                     for row in recent_entries[:8]:
                         safe_row = dict(row)
                         if safe_row.get("kind") == "action" and not callable(safe_row.get("callback")):
                             callback = action_lookup.get(str(safe_row.get("label", "")))
-                            if callback:
-                                safe_row["callback"] = callback
+                            if not callback:
+                                continue        # not offered to this person here
+                            safe_row["callback"] = callback
                         item = QListWidgetItem(str(safe_row.get("label", "")))
                         item.setData(Qt.ItemDataRole.UserRole, safe_row)
                         results_list.addItem(item)
     
                 recent_shots: List[str] = list(getattr(self, "_omnibar_recent_shots", []))
                 if recent_shots:
-                    add_section("Recent Shots")
+                    add_section("Recent shots")
                     for shot_name in recent_shots[:6]:
                         row = {
                             "kind": "shot",
-                            "label": f"Jump to Shot: {shot_name}",
+                            "label": f"Jump to shot {shot_name}",
                             "shot_query": shot_name,
                         }
                         item = QListWidgetItem(str(row.get("label", "")))
@@ -588,14 +675,14 @@ class QuickSearchControllerMixin:
                     results_list.addItem(item)
     
             if ranked_tabs:
-                add_section("Tabs")
+                add_section("Screens")
                 for _score, row in ranked_tabs[:36]:
                     item = QListWidgetItem(str(row.get("label", "")))
                     item.setData(Qt.ItemDataRole.UserRole, row)
                     results_list.addItem(item)
     
             if ranked_shots:
-                add_section("Shot Jump")
+                add_section("Shots")
                 for _score, row in ranked_shots[:12]:
                     item = QListWidgetItem(str(row.get("label", "")))
                     item.setData(Qt.ItemDataRole.UserRole, row)

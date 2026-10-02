@@ -11,7 +11,8 @@ from PySide6.QtWidgets import (
     QStyledItemDelegate,
 )
 from PySide6.QtCore import Qt, QSize, Signal, QObject, QRectF
-from PySide6.QtGui import QColor, QFont, QPainter
+from PySide6.QtGui import QColor, QFont, QPainter, QIcon
+import html
 import logging
 from slate.core.infra.gate import Gate
 
@@ -22,16 +23,40 @@ NAV_ROW_HEIGHT = 38
 HEADER_ROW_HEIGHT = 30
 
 
+# What a sidebar entry gets when it has no drawn icon (a plugin with a letter
+# for an icon): a blank row there threw its label out of line with the rest.
+DEFAULT_NAV_ICON = "package"
+
+
+def nav_icon(icon_name):
+    """
+    The entry's drawn icon: dim at rest, accent when selected - the selected
+    row's text turned accent while its icon stayed grey.
+    """
+    from ..core.icons import pixmap, has_icon
+    name = icon_name if icon_name and has_icon(icon_name) else DEFAULT_NAV_ICON
+    result = QIcon()
+    for size in (18, 36):
+        result.addPixmap(pixmap(name, Gate.TEXT_2, size), QIcon.Mode.Normal)
+        result.addPixmap(pixmap(name, Gate.ACCENT, size), QIcon.Mode.Selected)
+    return result
+
+
 def _apply_nav_icon(item, icon_name):
-    """Put a drawn icon on a navigation entry, if we have one for it."""
-    if not icon_name:
-        return
+    """Put a drawn icon on a navigation entry (a default one if we have none for it)."""
     try:
-        from ..core.icons import icon as draw_icon, has_icon
-        if has_icon(icon_name):
-            item.setIcon(draw_icon(icon_name))
+        item.setIcon(nav_icon(icon_name))
     except Exception as exc:
         logging.debug("Nav icon skipped for %r: %s", icon_name, exc)
+
+
+def nav_tooltip(label, description=""):
+    """
+    The entry's name in bold, then what it is for. Folded to icons, the
+    sidebar showed only the description and never said which screen it was.
+    """
+    name = f"<b>{html.escape(str(label))}</b>"
+    return f"{name}<br>{html.escape(str(description))}" if description else name
 
 
 # Where a sidebar entry keeps its unread / waiting count (see set_badge).
@@ -113,55 +138,146 @@ class NavBadgeDelegate(QStyledItemDelegate):
 
 
 class CategoryHeaderWidget(QWidget):
+    """
+    A group heading in the sidebar: a chevron that says whether the group is
+    open, the name, and a rule. Clicking it folds the group away or brings it
+    back. Folded to icons, a folded group shows a chevron and how many screens
+    it holds - it used to be a bare 1 px dash, and its screens simply vanished.
+    """
+
+    clicked = Signal()
+
     def __init__(self, label_text: str, parent=None):
         super().__init__(parent)
-        layout = QHBoxLayout(self)
-        # Remove vertical margins since QListWidgetItem already has 12px padding top/bottom
-        layout.setContentsMargins(15, 0, 15, 0)
-        layout.setSpacing(10)
-        
-        # Left line
-        self.left_line = QFrame()
-        self.left_line.setFixedHeight(1)
-        self.left_line.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.left_line.setStyleSheet(f"background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {Gate.tint(Gate.ACCENT, 0)}, stop:1 {Gate.tint(Gate.ACCENT, 0.4)});")
-        
-        # Tells you the group can be folded away, and which way it is now.
-        self.chevron = QLabel("▾")
-        self.chevron.setStyleSheet(
-            f"color: {Gate.ACCENT}; font-size: 9px; background: transparent;")
+        self.label_text = label_text
+        self.count = 0
+        self._folded = False
+        self._collapsed = False
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
-        # Text label
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 0, 12, 0)
+        layout.setSpacing(6)
+        self._layout = layout
+
+        # The chevron, drawn and big enough to see (it was a 9 px text speck
+        # that looked the same open or folded).
+        self.chevron = QLabel()
+        self.chevron.setFixedSize(14, 14)
+        self.chevron.setStyleSheet("background: transparent;")
+
         self.lbl = QLabel(label_text.upper())
-        # Use a slightly bigger font and no margins
-        self.lbl.setStyleSheet(f"color: {Gate.ACCENT}; font-size: 11px; font-weight: 900; letter-spacing: 2px; background: transparent; padding: 0px; margin: 0px;")
-        self.lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
-        # Right line
+        self.lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+        self.lbl.setMinimumWidth(0)
+
+        # The rule shrinks first, to nothing, before the name gives way.
         self.right_line = QFrame()
         self.right_line.setFixedHeight(1)
+        self.right_line.setMinimumWidth(0)
         self.right_line.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.right_line.setStyleSheet(f"background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {Gate.tint(Gate.ACCENT, 0.4)}, stop:1 {Gate.tint(Gate.ACCENT, 0)});")
-        
-        layout.addWidget(self.left_line)
-        layout.addWidget(self.lbl)
-        layout.addWidget(self.chevron)
-        layout.addWidget(self.right_line)
+        self.right_line.setStyleSheet(
+            f"background: qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+            f"stop:0 {Gate.tint(Gate.ACCENT, 0.4)}, stop:1 {Gate.tint(Gate.ACCENT, 0)});")
 
-    def set_folded(self, folded: bool):
-        self.chevron.setText("▸" if folded else "▾")
-        
-    def set_collapsed(self, collapsed: bool):
-        if collapsed:
-            self.chevron.hide()
+        # Kept for anything that reaches for it; the rule now sits on the right.
+        self.left_line = QFrame()
+        self.left_line.setFixedHeight(1)
+        self.left_line.hide()
+
+        # Folded to icons: how many screens are folded away here.
+        self.count_label = QLabel("")
+        self.count_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.count_label.setStyleSheet(
+            f"color: {Gate.TEXT_ON_ACCENT}; background: {Gate.ACCENT}; border-radius: 7px; "
+            "font-size: 10px; font-weight: 700; padding: 0 4px;")
+        self.count_label.setFixedHeight(14)
+        self.count_label.hide()
+
+        layout.addWidget(self.chevron)
+        layout.addWidget(self.lbl)
+        layout.addWidget(self.left_line)
+        layout.addWidget(self.right_line, 1)
+        layout.addWidget(self.count_label)
+        self._restyle()
+
+    def _label_sheet(self, tight: bool) -> str:
+        spacing = "0.5px" if tight else "1.5px"
+        return (f"color: {Gate.ACCENT}; font-size: 11px; font-weight: 800; letter-spacing: {spacing}; "
+                "background: transparent; padding: 0px; margin: 0px;")
+
+    def _restyle(self):
+        from ..core.icons import pixmap
+        name = "chevron-right" if self._folded else "chevron-down"
+        self.chevron.setPixmap(pixmap(name, Gate.ACCENT, 12))
+        self._fit_text()
+        if self._collapsed:
             self.lbl.hide()
-            self.left_line.setStyleSheet(f"background-color: {Gate.tint(Gate.ACCENT, 0.5)};")
             self.right_line.hide()
+            self.count_label.setText(str(self.count) if self._folded and self.count else "")
+            self.count_label.setVisible(self._folded and bool(self.count))
+            self.chevron.setVisible(self._folded)
+            self._layout.setContentsMargins(6, 0, 6, 0)
+            if not self._folded:
+                # Open: a simple rule between groups, as before.
+                self.right_line.show()
         else:
-            self.chevron.show()
             self.lbl.show()
-            self.left_line.setStyleSheet(f"background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {Gate.tint(Gate.ACCENT, 0)}, stop:1 {Gate.tint(Gate.ACCENT, 0.4)});")
             self.right_line.show()
+            self.chevron.show()
+            self.count_label.hide()
+        self._update_tooltip()
+
+    def _fit_text(self):
+        tight = 0 < self.width() < 230
+        self.lbl.setStyleSheet(self._label_sheet(tight))
+        if not self._collapsed:
+            self._layout.setContentsMargins(8 if tight else 12, 0, 8 if tight else 12, 0)
+        # The name is only shortened when it still does not fit.
+        room = self.width() - self._layout.contentsMargins().left() - self._layout.contentsMargins().right() - 24
+        text = self.label_text.upper()
+        if room > 0:
+            from PySide6.QtGui import QFontMetrics
+            self.lbl.ensurePolished()
+            text = QFontMetrics(self.lbl.font()).elidedText(text, Qt.TextElideMode.ElideRight, room)
+        self.lbl.setText(text)
+
+    def _update_tooltip(self):
+        state = "click to show them" if self._folded else "click to fold them away"
+        count = f"{self.count} screen{'s' if self.count != 1 else ''}"
+        self.setToolTip(f"{self.label_text.title()} ({count}) - {state}")
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._fit_text()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+            return
+        super().mousePressEvent(event)
+
+    def enterEvent(self, event):
+        self.setStyleSheet(f"CategoryHeaderWidget {{ background: {Gate.overlay(0.05)}; border-radius: 4px; }}")
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.setStyleSheet("")
+        super().leaveEvent(event)
+
+    def set_folded(self, folded: bool, count=None):
+        self._folded = bool(folded)
+        if count is not None:
+            self.count = int(count)
+        self._restyle()
+
+    def is_folded(self) -> bool:
+        return self._folded
+
+    def set_collapsed(self, collapsed: bool):
+        self._collapsed = bool(collapsed)
+        self._restyle()
 
 
 class TabCoordinator(QObject):
@@ -176,6 +292,7 @@ class TabCoordinator(QObject):
     """
     
     tab_switched = Signal(str)  # tab_name
+    folds_changed = Signal(list)  # labels of the folded groups, to remember
     
     def __init__(self, parent_window, sidebar_nav, content_stack):
         """
@@ -280,6 +397,7 @@ class TabCoordinator(QObject):
         item = QListWidgetItem(" " if is_collapsed else label)
         _apply_nav_icon(item, icon)
         item.setSizeHint(QSize(0, NAV_ROW_HEIGHT))
+        item.setToolTip(nav_tooltip(label, getattr(page_widget, "plugin_description", "")))
         
         if is_collapsed:
             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -292,6 +410,9 @@ class TabCoordinator(QObject):
         item.setHidden(not visible)
         
         # Store mapping
+        self.tab_factories.setdefault(label, {'factory': None, 'icon': icon,
+                                              'permission': permission_key,
+                                              'visible': visible, 'locked': False})
         self.nav_items.append({
             'page': page_widget,
             'item': item,
@@ -320,8 +441,11 @@ class TabCoordinator(QObject):
         item = QListWidgetItem("")
         item.setSizeHint(QSize(0, HEADER_ROW_HEIGHT))
         
-        # Make it non-selectable
-        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+        # Not an entry: not selectable, and "disabled" so the sidebar sheet
+        # can give it no item padding (QListWidget::item:disabled). With the
+        # entries' 12 px padding the heading had 6 px of height to draw in.
+        # The heading widget takes the clicks itself.
+        item.setFlags(Qt.ItemFlag.NoItemFlags)
         
         self.sidebar_nav.addItem(item)
         
@@ -331,6 +455,7 @@ class TabCoordinator(QObject):
         
         # Keep track of header indices
         row_index = self.sidebar_nav.count() - 1
+        widget.clicked.connect(lambda row=row_index: self.toggle_group(row))
         self.header_items.add(row_index)
         self.groups.append({
             'label': label,
@@ -421,17 +546,19 @@ class TabCoordinator(QObject):
 
     def _apply_group(self, group):
         """Show or hide a group's entries, without overriding permissions."""
+        permitted_rows = 0
         for row in group['rows']:
             item = self.sidebar_nav.item(row)
             if item is None:
                 continue
             entry = next((e for e in self.nav_items if e.get('item') is item), None)
             permitted = entry.get('permitted', True) if entry else True
+            permitted_rows += int(bool(permitted))
             item.setHidden(group['folded'] or not permitted)
 
         widget = group.get('widget')
         if widget is not None and hasattr(widget, 'set_folded'):
-            widget.set_folded(group['folded'])
+            widget.set_folded(group['folded'], permitted_rows)
 
     def set_group_folded(self, label, folded):
         for group in self.groups:
@@ -442,53 +569,47 @@ class TabCoordinator(QObject):
         return False
 
     def toggle_group(self, row):
+        """A click on a heading: fold the group away or bring it back, and remember it."""
         group = self._group_for_row(row)
         if group is None:
             return False
         group['folded'] = not group['folded']
         self._apply_group(group)
+        self.folds_changed.emit(self.folded_groups())
         return True
 
+    def folded_groups(self):
+        """The labels of the groups the person has folded away."""
+        return [g['label'] for g in self.groups if g['folded']]
+
+    def restore_folds(self, labels):
+        """Fold the groups the person had folded last time (nothing folds by itself)."""
+        wanted = {str(label) for label in (labels or [])}
+        for group in self.groups:
+            group['folded'] = group['label'] in wanted
+            self._apply_group(group)
+
     def content_height(self):
-        """How much room the visible navigation entries want."""
+        """How much room the visible navigation entries want, margins included."""
         total = 0
         for row in range(self.sidebar_nav.count()):
             item = self.sidebar_nav.item(row)
             if item is not None and not item.isHidden():
-                total += item.sizeHint().height()
+                # Each entry has a 2 px margin above and below (sidebar sheet).
+                total += item.sizeHint().height() + 4
         return total
 
-    def fit_to_viewport(self):
-        """
-        Fold groups away only if the navigation does not fit.
-
-        On a tall window nothing changes and every entry stays where the team
-        expects it. On a short one the groups you are not working in fold up,
-        rather than the last few entries being quietly cut off the bottom.
-        """
-        viewport = self.sidebar_nav.viewport().height()
-        if viewport <= 0 or not self.groups:
-            return False
-
-        active = self._group_containing(self.sidebar_nav.currentRow())
-
-        # Start from everything open, so widening the window brings them back.
-        for group in self.groups:
-            if group['folded']:
-                group['folded'] = False
-                self._apply_group(group)
-
-        folded_any = False
-        for group in self.groups:
-            if self.content_height() <= viewport:
-                break
-            if group is active or not group['rows']:
+    def tab_rows(self):
+        """Sidebar rows of the screens this person has, in order (no headings)."""
+        rows = []
+        for entry in self.nav_items:
+            item = entry.get('item')
+            if item is None or not entry.get('permitted', True):
                 continue
-            group['folded'] = True
-            self._apply_group(group)
-            folded_any = True
-
-        return folded_any
+            row = self.sidebar_nav.row(item)
+            if row >= 0 and row not in self.header_items:
+                rows.append(row)
+        return sorted(rows)
 
     def _on_item_clicked(self, item):
         """A click on a category rule folds that group away, or brings it back."""
@@ -553,7 +674,7 @@ class TabCoordinator(QObject):
                 if 'base_tooltip' not in entry:
                     entry['base_tooltip'] = item.toolTip()
                 if count and tooltip:
-                    item.setToolTip(f"{entry['base_tooltip']}\n{tooltip}".strip())
+                    item.setToolTip(f"{entry['base_tooltip']}<br>{html.escape(str(tooltip))}")
                 else:
                     item.setToolTip(entry['base_tooltip'])
                 return True
@@ -658,9 +779,7 @@ class TabCoordinator(QObject):
             
         if is_locked:
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled & ~Qt.ItemFlag.ItemIsSelectable)
-            item.setToolTip(lock_tooltip)
-        elif tooltip:
-            item.setToolTip(tooltip)
+        item.setToolTip(nav_tooltip(label, lock_tooltip if is_locked else tooltip))
         self.sidebar_nav.addItem(item)
 
         # Keep content_stack index in 1:1 sync with sidebar_nav
@@ -843,21 +962,21 @@ class TabCoordinator(QObject):
             resize_event = QResizeEvent(widget.size(), widget.size())
             QCoreApplication.postEvent(widget, resize_event)
 
-        # Which group has to stay open has just changed, so re-fit. Without
-        # this, moving into a group that was folded leaves the navigation taller
-        # than the window and the last entries clipped off the bottom again.
-        from PySide6.QtCore import QTimer
-        QTimer.singleShot(0, self.fit_to_viewport)
+        # Nothing folds by itself any more: the sidebar used to fold whole
+        # groups away on every click so the list fitted the window, and the
+        # navigation jumped about. A list taller than the window scrolls.
 
-        # Emit signal with tab name.
-        try:
-            item = self.sidebar_nav.item(row)
-            if item:
-                self.tab_switched.emit(item.text())
-        except Exception as exc:
-            logging.debug("Tab switch signal emit failed: %s", exc)
+        # The screen's name - the item's text is blank when folded to icons.
+        if 0 <= row < len(self.tab_labels):
+            self.tab_switched.emit(self.tab_labels[row])
 
     
+    def open_current(self):
+        """Build and show the selected tab (after every tab is registered)."""
+        row = self.sidebar_nav.currentRow()
+        if row >= 0:
+            self._on_nav_changed(row)
+
     def get_tab_count(self):
         """Return total number of registered tabs."""
         # Sidebar count includes lazy tabs (not yet created), eagerly created tabs,

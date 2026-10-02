@@ -126,7 +126,7 @@ class TaskItemWidget(QFrame):
 
 class TaskManagerDock(QDockWidget):
     def __init__(self, parent=None):
-        super().__init__("Global Task Manager", parent)
+        super().__init__("Running tasks", parent)
         self.setObjectName("TaskManagerDock")
         self.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea | Qt.DockWidgetArea.BottomDockWidgetArea)
         

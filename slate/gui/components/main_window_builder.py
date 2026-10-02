@@ -118,28 +118,26 @@ class MainWindowBuilderMixin:
             from ... import __version__ as APP_VERSION
             from .tab_coordinator import TabCoordinator
             from ..tabs.home_tab import HomeTab
-            from ..tabs.folder_creator_tab import FolderCreatorTab
-            from ..cap_rename_tab import CapRenameTab 
-            from ..tabs.stock_browser_tab import StockBrowserTab
-            from ..tabs.vfx_review_dual_mode_tab import VFXReviewDualModeTab
-            from ..tabs.vfx_dashboard_pro.ui.dashboard_widget import DashboardWidget
-            from ..tabs.settings_tab import SettingsTab
-            from ..admin_panel import AdminPanelTab
-            from ..tester_panel import TesterPanel
-            from ..attendance_tab import AttendanceTab
-
-            from ..tabs.prod_scheduling_tab import ProdSchedulingTab
-            from ..tabs.prod_bidding_tab import ProdBiddingTab
-            from ..tabs.it_inventory_tab import ItInventoryTab
             from ..tabs.licence_view import LicenceView
-            from ..tabs.it_deployment_tab import ItDeploymentTab
-            from ..tabs.admin_users_tab import AdminUsersTab
+
+            # Each screen's module is imported when the screen is first
+            # opened, not while the window is built: importing all of them
+            # (the dashboard alone is large) held the start-up for over a
+            # second with the loading window frozen.
+            from importlib import import_module
+
+            def screen(module, name):
+                return lambda *a, **k: getattr(import_module(module), name)(*a, **k)
+
             central_widget = QWidget()
             self.setCentralWidget(central_widget)
 
+            # Header, sidebar and footer run edge to edge. They used to sit
+            # 15 px inside a charcoal frame of another colour, with the
+            # header's rule stopping short of both edges.
             main_layout = QVBoxLayout(central_widget)
-            main_layout.setContentsMargins(15, 15, 15, 2)  # Minimal bottom margin for max editor space
-            main_layout.setSpacing(15)
+            main_layout.setContentsMargins(0, 0, 0, 0)
+            main_layout.setSpacing(0)
 
             # A. Toolbar Removed (Moved to Header)
             # self.create_toolbar()
@@ -185,31 +183,21 @@ class MainWindowBuilderMixin:
             nav_font.setPixelSize(14)
             self.sidebar_nav.setFont(nav_font)
 
-            self.sidebar_toggle_btn = QPushButton("⮜")
+            self.sidebar_toggle_btn = QPushButton()
             self.sidebar_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             self.sidebar_toggle_btn.setFixedHeight(40)
-            self.sidebar_toggle_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: transparent;
-                    color: {Gate.LINE};
-                    border: none;
-                    border-top: 1px solid {Gate.RAISED};
-                    font-size: 16px;
-                    text-align: right;
-                    padding-right: 20px;
-                }}
-                QPushButton:hover {{
-                    color: {Gate.ACCENT};
-                    background-color: {Gate.tint(Gate.ACCENT, 0.05)};
-                }}
-            """)
             self.sidebar_toggle_btn.clicked.connect(self.toggle_sidebar)
+            # Long lists scroll smoothly, and the last entry is never left
+            # half-cut against the bottom edge.
+            self.sidebar_nav.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
 
             sidebar_layout.addWidget(self.sidebar_nav)
             sidebar_layout.addWidget(self.sidebar_toggle_btn)
 
-            # 2. Content Stack (Right Panel)
+            # 2. Content Stack (Right Panel) - the pages keep their breathing
+            # room inside it.
             self.content_stack = QStackedWidget()
+            self.content_stack.setContentsMargins(16, 12, 16, 8)
 
             content_layout.addWidget(self.sidebar_container)
             content_layout.addWidget(self.content_stack)
@@ -222,43 +210,20 @@ class MainWindowBuilderMixin:
             self.tab_coordinator.tab_switched.connect(self._on_tab_switched)
             self.tab_coordinator.sidebar_collapsed = True
 
-            # Make sidebar collapsed by default on startup without triggering animations yet
-            self.sidebar_collapsed = True
-            self.sidebar_container.setFixedWidth(64)
+            # Folded to icons the very first time; after that, as it was left
+            # (it was forced to icons on every start).
+            collapsed = bool((getattr(self, "global_settings", None) or {}).get("sidebar_collapsed", True))
+            self.sidebar_collapsed = collapsed
+            self.tab_coordinator.sidebar_collapsed = collapsed
+            if collapsed:
+                self.sidebar_container.setFixedWidth(64)
+            self.apply_sidebar_look(collapsed)
 
-            self.sidebar_toggle_btn.setText("⮞")
-            self.sidebar_toggle_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: transparent;
-                    color: {Gate.LINE};
-                    border: none;
-                    border-top: 1px solid {Gate.RAISED};
-                    font-size: 16px;
-                    text-align: center;
-                    padding: 0;
-                }}
-                QPushButton:hover {{ color: {Gate.ACCENT}; background-color: {Gate.tint(Gate.ACCENT, 0.05)}; }}
-            """)
-
-            self.sidebar_nav.setStyleSheet(f"""
-                QListWidget {{ background: transparent; border: none; outline: none; padding: 2px; }}
-                QListWidget::item {{ 
-                    color: {Gate.TEXT};
-                    padding: 12px 0px; 
-                    border-radius: 6px;
-                    margin: 2px 4px;
-                    font-size: 32px;
-                }}
-                QListWidget::item:hover {{
-                    background-color: {Gate.overlay(0.05)};
-                }}
-                QListWidget::item:selected {{
-                    background-color: {Gate.tint(Gate.ACCENT, 0.15)};
-                    color: {Gate.ACCENT};
-                    border-left: 3px solid {Gate.ACCENT};
-                    border-radius: 4px;
-                }}
-            """)
+            # The sidebar is quiet while the screens are registered: the
+            # first one used to be built the moment it was added, with only
+            # itself in the sidebar (Home had no tiles). open_current() below
+            # builds it once every screen is in.
+            self.sidebar_nav.blockSignals(True)
 
             # === LAZY TAB LOADING (Improvement #4 & Suite Decoupling) ===
             mode = getattr(self, "app_mode", "all") or "all"
@@ -270,27 +235,29 @@ class MainWindowBuilderMixin:
             if show_vfx:
                 self.tab_coordinator.add_category_header("PRODUCTION")
 
-                # Home Tab (Cinematic Hub - VFX Mode without attendance)
+                # Home. In the full suite it is built from what this person
+                # has (production and operations), not as the VFX Home.
                 self.tab_coordinator.register_tab_factory(
                     "Home",
                     lambda: HomeTab(
                         user_data=self.user_data,
                         app_context=self.app_context,
                         main_window=self,
-                        mode="vfx"
+                        mode="all" if mode == "all" else "vfx"
                     ),
                     icon="🏠",
                     permission_key=None,  # Always allowed
                     user_role=self.user_role,
                     allowed_tabs=self.allowed_tabs,
-                    tooltip="VFX Production Hub & Quick Actions"
+                    tooltip="Your shots, the studio's figures and quick links to your screens"
                 )
 
                 def create_folder_creator():
                     # Not wired to on_templates_refreshed: that reloads this
                     # same tab, and the reload re-emitted - an endless loop
                     # that crashed Slate (ING-001).
-                    return FolderCreatorTab(self.config_manager, user_data=self.user_data)
+                    return screen("slate.gui.tabs.folder_creator_tab", "FolderCreatorTab")(
+                        self.config_manager, user_data=self.user_data)
 
                 # Build & Ingest (structure + scan move)
                 self.tab_coordinator.register_tab_factory(
@@ -306,18 +273,19 @@ class MainWindowBuilderMixin:
                 # CAP Rename
                 self.tab_coordinator.register_tab_factory(
                     "CAP Rename",
-                    lambda: CapRenameTab(self.config_manager, user_data=self.user_data),
+                    lambda: screen("slate.gui.cap_rename_tab", "CapRenameTab")(
+                        self.config_manager, user_data=self.user_data),
                     icon="🏷️",
                     permission_key="Rename Tool",
                     user_role=self.user_role,
                     allowed_tabs=self.allowed_tabs,
-                    tooltip="Batch-rename VFX deliverables using smart pattern matching"
+                    tooltip="Rename delivered files to the studio's naming, in batches"
                 )
 
                 # Stock Viewer
                 self.tab_coordinator.register_tab_factory(
                     "Stock Viewer",
-                    lambda: StockBrowserTab(
+                    lambda: screen("slate.gui.tabs.stock_browser_tab", "StockBrowserTab")(
                         self.library_manager,
                         user_roles=self.user_roles,
                         user_role=self.user_role,
@@ -327,7 +295,7 @@ class MainWindowBuilderMixin:
                     permission_key="Stock Browser",
                     user_role=self.user_role,
                     allowed_tabs=self.allowed_tabs,
-                    tooltip="Browse, preview and manage your stock asset library"
+                    tooltip="Browse and preview the stock library"
                 )
 
                 # Timeline Viewer (the Olive lineup).
@@ -336,7 +304,7 @@ class MainWindowBuilderMixin:
                 # lock people out of a tab they already have.
                 self.tab_coordinator.register_tab_factory(
                     "Timeline Viewer",
-                    lambda: VFXReviewDualModeTab(self.config_manager, self.user_data),
+                    lambda: screen("slate.gui.tabs.vfx_review_dual_mode_tab", "VFXReviewDualModeTab")(self.config_manager, self.user_data),
                     icon="🎬",
                     permission_key="Shot Review",
                     user_role=self.user_role,
@@ -347,7 +315,7 @@ class MainWindowBuilderMixin:
                 # VFX Dashboard Pro
                 self.tab_coordinator.register_tab_factory(
                     "VFX Dashboard",
-                    lambda: DashboardWidget(
+                    lambda: screen("slate.gui.tabs.vfx_dashboard_pro.ui.dashboard_widget", "DashboardWidget")(
                         user_data={**(self.user_data or {}), "inherit_app_theme": True},
                         user_manager=self.app_context.user_manager(),
                         app_context=self.app_context,
@@ -356,13 +324,13 @@ class MainWindowBuilderMixin:
                     permission_key="Dashboard",
                     user_role=self.user_role,
                     allowed_tabs=self.allowed_tabs,
-                    tooltip="Live project dashboard with shot tracking and production metrics"
+                    tooltip="Every shot: status, artist, versions and figures"
                 )
 
                 # Production Scheduling
                 self.tab_coordinator.register_tab_factory(
                     "Scheduling",
-                    lambda: ProdSchedulingTab(user_data=self.user_data),
+                    lambda: screen("slate.gui.tabs.prod_scheduling_tab", "ProdSchedulingTab")(user_data=self.user_data),
                     icon="📅",
                     permission_key="Scheduling",
                     user_role=self.user_role,
@@ -373,7 +341,7 @@ class MainWindowBuilderMixin:
                 # Production Bidding
                 self.tab_coordinator.register_tab_factory(
                     "Bidding",
-                    lambda: ProdBiddingTab(user_data=self.user_data),
+                    lambda: screen("slate.gui.tabs.prod_bidding_tab", "ProdBiddingTab")(user_data=self.user_data),
                     icon="💰",
                     permission_key="Bidding",
                     user_role=self.user_role,
@@ -398,13 +366,13 @@ class MainWindowBuilderMixin:
                         permission_key=None,  # Always allowed
                         user_role=self.user_role,
                         allowed_tabs=self.allowed_tabs,
-                        tooltip="Operations Hub & Biometric Attendance"
+                        tooltip="Punch in and out, and quick links to your screens"
                     )
 
                 # Attendance
                 self.tab_coordinator.register_tab_factory(
                     "Attendance",
-                    lambda: AttendanceTab(
+                    lambda: screen("slate.gui.attendance_tab", "AttendanceTab")(
                         self.user_data,
                         attendance=self.app_context.attendance(),
                         user_manager=self.app_context.user_manager(),
@@ -462,7 +430,7 @@ class MainWindowBuilderMixin:
                 # Hardware Inventory
                 self.tab_coordinator.register_tab_factory(
                     "Hardware",
-                    lambda: ItInventoryTab(user_data=self.user_data),
+                    lambda: screen("slate.gui.tabs.it_inventory_tab", "ItInventoryTab")(user_data=self.user_data),
                     icon="🖥️",
                     permission_key=it_key,
                     user_role=self.user_role,
@@ -503,7 +471,7 @@ class MainWindowBuilderMixin:
                 # Auto Deployment
                 self.tab_coordinator.register_tab_factory(
                     "Deployment",
-                    lambda: ItDeploymentTab(user_data=self.user_data),
+                    lambda: screen("slate.gui.tabs.it_deployment_tab", "ItDeploymentTab")(user_data=self.user_data),
                     icon="📦",
                     permission_key=it_key,
                     user_role=self.user_role,
@@ -525,7 +493,7 @@ class MainWindowBuilderMixin:
                         or can(roles_for_access, "manage_permissions")):
                     self.tab_coordinator.register_tab_factory(
                         "Users & Roles",
-                        lambda: AdminUsersTab(user_role=self.user_role, user_data=self.user_data),
+                        lambda: screen("slate.gui.tabs.admin_users_tab", "AdminUsersTab")(user_role=self.user_role, user_data=self.user_data),
                         icon="👥",
                         permission_key=None,
                         user_role=self.user_role,
@@ -542,7 +510,7 @@ class MainWindowBuilderMixin:
                             "Admin fleet monitoring and remote controls are unavailable in LOCAL MODE.",
                         )
                         if self._is_sqlite_fallback_mode()
-                        else AdminPanelTab(
+                        else screen("slate.gui.admin_panel", "AdminPanelTab")(
                             current_username=(self.user_data or {}).get(
                                 "user_id",
                                 (self.user_data or {}).get("username", "Unknown"),
@@ -567,7 +535,7 @@ class MainWindowBuilderMixin:
             # Tester Panel
             self.tab_coordinator.register_tab_factory(
                 "Tester Panel",
-                lambda: TesterPanel(
+                lambda: screen("slate.gui.tester_panel", "TesterPanel")(
                     user_manager=self.app_context.user_manager(),
                     app_context=self.app_context,
                 ),
@@ -575,12 +543,12 @@ class MainWindowBuilderMixin:
                 permission_key="Tester Panel",
                 user_role=self.user_role,
                 allowed_tabs=self.allowed_tabs,
-                tooltip="Generate test data and validate workflows - developer/QA tool"
+                tooltip="Tools for testing Slate (developers and QA)"
             )
 
             # Settings
             def create_settings():
-                settings = SettingsTab(self.config_manager)
+                settings = screen("slate.gui.tabs.settings_tab", "SettingsTab")(self.config_manager)
                 settings.templates_refresh_requested.connect(self.on_templates_refreshed)
                 settings.global_settings_updated.connect(self.on_global_settings_updated)
                 return settings
@@ -601,51 +569,44 @@ class MainWindowBuilderMixin:
             # --- DYNAMIC PLUGIN LOADER ---
             self.load_plugins()
 
-            # Guarantee that all dynamically loaded tabs have their text stripped on boot
-            if hasattr(self, 'tab_coordinator'):
-                self.tab_coordinator.set_sidebar_collapsed(True)
+            # Every entry, plugins included, in the remembered state.
+            self.tab_coordinator.set_sidebar_collapsed(collapsed)
+
+            # Groups fold only when the person folds them, and stay folded
+            # the next time (they used to fold by themselves on every click).
+            self.tab_coordinator.restore_folds(
+                (getattr(self, "global_settings", None) or {}).get("sidebar_folded_groups", []))
+            self.tab_coordinator.folds_changed.connect(
+                lambda labels: self._remember_sidebar("sidebar_folded_groups", list(labels)))
+
+            # Now that every screen is registered, open the first one.
+            self.sidebar_nav.blockSignals(False)
+            self.tab_coordinator.open_current()
 
             # main_layout.addWidget(self.tab_widget, 1) # Removed
 
-            # D. Footer / Status Bar
+            # D. Footer: status messages and running tasks on the left, the
+            # credit line on the right. There used to be a second bar under
+            # it - an empty QStatusBar with a size grip - taking another 20 px.
+            self.status_bar = QStatusBar()
+            self.status_bar.setSizeGripEnabled(False)
+            self.status_bar.setObjectName("footerStatus")
+            self.status_bar.setStyleSheet("QStatusBar { background: transparent; border: none; }")
             footer_widget = self.create_footer()
             main_layout.addWidget(footer_widget)
-
-            self.status_bar = QStatusBar()
-            self.setStatusBar(self.status_bar)
             suite_title = getattr(self, "suite_title", "Slate")
-            self.status_bar.showMessage(f"Ready - {suite_title} v{APP_VERSION}", 5000)
+            self.status_bar.showMessage(f"Ready - {suite_title} {APP_VERSION}", 5000)
 
-            # E. Global Task Progress (Status Bar)
+            # E. Running tasks: a name and percent, click for the list.
             try:
-                from PySide6.QtWidgets import QProgressBar
-                self.global_progress = QProgressBar()
-                self.global_progress.setMaximumWidth(200)
-                self.global_progress.setFixedHeight(14)
-                self.global_progress.setTextVisible(False)
-                self.global_progress.setVisible(False)
-                self.status_bar.addPermanentWidget(self.global_progress)
-                
                 from .task_manager_dock import task_registry
-                
-                def update_global_progress(task_id):
-                    # Find highest progress among running tasks, or just show active
-                    active_tasks = [t for t in task_registry.get_all_tasks() if t.status.lower() in ("running", "pending", "paused")]
-                    if not active_tasks:
-                        self.global_progress.setVisible(False)
-                        return
-                    
-                    self.global_progress.setVisible(True)
-                    # Use the progress of the most recently updated active task
-                    task = active_tasks[-1]
-                    self.global_progress.setValue(task.progress)
-                    self.global_progress.setToolTip(f"{task.name}: {task.progress}%")
-                
-                def safe_update(task_id):
+                self._build_task_progress()
+
+                def safe_update(_task_id=None):
                     # The registry outlives this window. Once the window is
                     # gone, stop listening instead of touching a dead widget.
                     try:
-                        update_global_progress(task_id)
+                        self.update_task_progress()
                     except RuntimeError:
                         for signal, slot in ((task_registry.task_added, on_task_added),
                                              (task_registry.task_removed, on_task_removed),
@@ -662,9 +623,68 @@ class MainWindowBuilderMixin:
                 task_registry.task_added.connect(on_task_added)
                 task_registry.task_removed.connect(on_task_removed)
                 task_registry.task_updated.connect(on_task_updated)
-                
             except Exception as e:
                 logging.error(f"Failed to load Global Progress Bar: {e}")
+
+    def _build_task_progress(self):
+        """The footer's running-task display: 'Copying plates 37%' and a bar."""
+        from PySide6.QtWidgets import QProgressBar
+        from .header_builder import ClickableLabel
+        self.task_progress_label = ClickableLabel("")
+        self.task_progress_label.setStyleSheet(f"color: {Gate.TEXT_2}; font-size: 11px;")
+        self.task_progress_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.task_progress_label.setToolTip("Running tasks - click for the list")
+        self.task_progress_label.clicked.connect(self.show_task_list)
+        self.task_progress_label.setVisible(False)
+        self.global_progress = QProgressBar()
+        self.global_progress.setMaximumWidth(160)
+        self.global_progress.setFixedHeight(10)
+        self.global_progress.setTextVisible(False)
+        self.global_progress.setVisible(False)
+        self.global_progress.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.global_progress.mousePressEvent = lambda _e: self.show_task_list()
+        self._footer_row.insertWidget(1, self.task_progress_label)
+        self._footer_row.insertWidget(2, self.global_progress)
+
+    @staticmethod
+    def task_progress_text(active_tasks) -> str:
+        """'Copying plates 37%' for one task, '2 tasks' for more."""
+        if not active_tasks:
+            return ""
+        if len(active_tasks) > 1:
+            return f"{len(active_tasks)} tasks"
+        task = active_tasks[0]
+        return f"{task.name} {int(task.progress or 0)}%"
+
+    def update_task_progress(self):
+        from .task_manager_dock import task_registry
+        active = [t for t in task_registry.get_all_tasks()
+                  if str(t.status).lower() in ("running", "pending", "paused")]
+        label = getattr(self, "task_progress_label", None)
+        bar = getattr(self, "global_progress", None)
+        if label is None or bar is None:
+            return
+        if not active:
+            label.setVisible(False)
+            bar.setVisible(False)
+            return
+        label.setText(self.task_progress_text(active))
+        label.setVisible(True)
+        bar.setVisible(True)
+        bar.setValue(int(sum(int(t.progress or 0) for t in active) / len(active)))
+        bar.setToolTip("\n".join(f"{t.name}: {int(t.progress or 0)}%" for t in active))
+
+    def show_task_list(self):
+        """The list of running tasks, with Pause and Cancel (the task dock)."""
+        dock = getattr(self, "task_dock", None)
+        if dock is None:
+            from .task_manager_dock import TaskManagerDock
+            dock = TaskManagerDock(self)
+            self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, dock)
+            self.task_dock = dock
+        dock.show()
+        dock.raise_()
+        return dock
 
     def create_toolbar(self):
             """Create application toolbar with workflow switching."""
@@ -719,19 +739,25 @@ class MainWindowBuilderMixin:
             footer_layout = QVBoxLayout(footer)
             footer_layout.setContentsMargins(0, 0, 0, 0)
             team_layout = QHBoxLayout()
-            team_layout.setContentsMargins(10, 2, 10, 5)
+            # The credit line keeps its place: 25 px from the right edge, as
+            # it was inside the old 15 px window frame plus this row's 10.
+            team_layout.setContentsMargins(25, 2, 25, 5)
 
-            team_label = QLabel("TEAM SLATE")
-            team_label.setFont(QFont("Segoe UI", 8))
-            team_label.setStyleSheet(f"color: {Gate.TEXT_DIM};")
+            # Status messages where "TEAM SLATE" used to be (it meant nothing
+            # to anybody); the separate status bar under the footer is gone.
+            status = getattr(self, "status_bar", None) if self is not None else None
+            if status is not None:
+                team_layout.addWidget(status, 1)
+            else:
+                team_layout.addStretch()
 
             from slate.licence import credit_label
             license_label = credit_label()    # licence section 5: must stay
 
-            team_layout.addWidget(team_label)
-            team_layout.addStretch()
             team_layout.addWidget(license_label)
             footer_layout.addLayout(team_layout)
+            if self is not None:
+                self._footer_row = team_layout
             return footer
 
     def init_variables(self):

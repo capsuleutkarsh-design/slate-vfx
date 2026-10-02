@@ -44,7 +44,7 @@ class TestTab(QWidget):
         layout.setSpacing(15)
 
         # --- HEADER ---
-        header = QLabel("TESTING LAB")
+        header = QLabel("Run and test")
         header.setStyleSheet("color: #00B4D8; font-size: 18px; font-weight: bold; letter-spacing: 2px;")
         layout.addWidget(header)
 
@@ -60,16 +60,17 @@ class TestTab(QWidget):
             }
             QPushButton:hover { background-color: #3d3d3d; border: 1px solid #E9C46A; color: white; }
             QPushButton:pressed { background-color: #1a1a1a; }
+            QPushButton:disabled { background-color: #1a1a1a; color: #555; border: 1px solid #222; }
         """
 
         for title, script in LAUNCHERS:
-            btn = QPushButton(f"▶ {title}")
+            btn = QPushButton(f"Run {title}")
             btn.setToolTip(f"Run {script} under the console's Python")
             btn.setStyleSheet(btn_style)
             btn.clicked.connect(lambda _checked=False, s=script: self.launch(s))
             l_layout.addWidget(btn)
 
-        self.btn_run_bat = QPushButton("\U0001F680 Batch launcher")
+        self.btn_run_bat = QPushButton("Run batch launcher")
         self.btn_run_bat.setToolTip("Run launchers/launch_app.bat (the legacy all-in-one gatekeeper)")
         self.btn_run_bat.setStyleSheet(btn_style)
         self.btn_run_bat.clicked.connect(self.run_batch_mode)
@@ -90,18 +91,18 @@ class TestTab(QWidget):
         self.populate_tests()
 
         row = QHBoxLayout()
-        self.btn_run_test = QPushButton("RUN SELECTED TEST FILE")
+        self.btn_run_test = QPushButton("Run selected test file")
         self.btn_run_test.setStyleSheet(btn_style)
         self.btn_run_test.clicked.connect(self.run_selected_test)
         row.addWidget(self.btn_run_test)
 
-        self.btn_run_all = QPushButton("RUN WHOLE SUITE")
+        self.btn_run_all = QPushButton("Run whole suite")
         self.btn_run_all.setToolTip("python -m pytest tests - the PostgreSQL tests skip themselves when no server is running")
         self.btn_run_all.setStyleSheet(btn_style)
         self.btn_run_all.clicked.connect(self.run_all_tests)
         row.addWidget(self.btn_run_all)
 
-        self.btn_stop = QPushButton("STOP")
+        self.btn_stop = QPushButton("Stop")
         self.btn_stop.setStyleSheet(btn_style)
         self.btn_stop.setEnabled(False)
         self.btn_stop.clicked.connect(self.stop_running_process)

@@ -122,6 +122,7 @@ class OperationsView(QWidget):
     diagnostics_requested = Signal()
     open_log_requested = Signal()
     clear_log_requested = Signal()
+    force_kill_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -149,6 +150,7 @@ class OperationsView(QWidget):
         root.addWidget(self._backup_panel())
         root.addWidget(self._maintenance_panel(), 1)
         root.addWidget(self._log_panel())
+        root.addWidget(self._danger_panel())
 
     # ------------------------------------------------------------------ backups
     def _backup_panel(self) -> QWidget:
@@ -160,8 +162,8 @@ class OperationsView(QWidget):
         header = QHBoxLayout()
         header.addWidget(_heading(
             "Backups",
-            "A dump of the whole database. This is the studio's only copy of its "
-            "tracking, leave and attendance record."))
+            "A copy of the whole database: the studio's tracking, leave and "
+            "attendance records."))
         header.addStretch()
 
         self.lbl_last_backup = QLabel("No backup yet")
@@ -208,7 +210,7 @@ class OperationsView(QWidget):
             "every backup it had on the next tidy-up.")
         controls.addWidget(self.spin_keep_least)
 
-        self.btn_prune = _button("Tidy up")
+        self.btn_prune = _button("Delete old backups")
         self.btn_prune.clicked.connect(
             lambda: self.prune_requested.emit(self.spin_keep_days.value(),
                                               self.spin_keep_least.value()))
@@ -264,8 +266,8 @@ class OperationsView(QWidget):
 
         layout.addWidget(_heading(
             "Maintenance",
-            "When each job last ran. A job with no last-run time is one nobody "
-            "can tell has stopped, and the way these fail is by not happening."))
+            "When each job last ran. \"Never\" means it has not run yet - check "
+            "the schedule."))
 
         self.table_jobs = _table(["Job", "Every", "Last run", "State", "What it does"])
         head = self.table_jobs.horizontalHeader()
@@ -282,10 +284,10 @@ class OperationsView(QWidget):
 
         controls = QHBoxLayout()
         controls.setSpacing(10)
-        for key, label in (("vacuum", "Vacuum and analyze"),
+        for key, label in (("vacuum", "Clean up the database (vacuum)"),
                            ("reindex", "Rebuild indexes"),
                            ("comp_off", "Credit comp off")):
-            btn = _button("Run: %s" % label)
+            btn = _button(label)
             btn.clicked.connect(lambda _checked=False, job=key: self.job_requested.emit(job))
             controls.addWidget(btn)
         controls.addStretch()
@@ -333,7 +335,7 @@ class OperationsView(QWidget):
         header = QHBoxLayout()
         header.addWidget(_heading(
             "Server log",
-            "PostgreSQL's own log. It grows without limit unless it is trimmed."))
+            "PostgreSQL's own log. Trim it when it gets large."))
         header.addStretch()
 
         self.lbl_log_size = QLabel("-")
@@ -358,6 +360,25 @@ class OperationsView(QWidget):
         self.lbl_log_size.setStyleSheet(
             f"font-size: 13px; color: {'#D9A441' if large else C.TEXT_SECONDARY}; "
             f"background: transparent; border: none;")
+
+    # ------------------------------------------------------------- danger zone
+    def _danger_panel(self) -> QWidget:
+        """
+        Force kill, on its own and last. It sat on the Dashboard beside Restart
+        Pool and Open Web Dashboard, at the same size.
+        """
+        panel = _panel()
+        layout = QHBoxLayout(panel)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(12)
+        layout.addWidget(_heading(
+            "Danger zone",
+            "Only when the power switch cannot stop the database. Work being saved "
+            "is lost and the database may need recovery on its next start."), 1)
+        self.btn_force_kill = _button("Force kill the database…", "danger")
+        self.btn_force_kill.clicked.connect(self.force_kill_requested.emit)
+        layout.addWidget(self.btn_force_kill, 0, Qt.AlignmentFlag.AlignVCenter)
+        return panel
 
     # ------------------------------------------------------------- diagnostics
     def show_report(self, title: str, body: str, problems: int):

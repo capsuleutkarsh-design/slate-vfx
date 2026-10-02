@@ -35,10 +35,14 @@ from typing import Optional, Dict
 import logging
 
 # Try to import OpenImageIO (industry standard for VFX)
-# DISABLED BY DEFAULT due to segfault crashes on some systems
-# Set environment variable SLATE_ENABLE_OIIO=1 to opt-in
+# A setting (enable_oiio, on by default); SLATE_ENABLE_OIIO=0 switches it off
+# on a machine where it crashes.
 try:
-    OIIO_ENABLED = os.environ.get("SLATE_ENABLE_OIIO", "").lower() == "1"
+    try:
+        from slate.core.infra.global_config import GlobalConfig as _GC
+        OIIO_ENABLED = bool(_GC.oiio_enabled())
+    except Exception:
+        OIIO_ENABLED = os.environ.get("SLATE_ENABLE_OIIO", "").lower() == "1"
     if OIIO_ENABLED:
         from OpenImageIO import ImageInput
         HAS_OIIO = True
