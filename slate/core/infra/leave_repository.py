@@ -854,6 +854,63 @@ class LeaveRepository:
                 changed += 1
         return changed
 
+    # ------------------------------------------------------------ attendance
+    def approved_leave(self, start: date, end: date, users=None) -> dict:
+        """
+        Granted leave over a date range, day by day, for the attendance screens:
+        {user (lower-case): {date: {"type", "half", "days", "id"}}}.
+
+        Attendance did not know about leave at all, so an approved sick day
+        looked exactly like an unexplained absence and a punch on a day of
+        approved leave raised no question.
+        """
+        wanted = {str(u).strip().lower() for u in users} if users else None
+        try:
+            rows = self.db.execute_query(
+                "SELECT * FROM leave_requests WHERE start_date <= %s AND end_date >= %s",
+                (end, start), fetch="all") or []
+        except DatabaseUnavailableError:
+            raise
+        except Exception:
+            logger.exception("approved_leave failed")
+            return {}
+        out = {}
+        for row in rows:
+            row = dict(row)
+            if lp.normalise_status(row.get("status")) not in lp.GRANTED_STATUSES:
+                continue
+            who = str(row.get("user_id") or "").strip().lower()
+            if wanted is not None and who not in wanted:
+                continue
+            first, last = as_date(row.get("start_date")), as_date(row.get("end_date"))
+            if first is None or last is None:
+                continue
+            half = bool(row.get("half_day")) and first == last                 and str(row.get("half_day")).lower() not in ("0", "false")
+            day = max(first, start)
+            while day <= min(last, end):
+                out.setdefault(who, {})[day] = {
+                    "type": (row.get("type") or "Leave").title(),
+                    "half": lp.half_day_label(row.get("half_day_part")) if half else "",
+                    "days": 0.5 if half else 1.0,
+                    "id": row.get("id"),
+                }
+                day = date.fromordinal(day.toordinal() + 1)
+        return out
+
+    def holiday_names(self, year: int, location: str = None) -> dict:
+        """{date: name} for one place's holidays in a year (for tooltips)."""
+        out = {}
+        for row in self.holiday_rows(year):
+            place = str(row.get("location") or "All").strip()
+            if location and place.lower() not in ("", "all", str(location).strip().lower()):
+                continue
+            if not location and place.lower() not in ("", "all"):
+                continue
+            day = as_date(row.get("holiday_date"))
+            if day is not None:
+                out[day] = str(row.get("name") or "Holiday")
+        return out
+
     # --------------------------------------------------------------- the team
     def also_away(self, row) -> list:
         """
