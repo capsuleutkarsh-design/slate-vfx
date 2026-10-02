@@ -454,3 +454,25 @@ def test_the_studio_logo_does_not_replace_the_wordmark(qtbot, tmp_path):
     assert builder.mark_label.text() == "SLATE"
     assert builder.studio_logo_label.isVisibleTo(header)
     assert builder.studio_logo_label.height() <= HeaderBuilder.STUDIO_LOGO_MAX[1]
+
+
+def test_picker_reads_the_people_directory_by_default(qtbot, monkeypatch):
+    """Service accounts and leavers are the directory's call (people_for_picker)."""
+    from slate.core.domain import people as directory
+    from slate.gui.components.person_picker import PersonPicker
+    asked = {}
+
+    def fake(*, include_leavers=False, include_inactive=False, **_):
+        asked.update(leavers=include_leavers, inactive=include_inactive)
+        return [directory.Person("priya", "Priya Sharma"), directory.Person("rahul.s", "Rahul S")]
+
+    monkeypatch.setattr(directory, "people_for_picker", fake)
+    picker = PersonPicker()
+    qtbot.addWidget(picker)
+    assert picker.usernames() == ["priya", "rahul.s"]
+    assert asked == {"leavers": False, "inactive": False}
+
+
+def test_the_bell_is_the_shared_line_icon(qtbot):
+    from slate.gui.components.notification_center import bell_icon
+    assert not bell_icon("#ffffff", 20).isNull()

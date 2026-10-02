@@ -118,12 +118,19 @@ class StartPersonDialog(QDialog):
             done = service.joining_finished()
         except Exception:
             done = set()           # only the order suffers
+        # The picker's records come from the people directory, which does not
+        # carry joining dates; the onboarding service does.
+        try:
+            joined_on = {str(p.get("username") or "").lower(): p.get("joined_on")
+                         for p in service.people()}
+        except Exception:
+            joined_on = {}
 
         def key(entry):
             username, display, record = entry
             if username.lower() in done:
                 return (1, 0, display.casefold())
-            joined = str(record.get("joined_on") or "")[:10]
+            joined = str(record.get("joined_on") or joined_on.get(username.lower()) or "")[:10]
             try:
                 age = -date.fromisoformat(joined).toordinal()
             except ValueError:

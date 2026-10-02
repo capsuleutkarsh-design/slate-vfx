@@ -35,8 +35,8 @@ import logging
 import time
 from datetime import datetime, timedelta
 
-from PySide6.QtCore import QByteArray, QEvent, QObject, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QIcon, QPainter, QPixmap
+from PySide6.QtCore import QEvent, QObject, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QDialog, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton,
     QStackedWidget, QToolButton, QVBoxLayout, QWidget,
@@ -47,11 +47,6 @@ logger = logging.getLogger(__name__)
 POLL_MS = 30000          # without the change feed; with it, only when something changed
 FEED_TOPIC = "notifications"
 
-# Drawn like the rest of the line icons (slate/gui/core/icons.py): a bell on a
-# 24x24 grid. Kept here until the shared icon set has one.
-_BELL_PATH = ("M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15z "
-              "M10 20.5a2 2 0 0 0 4 0")
-
 
 def _gate():
     from slate.core.infra.gate import Gate
@@ -59,24 +54,9 @@ def _gate():
 
 
 def bell_icon(colour: str, size: int = 20) -> QIcon:
-    try:
-        from slate.gui.core.icons import has_icon, icon
-        if has_icon("bell"):
-            return icon("bell", colour, size)
-    except Exception:
-        pass
-    from PySide6.QtSvg import QSvgRenderer
-    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="{size}" '
-           f'height="{size}" fill="none" stroke="{colour}" stroke-width="1.6" '
-           f'stroke-linecap="round" stroke-linejoin="round"><path d="{_BELL_PATH}"/></svg>')
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    try:
-        QSvgRenderer(QByteArray(svg.encode("utf-8"))).render(painter)
-    finally:
-        painter.end()
-    return QIcon(pixmap)
+    """The shared line-icon bell (slate/gui/core/icons.py), in this colour."""
+    from slate.gui.core.icons import icon
+    return icon("bell", colour, size)
 
 
 def badge_text(count: int) -> str:

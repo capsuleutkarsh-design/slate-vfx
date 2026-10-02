@@ -36,15 +36,23 @@ Person = Tuple[str, str]        # (username, display name)
 
 def people(user_manager=None, include_inactive: bool = False,
            include: Callable[[str, dict], bool] = None) -> List[Tuple[str, str, dict]]:
-    """[(username, display name, record)] from the user table, alphabetical by name."""
-    try:
-        if user_manager is None:
-            from slate.core.domain.user_manager import UserManager
-            user_manager = UserManager()
-        records = user_manager.get_all_users() or {}
-    except Exception as exc:
-        logger.warning("People could not be read: %s", exc)
-        records = {}
+    """
+    [(username, display name, record)], alphabetical by name.
+
+    By default the studio's people directory decides who is offered
+    (slate.core.domain.people.people_for_picker): no service accounts, and
+    nobody deactivated or past their last day unless include_inactive. A
+    `user_manager` (anything with get_all_users) is a fixed list instead - an
+    import dialog's snapshot, or a test.
+    """
+    if user_manager is None:
+        records = _directory_records(include_inactive)
+    else:
+        try:
+            records = user_manager.get_all_users() or {}
+        except Exception as exc:
+            logger.warning("People could not be read: %s", exc)
+            records = {}
     result = []
     for username, record in records.items():
         record = record or {}
@@ -56,6 +64,21 @@ def people(user_manager=None, include_inactive: bool = False,
         result.append((str(username), display, record))
     result.sort(key=lambda p: (p[1].casefold(), p[0].casefold()))
     return result
+
+
+def _directory_records(include_inactive: bool) -> dict:
+    """{username: record} from the people directory, in the shape get_all_users gives."""
+    try:
+        from slate.core.domain import people as directory
+        chosen = directory.people_for_picker(include_leavers=include_inactive,
+                                             include_inactive=include_inactive)
+    except Exception as exc:
+        logger.warning("People could not be read: %s", exc)
+        return {}
+    return {p.username: {"display_name": p.display_name, "job_title": p.job_title,
+                         "location": p.location, "last_day": p.last_day,
+                         "active": bool(p.active) and not p.has_left()}
+            for p in chosen}
 
 
 def label_for(username: str, display: str) -> str:
