@@ -60,6 +60,18 @@ logger = logging.getLogger(__name__)
 NOT_REPORTED = "This machine has not reported yet."
 
 
+def _label(text=""):
+    """
+    A label that shows its text as written. Workstations write these values
+    themselves; as rich text a model called 'Projects<b>' turned the rest of
+    the dialog bold, and markup in a report would be rendered.
+    """
+    label = QLabel()
+    label.setTextFormat(Qt.TextFormat.PlainText)
+    label.setText("" if text is None else str(text))
+    return label
+
+
 def _load_json_with_fallback(path: Path):
     """Load JSON with encoding fallback for mixed workstation clients."""
     last_error = None
@@ -198,18 +210,18 @@ class PCDetailsDialog(QDialog):
         self.main_layout = QVBoxLayout(self)
 
         header = QHBoxLayout()
-        self.lbl_title = QLabel(self.pc_name)
+        self.lbl_title = _label(self.pc_name)
         self.lbl_title.setStyleSheet(
             f"font-size: {T.SIZE_XL}px; font-weight: {T.WEIGHT_STYLE_BOLD}; color: {C.ACCENT_PRIMARY};")
         header.addWidget(self.lbl_title)
         header.addStretch(1)
-        self.lbl_last = QLabel("")
+        self.lbl_last = _label("")
         self.lbl_last.setStyleSheet(f"color: {Gate.TEXT_DIM};")
         header.addWidget(self.lbl_last)
         self.main_layout.addLayout(header)
 
         # Shown instead of a message box when a reload cannot find the report.
-        self.lbl_note = QLabel("")
+        self.lbl_note = _label("")
         self.lbl_note.setWordWrap(True)
         self.lbl_note.setStyleSheet(f"color: {Gate.WARN};")
         self.lbl_note.hide()
@@ -253,16 +265,16 @@ class PCDetailsDialog(QDialog):
         self.section_titles = []
 
         def add_row(label, value):
-            l = QLabel(label)
+            l = _label(label)
             l.setStyleSheet(f"color: {C.TEXT_SECONDARY}; font-weight: {T.WEIGHT_STYLE_BOLD};")
-            v = QLabel(str(value))
+            v = _label(str(value))
             v.setStyleSheet(f"color: {Gate.TEXT}; font-family: {T.FONT_MONO};")
             v.setWordWrap(True)
             v.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             form.addRow(l, v)
 
         def add_section(title):
-            l = QLabel(title)
+            l = _label(title)
             l.setStyleSheet(
                 f"color: {C.ACCENT_PRIMARY}; font-weight: {T.WEIGHT_STYLE_BOLD}; "
                 f"font-size: {T.SIZE_MD}px; margin-top: {S.LG}px; border-bottom: 1px solid {C.BORDER_LIGHT};"
@@ -295,7 +307,7 @@ class PCDetailsDialog(QDialog):
                 box = QWidget()
                 row_layout = QVBoxLayout(box)
                 row_layout.setContentsMargins(0, 0, 0, 0)
-                row_layout.addWidget(QLabel(info))
+                row_layout.addWidget(_label(info))
                 row_layout.addWidget(bar)
                 form.addRow(box)
             updated = data.get("drives_updated")
@@ -402,7 +414,7 @@ class PCCard(QFrame):
 
         self.main_layout = QVBoxLayout(self)
         self.hl = QHBoxLayout()
-        self.lbl_name = QLabel(pc_name)
+        self.lbl_name = _label(pc_name)
         self.lbl_name.setStyleSheet(
             f"font-weight: {T.WEIGHT_STYLE_BOLD}; color: {Gate.TEXT}; font-size: 13px;")
         self.hl.addWidget(self.lbl_name, 1)
@@ -418,14 +430,14 @@ class PCCard(QFrame):
         self.hl.addWidget(self.btn_menu)
         self.main_layout.addLayout(self.hl)
 
-        self.lbl_user = QLabel("Loading...")
+        self.lbl_user = _label("Loading...")
         self.lbl_user.setStyleSheet(f"color: {C.TEXT_SECONDARY};")
         self.main_layout.addWidget(self.lbl_user)
-        self.lbl_disk = QLabel("")
+        self.lbl_disk = _label("")
         self.lbl_disk.setStyleSheet(f"color: {C.TEXT_SECONDARY}; font-size: 11px;")
         self.main_layout.addWidget(self.lbl_disk)
         self.main_layout.addStretch()
-        self.lbl_status = QLabel("● Connecting...")
+        self.lbl_status = _label("● Connecting...")
         self.lbl_status.setStyleSheet(
             f"color: {Gate.TEXT_DIM}; font-weight: {T.WEIGHT_STYLE_BOLD}; font-size: 10px;")
         self.main_layout.addWidget(self.lbl_status)
@@ -443,7 +455,7 @@ class PCCard(QFrame):
         width = max(40, self._text_width() - reserve)
         shown = QFontMetrics(label.font()).elidedText(text, Qt.TextElideMode.ElideRight, width)
         label.setText(shown)
-        label.setToolTip(text if shown != text else "")
+        label.setToolTip(f"<p>{html.escape(text)}</p>" if shown != text else "")
 
     def _restyle(self, colour):
         self.setStyleSheet(
@@ -661,7 +673,7 @@ class LiveDashboard(QWidget):
                                        tooltip="Read every machine's report now (it also refreshes every 30 s)")
         self.btn_refresh.setIcon(draw_icon("refresh"))
         self.toolbar.addWidget(self.btn_refresh)
-        self.lbl_updated = QLabel("Not updated yet")
+        self.lbl_updated = _label("Not updated yet")
         self.lbl_updated.setStyleSheet(f"color: {Gate.TEXT_DIM};")
         self.toolbar.addWidget(self.lbl_updated)
         bar_layout.addLayout(self.toolbar)

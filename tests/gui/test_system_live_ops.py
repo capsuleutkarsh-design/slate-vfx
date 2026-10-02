@@ -127,7 +127,7 @@ def test_nobody_signed_in_and_long_names_elide(dashboard):
     assert dashboard.pc_widgets["R1"].lbl_user.text() == "Nobody signed in"
     assert dashboard.pc_widgets["R2"].lbl_user.text() == "Nobody signed in"
     card = dashboard.pc_widgets[long_name]
-    assert card.lbl_name.text().endswith("…") and card.lbl_name.toolTip() == long_name
+    assert card.lbl_name.text().endswith("…") and long_name in card.lbl_name.toolTip()
 
 
 def test_grid_has_no_holes_after_machines_leave(dashboard):
@@ -297,3 +297,19 @@ def test_api_probe_names_the_host_that_answered(monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     assert admin_panel.probe_api(["127.0.0.1", "10.0.0.5"]) == "10.0.0.5"
     assert admin_panel.probe_api(["127.0.0.1"]) is None
+
+
+def test_workstation_text_is_shown_as_plain_text(qtbot, hub):
+    from PySide6.QtCore import Qt
+    from slate.gui import admin_widgets
+    data = _report("<b>PC</b>", 5, Model="Projects<b>", OS="<script>alert(1)</script>",
+                   Drives=[{"Root": "C:", "Label": "Work<i>", "Usage": "50%"}])
+    dlg = admin_widgets.PCDetailsDialog(data, hub=hub, pc_name="<b>PC</b>")
+    qtbot.addWidget(dlg)
+    labels = dlg.findChildren(QLabel)
+    assert labels and all(l.textFormat() == Qt.TextFormat.PlainText for l in labels)
+    assert "Projects<b>" in [l.text() for l in labels]
+    card = admin_widgets.PCCard("<b>PC</b>", hub)
+    qtbot.addWidget(card)
+    card.update_data(data)
+    assert all(l.textFormat() == Qt.TextFormat.PlainText for l in card.findChildren(QLabel))

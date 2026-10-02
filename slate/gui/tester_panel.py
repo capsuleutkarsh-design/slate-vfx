@@ -129,7 +129,14 @@ def count_files(folder: Path) -> int:
 
 
 def free_space_check(folder: Path, needed: int):
-    """(ok, ask, message): refuse when it would leave under 10 % free, ask above 5 GB."""
+    """
+    (ok, ask, message): refuse a run that would take the disk below 10 % free
+    (or not fit at all), ask above 5 GB. A disk already under 10 % is not a
+    reason to refuse a run that writes nothing, or one that fits without
+    crossing anything further.
+    """
+    if needed <= 0:
+        return True, False, ""
     probe = Path(folder)
     while not probe.exists() and probe.parent != probe:
         probe = probe.parent
@@ -137,7 +144,9 @@ def free_space_check(folder: Path, needed: int):
         usage = shutil.disk_usage(probe)
     except OSError:
         return True, needed > CONFIRM_ABOVE_BYTES, ""
-    if usage.free - needed < usage.total * KEEP_FREE_FRACTION:
+    limit = usage.total * KEEP_FREE_FRACTION
+    crosses = usage.free >= limit and usage.free - needed < limit
+    if needed > usage.free or crosses:
         return False, False, (f"This would write {human_size(needed)}, leaving less than 10% of the "
                               f"disk free ({human_size(usage.free)} free now). Make it smaller.")
     return True, needed > CONFIRM_ABOVE_BYTES, ""

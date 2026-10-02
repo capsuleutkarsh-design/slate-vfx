@@ -248,3 +248,22 @@ def test_staging_an_update_runs_off_the_ui_thread(make_tab, qtbot, monkeypatch):
     job.wait(2000)
     assert seen["thread"] != threading.get_ident()
     assert tab.btn_update.isEnabled() and "downloaded" in seen["told"]
+
+
+def test_studio_policy_edits_are_tracked_and_saved_by_the_bar(make_tab, qtbot, monkeypatch):
+    from slate.gui.components import work_guard
+    tab = make_tab(["Admin"])
+    tab.show()
+    QApplication.processEvents()
+    editor = tab.studio_policy_editor
+    assert editor.btn_save.isHidden() and not tab.has_unsaved_changes()
+    editor.accrual.setValue(editor.accrual.value() + 0.25)
+    assert tab.has_unsaved_changes() and tab.lbl_dirty.text() == "Unsaved changes"
+    unsaved, _busy = work_guard.pending_work({"Settings": tab})
+    assert unsaved and "studio policy" in tab.unsaved_summary()
+    tab.discard_changes()
+    assert not tab.has_unsaved_changes()
+    saved = []
+    monkeypatch.setattr(type(editor), "save", lambda self: saved.append(1) or (self._mark_clean() or True))
+    editor.accrual.setValue(editor.accrual.value() + 0.25)
+    assert tab.save_all() and saved == [1] and not tab.has_unsaved_changes()

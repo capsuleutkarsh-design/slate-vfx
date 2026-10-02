@@ -293,3 +293,23 @@ def test_regression_ingests_and_cleans_up(pg_db, panel_for, tmp_path, monkeypatc
     assert panel._regression["passed"], titles
     assert titles[-1] == "Regression passed"
     assert panel.count_stock_rows(panel._regression["target"]) == 0
+
+
+def test_free_space_rule_without_stubs(tmp_path):
+    """The real disk: nothing is refused for writing nothing, and a run that cannot fit is."""
+    import shutil as _sh
+    usage = _sh.disk_usage(tmp_path)
+    assert tp.free_space_check(tmp_path, 0) == (True, False, "")
+    assert tp.free_space_check(tmp_path, 1024)[0] is (usage.free - 1024 >= usage.total * 0.10
+                                                      or usage.free < usage.total * 0.10)
+    ok, _ask, message = tp.free_space_check(tmp_path, usage.free + 1)
+    assert not ok and message
+
+
+def test_free_space_rule_on_a_nearly_full_disk(monkeypatch, tmp_path):
+    class Usage:
+        total, free = 100 * 1024 ** 3, 5 * 1024 ** 3          # already under 10 %
+    monkeypatch.setattr(tp.shutil, "disk_usage", lambda p: Usage())
+    assert tp.free_space_check(tmp_path, 0)[0]
+    assert tp.free_space_check(tmp_path, 1024 ** 2)[0]          # small run: does not cross anything
+    assert not tp.free_space_check(tmp_path, 6 * 1024 ** 3)[0]  # does not fit

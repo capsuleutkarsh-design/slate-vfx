@@ -834,11 +834,17 @@ class DatabaseAuditViewer(QWidget):
         self.toggle_explanation_column(self.chk_explain.isChecked())
 
         loaded = len(self.full_history)
+        shown = len(rows)
         if self.total is not None and self.total > loaded:
-            self.lbl_count.setText(f"Showing {len(rows):,} - {loaded:,} loaded of {self.total:,} changes.")
+            if shown == loaded:
+                text = f"Showing the newest {loaded:,} of {self.total:,} changes."
+            else:
+                text = f"Showing {shown:,} of the newest {loaded:,} changes ({self.total:,} in all)."
+            self.lbl_count.setText(text + " Load more for older ones.")
             self.btn_more.show()
         else:
-            self.lbl_count.setText(f"Showing {len(rows):,} of {loaded:,} changes.")
+            self.lbl_count.setText(f"Showing all {loaded:,} changes." if shown == loaded
+                                   else f"Showing {shown:,} of {loaded:,} changes.")
             self.btn_more.setVisible(self.total is None and loaded >= HISTORY_PAGE)
 
     def filter_table(self):

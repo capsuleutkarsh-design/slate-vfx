@@ -270,3 +270,18 @@ def test_role_changes_show_permission_names_not_keys(qtbot, tmp_path):
              for c in range(viewer.table.columnCount()) if viewer.table.item(r, c)]
     assert any("added Timeline Viewer, Stock Viewer; removed nothing" in t for t in texts)
     assert not any("Shot Review" in t for t in texts)
+
+
+def test_change_history_count_wording(qtbot, monkeypatch):
+    db = FakeHistoryDb(2128)
+    monkeypatch.setattr(alv.DatabaseAuditViewer, "_count", lambda self: len(db.rows))
+    viewer = alv.DatabaseAuditViewer(db)
+    qtbot.addWidget(viewer)
+    assert viewer.lbl_count.text() == "Showing the newest 2,000 of 2,128 changes. Load more for older ones."
+    viewer.search.setText("SH2127")
+    viewer.populate_table()
+    assert viewer.lbl_count.text().startswith("Showing 1 of the newest 2,000 changes (2,128 in all).")
+    viewer.load_more()
+    viewer.search.setText("")
+    viewer.populate_table()
+    assert viewer.lbl_count.text() == "Showing all 2,128 changes."
