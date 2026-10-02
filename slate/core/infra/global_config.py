@@ -19,7 +19,12 @@ class GlobalConfig:
         "DEVELOPER_MODE": False,
         "db_mode": "sqlite",
         "allow_db_fallback": True,
-        "enable_exr_loading": False,
+        # EXR and OpenImageIO are settings, on by default: they were switched
+        # on by two of the launchers and off by the others, so what Slate
+        # could open depended on which shortcut started it. The environment
+        # variables still override them.
+        "enable_exr_loading": True,
+        "enable_oiio": True,
     }
 
     def __init__(self):
@@ -428,6 +433,19 @@ class GlobalConfig:
         return True
 
     @classmethod
+    def oiio_enabled(cls) -> bool:
+        """OpenImageIO switch; env SLATE_ENABLE_OIIO=1|0 overrides the setting."""
+        env = str(os.getenv("SLATE_ENABLE_OIIO", "") or "").strip().lower()
+        if env in ("1", "true", "yes", "on"):
+            return True
+        if env in ("0", "false", "no", "off"):
+            return False
+        raw = cls.get("enable_oiio", True)
+        if isinstance(raw, bool):
+            return raw
+        return str(raw or "").strip().lower() in ("1", "true", "yes", "on")
+
+    @classmethod
     def exr_loading_enabled(cls) -> bool:
         """
         EXR loading switch with environment override.
@@ -438,7 +456,7 @@ class GlobalConfig:
             return True
         if env in ("0", "false", "no", "off"):
             return False
-        raw = cls.get("enable_exr_loading", False)
+        raw = cls.get("enable_exr_loading", True)
         if isinstance(raw, bool):
             return raw
         text = str(raw or "").strip().lower()

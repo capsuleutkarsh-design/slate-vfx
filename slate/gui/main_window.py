@@ -51,21 +51,9 @@ from ..core.services.sweeper_engine import SweeperEngine
 from ..core.services.sweepers.temp_sweeper import TempFileSweeper
 from ..gui.help_dialog import show_help  # Re-enabled with JSON-based content
 
-from .tabs.folder_creator_tab import FolderCreatorTab
-from .cap_rename_tab import CapRenameTab 
-from .tabs.stock_browser_tab import StockBrowserTab
-from .tabs.vfx_review_dual_mode_tab import VFXReviewDualModeTab  # NEW: VFX Supervisor Review Tool (Dual Mode)
-from .admin_panel import AdminPanelTab
-from .tester_panel import TesterPanel
-from .attendance_tab import AttendanceTab
+# The screens are imported when they are first opened (main_window_builder),
+# not here: importing every one of them made start-up over a second slower.
 from .login_dialog import LoginDialog
-from .tabs.settings_tab import SettingsTab
-# from ..vfx_dashboard.ui.main_window import MainWindow as DashboardWindow  <-- OLD (UNSAFE)
-# from .dashboard_adapter import DashboardAdapter # <-- OLD ADAPTER (REPLACED)
-
-from .tabs.vfx_dashboard_pro.ui.dashboard_widget import DashboardWidget # <-- PRO DASHBOARD
-from .tabs.home_tab import HomeTab  # NEW: Cinematic Home Tab
-
 
 
 # Component Imports
@@ -278,10 +266,14 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         self.setup_help_shortcuts()
         self.setup_shortcuts()  # NEW: Global keyboard shortcuts (Improvement #9)
 
-        # Update Checker (Auto-Check)
-        self.update_checker = UpdateChecker(self)
-        # Note: Update callback intentionally disabled - UpdateAvailableDialog handled by UpdateChecker internally
-        self.update_checker.start()
+        # The update check: only when the studio has not switched it off
+        # (check_updates_on_startup), and its answer is now heard - it was
+        # started, and what it found was thrown away.
+        self.update_checker = None
+        if self.update_check_enabled():
+            self.update_checker = UpdateChecker(self)
+            self.update_checker.update_available.connect(self._on_update_available)
+            self.update_checker.start()
         
         # Reflect DB runtime mode in UI immediately.
         self._refresh_db_runtime_indicator(show_fallback_warning=True)
@@ -299,6 +291,42 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         
         # --- RV Integration Listener ---
         self._setup_rv_listener()
+
+    @staticmethod
+    def update_check_enabled() -> bool:
+        value = GlobalConfig.get("check_updates_on_startup", True)
+        if isinstance(value, str):
+            return value.strip().lower() not in ("0", "false", "no", "off")
+        return bool(value)
+
+    def _on_update_available(self, manifest):
+        """A newer version: a toast that does not interrupt, unless put off today."""
+        from .dialogs.update_available_dialog import is_snoozed
+        version = str((manifest or {}).get("version", ""))
+        if is_snoozed(version):
+            logging.info("Update %s was put off; not offering it again yet.", version)
+            return False
+        self._pending_update = manifest
+        self.show_feedback(f"Slate {version} is available.", "info", duration=15000,
+                           action=("See what's new", self.show_update_dialog))
+        return True
+
+    def show_update_dialog(self):
+        """The update dialog; Download and install hands over to Settings' installer."""
+        from .dialogs.update_available_dialog import UpdateAvailableDialog
+        manifest = getattr(self, "_pending_update", None)
+        if not manifest:
+            return False
+        dialog = UpdateAvailableDialog(manifest, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return False
+        settings = self._get_tab_instance("Settings", create=True)
+        if settings is not None and hasattr(settings, "_stage_update"):
+            self._switch_to_tab_label("Settings")
+            settings._stage_update(manifest)
+            return True
+        self.show_feedback("Open Settings to install the update.", "warning")
+        return False
 
     def _setup_rv_listener(self):
         import os, json

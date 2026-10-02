@@ -64,50 +64,54 @@ from slate.core.infra.app_context import AppContext
 from slate.core.infra.global_config import GlobalConfig
 
 class BroadcastWindow(QDialog):
-    def __init__(self, message, parent=None):
+    """
+    A message from an administrator. It stays until it is read and closed:
+    it used to vanish after ten seconds, with every label boxed in red, a
+    '[WARN] ADMIN MESSAGE' title and 'Running command...' under a plain note.
+    """
+
+    def __init__(self, message, parent=None, sender=""):
         super().__init__(parent)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        
+
         layout = QVBoxLayout(self)
-        
-        # Frame
+
         frame = QFrame()
+        frame.setObjectName("BroadcastFrame")
+        # Scoped to the frame: a bare QFrame rule also boxed every QLabel in it.
         frame.setStyleSheet(f"""
-            QFrame {{
-                background-color: rgba(20, 20, 20, 240);
-                border: 2px solid {Gate.BAD};
+            QFrame#BroadcastFrame {{
+                background-color: {Gate.RAISED};
+                border: 1px solid {Gate.LINE};
                 border-radius: 10px;
             }}
+            QLabel {{ background: transparent; border: none; }}
         """)
         frame_layout = QVBoxLayout(frame)
-        
-        # Icon
-        title = QLabel("[WARN] ADMIN MESSAGE")
-        title.setStyleSheet(f"color: {Gate.BAD}; font-weight: bold; font-size: 16px;")
-        title.setAlignment(Qt.AlignCenter)
+        frame_layout.setContentsMargins(20, 16, 20, 16)
+        frame_layout.setSpacing(10)
+
+        title = QLabel(f"Message from {sender}" if sender else "Message from your administrator")
+        title.setStyleSheet(f"color: {Gate.TEXT}; font-weight: bold; font-size: 15px;")
         frame_layout.addWidget(title)
-        
-        # Message
+
         msg_label = QLabel(message)
-        msg_label.setStyleSheet(f"color: {Gate.TEXT}; font-size: 14px;")
-        msg_label.setAlignment(Qt.AlignCenter)
+        msg_label.setStyleSheet(f"color: {Gate.TEXT_2}; font-size: 14px;")
         msg_label.setWordWrap(True)
-        msg_label.setTextFormat(Qt.PlainText) # SECURITY: Prevent HTML Injection
+        msg_label.setTextFormat(Qt.PlainText)  # SECURITY: Prevent HTML Injection
         frame_layout.addWidget(msg_label)
-        
-        # Close Button
-        btn_close = QLabel("Running command...")
-        btn_close.setAlignment(Qt.AlignCenter)
-        btn_close.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: 10px; margin-top: 10px;")
-        frame_layout.addWidget(btn_close) # Actually just informational
-        
+
+        from slate.gui.core.controls import make_button
+        row = QHBoxLayout()
+        row.addStretch(1)
+        self.ok_button = make_button("OK", "primary", on_click=self.close)
+        row.addWidget(self.ok_button)
+        frame_layout.addLayout(row)
+
         layout.addWidget(frame)
-        
-        # Auto close
-        safe_single_shot(10000, self, self.close)
-        self.resize(400, 200)
-        
+        self.resize(420, 200)
+
         # Center on screen
         if QApplication.primaryScreen():
             self.move(QApplication.primaryScreen().availableGeometry().center() - self.rect().center())
@@ -120,7 +124,9 @@ class StartupLoadingDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Launching Slate")
         self.setModal(False)
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Dialog | Qt.WindowStaysOnTopHint)
+        # Not always on top: it covered every other window for the whole
+        # start-up.
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Dialog)
         self.setAttribute(Qt.WA_TranslucentBackground)
 
         root = QVBoxLayout(self)
@@ -130,7 +136,7 @@ class StartupLoadingDialog(QDialog):
         frame.setStyleSheet(
             f"""
             QFrame {{
-                background-color: rgba(18, 24, 36, 235);
+                background-color: {Gate.RAISED};
                 border: 1px solid {Gate.LINE};
                 border-radius: 10px;
             }}
@@ -169,7 +175,7 @@ class StartupLoadingDialog(QDialog):
         )
         layout.addWidget(progress)
 
-        hint = QLabel("Loading workspace and services")
+        hint = QLabel("Opening your workspace")
         hint.setAlignment(Qt.AlignCenter)
         hint.setStyleSheet(f"color: {Gate.INFO}; font-size: 11px;")
         layout.addWidget(hint)
@@ -181,12 +187,54 @@ class StartupLoadingDialog(QDialog):
             self.move(QApplication.primaryScreen().availableGeometry().center() - self.rect().center())
 
 
+class ConnectionTestWorker(QThread):
+    """Try the typed database details off the UI thread (5 s at most)."""
+    done = Signal(bool, str)
+
+    def __init__(self, values, connect=None):
+        super().__init__()
+        self.values = dict(values)
+        self._connect = connect
+
+    def run(self):
+        ok, message = test_database_connection(self.values, connect=self._connect)
+        self.done.emit(ok, message)
+
+
+def test_database_connection(values, connect=None):
+    """(ok, plain sentence) for the database details in the first-run window."""
+    try:
+        if connect is None:
+            import psycopg2
+            connect = psycopg2.connect
+        conn = connect(host=values.get("db_host"), port=int(values.get("db_port") or 5440),
+                       dbname=values.get("db_name"), user=values.get("db_user"),
+                       password=values.get("db_password") or None, connect_timeout=5)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return True, "Connected. These details work."
+    except Exception as exc:
+        text = str(exc).lower()
+        if "password" in text or "authentication" in text:
+            reason = "the server refused the user name or password"
+        elif "does not exist" in text:
+            reason = "there is no database with that name on the server"
+        elif "timeout" in text or "timed out" in text:
+            reason = "the server did not answer within 5 seconds"
+        else:
+            reason = "the server could not be reached at that address and port"
+        logging.info("First-run connection test failed: %s", exc)
+        return False, f"Not connected: {reason}."
+
+
 class FirstRunSetupDialog(QDialog):
     """First-run configuration dialog for required runtime paths and DB connection."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Slate - First Run Setup")
+        self.setWindowTitle("Set up Slate on this computer")
         self.setModal(True)
         self.setMinimumWidth(560)
 
@@ -194,15 +242,15 @@ class FirstRunSetupDialog(QDialog):
         root.setSpacing(10)
 
         intro = QLabel(
-            "Configure required paths and database connection.\n"
-            "You can update these later in Settings > Paths & Connections."
+            "Tell Slate where the studio's shared folder and its server are. "
+            "Find server fills in the server for you when it is on this network. "
+            "You can change these later in Settings > Paths & Connections."
         )
         intro.setWordWrap(True)
         root.addWidget(intro)
 
-        form = QFormLayout()
-        form.setHorizontalSpacing(12)
-        form.setVerticalSpacing(8)
+        from slate.gui.core.controls import form_layout, make_button
+        form = form_layout()
 
         server_wrap = QWidget()
         server_row = QHBoxLayout(server_wrap)
@@ -210,56 +258,106 @@ class FirstRunSetupDialog(QDialog):
         self.server_root_input = QLineEdit(str(GlobalConfig.get("SERVER_ROOT", "")))
         self.server_root_input.setPlaceholderText(
             "The studio's shared folder - a mapped drive or a \\\\server\\share path")
-        browse_server_btn = QPushButton("Browse")
+        browse_server_btn = QPushButton("Browse\u2026")
         browse_server_btn.clicked.connect(self._browse_server_root)
         server_row.addWidget(self.server_root_input, 1)
         server_row.addWidget(browse_server_btn)
-        form.addRow("Server Root", server_wrap)
+        form.addRow("Studio shared folder", server_wrap)
 
+        host_wrap = QWidget()
+        host_row = QHBoxLayout(host_wrap)
+        host_row.setContentsMargins(0, 0, 0, 0)
         self.db_host_input = QLineEdit(str(GlobalConfig.get("db_host", "")))
-        form.addRow("DB Host", self.db_host_input)
+        self.db_host_input.setPlaceholderText("e.g. 10.0.0.15 or slate-server")
+        self.find_button = make_button("Find server", "secondary", on_click=self._find_server,
+                                       tooltip="Ask the network where Slate Server is")
+        host_row.addWidget(self.db_host_input, 1)
+        host_row.addWidget(self.find_button)
+        form.addRow("Server address", host_wrap)
 
         self.db_port_input = QSpinBox()
         self.db_port_input.setRange(1, 65535)
         self.db_port_input.setValue(int(GlobalConfig.get("db_port", 5440) or 5440))
-        form.addRow("DB Port", self.db_port_input)
+        form.addRow("Port", self.db_port_input)
 
         self.db_name_input = QLineEdit(str(GlobalConfig.get("db_name", "ut_vfx")))
-        form.addRow("DB Name", self.db_name_input)
+        form.addRow("Database name", self.db_name_input)
 
         self.db_user_input = QLineEdit(str(GlobalConfig.get("db_user", "postgres")))
-        form.addRow("DB User", self.db_user_input)
+        form.addRow("Database user", self.db_user_input)
 
         self.db_password_input = QLineEdit(str(GlobalConfig.get("db_password", "")))
         self.db_password_input.setEchoMode(QLineEdit.Password)
         self.db_password_input.setPlaceholderText("Optional if configured via credential setup")
-        form.addRow("DB Password", self.db_password_input)
+        form.addRow("Database password", self.db_password_input)
 
         root.addLayout(form)
 
+        test_row = QHBoxLayout()
+        self.test_button = make_button("Test connection", "secondary", on_click=self.test_connection)
+        self.test_result = QLabel("")
+        self.test_result.setWordWrap(True)
+        test_row.addWidget(self.test_button)
+        test_row.addWidget(self.test_result, 1)
+        root.addLayout(test_row)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
+        buttons.button(QDialogButtonBox.Ok).setText("Save")
         buttons.accepted.connect(self._validate_and_accept)
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
+        self._test_worker = None
+
+    def _set_result(self, ok, message):
+        colour = Gate.OK if ok else Gate.BAD
+        self.test_result.setStyleSheet(f"color: {colour};")
+        self.test_result.setText(message)
+        self.test_button.setEnabled(True)
+        self.test_button.setText("Test connection")
+
+    def test_connection(self, connect=None):
+        """Check the details on a worker thread; the result goes on the line beside."""
+        if self._test_worker is not None and self._test_worker.isRunning():
+            return self._test_worker
+        self.test_button.setEnabled(False)
+        self.test_button.setText("Testing\u2026")
+        self.test_result.setStyleSheet("")
+        self.test_result.setText("Trying the server (up to 5 seconds)\u2026")
+        self._test_worker = ConnectionTestWorker(self.values(), connect=connect)
+        self._test_worker.done.connect(self._set_result)
+        self._test_worker.start()
+        return self._test_worker
+
+    def _find_server(self):
+        from slate.core.infra.network_discovery import discover_server_details
+        self.find_button.setEnabled(False)
+        QApplication.processEvents()
+        try:
+            found = discover_server_details(timeout=2.0)
+        finally:
+            self.find_button.setEnabled(True)
+        if not found:
+            self._set_result(False, "No Slate Server answered on this network. Type its address.")
+            return False
+        self.db_host_input.setText(found["host"])
+        self.db_port_input.setValue(int(found.get("pooler_port") or found.get("db_port") or 5440))
+        self._set_result(True, f"Found Slate Server at {found['host']}.")
+        return True
 
     def _browse_server_root(self):
         start_dir = self.server_root_input.text().strip() or str(Path.home())
-        selected = QFileDialog.getExistingDirectory(self, "Select Slate_Central Root", start_dir)
+        selected = QFileDialog.getExistingDirectory(self, "Choose the studio's shared folder", start_dir)
         if selected:
             self.server_root_input.setText(selected)
 
     def _validate_and_accept(self):
-        if not self.server_root_input.text().strip():
-            QMessageBox.warning(self, "Missing Field", "Server Root is required.")
-            return
-        if not self.db_host_input.text().strip():
-            QMessageBox.warning(self, "Missing Field", "DB Host is required.")
-            return
-        if not self.db_name_input.text().strip():
-            QMessageBox.warning(self, "Missing Field", "DB Name is required.")
-            return
-        if not self.db_user_input.text().strip():
-            QMessageBox.warning(self, "Missing Field", "DB User is required.")
+        missing = [label for label, field in (
+            ("the studio shared folder", self.server_root_input),
+            ("the server address", self.db_host_input),
+            ("the database name", self.db_name_input),
+            ("the database user", self.db_user_input)) if not field.text().strip()]
+        if missing:
+            QMessageBox.warning(self, "Set up Slate", "Fill in " + ", ".join(missing) + ".")
             return
         self.accept()
 
@@ -274,7 +372,7 @@ class FirstRunSetupDialog(QDialog):
         }
 
 
-        
+
 # --- WORKER CLASS TO FIX UI FREEZE ---
 class CommandCheckWorker(QThread):
     command_received = Signal(dict)
@@ -346,6 +444,10 @@ class ApplicationEntry:
         # Signing out and in again goes through launch_main_tool too
         # (MainWindow._open_window_for), so it can find this entry.
         self.app._slate_entry = self
+        # Starting Slate again brings this one forward instead of a box that
+        # named an internal lock.
+        from slate.utils.single_instance import listen, lock_name_for
+        self._instance_server = listen(lock_name_for(self.app_mode), self._bring_to_front)
         self._cleanup_done = False
         self._is_closing = False
         self.loading_dialog = None
@@ -362,7 +464,8 @@ class ApplicationEntry:
 
         if not self._ensure_first_run_setup():
             self._startup_cancelled = True
-            self.cleanup_and_exit()
+            # Cancelled setup is not a crash; a setup that failed is.
+            self.cleanup_and_exit(getattr(self, "_setup_failed", False) and 1 or 0)
             return
 
         # Rehydrate DB backend after first-run config writes.
@@ -414,6 +517,20 @@ class ApplicationEntry:
         if self.icon_path.exists(): self.app.setWindowIcon(QIcon(str(self.icon_path)))
 
         self.show_software_login()
+
+    def _bring_to_front(self):
+        """Another start of this application asked for us: show the open window."""
+        window = getattr(self, "main_window", None) or getattr(self, "login_dialog", None)
+        if window is None:
+            return
+        try:
+            if window.isMinimized():
+                window.showNormal()
+            window.show()
+            window.raise_()
+            window.activateWindow()
+        except RuntimeError:
+            pass
 
     def _get_db_runtime_status(self) -> dict:
         try:
@@ -520,6 +637,7 @@ class ApplicationEntry:
             return True
         except Exception as exc:
             logging.exception("First-run setup failed: %s", exc, exc_info=True)
+            self._setup_failed = True
             QMessageBox.critical(
                 None,
                 "Setup Error",
@@ -564,7 +682,7 @@ class ApplicationEntry:
         """Handle command on Main Thread (UI Safe)"""
         try:
             if cmd['command'] == "message":
-                self.alert = BroadcastWindow(cmd['message'])
+                self.alert = BroadcastWindow(cmd['message'], sender=cmd.get('admin_user', ''))
                 self.alert.show()
                 logging.info("Admin message displayed")
                 
@@ -585,24 +703,28 @@ class ApplicationEntry:
         action = "shutdown" if cmd['command'] == "shutdown" else "restart"
         admin = cmd.get('admin_user', 'Administrator')
         reason = cmd.get('reason', 'No reason provided')
-        
+        verb = "shut down" if action == "shutdown" else "restart"
+        button_text = "Shut down" if action == "shutdown" else "Restart"
+
         # Show confirmation dialog
         msg = QMessageBox()
         msg.setIcon(QMessageBox.Icon.Warning)
-        msg.setWindowTitle(f"Admin Remote {action.title()}")
-        msg.setText(f"⚠️ {admin} is requesting to {action} this PC in 60 seconds.")
+        msg.setWindowTitle(f"{button_text} this PC")
+        msg.setText(f"{admin} wants to {verb} this PC.")
         msg.setInformativeText(
             f"Reason: {reason}\n\n"
-            f"Click OK to proceed or Cancel to abort.\n\n"
-            f"Save your work before clicking OK!"
+            f"Save your work, then choose {button_text} - Windows will {verb} "
+            f"60 seconds later. Choose Cancel to keep working."
         )
-        msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
-        msg.setDefaultButton(QMessageBox.Cancel)
-        
+        go = msg.addButton(button_text, QMessageBox.ButtonRole.AcceptRole)
+        cancel = msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        msg.setDefaultButton(cancel)
+        msg.setEscapeButton(cancel)
+
         # Show dialog and wait for user response
-        reply = msg.exec()
-        
-        if reply == QMessageBox.Ok:
+        msg.exec()
+
+        if msg.clickedButton() is go:
             # User accepted - proceed with system command
             logging.critical(f"Remote {action} accepted by user. Admin: {admin}, Reason: {reason}")
             
@@ -625,16 +747,16 @@ class ApplicationEntry:
                 logging.error(f"Failed to execute {action} command: {e}")
                 QMessageBox.critical(
                     None,
-                    "Error",
-                    f"Failed to {action} system: {e}\n\nPlease contact IT support."
+                    f"{button_text} this PC",
+                    f"Windows did not {verb}: {e}\n\nAsk IT for help."
                 )
         else:
             # User cancelled
             logging.info(f"User cancelled remote {action} request from {admin}")
             QMessageBox.information(
                 None,
-                "Cancelled",
-                f"{action.title()} request cancelled.\n\nYour PC will not {action}."
+                f"{button_text} this PC",
+                f"Cancelled. This PC will not {verb}."
             )
 
     def show_software_login(self):
@@ -650,7 +772,7 @@ class ApplicationEntry:
 
             if not user_data:
                 logging.error("Login accepted but no user_data returned. Cannot launch.")
-                self.cleanup_and_exit()
+                self.cleanup_and_exit(1)
                 return
 
             if self.reporter:
@@ -673,7 +795,12 @@ class ApplicationEntry:
 
     def launch_main_tool(self, user_data):
         logging.info(f"Input: Launching Main Window for mode='{self.app_mode}'...")
+        started = time.perf_counter()
         try:
+            # Import first, then let the loading window paint, then build:
+            # the screens themselves load when they are first opened.
+            import slate.gui.main_window  # noqa: F401
+            QApplication.processEvents()
             if self.app_mode == "vfx":
                 from slate.gui.vfx_studio_window import VFXStudioWindow
                 logging.info("Initializing VFXStudioWindow...")
@@ -699,7 +826,7 @@ class ApplicationEntry:
                 self.main_window.showMaximized()
             # Main window is now the primary lifecycle owner.
             self.app.setQuitOnLastWindowClosed(True)
-            logging.info("Main Window Launched Successfully.")
+            logging.info("Main Window Launched Successfully in %.2f s.", time.perf_counter() - started)
             
         except Exception as e:
             msg = f"CRITICAL: Error launching Main Window:\n{e}"
@@ -719,8 +846,9 @@ class ApplicationEntry:
                 hint=("Close Slate and start it again. If it keeps happening, "
                       "copy the details and send them to IT."),
             )
-            
-            self.cleanup_and_exit()
+
+            # A non-zero code, so the launcher shows its crash message.
+            self.cleanup_and_exit(1)
         finally:
             self._hide_startup_loading()
 
@@ -772,7 +900,8 @@ class ApplicationEntry:
         except Exception as e:
             logging.debug(f"Error handler cleanup skipped in gatekeeper: {e}")
 
-    def cleanup_and_exit(self):
+    def cleanup_and_exit(self, code: int = 0):
+        """Stop everything and leave with `code` (non-zero for a failed start)."""
         self._is_closing = True
         self._hide_startup_loading()
         self._cleanup_background_services()
@@ -780,7 +909,7 @@ class ApplicationEntry:
         if app:
             app.quit()
         import os
-        os._exit(0)
+        os._exit(int(code))
 
     def run(self):
         if self._startup_cancelled:
@@ -796,7 +925,7 @@ class ApplicationEntry:
 
         self._cleanup_background_services()
         import os
-        os._exit(0)
+        os._exit(int(getattr(self, "exit_code", 0) or 0))
 
 if __name__ == "__main__":
     import argparse
@@ -804,8 +933,8 @@ if __name__ == "__main__":
     parser.add_argument("--mode", choices=["all", "vfx", "ops"], default="all", help="Suite mode to launch (vfx, ops, all)")
     cli_args, _ = parser.parse_known_args()
 
-    from slate.utils.single_instance import SingleInstance
-    lock_name = f"Slate_Process_{cli_args.mode}" if cli_args.mode != "all" else "Slate_Process"
+    from slate.utils.single_instance import SingleInstance, lock_name_for
+    lock_name = lock_name_for(cli_args.mode)
     if not SingleInstance(lock_name).check():
         sys.exit(0)
         

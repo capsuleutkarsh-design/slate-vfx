@@ -105,22 +105,17 @@ class MainWindowBuilderMixin:
             from ... import __version__ as APP_VERSION
             from .tab_coordinator import TabCoordinator
             from ..tabs.home_tab import HomeTab
-            from ..tabs.folder_creator_tab import FolderCreatorTab
-            from ..cap_rename_tab import CapRenameTab 
-            from ..tabs.stock_browser_tab import StockBrowserTab
-            from ..tabs.vfx_review_dual_mode_tab import VFXReviewDualModeTab
-            from ..tabs.vfx_dashboard_pro.ui.dashboard_widget import DashboardWidget
-            from ..tabs.settings_tab import SettingsTab
-            from ..admin_panel import AdminPanelTab
-            from ..tester_panel import TesterPanel
-            from ..attendance_tab import AttendanceTab
-
-            from ..tabs.prod_scheduling_tab import ProdSchedulingTab
-            from ..tabs.prod_bidding_tab import ProdBiddingTab
-            from ..tabs.it_inventory_tab import ItInventoryTab
             from ..tabs.licence_view import LicenceView
-            from ..tabs.it_deployment_tab import ItDeploymentTab
-            from ..tabs.admin_users_tab import AdminUsersTab
+
+            # Each screen's module is imported when the screen is first
+            # opened, not while the window is built: importing all of them
+            # (the dashboard alone is large) held the start-up for over a
+            # second with the loading window frozen.
+            from importlib import import_module
+
+            def screen(module, name):
+                return lambda *a, **k: getattr(import_module(module), name)(*a, **k)
+
             central_widget = QWidget()
             self.setCentralWidget(central_widget)
 
@@ -211,6 +206,12 @@ class MainWindowBuilderMixin:
                 self.sidebar_container.setFixedWidth(64)
             self.apply_sidebar_look(collapsed)
 
+            # The sidebar is quiet while the screens are registered: the
+            # first one used to be built the moment it was added, with only
+            # itself in the sidebar (Home had no tiles). open_current() below
+            # builds it once every screen is in.
+            self.sidebar_nav.blockSignals(True)
+
             # === LAZY TAB LOADING (Improvement #4 & Suite Decoupling) ===
             mode = getattr(self, "app_mode", "all") or "all"
             show_vfx = mode in ("vfx", "all")
@@ -239,7 +240,7 @@ class MainWindowBuilderMixin:
                 )
 
                 def create_folder_creator():
-                    tab = FolderCreatorTab(self.config_manager)
+                    tab = screen("slate.gui.tabs.folder_creator_tab", "FolderCreatorTab")(self.config_manager)
                     if hasattr(tab, "template_changed"):
                         tab.template_changed.connect(lambda *_: self.on_templates_refreshed())
                     return tab
@@ -258,7 +259,7 @@ class MainWindowBuilderMixin:
                 # CAP Rename
                 self.tab_coordinator.register_tab_factory(
                     "CAP Rename",
-                    lambda: CapRenameTab(self.config_manager),
+                    lambda: screen("slate.gui.cap_rename_tab", "CapRenameTab")(self.config_manager),
                     icon="🏷️",
                     permission_key="Rename Tool",
                     user_role=self.user_role,
@@ -269,7 +270,7 @@ class MainWindowBuilderMixin:
                 # Stock Viewer
                 self.tab_coordinator.register_tab_factory(
                     "Stock Viewer",
-                    lambda: StockBrowserTab(
+                    lambda: screen("slate.gui.tabs.stock_browser_tab", "StockBrowserTab")(
                         self.library_manager,
                         user_roles=self.user_roles,
                         user_role=self.user_role,
@@ -287,7 +288,7 @@ class MainWindowBuilderMixin:
                 # lock people out of a tab they already have.
                 self.tab_coordinator.register_tab_factory(
                     "Timeline Viewer",
-                    lambda: VFXReviewDualModeTab(self.config_manager, self.user_data),
+                    lambda: screen("slate.gui.tabs.vfx_review_dual_mode_tab", "VFXReviewDualModeTab")(self.config_manager, self.user_data),
                     icon="🎬",
                     permission_key="Shot Review",
                     user_role=self.user_role,
@@ -298,7 +299,7 @@ class MainWindowBuilderMixin:
                 # VFX Dashboard Pro
                 self.tab_coordinator.register_tab_factory(
                     "VFX Dashboard",
-                    lambda: DashboardWidget(
+                    lambda: screen("slate.gui.tabs.vfx_dashboard_pro.ui.dashboard_widget", "DashboardWidget")(
                         user_data={**(self.user_data or {}), "inherit_app_theme": True},
                         user_manager=self.app_context.user_manager(),
                         app_context=self.app_context,
@@ -313,7 +314,7 @@ class MainWindowBuilderMixin:
                 # Production Scheduling
                 self.tab_coordinator.register_tab_factory(
                     "Scheduling",
-                    lambda: ProdSchedulingTab(user_data=self.user_data),
+                    lambda: screen("slate.gui.tabs.prod_scheduling_tab", "ProdSchedulingTab")(user_data=self.user_data),
                     icon="📅",
                     permission_key="Scheduling",
                     user_role=self.user_role,
@@ -324,7 +325,7 @@ class MainWindowBuilderMixin:
                 # Production Bidding
                 self.tab_coordinator.register_tab_factory(
                     "Bidding",
-                    lambda: ProdBiddingTab(user_data=self.user_data),
+                    lambda: screen("slate.gui.tabs.prod_bidding_tab", "ProdBiddingTab")(user_data=self.user_data),
                     icon="💰",
                     permission_key="Bidding",
                     user_role=self.user_role,
@@ -355,7 +356,7 @@ class MainWindowBuilderMixin:
                 # Attendance
                 self.tab_coordinator.register_tab_factory(
                     "Attendance",
-                    lambda: AttendanceTab(
+                    lambda: screen("slate.gui.attendance_tab", "AttendanceTab")(
                         self.user_data,
                         attendance=self.app_context.attendance(),
                         user_manager=self.app_context.user_manager(),
@@ -413,7 +414,7 @@ class MainWindowBuilderMixin:
                 # Hardware Inventory
                 self.tab_coordinator.register_tab_factory(
                     "Hardware",
-                    lambda: ItInventoryTab(user_data=self.user_data),
+                    lambda: screen("slate.gui.tabs.it_inventory_tab", "ItInventoryTab")(user_data=self.user_data),
                     icon="🖥️",
                     permission_key=it_key,
                     user_role=self.user_role,
@@ -456,7 +457,7 @@ class MainWindowBuilderMixin:
                 # Auto Deployment
                 self.tab_coordinator.register_tab_factory(
                     "Deployment",
-                    lambda: ItDeploymentTab(user_data=self.user_data),
+                    lambda: screen("slate.gui.tabs.it_deployment_tab", "ItDeploymentTab")(user_data=self.user_data),
                     icon="📦",
                     permission_key=it_key,
                     user_role=self.user_role,
@@ -478,7 +479,7 @@ class MainWindowBuilderMixin:
                         or can(roles_for_access, "manage_permissions")):
                     self.tab_coordinator.register_tab_factory(
                         "Users & Roles",
-                        lambda: AdminUsersTab(user_role=self.user_role, user_data=self.user_data),
+                        lambda: screen("slate.gui.tabs.admin_users_tab", "AdminUsersTab")(user_role=self.user_role, user_data=self.user_data),
                         icon="👥",
                         permission_key=None,
                         user_role=self.user_role,
@@ -495,7 +496,7 @@ class MainWindowBuilderMixin:
                             "Admin fleet monitoring and remote controls are unavailable in LOCAL MODE.",
                         )
                         if self._is_sqlite_fallback_mode()
-                        else AdminPanelTab(
+                        else screen("slate.gui.admin_panel", "AdminPanelTab")(
                             current_username=(self.user_data or {}).get(
                                 "user_id",
                                 (self.user_data or {}).get("username", "Unknown"),
@@ -520,7 +521,7 @@ class MainWindowBuilderMixin:
             # Tester Panel
             self.tab_coordinator.register_tab_factory(
                 "Tester Panel",
-                lambda: TesterPanel(
+                lambda: screen("slate.gui.tester_panel", "TesterPanel")(
                     user_manager=self.app_context.user_manager(),
                     app_context=self.app_context,
                 ),
@@ -533,7 +534,7 @@ class MainWindowBuilderMixin:
 
             # Settings
             def create_settings():
-                settings = SettingsTab(self.config_manager)
+                settings = screen("slate.gui.tabs.settings_tab", "SettingsTab")(self.config_manager)
                 settings.templates_refresh_requested.connect(self.on_templates_refreshed)
                 settings.global_settings_updated.connect(self.on_global_settings_updated)
                 return settings
@@ -563,6 +564,10 @@ class MainWindowBuilderMixin:
                 (getattr(self, "global_settings", None) or {}).get("sidebar_folded_groups", []))
             self.tab_coordinator.folds_changed.connect(
                 lambda labels: self._remember_sidebar("sidebar_folded_groups", list(labels)))
+
+            # Now that every screen is registered, open the first one.
+            self.sidebar_nav.blockSignals(False)
+            self.tab_coordinator.open_current()
 
             # main_layout.addWidget(self.tab_widget, 1) # Removed
 

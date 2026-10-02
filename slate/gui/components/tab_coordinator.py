@@ -971,6 +971,12 @@ class TabCoordinator(QObject):
             self.tab_switched.emit(self.tab_labels[row])
 
     
+    def open_current(self):
+        """Build and show the selected tab (after every tab is registered)."""
+        row = self.sidebar_nav.currentRow()
+        if row >= 0:
+            self._on_nav_changed(row)
+
     def get_tab_count(self):
         """Return total number of registered tabs."""
         # Sidebar count includes lazy tabs (not yet created), eagerly created tabs,
