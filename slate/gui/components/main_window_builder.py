@@ -555,6 +555,7 @@ class MainWindowBuilderMixin:
                 lambda: screen("slate.gui.tester_panel", "TesterPanel")(
                     user_manager=self.app_context.user_manager(),
                     app_context=self.app_context,
+                    roles=self._screen_roles(),
                 ),
                 icon="🧪",
                 permission_key="Tester Panel",
