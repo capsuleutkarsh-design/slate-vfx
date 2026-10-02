@@ -1,9 +1,23 @@
-"""Attendance computation helpers extracted from AttendanceTab."""
+"""
+Attendance computation helpers extracted from AttendanceTab.
+
+The rules themselves (hours, late, a day's state, the streak) live in
+slate.core.domain.attendance_rules so the tab, the grid, the Excel export and
+the comp-off review all use one copy. They are re-exported here for the
+screens; calculate_hours / calculate_streak below are the old month-only
+helpers, kept for callers that still pass a single month.
+"""
 
 from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
+
+from slate.core.domain.attendance_rules import (  # noqa: F401  (re-exported)
+    STATE_LABELS, day_hours, day_state, hhmm, is_late, is_short, parse_time,
+    session_hours, sessions_of,
+)
+from slate.core.domain.attendance_rules import calculate_streak as streak_across_months  # noqa: F401
 
 
 def calculate_hours(in_time: str, out_time: str = "", now_ref: datetime | None = None) -> float:
