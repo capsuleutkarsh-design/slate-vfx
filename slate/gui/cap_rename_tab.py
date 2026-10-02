@@ -412,7 +412,7 @@ class CapRenameTab(QWidget):
             <li><b>Step:</b> Increment size (usually 1).</li>
         </ul>
 
-        <p><b>⚠️ Safety Feature:</b> Every rename operation generates an <code>undo_rename.bat</code> file in the folder, allowing you to instantly revert changes if needed.</p>
+        <p><b>Undo:</b> every rename writes an undo script, <code>undo_rename_&lt;date&gt;_&lt;time&gt;.bat</code>, next to the files as it goes. Run it to put the old names back - it covers the files renamed so far, even if the rename stopped half way.</p>
         """)
         msg.exec()
 
@@ -784,7 +784,8 @@ class CapRenameTab(QWidget):
             
         confirm = QMessageBox.question(
             self, "Confirm Rename", 
-            f"Are you sure you want to rename {len(self.preview_map)} files?\nThis action cannot be undone easily.",
+            f"Rename {len(self.preview_map)} files on disk?\n\nAn undo script (undo_rename_<date>_<time>.bat) is "
+            "saved next to them; run it to put the old names back.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
         
