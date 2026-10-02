@@ -17,7 +17,41 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QUrl, Signal, QThread, Slot
 from PySide6.QtGui import QColor
-from slate.core.infra.gate import Gate
+from slate.core.infra.gate import Gate as _ThemeGate
+
+
+class _HomeGate:
+    """
+    Home's colours: always the Dark palette.
+
+    Home draws over the animated sky, which is dark in every theme. With the
+    Light theme's tokens the greeting and the panel text came out as dark text
+    on that dark sky and could hardly be read. Everything else (tint, mix,
+    sizes, fonts) is the real Gate; overlay() is a white wash, as on Dark.
+    """
+
+    def __init__(self):
+        self._dark = _ThemeGate.palette("Dark")
+
+    def __getattr__(self, name):
+        if name in self._dark:
+            return self._dark[name]
+        return getattr(_ThemeGate, name)
+
+    def overlay(self, alpha: float) -> str:
+        return _ThemeGate.tint("#" + "F" * 6, alpha)
+
+    @property
+    def STATUS(self):
+        current = _ThemeGate.palette(_ThemeGate.MODE)
+        by_value = {}
+        for key, value in current.items():
+            by_value.setdefault(value, key)
+        return {status: self._dark.get(by_value.get(colour, ""), colour)
+                for status, colour in _ThemeGate.STATUS.items()}
+
+
+Gate = _HomeGate()
 
 try:
     from PySide6.QtWebEngineWidgets import QWebEngineView

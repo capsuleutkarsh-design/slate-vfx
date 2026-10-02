@@ -84,3 +84,17 @@ def test_the_palette_looks_like_one(admin_window, qtbot, monkeypatch):
     assert dialog.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
     field = dialog.findChild(QLineEdit, "omnibarInput")
     assert field.placeholderText() == "Search commands, screens or shots (e.g. shot 042)…"
+
+
+def test_enter_never_starts_maintenance(admin_window, monkeypatch):
+    """Ctrl+K then Enter used to run 'Clear temporary files' for admins."""
+    from PySide6.QtWidgets import QDialog, QListWidget
+    monkeypatch.setattr(QDialog, "exec", lambda self: 0)
+    labels = [row["label"] for row in admin_window.palette_commands()]
+    assert "Clear temporary files (maintenance)" in labels
+    admin_window.show_quick_search()
+    results = admin_window._palette_dialog.findChild(QListWidget, "omnibarResults")
+    current = results.currentItem().data(Qt.ItemDataRole.UserRole)
+    assert not current.get("careful") and current["kind"] == "tab"
+    assert Palette.palette_preselect([None, {"careful": True}, {"kind": "tab"}]) == 2
+    assert Palette.palette_preselect([{"careful": True}]) is None
