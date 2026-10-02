@@ -37,7 +37,7 @@ from slate.core.services.path_template_manager import get_path_manager
 from slate.core.domain.ingest_survey import (
     IGNORED_FILES, IGNORED_SUFFIXES, IngestSurvey, is_junk_file, survey_drive,
 )
-from slate.core.domain.naming import name_problem
+from slate.core.domain.naming import name_problem, shot_name_problem
 from slate.utils.sequence_utils import group_frames
 
 __all__ = ["FolderCreationWorker", "ShotSubfoldersWorker", "is_junk_file",
@@ -528,7 +528,7 @@ class FolderCreationWorker(QThread):
 
             stitched = survey.stitched_name(shot, self.stitch_mapping)
             dest_name = stitched or shot.name
-            problem = name_problem(dest_name, "A shot name") or name_problem(shot.reel, "A reel name")
+            problem = shot_name_problem(dest_name, "A shot name") or name_problem(shot.reel, "A reel name")
             dest_reel = reels_path / shot.reel
             dest_shot = dest_reel / dest_name
             if not problem:

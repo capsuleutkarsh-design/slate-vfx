@@ -766,6 +766,9 @@ class ProdBiddingTab(QWidget):
         lines = [f"Created {len(result['created'])} shot{'s' if len(result['created']) != 1 else ''}."]
         if result["existing"]:
             lines.append(f"{len(result['existing'])} were already on the dashboard and were left as they were.")
+        if result.get("refused"):
+            lines.append(f"{len(result['refused'])} not created because of the shot name: "
+                         + "; ".join(reason for _name, reason in result["refused"][:3]))
         if result["group_lines"]:
             lines.append(f"{result['group_lines']} line{'s' if result['group_lines'] != 1 else ''} "
                          "without a shot name created nothing.")

@@ -64,6 +64,36 @@ def name_problem(name, what: str = "A name", max_length: int = MAX_NAME_LENGTH) 
     return None
 
 
+# Shot names are stricter than any file name: they are typed into Nuke
+# scripts, render paths and client sheets, so letters, digits, '_', '-' and
+# '.' only, no spaces, and short enough for a deep shot tree.
+SHOT_NAME_MAX = 64
+_SHOT_ALLOWED = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.\-]*$")
+
+
+def shot_name_problem(name, what: str = "Shot name") -> Optional[str]:
+    """
+    Why `name` cannot be a shot (or reel) on the dashboard, or None when it can.
+
+    The one rule for every way a shot is made - Add Shots on the dashboard,
+    Build & Ingest (pre-flight, worker and registration) and Create shots
+    from a bid - so none of them can create a name another one refuses.
+    """
+    text = "" if name is None else str(name)
+    if not text.strip():
+        return f"{what} is empty."
+    if text != text.strip() or " " in text:
+        return f"{what} '{text.strip()}' has spaces; use _ instead."
+    if ".." in text or "/" in text or "\\" in text:
+        return f"{what} '{text}' contains / \\ or .., which would point outside the shot folder."
+    if len(text) > SHOT_NAME_MAX:
+        return f"{what} '{text[:20]}…' is {len(text)} characters; the limit is {SHOT_NAME_MAX}."
+    if not _SHOT_ALLOWED.match(text):
+        return f"{what} '{text}' can only use letters, digits, _ - and ."
+    # What is left of the file-name rules: Windows device names, a final dot.
+    return name_problem(text, what)
+
+
 def folder_path_problem(path, what: str = "A folder") -> Optional[str]:
     """
     Like name_problem for a template entry such as '02_Dmp/Work/PSD': every

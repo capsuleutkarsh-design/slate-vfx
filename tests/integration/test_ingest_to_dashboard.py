@@ -220,3 +220,33 @@ class TestTheProjectItselfReachesTheDashboard:
         project = manager.projects["NEWPRJ"]
         assert project.folder_base == str(temp_vfx_root / "NEWPRJ")
         assert manager.get_folder_path("NEWPRJ", "scan", "ReelA", "SH010")
+
+
+class TestOneShotNameRule:
+    """Integration: shot_registry refuses exactly what the dashboard's Add Shots refuses."""
+
+    BAD = ["bad/name", "..", "SH 010", " SH010", "S" * 65, "SH*010", "CON", "SH010."]
+
+    def test_registration_refuses_what_add_shots_refuses(self, mock_db, handler):
+        from slate.gui.tabs.vfx_dashboard_pro.ui.add_shots_dialog import name_problem as dashboard_rule
+        for name in self.BAD:
+            assert dashboard_rule(name), name
+        shots = [{"reel": "ReelA", "shot": n} for n in self.BAD + ["SH010", "sh_020.v2"]]
+        result = register_ingested_shots(project_code=PROJECT, shots=shots, db=mock_db)
+        assert result.ok, result.error
+        assert sorted(result.created) == ["SH010", "sh_020.v2"]
+        assert [n for n, _why in result.refused] == [n for n in self.BAD if n.strip()]
+        assert "refused" in result.summary()
+        assert {s.shot_name for s in handler.read_shots()} == {"SH010", "sh_020.v2"}
+
+    def test_a_reel_must_be_a_safe_folder(self, mock_db, handler):
+        result = register_ingested_shots(project_code=PROJECT, db=mock_db,
+                                         shots=[{"reel": "../x", "shot": "SH010"},
+                                                {"reel": "Reel 1", "shot": "SH020"}])
+        assert result.created == ["SH020"] and result.refused[0][0] == "SH010"
+
+    def test_the_ingest_pre_flight_uses_the_same_rule(self):
+        from slate.core.domain.naming import shot_name_problem
+        from slate.gui.tabs.vfx_dashboard_pro.ui.add_shots_dialog import name_problem as dashboard_rule
+        for name in self.BAD + ["SH010", "A-1.b"]:
+            assert bool(shot_name_problem(name)) == bool(dashboard_rule(name)), name

@@ -12,8 +12,6 @@ naming rules before anything is created ('bad/name', '..', spaces and
 duplicate only within its reel - SH010 can be added to a new reel.
 """
 
-import re
-
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QFormLayout, QLabel, QPlainTextEdit,
@@ -24,27 +22,20 @@ from slate.core.domain import shot_status
 from slate.core.infra.gate import Gate
 from slate.gui.core.controls import style_button
 
-MAX_NAME = 64
-_ALLOWED = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.\-]*$")
+from slate.core.domain.naming import SHOT_NAME_MAX as MAX_NAME, shot_name_problem
 
 # Kept for importers: the workflow, in order.
 STATUS_CHOICES = list(shot_status.WORKFLOW)
 
 
 def name_problem(name: str, what: str = "Shot name") -> str:
-    """Why this cannot be a shot (or reel) folder name, or '' when it can."""
-    text = str(name or "")
-    if not text.strip():
-        return f"{what} is empty."
-    if text != text.strip() or " " in text:
-        return f"{what} '{text.strip()}' has spaces; use _ instead."
-    if ".." in text or "/" in text or "\\" in text:
-        return f"{what} '{text}' contains / \\ or .., which would point outside the shot folder."
-    if len(text) > MAX_NAME:
-        return f"{what} '{text[:20]}…' is {len(text)} characters; the limit is {MAX_NAME}."
-    if not _ALLOWED.match(text):
-        return f"{what} '{text}' can only use letters, digits, _ - and ."
-    return ""
+    """
+    Why this cannot be a shot (or reel) folder name, or '' when it can.
+
+    The rule itself lives in naming.shot_name_problem, shared with Build &
+    Ingest and shot_registry, so a name refused here cannot arrive another way.
+    """
+    return shot_name_problem(name, what) or ""
 
 
 class AddShotsDialog(QDialog):
