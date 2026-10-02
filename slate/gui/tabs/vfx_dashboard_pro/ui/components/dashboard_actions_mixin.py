@@ -33,7 +33,9 @@ class DashboardActionsMixin:
             self._notify("Open a project first.", "warning")
             return
 
-        dialog = ReviewQueueDialog(self.current_project.code, parent=self)
+        # Verdicts need the right to give them (the store refuses otherwise).
+        dialog = ReviewQueueDialog(self.current_project.code, parent=self,
+                                   roles=getattr(self, "access_roles", None))
         dialog.exec()
 
     def production_summary_click(self):
@@ -42,19 +44,21 @@ class DashboardActionsMixin:
             ProductionSummaryDialog,
         )
 
-        shots = self.displayed_shots or self.all_shots or []
-        if not shots:
+        if not self.all_shots:
             self._notify("No shots loaded.", "warning")
             return
 
+        # What is on screen, and the whole project - the dialog says which it
+        # shows ("Filtered: 33 of 262 shots") and switches between them.
         name = getattr(self.current_project, "name", "") if self.current_project else ""
-        dialog = ProductionSummaryDialog(shots, project_name=name, parent=self)
+        dialog = ProductionSummaryDialog(list(self.displayed_shots or []), project_name=name,
+                                         parent=self, all_shots=list(self.all_shots or []))
         dialog.exec()
 
     def add_shots_click(self):
         """Create shots by hand, for anything that did not arrive via ingest."""
-        if not self._user_can_edit():
-            self._notify("You do not have permission to add shots.", "warning")
+        if not self._can_manage_shots():
+            self._notify("You don't have permission to add shots.", "warning")
             return
 
         if not self.current_project:
@@ -68,7 +72,7 @@ class DashboardActionsMixin:
         dialog = AddShotsDialog(
             parent=self,
             existing_reels=[s.reel_episode for s in existing if s.reel_episode],
-            existing_shots=[s.shot_name for s in existing],
+            existing_shots=[(s.reel_episode, s.shot_name) for s in existing],
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
@@ -88,32 +92,40 @@ class DashboardActionsMixin:
         )
 
         if not result.ok:
-            self._notify("Could not add shots.", "error", details=result.error)
+            self._notify("The shots could not be added.", "error", details=result.error)
             return
 
-        # Apply the status and priority the coordinator chose.
+        # The status and priority the coordinator chose, written with the
+        # shots (not left as a pending edit nobody asked to review).
+        failed_status = False
         if result.created and self.data_handler:
             try:
-                self.all_shots = self.data_handler.read_shots()
+                fresh = self.data_handler.read_shots()
                 created = {n.lower() for n in result.created}
-                touched = [s for s in self.all_shots
-                           if s.shot_name.lower() in created]
+                reel = str(values["reel"] or "").lower()
+                touched = [s for s in fresh
+                           if s.shot_name.lower() in created and str(s.reel_episode or "").lower() == reel]
                 for shot in touched:
                     shot.status = values["status"]
                     shot.priority = values["priority"]
-                if touched:
-                    self.data_handler.write_shots(touched)
+                if touched and not self.data_handler.write_shots(touched):
+                    failed_status = True
             except Exception as exc:
                 logging.warning("Could not apply status to new shots: %s", exc)
+                failed_status = True
 
-        self._notify(f"Added {len(result.created)} shot(s).", "success")
-        self.refresh_data()
+        count = len(result.created)
+        if failed_status:
+            self._notify(f"Added {count} shot(s), but their status and priority could not be set.",
+                         "warning")
+        else:
+            self._notify(f"Added {count} shot{'s' if count != 1 else ''}.", "success")
+        self.reload_shots()
 
     def export_to_excel_click(self):
         """Write every shot currently loaded out to the project Excel backup."""
         if not self._excel_allowed():
-            self._notify("Only Coordinator, Lead or Supervisor can export to Excel.",
-                         "warning")
+            self._notify("You don't have permission to export to Excel.", "warning")
             return
 
         if not self.current_project:
@@ -124,32 +136,33 @@ class DashboardActionsMixin:
             self._notify("Nothing to export - no shots loaded.", "warning")
             return
 
-        excel_path = self.project_manager.get_excel_path(self.current_project.code)
-        if not excel_path or not os.path.exists(excel_path):
-            self._notify("No Excel file is set for this project.", "warning",
-                         details=str(excel_path or ""))
-            return
-
         try:
-            # force=True so this runs even when automatic mirroring is off.
+            # force=True so this runs even when automatic mirroring is off. The
+            # mirror creates the passbook when the project has none yet, as a
+            # save does - export used to refuse ("No Excel file is set").
             if self._mirror_shots_to_excel(self.all_shots, force=True):
                 self._notify(
                     f"Exported {len(self.all_shots)} shot(s) to the Excel backup.",
                     "success",
                 )
             else:
-                self._notify("Excel export failed.", "error", details=excel_path)
+                reason = getattr(self.sync_service, "last_backup_error", "") or ""
+                self._notify("The Excel backup could not be written.", "error", details=reason)
         except Exception as exc:
             logging.exception("Excel export failed: %s", exc)
-            self._notify("Excel export failed.", "error", details=str(exc))
+            self._notify("The Excel backup could not be written.", "error", details=str(exc))
+        self.update_backup_indicator()
 
     def create_blank_template_click(self):
             """Create a blank template Excel using current project structure/mapping."""
             project = self.current_project
             if not project:
-                self._notify("Please select a project first.", "warning")
+                self._notify("Pick a project first.", "warning")
                 return
 
+            if not self._can_manage_shots():
+                self._notify("You don't have permission to create templates.", "warning")
+                return
             default_name = f"{project.code}_blank_template.xlsx"
             target_path, _ = QFileDialog.getSaveFileName(
                 self,
@@ -340,14 +353,14 @@ class DashboardActionsMixin:
 
                 # Data validation dropdowns via hidden lookup sheet
                 lookup_ws = out_wb.create_sheet("_LOOKUPS")
+                from slate.core.domain import shot_status
                 lookups = {
-                    "statuses": ["Not Started", "Ready", "WIP", "Review", "Retake", "Final", "Delivered", "Approved"],
-                    "priorities": [str(v) for v in (getattr(self.project_manager, "priority_levels", [0, 1, 2, 3]) or [0, 1, 2, 3])],
-                    "shot_types": [str(v) for v in (getattr(self.project_manager, "shot_types", ["Prep", "2D Comp", "CG Comp"]) or [])],
+                    # The statuses the dashboard itself uses, in workflow order.
+                    "statuses": list(shot_status.WORKFLOW),
+                    "priorities": [str(v) for v, _label in shot_status.priorities()],
+                    "shot_types": shot_status.shot_types(),
                     "artists": sorted({str(u).strip() for u in (self.all_users or []) if str(u).strip()}),
                 }
-                if not lookups["artists"]:
-                    lookups["artists"] = ["Artist_A", "Artist_B"]
 
                 col_cursor = 1
                 named_ranges = {}
@@ -428,11 +441,14 @@ class DashboardActionsMixin:
                     source_wb.close()
                 self._notify(f"Blank template created: {target_path}", "success", 5000)
             except Exception as e:
-                self._notify("Failed to create blank template.", "error", 6000, details=str(e))
+                self._notify("The blank template could not be created.", "error", 6000, details=str(e))
 
     def edit_project_click(self):
             if not self.current_project:
-                self._notify("Please select a project to edit.", "warning")
+                self._notify("Pick a project to edit.", "warning")
+                return
+            if not self._can_manage_shots():
+                self._notify("You don't have permission to edit the project.", "warning")
                 return
 
             dialog = EditProjectDialog(self.current_project, self)
@@ -449,15 +465,16 @@ class DashboardActionsMixin:
                         data_start_row=data.get('data_start_row')
                     )
                     if success:
-                        self._notify("Project configuration updated successfully.", "success")
-                        # Refresh
+                        self._notify("Project updated.", "success")
+                        self.current_project = self.project_manager.get_project(data['code'])
+                        self.project_combo.blockSignals(True)
                         self.load_projects()
-                        # Re-select same project to reload config
                         idx = self.project_combo.findData(data['code'])
                         if idx >= 0:
                             self.project_combo.setCurrentIndex(idx)
-                            self.switch_project(data['code'])
+                        self.project_combo.blockSignals(False)
                     else:
-                        self._notify("Failed to update project.", "warning")
+                        self._notify("The project could not be updated.", "error",
+                                     details=getattr(self.project_manager, "last_error", "") or "")
                 except Exception as e:
-                    self._notify("Project update failed.", "error", details=str(e))
+                    self._notify("The project could not be updated.", "error", details=str(e))

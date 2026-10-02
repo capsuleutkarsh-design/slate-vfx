@@ -5,15 +5,36 @@ from slate.core.infra.gate import Gate
 
 GROUP_HEADER_ROLE = Qt.ItemDataRole.UserRole + 200
 
+
 class GroupHeaderDelegate(QStyledItemDelegate):
     """
-    Paints a ShotGrid / Flow-style section header row spanning the table.
-    Displays group title, expand/collapse indicator, shot counts,
-    and aggregate progress metrics.
+    Paints a group header row: disclosure arrow, the group's name (as it is
+    written - "Vikram Singh", not "VIKRAM SINGH"), the shot count, how many are
+    approved, and the group's frames and bid days.
+
+    Everything is drawn from the left edge of what is on screen, not across
+    the full 24-column span: the totals used to sit at the far right of a
+    2,200 px row, visible only after scrolling. The frozen Reel/Shot columns
+    draw the same thing at the same place, so the row reads as one.
     """
 
     def __init__(self, parent=None):
         super().__init__(parent)
+
+    @staticmethod
+    def colours(hovered: bool) -> dict:
+        """The header's colours (theme tokens), normal or under the pointer."""
+        return {
+            "background": QColor(Gate.mix(Gate.PANEL, Gate.ACCENT, 0.16 if hovered else 0.08)),
+            "separator": QColor(Gate.LINE),
+            "accent": QColor(Gate.ACCENT),
+            "title": QColor(Gate.TEXT),
+            "muted": QColor(Gate.TEXT_2),
+            "badge": Gate.qcolor(Gate.TEXT, 0.08),
+            "progress": Gate.qcolor(Gate.OK, 0.22),
+            "progress_fill": Gate.qcolor(Gate.OK, 0.38),
+            "progress_text": QColor(Gate.OK),
+        }
 
     def paint(self, painter: QPainter, option, index):
         group_data = index.data(GROUP_HEADER_ROLE)
@@ -25,92 +46,91 @@ class GroupHeaderDelegate(QStyledItemDelegate):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         rect = option.rect
+        hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        c = self.colours(hovered)
 
-        # 1. Background
-        is_hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
-        bg_color = QColor(Gate.ACCENT_SURFACE) if is_hovered else QColor(Gate.ACCENT_SURFACE)
-        painter.fillRect(rect, bg_color)
-
-        # 2. Bottom separator & left accent bar
-        painter.setPen(QColor(Gate.ACCENT_SURFACE))
+        painter.fillRect(rect, c["background"])
+        painter.setPen(c["separator"])
         painter.drawLine(rect.bottomLeft(), rect.bottomRight())
 
-        accent_bar = QRect(rect.left(), rect.top(), 4, rect.height())
-        painter.fillRect(accent_bar, QColor(Gate.ACCENT))
+        # Anchor at the visible left edge: when the grid is scrolled the
+        # span starts off screen, but its text should not.
+        left = max(rect.left(), 0)
+        painter.fillRect(QRect(left, rect.top(), 4, rect.height()), c["accent"])
 
-        # 3. Disclosure triangle
+        base = QFont(option.font)
+
+        # Disclosure arrow.
         is_collapsed = bool(group_data.get("is_collapsed", False))
-        arrow = "▶" if is_collapsed else "▼"
-        arrow_font = QFont("Segoe UI", 9)
+        arrow_font = QFont(base)
         painter.setFont(arrow_font)
-        painter.setPen(QColor(Gate.INFO))
-        arrow_rect = QRect(rect.left() + 12, rect.top(), 16, rect.height())
-        painter.drawText(arrow_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, arrow)
+        painter.setPen(c["muted"])
+        arrow_rect = QRect(left + 12, rect.top(), 16, rect.height())
+        painter.drawText(arrow_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                         "▸" if is_collapsed else "▾")
 
-        # 4. Group Title
-        title_text = str(group_data.get("title", "Group")).upper()
-        title_font = QFont("Segoe UI", 10, QFont.Weight.Bold)
+        # Group name, in its own case.
+        title_text = str(group_data.get("title", "Group"))
+        title_font = QFont(base)
+        title_font.setBold(True)
         painter.setFont(title_font)
-        painter.setPen(QColor(Gate.TEXT))
+        painter.setPen(c["title"])
         fm = QFontMetrics(title_font)
-        title_width = fm.horizontalAdvance(title_text) + 8
-        title_rect = QRect(rect.left() + 32, rect.top(), title_width, rect.height())
-        painter.drawText(title_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, title_text)
+        title_width = min(fm.horizontalAdvance(title_text) + 8, 420)
+        title_rect = QRect(left + 32, rect.top(), title_width, rect.height())
+        painter.drawText(title_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                         fm.elidedText(title_text, Qt.TextElideMode.ElideRight, title_width))
 
-        # 5. Shot Count Badge
-        count = group_data.get("count", 0)
-        count_text = f"{count} Shots" if count != 1 else "1 Shot"
-        badge_font = QFont("Segoe UI", 9, QFont.Weight.DemiBold)
+        # Shot count.
+        count = int(group_data.get("count", 0) or 0)
+        count_text = "1 shot" if count == 1 else f"{count} shots"
+        badge_font = QFont(base)
         painter.setFont(badge_font)
         fm_badge = QFontMetrics(badge_font)
-        b_width = fm_badge.horizontalAdvance(count_text) + 16
-        b_height = 20
-        b_x = title_rect.right() + 8
+        b_height = min(20, rect.height() - 6)
         b_y = rect.top() + (rect.height() - b_height) // 2
-
-        badge_rect = QRect(b_x, b_y, b_width, b_height)
+        badge_rect = QRect(title_rect.right() + 8, b_y,
+                           fm_badge.horizontalAdvance(count_text) + 16, b_height)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(Gate.overlay(0.08)))
-        painter.drawRoundedRect(badge_rect, 10, 10)
-
-        painter.setPen(QColor(Gate.TEXT_2))
+        painter.setBrush(c["badge"])
+        painter.drawRoundedRect(badge_rect, b_height / 2, b_height / 2)
+        painter.setPen(c["muted"])
         painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, count_text)
+        cursor = badge_rect.right() + 10
 
-        # 6. Progress Pill (% Approved)
-        approved_count = group_data.get("approved_count", 0)
-        pct = int((approved_count / count * 100)) if count > 0 else 0
-        pct_text = f"{approved_count}/{count} Approved ({pct}%)"
-        pct_font = QFont("Segoe UI", 9, QFont.Weight.Bold)
-        painter.setFont(pct_font)
-        fm_pct = QFontMetrics(pct_font)
-        pct_width = fm_pct.horizontalAdvance(pct_text) + 20
-        pct_x = badge_rect.right() + 10
-        pct_rect = QRect(pct_x, b_y, pct_width, b_height)
+        # Approved so far (omitted shots are not counted). Not shown when the
+        # grouping is by status - every group would read 0/33 or 33/33.
+        if group_data.get("show_progress", True):
+            counted = int(group_data.get("counted", count) or 0)
+            approved = int(group_data.get("approved_count", 0) or 0)
+            pct = int(approved / counted * 100) if counted else 0
+            pct_text = f"{approved}/{counted} approved ({pct}%)"
+            pct_font = QFont(base)
+            pct_font.setBold(True)
+            painter.setFont(pct_font)
+            fm_pct = QFontMetrics(pct_font)
+            pct_rect = QRect(cursor, b_y, fm_pct.horizontalAdvance(pct_text) + 20, b_height)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(c["progress"])
+            painter.drawRoundedRect(pct_rect, b_height / 2, b_height / 2)
+            fill_w = max(0, int((pct_rect.width() - 4) * (pct / 100.0)))
+            if fill_w > 0:
+                painter.setBrush(c["progress_fill"])
+                painter.drawRoundedRect(QRect(pct_rect.left() + 2, pct_rect.top() + 2,
+                                              fill_w, b_height - 4), (b_height - 4) / 2, (b_height - 4) / 2)
+            painter.setPen(c["progress_text"])
+            painter.drawText(pct_rect, Qt.AlignmentFlag.AlignCenter, pct_text)
+            cursor = pct_rect.right() + 12
 
-        # Pill background
-        painter.setBrush(QColor(Gate.tint(Gate.OK, 0.25)))
-        painter.drawRoundedRect(pct_rect, 10, 10)
-
-        # Mini fill indicator
-        fill_w = max(0, int((pct_rect.width() - 4) * (pct / 100.0)))
-        if fill_w > 0:
-            fill_rect = QRect(pct_rect.left() + 2, pct_rect.top() + 2, fill_w, b_height - 4)
-            painter.setBrush(QColor(Gate.tint(Gate.OK, 0.35)))
-            painter.drawRoundedRect(fill_rect, 8, 8)
-
-        painter.setPen(QColor(Gate.OK))
-        painter.drawText(pct_rect, Qt.AlignmentFlag.AlignCenter, pct_text)
-
-        # 7. Total frames and bid days on the right side
-        frames = group_data.get("total_frames", 0)
-        bids = group_data.get("total_bids", 0.0)
-        metrics_text = f"{frames} frames  •  {bids:.1f} bid days"
-        m_font = QFont("Segoe UI", 9)
-        painter.setFont(m_font)
-        painter.setPen(QColor(Gate.INFO))
-        fm_m = QFontMetrics(m_font)
-        m_width = fm_m.horizontalAdvance(metrics_text) + 16
-        m_rect = QRect(rect.right() - m_width - 12, rect.top(), m_width, rect.height())
-        painter.drawText(m_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, metrics_text)
+        # Frames and bid days, right after the rest - on screen.
+        frames = int(group_data.get("total_frames", 0) or 0)
+        bids = float(group_data.get("total_bids", 0.0) or 0.0)
+        bids_text = f"{bids:,.1f}".rstrip("0").rstrip(".")
+        metrics_text = f"{frames:,} frames  ·  {bids_text} bid days"
+        painter.setFont(base)
+        painter.setPen(c["muted"])
+        fm_m = QFontMetrics(base)
+        m_rect = QRect(cursor, rect.top(), fm_m.horizontalAdvance(metrics_text) + 8, rect.height())
+        painter.drawText(m_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, metrics_text)
 
         painter.restore()

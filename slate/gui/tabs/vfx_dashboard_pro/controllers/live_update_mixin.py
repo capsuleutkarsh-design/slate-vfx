@@ -17,6 +17,9 @@ changed. Only those are read, and they are swapped into the grid in place:
 Without the feed (an old database, or it cannot be read) the old three-second
 check stays on as a fallback, and a change there reads the project once and
 merges it the same careful way.
+
+Your own saves come back through the feed too. They are recognised (by shot
+id and the version this screen wrote) and not reported as "changed by others".
 """
 
 import logging
@@ -234,6 +237,15 @@ class DashboardLiveUpdateMixin:
             self._schedule_live_apply(self.LIVE_RETRY_MS * 4)
             return
 
+        # What this screen saved itself is not news.
+        own = getattr(self, "_own_writes", None) or {}
+        if own:
+            mine = {_shot_id(s) for s in fresh
+                    if _shot_id(s) in own and int(getattr(s, "version", 0) or 0) == own[_shot_id(s)]}
+            if mine:
+                fresh = [s for s in fresh if _shot_id(s) not in mine]
+                checked = set(checked) - mine
+
         result = merge_shots(
             current, fresh, checked,
             visible=lambda s: bool(self._filter_shots_for_current_user([s])),
@@ -242,17 +254,47 @@ class DashboardLiveUpdateMixin:
             return
         self._show_merged_shots(result)
 
+    def _selected_shot_ids(self):
+        """Python ids of the selected shots (whatever the grid's model)."""
+        table = getattr(self, "table", None)
+        if table is None or table.selectionModel() is None:
+            return []
+        model = table.model()
+        out = []
+        for index in table.selectionModel().selectedRows():
+            shot = model.get_shot_at(index.row())
+            if shot is not None and id(shot) not in out:
+                out.append(id(shot))
+        return out
+
+    def _select_shot_ids(self, ids, by_db_id=None):
+        """Select these shots again; shots that were replaced are found by database id."""
+        from PySide6.QtCore import QItemSelection, QItemSelectionModel
+        table = self.table
+        model = table.model()
+        wanted = set(ids)
+        wanted_db = set(by_db_id or [])
+        selection = QItemSelection()
+        for row in range(model.rowCount()):
+            shot = model.get_shot_at(row)
+            if shot is None:
+                continue
+            if id(shot) in wanted or (_shot_id(shot) in wanted_db):
+                selection.select(model.index(row, 0), model.index(row, model.columnCount() - 1))
+        table.selectionModel().select(selection, QItemSelectionModel.SelectionFlag.ClearAndSelect)
+
     def _show_merged_shots(self, result: MergeResult):
         table = getattr(self, "table", None)
-        model = getattr(self, "table_model", None)
+        model = table.model() if table is not None else None
 
         # Where the person is, so the grid looks the same afterwards.
-        selected_ids = []
+        selected = self._selected_shot_ids()
+        selected_db = []
         if table is not None and model is not None and table.selectionModel():
             for index in table.selectionModel().selectedRows():
                 sid = _shot_id(model.get_shot_at(index.row()))
                 if sid is not None:
-                    selected_ids.append(sid)
+                    selected_db.append(sid)
         scroll = None
         if table is not None:
             scroll = (table.verticalScrollBar().value(), table.horizontalScrollBar().value())
@@ -266,43 +308,23 @@ class DashboardLiveUpdateMixin:
         self.all_shots = result.shots
         self._keep_undo = True
         try:
-            search = getattr(self, "search_input", None)
-            if search is not None and (search.text() or "").startswith("?"):
-                # A semantic search result: swap objects, never re-run the search.
-                by_id = {_shot_id(s): s for s in result.replaced}
-                gone = {id(s) for s in result.removed}
-                self.displayed_shots = [by_id.get(_shot_id(s), s) for s in self.displayed_shots
-                                        if id(s) not in gone]
-                self.update_table()
-            else:
-                self.populate_filters()
-                self.apply_filters()
+            self.table_model.set_shots(self.all_shots, keep_undo=True)
+            self.populate_filters()
+            self.apply_filters()
         finally:
             self._keep_undo = False
 
         if table is not None and model is not None:
-            if selected_ids and table.selectionModel():
-                from PySide6.QtCore import QItemSelection, QItemSelectionModel
-                wanted = set(selected_ids)
-                selection = QItemSelection()
-                for row in range(model.rowCount()):
-                    if _shot_id(model.get_shot_at(row)) in wanted:
-                        selection.select(model.index(row, 0),
-                                         model.index(row, model.columnCount() - 1))
-                table.selectionModel().select(selection, QItemSelectionModel.SelectionFlag.ClearAndSelect)
+            if selected or selected_db:
+                self._select_shot_ids(selected, selected_db)
             if scroll is not None:
                 table.verticalScrollBar().setValue(scroll[0])
                 table.horizontalScrollBar().setValue(scroll[1])
 
-        if result.added:
-            try:
-                self.start_thumbnail_loading()
-            except Exception as exc:
-                logger.debug("Thumbnails for new shots skipped: %s", exc)
-
         self._tell_about_live_changes(result, newly_marked)
 
     def _tell_about_live_changes(self, result: MergeResult, newly_marked):
+        touched = list(result.replaced) + list(result.added) + list(result.kept)
         parts = []
         if result.replaced:
             parts.append(f"{len(result.replaced)} updated")
@@ -310,9 +332,11 @@ class DashboardLiveUpdateMixin:
             parts.append(f"{len(result.added)} added")
         if result.removed:
             parts.append(f"{len(result.removed)} removed")
+        if result.kept:
+            parts.append(f"{len(result.kept)} with your unsaved edits kept")
         if parts and hasattr(self, "status_bar"):
             self.status_bar.showMessage(
-                "Shots changed by others: " + ", ".join(parts), 6000)
+                "Shots changed by others: " + ", ".join(parts), 8000)
 
         if newly_marked:
             names = ", ".join(s.shot_name for s in newly_marked[:5])
@@ -320,13 +344,19 @@ class DashboardLiveUpdateMixin:
             self._notify(
                 f"Someone else changed {names}{more} while you have unsaved edits "
                 f"on it. Your edits are kept - check the shot before you save.",
-                "warning", 8000)
+                "warning", 10000,
+                action=("Show", lambda shots=list(touched): self.show_only_shots(shots)))
 
         detail = getattr(self, "detail_widget", None)
         if detail is not None:
             open_id = _shot_id(getattr(detail, "shot", None))
-            touched = {_shot_id(s) for s in result.replaced} | {_shot_id(s) for s in result.removed}
-            if open_id is not None and open_id in touched:
+            changed = {_shot_id(s) for s in result.replaced} | {_shot_id(s) for s in result.removed}
+            if open_id is not None and open_id in changed:
+                fresh = next((s for s in result.replaced if _shot_id(s) == open_id), None)
+                busy = getattr(detail, "has_unapplied_changes", lambda: False)()
+                if fresh is not None and not busy and hasattr(self, "open_detail_dock"):
+                    # Show what is there now rather than a copy that is out of date.
+                    self.open_detail_dock(fresh)
                 self._notify(
-                    f"{detail.shot.shot_name} was changed by someone else. "
-                    f"Open it again to see the latest.", "info", 6000)
+                    f"{detail.shot.shot_name if fresh is None else fresh.shot_name} was just "
+                    "changed by someone else; the panel shows the latest.", "info", 6000)

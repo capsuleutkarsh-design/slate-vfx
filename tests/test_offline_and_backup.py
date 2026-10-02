@@ -128,7 +128,10 @@ class TestTheDashboardShowsTheOutage:
 
         assert widget.offline_banner.isVisible() is False
         assert widget._user_can_edit() is True
-        assert widget.save_btn.isEnabled() is True
+        # The Save button is there for this person; it lights up when there
+        # is something to save (DSH-131).
+        assert widget.save_btn.isVisibleTo(widget) is True
+        assert widget.save_btn.isEnabled() is False
 
     def test_banner_shown_and_save_disabled_during_an_outage(self, qtbot, mock_db, offline):
         widget = self._widget(qtbot)
@@ -144,7 +147,7 @@ class TestTheDashboardShowsTheOutage:
         widget = self._widget(qtbot)
         text = widget.offline_label.text().lower()
         assert "read-only" in text
-        assert "would not reach" in text
+        assert "can't reach" in text
 
     def test_there_is_a_way_to_try_again(self, qtbot, mock_db, offline):
         widget = self._widget(qtbot)
@@ -197,11 +200,12 @@ class TestExcelBackupHealth:
             "username": "coord", "roles": ["Supervisor"],
         })
         qtbot.addWidget(widget)
+        widget.current_project = object()
 
         widget.sync_service.last_backup_error = "The file is open in Excel."
         widget.update_backup_indicator()
 
-        assert "FAILING" in widget.backup_label.text()
+        assert "failing" in widget.backup_label.text().lower()
         assert "open in Excel" in widget.backup_label.toolTip()
 
     def test_the_indicator_reflects_a_success(self, qtbot, mock_db, online):
@@ -212,10 +216,11 @@ class TestExcelBackupHealth:
             "username": "coord", "roles": ["Supervisor"],
         })
         qtbot.addWidget(widget)
+        widget.current_project = object()
 
         widget.sync_service.last_backup_error = None
         widget.sync_service.last_backup_at = datetime.now()
         widget.update_backup_indicator()
 
-        assert "FAILING" not in widget.backup_label.text()
-        assert "Excel backup:" in widget.backup_label.text()
+        assert "failing" not in widget.backup_label.text().lower()
+        assert widget.backup_label.text().startswith("Backup saved")

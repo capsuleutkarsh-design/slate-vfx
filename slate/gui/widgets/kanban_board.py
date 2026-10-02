@@ -1,181 +1,148 @@
-from PySide6.QtCore import QPoint, Qt, QMimeData, QSize, Signal
-from PySide6.QtGui import QDrag, QPixmap, QColor
+"""
+The dashboard's board: one column per shot status, a card per shot.
+
+It used to have three buckets (To Do / In Progress / Done) that SENT FOR
+REVIEW, READY, YTS, OMIT and CBB all fell into as "To Do", and a drop wrote
+statuses nothing else used ("Ready", "Final") or quietly turned a RETAKE into
+WIP. Now each column is a real status in workflow order (plus any other status
+the project has, and "No status"), a card sits in the column of its own status,
+and dropping it writes exactly that column's status.
+
+The column counts used to be wired in a loop that captured the loop variable,
+so every column's changes updated the last column's label ("To Do 0" over a
+full column). Each column now owns its label.
+"""
+
+from PySide6.QtCore import QMimeData, QPoint, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QDrag, QFontMetrics, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
-    QVBoxLayout,
-    QWidget,
-    QGraphicsDropShadowEffect
-)
-from PySide6.QtWidgets import (
-    QAbstractItemView,
-    QHBoxLayout,
-    QLabel,
-    QListWidget,
-    QListWidgetItem,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
+
 from slate.core.infra.gate import Gate
 
+USER_MIME = "application/x-slate-user"
+TASK_MIME = "application/x-slate-task"
 
-class KanbanCard(QWidget):
-    """
-    Visual representation of a task in the Kanban board.
-    Accepts user drops for assignment.
-    """
+
+class KanbanCard(QFrame):
+    """One shot on the board. Accepts a person dropped on it (assignment)."""
 
     assign_requested = Signal(int, str)  # task_id, username
 
-    def __init__(self, task_data, inherit_app_theme: bool = False, parent=None):
+    WIDTH = 220
+
+    def __init__(self, task_data, inherit_app_theme: bool = False, parent=None, editable=True):
         super().__init__(parent)
         self.task_data = task_data
         self.task_id = task_data.get("id")
         self.inherit_app_theme = bool(inherit_app_theme)
-        self.setAcceptDrops(True)
+        self.editable = bool(editable)
+        self.setObjectName("kanbanCard")
+        self.setAcceptDrops(self.editable)
         self.setup_ui()
 
+    def _accent(self) -> str:
+        return Gate.status_color(self.task_data.get("status", ""))
+
     def _set_card_style(self, highlight: bool = False):
-        # We ignore inherit_app_theme here to ensure the premium look is preserved
-        status = self.task_data.get("status", "").upper()
-        accent = Gate.LINE
-        if status in ["DONE", "APPROVED", "FINAL"]: accent = Gate.OK
-        elif status in ["WIP", "IN PROGRESS", "IP"]: accent = Gate.WARN
-        elif status in ["REVIEW", "SENT FOR REVIEW"]: accent = Gate.ACCENT
-        elif status in ["RETAKE", "SI"]: accent = Gate.BAD
-            
-        if highlight:
-            self.setStyleSheet(
-                f"""
-                QWidget {{
-                    background-color: {Gate.RAISED_HI};
-                    border-radius: 8px;
-                    border: 1px solid {accent};
-                }}
-                QLabel {{ border: none; background: transparent; }}
-                """
-            )
-        else:
-            self.setStyleSheet(
-                f"""
-                QWidget {{
-                    background-color: {Gate.RAISED_HI};
-                    border-radius: 8px;
-                    border: 1px solid {Gate.overlay(0.1)};
-                    border-left: 5px solid {accent};
-                }}
-                QWidget:hover {{
-                    background-color: {Gate.RAISED_HI};
-                    border: 1px solid {Gate.overlay(0.2)};
-                    border-left: 5px solid {accent};
-                }}
-                QLabel {{ border: none; background: transparent; }}
-                """
-            )
-            
-        # Add drop shadow
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(15)
-        shadow.setColor(QColor(0, 0, 0, 80))
-        shadow.setOffset(0, 4)
-        self.setGraphicsEffect(shadow)
+        accent = self._accent()
+        border = accent if highlight else Gate.LINE
+        self.setStyleSheet(f"""
+            QFrame#kanbanCard {{
+                background-color: {Gate.RAISED};
+                border-radius: {Gate.RADIUS_LG}px;
+                border: 1px solid {border};
+                border-left: 4px solid {accent};
+            }}
+            QFrame#kanbanCard QLabel {{ border: none; background: transparent; }}
+        """)
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(6)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(4)
         self._set_card_style()
+        inner = self.WIDTH - 40
 
-        header_layout = QHBoxLayout()
-        shot_code = self.task_data.get("shot_code", "UNKNOWN")
-        lbl_shot = QLabel(f"{shot_code}")
-        lbl_shot.setStyleSheet(f"font-weight: 800; font-size: 11px; color: {Gate.TEXT};")
-        header_layout.addWidget(lbl_shot)
-        header_layout.addStretch()
-        layout.addLayout(header_layout)
+        shot_code = str(self.task_data.get("shot_code", "") or "")
+        reel = str(self.task_data.get("reel", "") or "")
+        lbl_shot = QLabel()
+        lbl_shot.setObjectName("cardShot")
+        font = lbl_shot.font()
+        font.setBold(True)
+        lbl_shot.setFont(font)
+        lbl_shot.setText(QFontMetrics(font).elidedText(shot_code, Qt.TextElideMode.ElideRight, inner))
+        lbl_shot.setToolTip(f"{shot_code} ({reel})" if reel else shot_code)
+        lbl_shot.setStyleSheet(f"color: {Gate.TEXT};")
+        layout.addWidget(lbl_shot)
+        self.lbl_shot = lbl_shot
 
-        task_name = self.task_data.get("task_name", "Task")
-        lbl_task = QLabel(task_name)
-        lbl_task.setWordWrap(True)
-        lbl_task.setStyleSheet(f"color: {Gate.overlay(0.7)}; font-size: 11px; line-height: 1.4;")
-        layout.addWidget(lbl_task)
+        if reel:
+            lbl_reel = QLabel(reel)
+            lbl_reel.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: {Gate.SIZE_XS}px;")
+            layout.addWidget(lbl_reel)
 
-        layout.addSpacing(6)
+        task_name = str(self.task_data.get("task_name", "") or "").strip()
+        if task_name:
+            lbl_task = QLabel(task_name)
+            lbl_task.setWordWrap(True)
+            lbl_task.setMaximumHeight(QFontMetrics(lbl_task.font()).lineSpacing() * 2 + 2)
+            lbl_task.setToolTip(task_name)
+            lbl_task.setStyleSheet(f"color: {Gate.TEXT_2}; font-size: {Gate.SIZE_SM}px;")
+            layout.addWidget(lbl_task)
 
+        layout.addSpacing(4)
         footer_layout = QHBoxLayout()
-        self.assignee = self.task_data.get("assignee", "")
+        footer_layout.setSpacing(6)
+        self.assignee = str(self.task_data.get("assignee", "") or "")
 
+        self.lbl_artist = QLabel()
+        self.lbl_artist.setFixedSize(22, 22)
+        self.lbl_artist.setAlignment(Qt.AlignmentFlag.AlignCenter)
         if self.assignee:
-            color_hash = sum(ord(c) for c in self.assignee)
-            hue = color_hash % 360
-            self.lbl_artist = QLabel(self.assignee[:2].upper())
-            self.lbl_artist.setFixedSize(22, 22)
-            self.lbl_artist.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.lbl_artist.setToolTip(f"Assigned to: {self.assignee}")
+            initials = "".join(part[:1] for part in self.assignee.split()[:2]).upper() or self.assignee[:2].upper()
+            self.lbl_artist.setText(initials)
+            self.lbl_artist.setToolTip(f"Assigned to {self.assignee}")
             self.lbl_artist.setStyleSheet(
-                f"""
-                background-color: hsla({hue}, 60%, 40%, 1.0);
-                color: {Gate.TEXT};
-                border-radius: 11px;
-                font-weight: bold;
-                font-size: 9px;
-                padding: 0;
-                """
-            )
-            
-            lbl_name = QLabel(self.assignee.split(" ")[0]) # First name only
-            lbl_name.setStyleSheet(f"color: {Gate.overlay(0.5)}; font-size: 10px; font-weight: 600;")
-            
+                f"background-color: {Gate.ACCENT_SURFACE}; color: {Gate.ACCENT}; border-radius: 11px;"
+                f" font-weight: 700; font-size: 9px;")
+            name = QLabel()
+            name_font = name.font()
+            name.setText(QFontMetrics(name_font).elidedText(self.assignee, Qt.TextElideMode.ElideRight, inner - 40))
+            name.setToolTip(self.assignee)
+            name.setStyleSheet(f"color: {Gate.TEXT_2}; font-size: {Gate.SIZE_XS}px;")
+            self.lbl_name = name
             footer_layout.addWidget(self.lbl_artist)
-            footer_layout.addWidget(lbl_name)
+            footer_layout.addWidget(name, 1)
         else:
-            self.lbl_artist = QLabel("U")
-            self.lbl_artist.setFixedSize(22, 22)
-            self.lbl_artist.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.lbl_artist.setToolTip("Unassigned (Drag artist here)")
+            self.lbl_artist.setText("–")
+            self.lbl_artist.setToolTip("Nobody assigned" + (" - drag a person here" if self.editable else ""))
             self.lbl_artist.setStyleSheet(
-                f"""
-                background-color: {Gate.overlay(0.05)};
-                color: {Gate.overlay(0.4)};
-                border-radius: 11px;
-                border: 1px dashed {Gate.overlay(0.2)};
-                font-size: 10px;
-                """
-            )
+                f"color: {Gate.TEXT_DIM}; border-radius: 11px; border: 1px dashed {Gate.LINE}; font-size: 10px;")
+            self.lbl_name = QLabel("Unassigned")
+            self.lbl_name.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: {Gate.SIZE_XS}px;")
             footer_layout.addWidget(self.lbl_artist)
-
-        footer_layout.addStretch()
-
-        status = self.task_data.get("status", "").upper()
-        
-        # Style status as a nice pill
-        status_accent = Gate.LINE
-        if status in ["DONE", "APPROVED", "FINAL"]: status_accent = Gate.tint(Gate.OK, 0.2)
-        elif status in ["WIP", "IN PROGRESS", "IP"]: status_accent = Gate.tint(Gate.WARN, 0.2)
-        elif status in ["REVIEW", "SENT FOR REVIEW"]: status_accent = Gate.tint(Gate.INFO, 0.2)
-        elif status in ["RETAKE", "SI"]: status_accent = Gate.tint(Gate.BAD, 0.2)
-        
-        text_accent = status_accent.replace("0.2", "1.0") if "0.2" in status_accent else Gate.TEXT
-            
-        lbl_status = QLabel(status)
-        lbl_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl_status.setStyleSheet(f"""
-            background-color: {status_accent};
-            color: {text_accent};
-            border-radius: 10px;
-            padding: 4px 10px;
-            font-size: 10px;
-            font-weight: 900;
-        """)
-        
-        footer_layout.addWidget(lbl_status)
+            footer_layout.addWidget(self.lbl_name, 1)
         layout.addLayout(footer_layout)
 
+        if self.task_data.get("modified"):
+            pending = QLabel("Not saved yet")
+            pending.setStyleSheet(f"color: {Gate.WARN}; font-size: {Gate.SIZE_XS}px; font-weight: 600;")
+            layout.addWidget(pending)
+
     def dragEnterEvent(self, event):
-        if event.mimeData().hasFormat("application/x-slate-user"):
+        if self.editable and event.mimeData().hasFormat(USER_MIME):
             event.accept()
             self._set_card_style(highlight=True)
         else:
@@ -186,9 +153,8 @@ class KanbanCard(QWidget):
         event.accept()
 
     def dropEvent(self, event):
-        if event.mimeData().hasFormat("application/x-slate-user"):
-            username_bytes = event.mimeData().data("application/x-slate-user")
-            username = str(username_bytes, "utf-8")
+        if self.editable and event.mimeData().hasFormat(USER_MIME):
+            username = str(event.mimeData().data(USER_MIME), "utf-8")
             self.assign_requested.emit(self.task_id, username)
             event.accept()
             self._set_card_style()
@@ -197,10 +163,7 @@ class KanbanCard(QWidget):
 
 
 class KanbanColumn(QListWidget):
-    """
-    A single column in the Kanban board (e.g., "To Do").
-    Accepts drops from other columns.
-    """
+    """The cards of one status. Accepts cards dropped from other columns."""
 
     task_dropped = Signal(int, str)  # task_id, new_status_key
     task_double_clicked = Signal(int)  # task_id
@@ -211,55 +174,25 @@ class KanbanColumn(QListWidget):
         self.title = title
         self.status_key = status_key
         self.inherit_app_theme = bool(inherit_app_theme)
+        self.editable = True
 
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
-        self.setDragDropMode(QAbstractItemView.DragDrop)
-        self.setDefaultDropAction(Qt.MoveAction)
-        self.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.setSpacing(8)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
+        self.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.setSpacing(4)
+        self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.itemDoubleClicked.connect(self.on_item_double_clicked)
-
-        # Force QScrollBar styling to avoid the checkerboard
         self.setStyleSheet(
-            f"""
-            QListWidget {{
-                background-color: transparent;
-                border: none;
-                outline: none;
-            }}
-            QListWidget::item {{
-                background: transparent;
-                padding: 0px;
-                margin-bottom: 12px;
-            }}
-            QListWidget::item:selected {{
-                background: transparent;
-            }}
-            QScrollBar:vertical {{
-                border: none;
-                background: {Gate.overlay(0.02)};
-                width: 8px;
-                border-radius: 4px;
-            }}
-            QScrollBar::handle:vertical {{
-                background: {Gate.overlay(0.1)};
-                min-height: 20px;
-                border-radius: 4px;
-            }}
-            QScrollBar::handle:vertical:hover {{
-                background: {Gate.overlay(0.2)};
-            }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-                border: none;
-                background: none;
-                height: 0px;
-            }}
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
-                background: none;
-            }}
-            """
+            "QListWidget { background-color: transparent; border: none; outline: none; }"
+            "QListWidget::item, QListWidget::item:selected { background: transparent; padding: 0px; }"
         )
+
+    def set_editable(self, editable: bool):
+        self.editable = bool(editable)
+        self.setDragEnabled(self.editable)
+        self.setAcceptDrops(self.editable)
 
     def on_item_double_clicked(self, item):
         widget = self.itemWidget(item)
@@ -277,118 +210,175 @@ class KanbanColumn(QListWidget):
         super().clear()
 
     def startDrag(self, supported_actions):
+        if not self.editable:
+            return
         item = self.currentItem()
         if not item:
             return
-
         widget = self.itemWidget(item)
         if not widget:
             return
-
         mime = QMimeData()
+        mime.setData(TASK_MIME, str(widget.task_id).encode("utf-8"))
         mime.setText(str(widget.task_id))
-
         drag = QDrag(self)
         drag.setMimeData(mime)
-
         pixmap = QPixmap(widget.size())
         widget.render(pixmap)
         drag.setPixmap(pixmap)
         drag.setHotSpot(QPoint(pixmap.width() // 2, pixmap.height() // 2))
-        drag.exec(Qt.MoveAction)
+        drag.exec(Qt.DropAction.MoveAction)
 
     def dragEnterEvent(self, event):
-        if event.mimeData().hasText():
+        if self.editable and event.mimeData().hasFormat(TASK_MIME):
             event.accept()
         else:
             event.ignore()
 
     def dragMoveEvent(self, event):
-        if event.mimeData().hasText():
+        if self.editable and event.mimeData().hasFormat(TASK_MIME):
             event.accept()
         else:
             event.ignore()
 
     def dropEvent(self, event):
-        if event.mimeData().hasText():
+        if self.editable and event.mimeData().hasFormat(TASK_MIME):
             try:
-                task_id = int(event.mimeData().text())
-                self.task_dropped.emit(task_id, self.status_key)
-                event.accept()
+                task_id = int(bytes(event.mimeData().data(TASK_MIME)).decode("utf-8"))
             except ValueError:
                 event.ignore()
+                return
+            # The board is rebuilt from the data; never let Qt move the item.
+            event.setDropAction(Qt.DropAction.IgnoreAction)
+            event.accept()
+            self.task_dropped.emit(task_id, self.status_key)
         else:
             event.ignore()
 
 
-class KanbanBoard(QWidget):
-    """
-    Main widget hosting multiple KanbanColumn widgets.
-    """
+class _ColumnFrame(QFrame):
+    """A column: its heading (name and count, click to fold) and its cards."""
 
-    status_changed = Signal(int, str)  # task_id, new_status
+    def __init__(self, key, title, colour, board, collapsed=False):
+        super().__init__(board)
+        self.key = key
+        self.title = title
+        self.colour = colour
+        self.setObjectName("kanbanColumn")
+        self.setStyleSheet(
+            f"QFrame#kanbanColumn {{ background-color: {Gate.PANEL}; border-radius: {Gate.RADIUS_LG}px;"
+            f" border: 1px solid {Gate.LINE_SOFT}; }}")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 10, 8, 8)
+        layout.setSpacing(8)
+        self.header = QPushButton()
+        self.header.setObjectName("kanbanColumnTitle")
+        self.header.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.header.setToolTip("Click to fold or unfold this column")
+        self.header.setStyleSheet(
+            f"QPushButton#kanbanColumnTitle {{ text-align: left; border: none; background: transparent;"
+            f" color: {colour}; font-weight: 700; font-size: {Gate.SIZE_MD}px; padding: 2px 4px; }}"
+            f"QPushButton#kanbanColumnTitle:hover {{ color: {Gate.TEXT}; }}")
+        self.header.clicked.connect(self.toggle)
+        layout.addWidget(self.header)
+        self.list = KanbanColumn(title, key)
+        layout.addWidget(self.list, 1)
+        self.list.model().rowsInserted.connect(self.update_count)
+        self.list.model().rowsRemoved.connect(self.update_count)
+        self.list.model().modelReset.connect(self.update_count)
+        self.collapsed = False
+        self.set_collapsed(collapsed)
+
+    def update_count(self, *args):
+        count = self.list.count()
+        arrow = "▸" if self.collapsed else "▾"
+        self.header.setText(f"{arrow}  {self.title}   {count}")
+
+    def toggle(self):
+        self.set_collapsed(not self.collapsed)
+
+    def set_collapsed(self, collapsed: bool):
+        self.collapsed = bool(collapsed)
+        self.list.setVisible(not self.collapsed)
+        width = 150 if self.collapsed else KanbanCard.WIDTH + 30
+        self.setFixedWidth(width)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+        self.update_count()
+
+
+class KanbanBoard(QWidget):
+    """Hosts one column per status, side by side, scrolling sideways when needed."""
+
+    status_changed = Signal(int, str)  # task_id, new status (the column's key)
     task_double_clicked = Signal(int)  # task_id
     task_assigned = Signal(int, str)  # task_id, username
 
     def __init__(self, inherit_app_theme: bool = False, parent=None):
         super().__init__(parent)
         self.columns = {}
+        self._frames = {}
+        self._column_keys = []
+        self._editable = True
+        self._collapsed = {"OMIT"}
         self.inherit_app_theme = bool(inherit_app_theme)
         self.setup_ui()
 
     def setup_ui(self):
-        self.main_layout = QHBoxLayout(self)
-        self.main_layout.setContentsMargins(0, 0, 0, 0)
-        self.main_layout.setSpacing(15)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        self.notice = QLabel("")
+        self.notice.setWordWrap(True)
+        self.notice.setStyleSheet(
+            f"color: {Gate.TEXT_2}; background: {Gate.RAISED}; padding: 6px 10px;"
+            f" border-bottom: 1px solid {Gate.LINE};")
+        self.notice.hide()
+        outer.addWidget(self.notice)
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.strip = QWidget()
+        self.main_layout = QHBoxLayout(self.strip)
+        self.main_layout.setContentsMargins(8, 8, 8, 8)
+        self.main_layout.setSpacing(10)
+        self.main_layout.addStretch(1)
+        self.scroll.setWidget(self.strip)
+        outer.addWidget(self.scroll, 1)
 
-        self.column_defs = [
-            ("To Do", "Not Started"),
-            ("In Progress", "In Progress"),
-            ("Done", "Final"),
-        ]
+    def set_columns(self, columns):
+        """[(status key, title, colour)] - rebuilt only when they change."""
+        keys = [c[0] for c in columns]
+        if keys == self._column_keys:
+            return
+        for frame in self._frames.values():
+            self._collapsed.discard(frame.key)
+            if frame.collapsed:
+                self._collapsed.add(frame.key)
+            frame.list.clear()
+            frame.setParent(None)
+            frame.deleteLater()
+        self._frames = {}
+        self.columns = {}
+        while self.main_layout.count():
+            self.main_layout.takeAt(0)
+        for key, title, colour in columns:
+            frame = _ColumnFrame(key, title, colour, self.strip, collapsed=key in self._collapsed)
+            frame.list.task_dropped.connect(self.handle_drop)
+            frame.list.task_double_clicked.connect(self.task_double_clicked.emit)
+            frame.list.set_editable(self._editable)
+            self.main_layout.addWidget(frame)
+            self._frames[key] = frame
+            self.columns[key] = frame.list
+        self.main_layout.addStretch(1)
+        self._column_keys = keys
 
-        for title, key in self.column_defs:
-            col_container = QWidget()
-            # Force background styling
-            col_container.setStyleSheet(f"""
-                QWidget {{
-                    background-color: {Gate.PANEL};
-                    border-radius: 12px;
-                    border: 1px solid {Gate.overlay(0.05)};
-                }}
-            """)
-            col_layout = QVBoxLayout(col_container)
-            col_layout.setContentsMargins(12, 16, 12, 12)
-            col_layout.setSpacing(12)
-
-            lbl_title = QLabel(f"{title}")
-            lbl_title.setAlignment(Qt.AlignmentFlag.AlignLeft)
-            lbl_title.setStyleSheet(f"font-weight: 900; font-size: 14px; color: {Gate.overlay(0.9)}; padding-left: 4px; background: transparent; border: none; letter-spacing: 0.5px;")
-            col_layout.addWidget(lbl_title)
-
-            kanban_list = KanbanColumn(title, key, inherit_app_theme=self.inherit_app_theme)
-            
-            # Helper to update count
-            def update_count(count_label, title_text, list_widget):
-                def _update():
-                    count = list_widget.count()
-                    count_label.setText(f"{title_text}  <span style='color: {Gate.overlay(0.4)}; font-size: 12px;'>{count}</span>")
-                return _update
-                
-            update_func = update_count(lbl_title, title, kanban_list)
-            # Connect model changes to count update
-            kanban_list.model().rowsInserted.connect(lambda *args: update_func())
-            kanban_list.model().rowsRemoved.connect(lambda *args: update_func())
-            # Initial call
-            update_func()
-            
-            kanban_list.task_dropped.connect(self.handle_drop)
-            kanban_list.task_double_clicked.connect(self.task_double_clicked.emit)
-            kanban_list.task_assigned.connect(self.task_assigned.emit)
-            col_layout.addWidget(kanban_list)
-
-            self.columns[key] = kanban_list
-            self.main_layout.addWidget(col_container)
+    def set_editable(self, editable: bool, reason: str = ""):
+        """Turn drag-to-move and drop-to-assign off (with the reason shown) or on."""
+        self._editable = bool(editable)
+        for column in self.columns.values():
+            column.set_editable(self._editable)
+        self.notice.setText(reason)
+        self.notice.setVisible(bool(reason) and not self._editable)
 
     def handle_drop(self, task_id, new_status):
         self.status_changed.emit(task_id, new_status)
@@ -397,25 +387,18 @@ class KanbanBoard(QWidget):
         for col in self.columns.values():
             col.clear()
 
+    def column_title(self, key) -> str:
+        frame = self._frames.get(key)
+        return frame.header.text() if frame else ""
+
     def add_task(self, task_data):
-        status = task_data.get("status", "Not Started")
-
-        if status in ["Not Started", "Pending", "Ready"]:
-            target_col = self.columns.get("Not Started")
-        elif status in ["In Progress", "IP", "Review"]:
-            target_col = self.columns.get("In Progress")
-        elif status in ["Final", "Approved", "Done", "CBB"]:
-            target_col = self.columns.get("Final")
-        else:
-            target_col = self.columns.get("Not Started")
-
-        if not target_col:
+        key = task_data.get("column", "")
+        target_col = self.columns.get(key)
+        if target_col is None:
             return
-
-        item = QListWidgetItem()
-        item.setSizeHint(QSize(200, 100))
-        card = KanbanCard(task_data, inherit_app_theme=self.inherit_app_theme)
+        card = KanbanCard(task_data, inherit_app_theme=self.inherit_app_theme, editable=self._editable)
         card.assign_requested.connect(self.task_assigned.emit)
-
+        item = QListWidgetItem()
+        item.setSizeHint(QSize(KanbanCard.WIDTH, card.sizeHint().height() + 4))
         target_col.addItem(item)
         target_col.setItemWidget(item, card)

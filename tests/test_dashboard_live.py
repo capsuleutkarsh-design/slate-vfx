@@ -202,8 +202,11 @@ def _dashboard(shots, database):
             self.table_model.update_data(self.displayed_shots,
                                          keep_undo=getattr(self, "_keep_undo", False))
 
-        def _notify(self, message, level="info", duration=0, details=""):
+        def _notify(self, message, level="info", duration=0, details="", action=None):
             self.notices.append(message)
+
+        def show_only_shots(self, shots):
+            pass
 
         def log(self, message):
             pass
@@ -342,12 +345,12 @@ def test_undo_survives_for_shots_nobody_else_touched(app, manual_change_feed):
     shots = _three()
     database = _Database(_three())
     dash = _dashboard(shots, database)
-    dash.table_model._undo_stack = [(shots[0], "status", "WIP"), (shots[1], "status", "WIP")]
+    dash.table_model._undo_stack = [("a", [(shots[0], {})]), ("b", [(shots[1], {})])]
 
     database.change(2, status="APPROVED")
     manual_change_feed.push({"tracking_shots": {"2"}})
     dash._apply_live_changes()
-    assert dash.table_model._undo_stack == [(shots[0], "status", "WIP")]
+    assert dash.table_model._undo_stack == [("a", [(shots[0], {})])]
 
 
 def test_unknown_changes_read_the_project_once_and_merge(app, manual_change_feed):

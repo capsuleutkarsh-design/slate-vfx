@@ -34,15 +34,15 @@ class DashboardBuilderMixin:
             self.user_display_name = self.user_data.get('display_name', self.user_data.get('username', 'User'))
             self.inherit_app_theme = bool(self.user_data.get("inherit_app_theme", False))
 
-            # Handle both multi-role arrays and legacy single role, normalized to lowercase.
+            # The roles as the user record has them, lower-cased. Every right
+            # is asked of access.json with these: the old alias table turned a
+            # coordinator into a "supervisor" on screen (and so offered Force
+            # Overwrite access.json does not give them). Only spellings are
+            # folded now ("coord" -> "coordinator"), never one role into another.
             roles_data = self.user_data.get('roles', self.user_data.get('role', ['Artist']))
             self.user_roles = self._normalize_roles(roles_data)
             self.user_role = self.user_roles[0] if self.user_roles else "artist"
-            # The roles exactly as the user record has them. Normalising folds
-            # "coordinator" into "supervisor" for the interface, but access.json
-            # tells them apart: a coordinator may not force-save over someone.
-            raw = roles_data if isinstance(roles_data, list) else [roles_data]
-            self.access_roles = [str(r).strip().lower() for r in raw if str(r).strip()] or ["artist"]
+            self.access_roles = list(self.user_roles)
             self.local_mode = self._is_local_fallback_mode()
 
             self.project_manager = ProjectManager()
@@ -64,11 +64,10 @@ class DashboardBuilderMixin:
             self.image_cache = OrderedDict()
             self._init_thumbnail_system()
 
-            # Fetch Users
+            # Fetch Users. No made-up names when the list cannot be read: they
+            # used to be offered (and saved) as real assignments.
             self.user_manager = user_manager or self.app_context.user_manager()
             self.all_users = self._get_user_list()
-            if not self.all_users:
-                self.all_users = ["Admin", "Artist", "Supervisor"]
 
             # PHASE 2: Sync Users to DB
             try:
@@ -79,12 +78,10 @@ class DashboardBuilderMixin:
             except Exception as e:
                 logging.exception(f"ERROR: Failed to sync users to DB: {e}")
 
-            # Paths
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            root_dir = os.path.dirname(current_dir)
-            cache_dir = os.path.join(root_dir, 'cache', 'thumbnails')
-
-            self.thumb_gen = ThumbnailGenerator(cache_dir)
+            # Thumbnails are cached per person (GlobalConfig.local_cache_dir), not
+            # in the install folder - an installed copy cannot write there, and
+            # those machine-local paths ended up saved into the database.
+            self.thumb_gen = ThumbnailGenerator()
             self.image_loader = AsyncImageLoader(self.thumb_gen)
             self.image_loader.image_loaded.connect(self.on_image_loaded)
             self.image_loader.image_started.connect(self.on_image_started)
@@ -115,6 +112,13 @@ class DashboardBuilderMixin:
             self.advanced_query_rules = []
             self.advanced_query_match_type = "AND"
             self.splitter = None
+            self._only_shots = None
+            self._search_needle = ""
+            self._board_dirty = True
+            self._board_shots = []
+            self._own_writes = {}
+            self._own_status_undo = []
+            self.publish_workers = []
 
             self._search_debounce_timer = QTimer(self)
             self._search_debounce_timer.setSingleShot(True)
@@ -131,14 +135,13 @@ class DashboardBuilderMixin:
             self.view_toggle_btn = None
 
             self.init_ui()
-            self.load_projects()
-
             self.refresh_timer = QTimer(self)
             self.refresh_timer.timeout.connect(self.check_for_updates)
             self.refresh_timer.start(300000)
             # A banner that stays, not a message that scrolls past.
             self.refresh_connection_state()
             self._update_empty_state()
+            self.load_projects()
 
     def _build_main_sheet_headers(self, project, source_ws=None):
             mapping = dict(getattr(project, "column_mapping", {}) or {})
