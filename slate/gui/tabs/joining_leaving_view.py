@@ -10,6 +10,7 @@ list. Somebody leaves and the machine they were given on day one is already
 named on the row - nobody has to remember it.
 """
 
+import html
 from datetime import date
 
 from PySide6.QtCore import Qt, QDate, Signal
@@ -60,6 +61,9 @@ class StartPersonDialog(QDialog):
         self.person_hint = QLabel("")
         self.person_hint.setWordWrap(True)
         self.person_hint.setStyleSheet(f"color: {Gate.WARN}; font-size: 12px;")
+        # "Users & Roles" in the hint is a link that opens that screen.
+        self.person_hint.setTextFormat(Qt.TextFormat.RichText)
+        self.person_hint.linkActivated.connect(self._open_users)
         form.addRow("", self.person_hint)
 
         self.employment = QComboBox()
@@ -104,9 +108,11 @@ class StartPersonDialog(QDialog):
     @staticmethod
     def _joining_order(service):
         """
-        For joining: people without a finished joining list first (newest
-        accounts first among them), long-standing staff last, each group
-        alphabetical. It was every account by joining date, blanks first.
+        For joining: people without a finished joining list first, newest
+        first among them (no joining date yet counts as newest), then those
+        whose joining list is finished, alphabetical. It was every account by
+        joining date, blanks first - and a new hire whose joining date was
+        already set dropped to the bottom among long-standing staff.
         """
         try:
             done = service.joining_finished()
@@ -115,9 +121,14 @@ class StartPersonDialog(QDialog):
 
         def key(entry):
             username, display, record = entry
-            joined = str(record.get("joined_on") or "")
-            started = username.lower() in done
-            return (1 if started or joined else 0, display.casefold())
+            if username.lower() in done:
+                return (1, 0, display.casefold())
+            joined = str(record.get("joined_on") or "")[:10]
+            try:
+                age = -date.fromisoformat(joined).toordinal()
+            except ValueError:
+                age = -date.max.toordinal()
+            return (0, age, display.casefold())
         return key
 
     def _sync_start(self, username):
@@ -127,13 +138,25 @@ class StartPersonDialog(QDialog):
         elif text and self._inactive_named(text):
             self.person_hint.setText(
                 "%s is deactivated or has left - reactivate the account on "
-                "Users & Roles first." % self._inactive_named(text))
+                "%s first." % (html.escape(self._inactive_named(text)), self._users_link()))
         elif text:
             self.person_hint.setText(
-                "No such person - create the account on Users & Roles first.")
+                "No such person - create the account on %s first." % self._users_link())
         else:
             self.person_hint.setText("")
         self.start_button.setEnabled(bool(username))
+
+    @staticmethod
+    def _users_link() -> str:
+        # Read when shown, so the colour follows the theme in force.
+        return '<a href="users" style="color: %s;">Users &amp; Roles</a>' % Gate.ACCENT
+
+    def _open_users(self, _link=None):
+        """Close this dialog and open Users & Roles, where accounts are made."""
+        window = self.parent().window() if self.parent() is not None else None
+        switch = getattr(window, "_switch_to_tab_label", None)
+        if callable(switch) and switch("Users & Roles"):
+            self.reject()
 
     def _inactive_named(self, text: str) -> str:
         """The username of a switched-off account this text names, if any."""

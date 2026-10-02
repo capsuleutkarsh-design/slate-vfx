@@ -223,9 +223,12 @@ class OnboardingService:
                 (str(username or "").strip(),), fetch="one")
         except DatabaseUnavailableError:
             raise
-        except Exception:
+        except Exception as exc:
             logger.exception("start: account check failed")
-            found = None
+            # Not "there is no account": the question could not be asked.
+            raise UnknownPerson(
+                "Could not check the account %r, so no checklist was started. "
+                "Try again; if it keeps happening, tell IT. (%s)" % (str(username or ""), exc))
         if not found:
             raise UnknownPerson(
                 "There is no account called %r. Create it on Users & Roles first, "
