@@ -96,10 +96,10 @@ class ConfigManager:
              p = Path(paths[key])
              return p
              
-        # 2. Defaults
-        if key == "central_library":
-            return Path.home() / "RuntimeData" / "Studio_soft_2" / "Central_Library"
-            
+        # 2. No defaults. "central_library" (~/RuntimeData/Studio_soft_2/
+        # Central_Library) used to be one; nothing reads it since the Timeline
+        # writes lineups to <project>/editorial/lineups. An old config that
+        # still has paths.central_library loads and returns it as before.
         return Path.home()
 
     def _secure_combine_templates(self) -> Dict[str, Any]:

@@ -334,3 +334,17 @@ class TestConfigManagerTemplates:
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v', '--tb=short'])
+
+
+def test_an_old_config_with_central_library_still_loads(tmp_path, monkeypatch):
+    """Integration: the unused central_library default is gone; old configs keep working."""
+    import json
+    from slate.core.infra.config_manager import ConfigManager
+    monkeypatch.setattr(ConfigManager, "_get_app_data_dir", lambda self: tmp_path)
+    cm = ConfigManager()
+    cm.settings_file.write_text(json.dumps({"paths": {"central_library": str(tmp_path / "lib")}}),
+                                encoding="utf-8")
+    old = ConfigManager()
+    assert old.settings.get("paths", {}).get("central_library") == str(tmp_path / "lib")
+    assert old.get_path("central_library") == tmp_path / "lib"
+    assert "Studio_soft_2" not in str(cm.get_path("central_library"))
