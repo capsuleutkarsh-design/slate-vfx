@@ -1250,7 +1250,9 @@ class AttendanceTab(QWidget):
             self.team_table.setItem(r, 4, stat(hours_sum, None, "%.1f" % hours_sum))
             self.team_table.setItem(r, 5, stat(wfh, "accent"))
 
-        self.team_table.horizontalHeader().setDefaultSectionSize(64)
+        # Wide enough for "10:00" beside the corrected / auto punch-out icon:
+        # at 64 px those days - the ones HR check - read "10...".
+        self.team_table.horizontalHeader().setDefaultSectionSize(76)
         for c in range(len(stats_cols)):
             self.team_table.setColumnWidth(c, 62)
         # Today's column, easy to find.

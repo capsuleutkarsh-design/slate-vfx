@@ -229,3 +229,33 @@ def test_approved_leave_reaches_attendance(mock_db):
     leave = repo.approved_leave(date(2026, 9, 1), date(2026, 9, 30))
     assert leave["aarav"][day]["type"] == "Sick"
     assert leave["aarav"][day]["days"] == 0.5
+
+
+# ------------------------------------------------------------ NEW-people-1
+
+def test_a_correction_clears_the_auto_and_missing_flags(att):
+    today = date.today()
+    auto_day, late_day = today - timedelta(days=3), today - timedelta(days=2)
+    _put(att, "asha", auto_day, "09:30:00")
+    _put(att, "asha", late_day, "20:15:00")
+    lp.set_overrides({"auto_logout_time": "19:30"})
+    att.log_action("asha", "in")
+    for day in (auto_day, late_day):
+        ok, _ = att.update_record("asha", day.year, day.month, day.day, "09:30", "18:30",
+                                  editor="hr.meera", reason="checked with the person")
+        assert ok
+        entry = att.get_user_days("asha", day, day)[day]
+        assert not entry["auto_logout"] and not entry["missing_punch_out"]
+        assert rules.day_state(entry, day, today) == rules.PRESENT
+
+
+def test_days_corrected_before_the_fix_are_repaired(att):
+    import json
+    from slate.core.infra.migrations.people_schema import clear_corrected_flags
+    day = date.today() - timedelta(days=4)
+    _put(att, "asha", day, "09:30:00", "18:30:00",
+         meta={"missing_punch_out": True, "admin_edit": True, "edited_by": "hr"})
+    _put(att, "ravi", day, "09:30:00", "19:30:00", meta={"auto_logout": True})
+    assert clear_corrected_flags(att.db)
+    assert not att.get_user_days("asha", day, day)[day]["missing_punch_out"]
+    assert att.get_user_days("ravi", day, day)[day]["auto_logout"], "not hand-edited: left alone"

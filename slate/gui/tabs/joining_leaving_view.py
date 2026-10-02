@@ -297,6 +297,19 @@ class StartPersonDialog(QDialog):
                 date(day.year(), day.month(), day.day()))
 
 
+def joining_teams(roles=None, allowed_tabs=None) -> list:
+    """
+    Which halves of Joining & Leaving somebody works: ["HR"], ["IT"] or both.
+    Admin / Developer (Full access) and people who are both HR and IT get both.
+    """
+    from slate.core.domain.workplace_access import manages_it, manages_leave
+    hr = manages_leave(roles, allowed_tabs)
+    it = manages_it(roles, allowed_tabs)
+    if hr and it:
+        return ["HR", "IT"]
+    return ["IT"] if it else ["HR"]
+
+
 class JoiningLeavingView(QWidget):
     """The spine - people on their way in and on their way out."""
 

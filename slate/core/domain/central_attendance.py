@@ -490,7 +490,13 @@ class CentralAttendance:
         before = self.get_day(user_name, target_date) or {}
         meta = {"admin_edit": True,
                 "edited_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "overnight": bool(overnight)}
+                "overnight": bool(overnight),
+                # HR typed the day's times: it is no longer an auto-closed or
+                # missing punch-out day. The flags were merged in and kept, so
+                # a corrected day still showed (and counted) as Missing punch.
+                # 'corrected' keeps the fact that it once was.
+                "auto_logout": False, "missing_punch_out": False, "cutoff": None,
+                "corrected": True}
         if editor is not None:
             history = list(_meta_dict(before.get("metadata")).get("edit_history") or [])
             history.append({

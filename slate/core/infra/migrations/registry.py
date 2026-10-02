@@ -112,6 +112,8 @@ PEOPLE = (
          "slate.core.infra.migrations.people_schema:split_decision_notes", once=True),
     step("people_normalise_employment",
          "slate.core.infra.migrations.people_schema:normalise_employment", once=True),
+    step("people_clear_corrected_flags",
+         "slate.core.infra.migrations.people_schema:clear_corrected_flags", once=True),
 )
 
 # ---- it (Hardware, Licences, Service desk, Deployment) ----

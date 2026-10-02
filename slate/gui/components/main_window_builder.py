@@ -64,11 +64,23 @@ class MainWindowBuilderMixin:
         machine. Same record, two halves - and nobody is shown a checklist they
         cannot action.
         """
-        from ..tabs.joining_leaving_view import JoiningLeavingView
-        from ...core.domain.workplace_access import manages_it
+        from ..tabs.joining_leaving_view import JoiningLeavingView, joining_teams
 
-        team = "IT" if manages_it(getattr(self, "user_roles", None), self.allowed_tabs) else "HR"
-        return JoiningLeavingView(self._current_username(), team=team)
+        teams = joining_teams(getattr(self, "user_roles", None), self.allowed_tabs)
+        if len(teams) == 1:
+            return JoiningLeavingView(self._current_username(), team=teams[0])
+        # Both halves (admin, or somebody who is HR and IT): one tab each.
+        # They used to get IT's half only, so could not start anybody.
+        from PySide6.QtWidgets import QTabWidget
+        both = QTabWidget()
+        views = [JoiningLeavingView(self._current_username(), team=t) for t in teams]
+        for view, team in zip(views, teams):
+            both.addTab(view, "HR checklist" if team == "HR" else "IT checklist")
+        for view in views:
+            for other in views:
+                if other is not view:
+                    view.changed.connect(other.refresh)
+        return both
 
     def _build_ticketing_tab(self):
         from ..tabs.service_desk_view import ServiceDeskView
