@@ -59,7 +59,10 @@ def table_label(name: str) -> str:
     text = str(name or "")
     if text in TABLE_LABELS:
         return TABLE_LABELS[text]
-    return text.replace("_", " ").strip().capitalize() or text
+    words = text.replace("_", " ").strip()
+    if words.lower().startswith("it "):
+        return "IT " + words[3:]
+    return words.capitalize() or text
 
 
 def _safe_identifier(name, allowed=None):

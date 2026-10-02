@@ -429,7 +429,7 @@ class PCCard(QFrame):
         self.lbl_status.setStyleSheet(
             f"color: {Gate.TEXT_DIM}; font-weight: {T.WEIGHT_STYLE_BOLD}; font-size: 10px;")
         self.main_layout.addWidget(self.lbl_status)
-        self._set_elided(self.lbl_name, pc_name)
+        self._set_elided(self.lbl_name, pc_name, reserve=30)   # room for the actions button
         self._restyle(Gate.TEXT_DIM)
 
     # ----------------------------------------------------------------- text
@@ -633,7 +633,8 @@ class LiveDashboard(QWidget):
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search machine or user…")
         self.search.setClearButtonEnabled(True)
-        self.search.setMaximumWidth(260)
+        self.search.setMinimumWidth(220)
+        self.search.setMaximumWidth(300)
         self.search.textChanged.connect(self._relayout)
         self.toolbar.addWidget(self.search)
 
