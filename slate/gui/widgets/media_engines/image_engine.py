@@ -35,6 +35,56 @@ if HAS_OIIO:
 if HAS_OCIO:
     logging.info("ImageEngine: OpenColorIO available via ColorManager")
 
+# Primaries (red x, y, green x, y, blue x, y) and the colourspace they mean.
+_PRIMARIES = (
+    ((0.640, 0.330, 0.300, 0.600, 0.150, 0.060), "Linear Rec.709 (sRGB)"),
+    ((0.713, 0.293, 0.165, 0.830, 0.128, 0.044), "ACEScg"),
+    ((0.7347, 0.2653, 0.0, 1.0, 0.0001, -0.077), "ACES2065-1"),
+)
+
+# Names EXR writers put in their colourspace attribute, and the OCIO space.
+_NAMED_SPACES = {
+    "acescg": "ACEScg", "aces - acescg": "ACEScg", "aces cg": "ACEScg",
+    "aces2065-1": "ACES2065-1", "aces": "ACES2065-1", "aces - aces2065-1": "ACES2065-1",
+    "linear": "Linear Rec.709 (sRGB)", "lin_rec709": "Linear Rec.709 (sRGB)",
+    "linear rec.709 (srgb)": "Linear Rec.709 (sRGB)", "lin_srgb": "Linear Rec.709 (sRGB)",
+    "scene_linear": "", "srgb": "sRGB Encoding", "srgb encoding": "sRGB Encoding",
+    "raw": "Raw",
+}
+
+
+def detect_input_space(attributes: dict, default: str = "ACEScg") -> str:
+    """
+    The colourspace an EXR says it is in, from its own header.
+
+    Every EXR used to be read as ACEScg (MED-124), so plates and renders in
+    linear Rec.709 displayed with the wrong colour. The header's colourspace
+    name is used when it has one, then its chromaticities; otherwise the
+    config's scene-linear space. The player also lets a person choose.
+    """
+    attributes = attributes or {}
+    for key in ("oiio:ColorSpace", "colorspace", "ColorSpace", "acesImageContainerFlag"):
+        value = attributes.get(key)
+        if isinstance(value, str) and value.strip():
+            mapped = _NAMED_SPACES.get(value.strip().lower())
+            if mapped:
+                return mapped
+            if mapped is None and key != "acesImageContainerFlag":
+                return value.strip()
+    if attributes.get("acesImageContainerFlag") in (1, "1", True):
+        return "ACES2065-1"
+    chroma = attributes.get("chromaticities")
+    if chroma is not None:
+        try:
+            values = [float(v) for v in list(chroma)[:6]]
+            for primaries, name in _PRIMARIES:
+                if all(abs(a - b) < 0.005 for a, b in zip(values, primaries)):
+                    return name
+        except (TypeError, ValueError):
+            pass
+    return default
+
+
 class ImageEngine(BaseMediaEngine):
     """
     Optimized engine for static images.
@@ -57,6 +107,9 @@ class ImageEngine(BaseMediaEngine):
         self._color_manager = None
         self.displays = []
         self.views = []
+        self.input_space = "ACEScg"
+        self.input_spaces = []
+        self._header = {}
         
         if HAS_OCIO:
             try:
@@ -64,6 +117,8 @@ class ImageEngine(BaseMediaEngine):
                 if self._color_manager.is_available():
                     self.displays = self._color_manager.get_displays()
                     self.views = self._color_manager.get_views()
+                    self.input_spaces = [name for name, _label in
+                                         self._color_manager.get_common_colorspaces()]
                     logging.info(
                         f"ImageEngine OCIO: {self._color_manager.get_current_display()} / "
                         f"{self._color_manager.get_current_view()}"
@@ -159,6 +214,15 @@ class ImageEngine(BaseMediaEngine):
                 inp = ImageInput.open(str(source_path))
                 if inp:
                     spec = inp.spec()
+                    self._header = {}
+                    for attr in ("oiio:ColorSpace", "colorspace", "ColorSpace",
+                                 "chromaticities", "acesImageContainerFlag"):
+                        try:
+                            value = spec.getattribute(attr)
+                        except Exception:
+                            value = None
+                        if value is not None:
+                            self._header[attr] = value
                     # Read as float32 RGB/RGBA
                     # Every channel. Passing -1 as the end channel does not
                     # mean "all of them" - it reads a single channel, and the
@@ -198,6 +262,8 @@ class ImageEngine(BaseMediaEngine):
              
         # Store full raw buffer for real-time color switching
         self.raw_buffer = img_np.astype(np.float32)
+        default = self._color_manager.scene_linear_space() if self._color_manager else "ACEScg"
+        self.input_space = detect_input_space(self._header, default)
         
         self._process_ocio()
 
@@ -238,8 +304,8 @@ class ImageEngine(BaseMediaEngine):
             was_enabled = cm.is_enabled()
             cm.set_enabled(True)
             
-            # Use ACEScg as default source space for EXR (scene-linear)
-            result = cm.transform_image(self.raw_buffer, src_colorspace="ACEScg")
+            # The space the file says it is in (or the one chosen in the player).
+            result = cm.transform_image(self.raw_buffer, src_colorspace=self.input_space or "ACEScg")
             
             # Restore previous enable state
             cm.set_enabled(was_enabled)
@@ -288,6 +354,17 @@ class ImageEngine(BaseMediaEngine):
         if self.is_exr and self.raw_buffer is not None:
             self._process_ocio()
             self._emit_frame()
+
+    def set_input_space(self, space: str):
+        """Read the EXR as another colourspace, and show it again."""
+        self.input_space = space or self.input_space
+        if self.is_exr and self.raw_buffer is not None:
+            self._process_ocio()
+            self._emit_frame()
+
+    def full_frame(self):
+        """The picture at its own resolution (for a snapshot), or None."""
+        return self.current_image
 
     def _emit_frame(self):
         if self.current_image:

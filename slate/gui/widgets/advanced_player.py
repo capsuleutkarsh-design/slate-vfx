@@ -1,100 +1,120 @@
+"""
+The preview player used by the Stock Viewer, Quick Look and the review dialog.
+
+It routes a file to the right engine (a still, a movie, an image sequence),
+and around the picture it has:
+
+  * a scrub bar and a frame/time readout wide enough to read (MED-111), with
+    the bar ending on the last frame, not one past it (MED-123);
+  * drawn transport icons with their keys in the tooltips (MED-114, MED-117),
+    driven by what the engine is doing rather than by the button's own text
+    (MED-109);
+  * the clip's sound, in step with the picture, with mute and volume - or
+    "No sound" when it has none (MED-118);
+  * for EXRs, the colour view and the input colourspace; the combos say what
+    they are and are only there when they do something (MED-112, MED-124);
+  * for stills, no transport that cannot do anything (MED-115);
+  * Snapshot at the picture's own resolution, saved where you can find it and
+    said so (MED-116); full screen as one expand/collapse icon (MED-113).
+
+The picture area stays black in every theme: a neutral surround is what a
+viewer needs to judge colour, as in RV or Nuke. The controls under it follow
+the theme.
+"""
+
 import logging
-from pathlib import Path
+import os
+import subprocess
+import sys
+import threading
 from datetime import datetime
+from pathlib import Path
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
-    QComboBox, QSlider, QSizePolicy, QFrame
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
+    QComboBox, QSlider, QSizePolicy, QFrame, QLabel, QMenu, QFileDialog,
 )
-from PySide6.QtCore import (
-    Qt, Signal, QTimer, QRect
-)
-from PySide6.QtGui import QPainter, QColor
+from PySide6.QtCore import Qt, Signal, QTimer, QRect
+from PySide6.QtGui import QPainter, QColor, QFont, QFontDatabase
 
-# --- NEW ENGINE IMPORTS ---
 from .media_engines.image_engine import ImageEngine
 from .media_engines.stream_engine import StreamEngine
 from .media_engines.sequence_engine import SequenceEngine
+from .media_engines.audio_track import AudioTrack
 from ..components.qt_safety import safe_single_shot
 from ...utils.media_capabilities import is_video, is_image
 from slate.core.infra.gate import Gate
 
+# The viewer surround: black whatever the theme, with a light grey message.
+SCREEN_BG = QColor(0, 0, 0)
+SCREEN_TEXT = QColor(165, 165, 160)
+
+
 class VideoWidget(QWidget):
     """
     Custom Widget for rendering video/images.
-    Maintains fixed size policy (filling available space) but renders content 
+    Maintains fixed size policy (filling available space) but renders content
     aspect-ratio correct with letterboxing (black bars).
     """
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.setStyleSheet("background-color: #000;")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.current_image = None
-        self._text_msg = "Select Asset"
-        # OPTIMIZATION: Prevent flickering by disabling automatic background erase
+        self._text_msg = "Select an asset"
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
 
     def set_image(self, image):
         self.current_image = image
-        self.update() # Trigger paintEvent
+        self.update()
 
     def set_text(self, text):
         self._text_msg = text
         self.current_image = None
         self.update()
 
+    def text(self) -> str:
+        return self._text_msg
+
+    def message_rect(self) -> QRect:
+        """Where a message is written: inside a margin, so long text wraps (MED-119)."""
+        return self.rect().adjusted(16, 12, -16, -12)
+
     def paintEvent(self, event):
         painter = QPainter(self)
-        
-        # 1. Setup
         rect = self.rect()
-        bg_color = QColor("#000000")
-        
-        # CRITICAL FIX: Always clear background to prevent "ghosting" / trails
-        # The optimization WA_OpaquePaintEvent requires us to paint every pixel.
-        # Previously we only painted borders, which caused trails if the image had alpha
-        # or if the calculations were slightly off.
-        painter.fillRect(rect, bg_color)
-        
+        # Every pixel is painted (WA_OpaquePaintEvent), so no trails are left.
+        painter.fillRect(rect, SCREEN_BG)
+
         if self.current_image and not self.current_image.isNull():
-            widget_w = rect.width()
-            widget_h = rect.height()
-            img_w = self.current_image.width()
-            img_h = self.current_image.height()
-            
+            img_w = self.current_image.width() / max(1.0, self.current_image.devicePixelRatio())
+            img_h = self.current_image.height() / max(1.0, self.current_image.devicePixelRatio())
             if img_w > 0 and img_h > 0:
-                # Calculate scale to fit
-                scale_w = widget_w / img_w
-                scale_h = widget_h / img_h
-                scale = min(scale_w, scale_h)
-                
-                target_w = int(img_w * scale)
-                target_h = int(img_h * scale)
-                
-                x = (widget_w - target_w) // 2
-                y = (widget_h - target_h) // 2
-                
-                target_rect = QRect(x, y, target_w, target_h)
-                
-                # 2. Draw Image
-                # Use Source composition to overwrite buffer (ignores alpha blending from prev frame)
-                painter.setCompositionMode(QPainter.CompositionMode_Source)
-                painter.drawImage(target_rect, self.current_image)
-                    
+                scale = min(rect.width() / img_w, rect.height() / img_h)
+                target_w, target_h = int(img_w * scale), int(img_h * scale)
+                target = QRect((rect.width() - target_w) // 2, (rect.height() - target_h) // 2,
+                               target_w, target_h)
+                painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+                painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+                painter.drawImage(target, self.current_image)
                 painter.end()
-                return # Done
-                
-        # Text Message (if no image)
+                return
+
         if self._text_msg:
-            painter.setPen(QColor(Gate.TEXT_DIM))
+            painter.setPen(SCREEN_TEXT)
             font = painter.font()
             font.setPointSize(10)
             painter.setFont(font)
-            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, self._text_msg)
-            
+            painter.drawText(self.message_rect(),
+                             Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap,
+                             self._text_msg)
         painter.end()
-                
+
+
+def _mono_font() -> QFont:
+    font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+    font.setPointSize(9)
+    return font
 
 
 class AdvancedPlayer(QWidget):
@@ -102,412 +122,402 @@ class AdvancedPlayer(QWidget):
     Smart Host for Media Engines.
     Routes playback to ImageEngine, StreamEngine, or SequenceEngine.
     """
-    frame_changed = Signal(int) # Current frame
-    duration_changed = Signal(int) # Total frames
-    next_requested = Signal() # NEW: Playlist Navigation
-    prev_requested = Signal() # NEW: Playlist Navigation
+    frame_changed = Signal(int)       # Current frame
+    duration_changed = Signal(int)    # Total frames
+    next_requested = Signal()         # Playlist navigation
+    prev_requested = Signal()
+    playing_changed = Signal(bool)
+    snapshot_saved = Signal(str)
+    _snapshot_done = Signal(str, str)  # path, error (from the snapshot thread)
+
+    SPEEDS = ("0.5x", "1x", "2x")
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        # REMOVED: self.setMinimumSize(320, 180) - Let Layout/Splitter decide
-        self.setStyleSheet("background-color: #000; border-radius: 4px;")
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.setFocusPolicy(Qt.StrongFocus)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._is_closing = False
 
-        # Connect Helpers
         self.active_engine = None
-        
-        # Instantiate Engines
         self.engines = {
             'image': ImageEngine(self),
             'stream': StreamEngine(self),
-            'sequence': SequenceEngine(self)
+            'sequence': SequenceEngine(self),
         }
-        
-        # Initialize UI State
+        self.audio = AudioTrack(self)
+        self.audio.availability_changed.connect(self._on_audio_available)
+
         self.is_slider_dragging = False
         self.total_frames = 1
         self.current_fps = 24.0
+        self.frame_offset = 0          # first frame number of a sequence
         self.show_timecode = False
-        self.paused = False 
+        self.current_path = None
+        self.media_kind = ""           # image / stream / sequence
+        self._pending_autoplay = False
+        self._sync_counter = 0
 
-        # Scrub preview debounce timer
         self._scrub_timer = QTimer(self)
         self._scrub_timer.setSingleShot(True)
-        self._scrub_timer.setInterval(150)  # 150ms debounce
+        self._scrub_timer.setInterval(150)
         self._scrub_timer.timeout.connect(self._do_scrub_seek)
         self._scrub_target = 0
-        
-        # State tracking for fullscreen
+
         self._is_fullscreen = False
         self._cached_parent = None
         self._cached_layout = None
         self._cached_layout_index = -1
         self._cached_geometry = None
         self._placeholder = None
-        
-        # Load debounce timer (Fix for scroll performance)
+
+        # Load debounce: arrowing through a long list does not start a
+        # decoder for every item on the way past.
         self._load_timer = QTimer(self)
         self._load_timer.setSingleShot(True)
-        self._load_timer.setInterval(200) # 200ms debounce
+        self._load_timer.setInterval(200)
         self._load_timer.timeout.connect(self._perform_load)
         self._pending_load_path = None
+        self._pending_audio_path = None
 
-        # Build UI immediately
+        self._snapshot_done.connect(self._on_snapshot_done)
         self.setup_ui()
-        
+
+    # ------------------------------------------------------------- layout
     def set_controls_visible(self, visible: bool):
         """Show/Hide internal controls (for embedding)."""
         if hasattr(self, 'controls_widget'):
             self.controls_widget.setVisible(visible)
-        
+
+    def _icon_button(self, name, tooltip, checkable=False, width=30):
+        from ..core.icons import icon as draw_icon
+        button = QPushButton()
+        button.setObjectName("PlayerButton")
+        button.setIcon(draw_icon(name, Gate.TEXT, 16))
+        button.setToolTip(tooltip)
+        button.setCheckable(checkable)
+        button.setFixedSize(width, 28)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        return button
+
     def setup_ui(self):
+        from ..core.icons import icon as draw_icon
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0,0,0,0)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        
-        # Screen
+
         self.screen = VideoWidget()
         layout.addWidget(self.screen, 1)
-        
-        # Controls Container
+
         self.controls_widget = QWidget()
-        self.controls_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        self.controls_widget.setStyleSheet(f"""
-            QWidget {{ 
-                background: rgba(15, 20, 25, 0.85); 
-                border: 1px solid {Gate.overlay(0.1)};
-                border-radius: 12px;
-                margin: 0px 4px 4px 4px;
-            }}
-        """)
-        
+        self.controls_widget.setObjectName("PlayerControls")
+        self.controls_widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.controls_widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        self.controls_widget.setStyleSheet(Gate.sheet("""
+            QWidget#PlayerControls { background: @PANEL; border-top: 1px solid @LINE_SOFT; }
+            QPushButton#PlayerButton { background: transparent; border: 1px solid transparent;
+                border-radius: 5px; padding: 0px; }
+            QPushButton#PlayerButton:hover { background: @HOVER; border-color: @LINE; }
+            QPushButton#PlayerButton:checked { background: @ACCENT_SURFACE; border-color: @ACCENT; }
+            QPushButton#PlayerButton:disabled { background: transparent; }
+            QPushButton#PlayerPlay { background: @ACCENT_SURFACE; border: 1px solid @ACCENT;
+                border-radius: 5px; }
+            QPushButton#PlayerPlay:hover { background: @ACCENT; }
+            QPushButton#PlayerTime { background: transparent; border: none; color: @TEXT_2;
+                text-align: right; padding: 0 2px; }
+            QLabel#PlayerNoSound { color: @TEXT_DIM; }
+            QSlider#PlayerScrub::groove:horizontal { height: 4px; background: @RAISED_HI;
+                border-radius: 2px; margin: 5px 0; }
+            QSlider#PlayerScrub::sub-page:horizontal { background: @ACCENT; border-radius: 2px; }
+            QSlider#PlayerScrub::handle:horizontal { background: @TEXT; width: 12px; height: 12px;
+                margin: -4px 0; border-radius: 6px; }
+        """))
+
         controls_layout = QVBoxLayout(self.controls_widget)
-        controls_layout.setContentsMargins(8, 6, 8, 6) # More breathing room
-        controls_layout.setSpacing(6)
-        
-        # --- Row 1: Slider + Time ---
+        controls_layout.setContentsMargins(8, 6, 8, 6)
+        controls_layout.setSpacing(4)
+
+        # Row 1: scrub bar and readout
         row_scrub = QHBoxLayout()
-        row_scrub.setContentsMargins(0,0,0,0)
         row_scrub.setSpacing(8)
-        
         self.slider = QSlider(Qt.Orientation.Horizontal)
-        self.slider.setRange(0, 100)
-        self.slider.setFixedHeight(14)
+        self.slider.setObjectName("PlayerScrub")
+        self.slider.setRange(0, 0)
+        self.slider.setFixedHeight(16)
         self.slider.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.slider.setStyleSheet(f"""
-            QSlider::groove:horizontal {{ border: none; height: 4px; background: {Gate.RAISED_HI}; margin: 5px 0; border-radius: 2px; }}
-            QSlider::sub-page:horizontal {{ background: {Gate.ACCENT}; border-radius: 2px; }}
-            QSlider::handle:horizontal {{ background: {Gate.TEXT}; width: 12px; height: 12px; margin: -4px 0; border-radius: 6px; }}
-            QSlider::handle:horizontal:hover {{ background: {Gate.ACCENT}; transform: scale(1.1); }}
-        """)
+        self.slider.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.slider.sliderPressed.connect(self.on_slider_pressed)
         self.slider.sliderReleased.connect(self.on_slider_released)
         self.slider.sliderMoved.connect(self.on_slider_move)
-        
-        self.lbl_time = QPushButton("00:00")
+
+        self.lbl_time = QPushButton("")
+        self.lbl_time.setObjectName("PlayerTime")
         self.lbl_time.setFlat(True)
+        self.lbl_time.setFont(_mono_font())
         self.lbl_time.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.lbl_time.setFixedWidth(45) # Slightly smaller
-        self.lbl_time.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-weight: bold; font-family: monospace; font-size: 10px; text-align: right; border: none;")
+        self.lbl_time.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.lbl_time.setToolTip("Frame number - click to show time instead")
+        self.lbl_time.setMinimumWidth(96)
         self.lbl_time.clicked.connect(self.toggle_time_display)
-        
-        row_scrub.addWidget(self.slider)
+        row_scrub.addWidget(self.slider, 1)
         row_scrub.addWidget(self.lbl_time)
         controls_layout.addLayout(row_scrub)
 
-        # --- Row 2: Transport (Centered and compact) ---
+        # Row 2: transport, sound
         row_transport = QHBoxLayout()
-        row_transport.setContentsMargins(0, 4, 0, 4)
-        row_transport.setSpacing(6) # Reduced spacing to prevent overlap
-        row_transport.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        self.btn_style = f"""
-            QPushButton {{
-                background: {Gate.overlay(0.05)}; color: {Gate.TEXT};
-                border-radius: 6px; padding: 2px;
-                border: 1px solid transparent;
-                font-family: "Segoe UI", "DejaVu Sans", sans-serif;
-                font-size: 12px;
-            }}
-            QPushButton:hover {{ background: {Gate.overlay(0.15)}; color: {Gate.TEXT}; }}
-            QPushButton:pressed {{ background: {Gate.overlay(0.1)}; }}
-            QPushButton:checked {{ background: {Gate.tint(Gate.ACCENT, 0.2)}; color: {Gate.ACCENT}; border: 1px solid {Gate.tint(Gate.ACCENT, 0.5)}; }}
-        """
-        
-        self.btn_prev = QPushButton("|<")
-        self.btn_prev.setFixedSize(28, 28); self.btn_prev.setStyleSheet(self.btn_style)
-        self.btn_prev.setToolTip("Previous Asset")
+        row_transport.setSpacing(4)
+        self.btn_prev = self._icon_button("skip-previous", "Previous asset")
         self.btn_prev.clicked.connect(self.prev_requested.emit)
-        
-        self.btn_step_back = QPushButton("<|")
-        self.btn_step_back.setFixedSize(28, 28); self.btn_step_back.setStyleSheet(self.btn_style)
-        self.btn_step_back.setToolTip("Step Back 1 Frame")
+        self.btn_step_back = self._icon_button("step-back", "Back one frame (← or J)")
         self.btn_step_back.clicked.connect(lambda: self.step_active(-1))
-        
-        self.btn_play = QPushButton("►")
-        self.btn_play.setFixedSize(40, 28) # Wide enough, but compact
-        self.btn_play.setToolTip("Play / Pause")
-        self.btn_play.setStyleSheet(self.btn_style + f"""
-            QPushButton {{ 
-                background: {Gate.tint(Gate.ACCENT, 0.1)}; 
-                color: {Gate.ACCENT}; 
-                font-size: 16px; 
-                border: 1px solid {Gate.tint(Gate.ACCENT, 0.3)};
-                border-radius: 6px;
-            }}
-            QPushButton:hover {{ background: {Gate.tint(Gate.ACCENT, 0.3)}; border: 1px solid {Gate.tint(Gate.ACCENT, 0.8)}; color: {Gate.TEXT}; }}
-        """)
+        self.btn_play = self._icon_button("play", "Play / pause (Space in Quick Look, Enter in "
+                                                  "the gallery, K pauses, L plays)", width=40)
+        self.btn_play.setObjectName("PlayerPlay")
         self.btn_play.clicked.connect(self.toggle_play)
-        
-        self.btn_step_forward = QPushButton("|>")
-        self.btn_step_forward.setFixedSize(28, 28); self.btn_step_forward.setStyleSheet(self.btn_style)
-        self.btn_step_forward.setToolTip("Step Forward 1 Frame")
+        self.btn_step_forward = self._icon_button("step-forward", "Forward one frame (→)")
         self.btn_step_forward.clicked.connect(lambda: self.step_active(1))
-        
-        self.btn_next = QPushButton(">|")
-        self.btn_next.setFixedSize(28, 28); self.btn_next.setStyleSheet(self.btn_style)
-        self.btn_next.setToolTip("Next Asset")
+        self.btn_next = self._icon_button("skip-next", "Next asset")
         self.btn_next.clicked.connect(self.next_requested.emit)
 
-        row_transport.addWidget(self.btn_prev)
-        row_transport.addWidget(self.btn_step_back)
-        row_transport.addWidget(self.btn_play)
-        row_transport.addWidget(self.btn_step_forward)
-        row_transport.addWidget(self.btn_next)
-        
+        row_transport.addStretch(1)
+        for b in (self.btn_prev, self.btn_step_back, self.btn_play, self.btn_step_forward,
+                  self.btn_next):
+            row_transport.addWidget(b)
+        row_transport.addStretch(1)
+
+        self.btn_mute = self._icon_button("volume", "Mute (M)", checkable=True)
+        self.btn_mute.toggled.connect(self.set_muted)
+        self.volume_slider = QSlider(Qt.Orientation.Horizontal)
+        self.volume_slider.setRange(0, 100)
+        self.volume_slider.setValue(int(self.audio.volume() * 100))
+        self.volume_slider.setFixedWidth(70)
+        self.volume_slider.setToolTip("Volume")
+        self.volume_slider.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.volume_slider.valueChanged.connect(lambda v: self.audio.set_volume(v / 100.0))
+        self.lbl_no_audio = QLabel("No sound")
+        self.lbl_no_audio.setObjectName("PlayerNoSound")
+        self.lbl_no_audio.setToolTip("This clip has no sound track")
+        row_transport.addWidget(self.btn_mute)
+        row_transport.addWidget(self.volume_slider)
+        row_transport.addWidget(self.lbl_no_audio)
         controls_layout.addLayout(row_transport)
 
-        # --- Row 3: Tools (Floating Media Island) ---
-        island_frame = QFrame()
-        island_frame.setStyleSheet(f"""
-            QFrame {{
-                background: {Gate.overlay(0.05)};
-                border-radius: 14px;
-            }}
-            QPushButton {{
-                background: transparent;
-                color: {Gate.TEXT_2};
-                border: none;
-                font-weight: bold;
-                font-size: 11px;
-                padding: 4px 8px;
-                border-radius: 6px;
-            }}
-            QPushButton:hover {{ color: {Gate.ACCENT}; background: {Gate.tint(Gate.ACCENT, 0.1)}; }}
-            QPushButton:checked {{ color: {Gate.ACCENT}; }}
-            QComboBox {{ 
-                background: transparent; 
-                color: {Gate.TEXT_2}; 
-                border: none; 
-                font-size: 11px;
-                padding: 4px 8px;
-            }}
-            QComboBox:hover {{ color: {Gate.ACCENT}; }}
-            QComboBox::drop-down {{ border: none; width: 14px; }}
-            QComboBox::down-arrow {{ width: 0px; height: 0px; border: none; }}
-        """)
-        row_tools = QHBoxLayout(island_frame)
-        row_tools.setContentsMargins(12, 4, 12, 4)
+        # Row 3: colour, speed, loop, snapshot, full screen
+        row_tools = QHBoxLayout()
         row_tools.setSpacing(6)
-        
-        # Left: View Settings
+        self.combo_input = QComboBox()
+        self.combo_input.setToolTip("Input colourspace of this EXR (read from the file when it says)")
+        self.combo_input.setMinimumWidth(130)
+        self.combo_input.currentIndexChanged.connect(self.change_input_space)
         self.combo_view = QComboBox()
-        self.combo_view.addItem("Std")
+        self.combo_view.addItem("Standard")
+        self.combo_view.setToolTip("Colour view for EXRs. Other files are shown as they are.")
+        self.combo_view.setMinimumWidth(120)
         self.combo_view.currentIndexChanged.connect(self.change_view_transform)
-        row_tools.addWidget(self.combo_view)
-        
-        # Speed
         self.combo_speed = QComboBox()
-        self.combo_speed.addItems(["0.5x", "1.0x", "2.0x"])
+        self.combo_speed.addItems(self.SPEEDS)
         self.combo_speed.setCurrentIndex(1)
+        self.combo_speed.setToolTip("Playback speed")
+        self.combo_speed.setMinimumWidth(70)
         self.combo_speed.currentIndexChanged.connect(self.change_speed)
+        for combo in (self.combo_input, self.combo_view, self.combo_speed):
+            combo.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        row_tools.addWidget(self.combo_input)
+        row_tools.addWidget(self.combo_view)
         row_tools.addWidget(self.combo_speed)
-        
         row_tools.addStretch(1)
-        
-        # Right: Actions
-        self.btn_loop = QPushButton("Loop")
-        self.btn_loop.setCheckable(True); self.btn_loop.setChecked(True)
-        self.btn_loop.clicked.connect(self.toggle_loop)
 
-        self.btn_snap = QPushButton("Snap")
-        self.btn_snap.clicked.connect(self.take_snapshot)
-        
-        # Fullscreen
-        self.btn_fullscreen = QPushButton("Full")
+        self.btn_loop = self._icon_button("repeat", "Loop", checkable=True)
+        self.btn_loop.setChecked(True)
+        self.btn_loop.toggled.connect(self.toggle_loop)
+        self.btn_snap = self._icon_button("image", "Save this frame as a picture, at full "
+                                                   "resolution (right-click: Save as…)")
+        self.btn_snap.clicked.connect(lambda: self.take_snapshot())
+        self.btn_snap.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.btn_snap.customContextMenuRequested.connect(self._snapshot_menu)
+        self.btn_fullscreen = self._icon_button("expand", "Full screen (F)")
         self.btn_fullscreen.clicked.connect(self.toggle_fullscreen)
-
         row_tools.addWidget(self.btn_loop)
         row_tools.addWidget(self.btn_snap)
         row_tools.addWidget(self.btn_fullscreen)
-        
-        controls_layout.addWidget(island_frame)
-        
+        controls_layout.addLayout(row_tools)
+
         layout.addWidget(self.controls_widget, 0)
+        self._set_play_icon(False)
+        self._on_audio_available(False)
+        self._configure_for(None)
+        self.update_time_label(0)
 
-    # --- DEBOUNCE LOGIC ---
-    def load(self, path):
-        """Standard Routing Logic with Debounce."""
-        Path(path)
-        str_path = str(path)
-        
-        # 1. Immediate Debounce: If same file, ignore
-        if getattr(self, 'current_path', None) == str_path:
+    # ------------------------------------------------------------- state
+    def is_playing(self) -> bool:
+        return bool(self.active_engine and self.active_engine.is_playing())
+
+    @property
+    def paused(self) -> bool:
+        return not self.is_playing()
+
+    def _set_play_icon(self, playing: bool):
+        from ..core.icons import icon as draw_icon
+        self.btn_play.setIcon(draw_icon("pause" if playing else "play", Gate.TEXT, 16))
+        self.btn_play.setProperty("playing", bool(playing))
+
+    def _on_engine_state(self, playing: bool):
+        sender = self.sender()
+        if sender is not None and sender is not self.active_engine:
             return
+        self._set_play_icon(playing)
+        if self.media_kind == "stream":
+            if playing:
+                self.audio.play(self.active_engine.position_seconds())
+            else:
+                self.audio.pause()
+        self.playing_changed.emit(bool(playing))
 
-        # 2. Stop immediately (clear UI)
+    def _on_audio_available(self, has_audio: bool):
+        movie = self.media_kind == "stream"
+        self.btn_mute.setVisible(movie and has_audio)
+        self.volume_slider.setVisible(movie and has_audio)
+        self.lbl_no_audio.setVisible(movie and not has_audio)
+
+    def has_audio(self) -> bool:
+        return self.audio.has_audio
+
+    def set_muted(self, muted: bool):
+        from ..core.icons import icon as draw_icon
+        self.audio.set_muted(muted)
+        if self.btn_mute.isChecked() != bool(muted):
+            self.btn_mute.setChecked(bool(muted))
+        self.btn_mute.setIcon(draw_icon("volume-off" if muted else "volume", Gate.TEXT, 16))
+        self.btn_mute.setToolTip("Unmute (M)" if muted else "Mute (M)")
+
+    def _configure_for(self, kind):
+        """Only the controls that do something for this kind of media (MED-115, MED-112)."""
+        self.media_kind = kind or ""
+        moving = kind in ("stream", "sequence")
+        for widget in (self.slider, self.lbl_time, self.btn_step_back, self.btn_play,
+                       self.btn_step_forward, self.combo_speed, self.btn_loop):
+            widget.setVisible(moving)
+        engine = self.engines['image']
+        exr = kind == "image" and getattr(engine, "is_exr", False)
+        has_views = bool(getattr(engine, "views", None))
+        self.combo_view.setVisible(exr and has_views)
+        self.combo_view.setEnabled(exr and has_views)
+        self.combo_input.setVisible(exr and bool(getattr(engine, "input_spaces", None)))
+        self.btn_snap.setEnabled(kind is not None)
+        self._on_audio_available(self.audio.has_audio)
+
+    # ------------------------------------------------------------- loading
+    def load(self, path, audio_source=None):
+        """Load a file (debounced). audio_source: where the sound is, when path is a silent proxy."""
+        str_path = str(path)
+        if getattr(self, 'current_path', None) == str_path:
+            if self._pending_autoplay and not self.is_playing() and self.active_engine:
+                self._pending_autoplay = False
+                self.active_engine.play()
+            return
         self.stop_media()
-        self.current_path = str_path # Claim it
-        
-        # 3. Start Debounce Timer
-        # If user scrolls, this function is called again, 
-        # stopping previous timer and starting a new one.
+        self.current_path = str_path
         self._pending_load_path = str_path
-        self._load_timer.start(200) # 200ms debounce
-        
+        self._pending_audio_path = str(audio_source) if audio_source else str_path
+        self.screen.set_text("Loading…")
+        self._load_timer.start(200)
+
     def _perform_load(self):
         """Called by timer to actually load the media."""
         path = getattr(self, '_pending_load_path', None)
-        if not path: return
-        
-        # Double check: if current_path changed in mean time (shouldn't happen with timer logic)
-        if path != self.current_path:
-             return
-             
+        if not path or path != self.current_path:
+            return
         logging.info(f"AdvancedPlayer: Loading {path}")
-        
         path_obj = Path(path)
-        
-        # Detection Logic
-        engine_key = 'stream' # Default
-        
-        # 1. Check for Sequence
-        # Frame sequence detection using VFX standard utility
-        is_sequence = False
-        seq_pattern = ""
-        seq_start = 0
-        
-        # Check if this might be a sequence (not a video file)
+
+        engine_key = 'stream'
+        seq = None
         if not is_video(path_obj.suffix.lower()):
-            # Import our centralized sequence detector
-            from ...utils.sequence_utils import SequenceDetector
-            
+            from ...utils.sequence_utils import sequence_for
             try:
-                # Try to detect sequence using fileseq (VFX standard)
-                seq = SequenceDetector.find_sequence(path_obj)
-                
-                if seq:
-                    # Extract sequence information
-                    seq_pattern = SequenceDetector.get_pattern(seq)
-                    seq_start, _ = SequenceDetector.get_frame_range(seq)
-                    is_sequence = True
-                    
-                    logging.info(f"Detected frame sequence: {seq_pattern} starting at frame {seq_start}")
-                else:
-                    logging.debug(f"Not a sequence: {path_obj}")
-                    
+                seq = sequence_for(path_obj)
             except Exception as e:
                 logging.exception(f"Sequence detection error: {e}")
-        
-        if is_sequence:
-            engine_key = 'sequence'
-            self.engines['sequence'].set_sequence_details(seq_pattern, seq_start)
-        else:
-            # 2. Check for Image
-            if is_image(path_obj.suffix.lower()):
+            if seq is not None:
+                engine_key = 'sequence'
+                self.engines['sequence'].set_sequence_details(seq.pattern, seq.start, seq.frame_count)
+            elif is_image(path_obj.suffix.lower()):
                 engine_key = 'image'
-            else:
-                engine_key = 'stream'
 
-        # Switch Engine
         self._activate_engine(engine_key)
-        
-        # CRITICAL FIX: Set target size BEFORE loading
-        # Otherwise ImageEngine will have 0x0 size and won't display anything
-        if hasattr(self, 'screen'):
-            size = self.screen.size()
-            dpr = self.devicePixelRatio()
-            self.active_engine.set_pixel_ratio(dpr)
-            self.active_engine.set_target_size(size)
-        
-        # Load
-        try:
-            logging.info(f"AdvancedPlayer: Loading {path} with {engine_key.upper()} Engine")
-            self.active_engine.load(str(path))
-            
-            # OCIO: Populate Views if available
-            self.combo_view.blockSignals(True)
-            self.combo_view.clear()
-            self.combo_view.addItem("Standard")
-            
-            if hasattr(self.active_engine, 'views') and self.active_engine.views:
-                self.combo_view.clear()
-                # Determine current
-                current_view = getattr(self.active_engine, 'view', 'Standard')
-                for v in self.active_engine.views:
-                    self.combo_view.addItem(v)
-                self.combo_view.setCurrentText(current_view)
-                self.combo_view.setEnabled(True)
-            else:
-                self.combo_view.setEnabled(False)
-                
-            self.combo_view.blockSignals(False)
+        self.frame_offset = seq.start if seq is not None else 0
+        size = self.screen.size()
+        self.active_engine.set_pixel_ratio(self.devicePixelRatio())
+        self.active_engine.set_target_size(size)
 
-            # Handle Autoplay on double-click
-            if getattr(self, '_pending_autoplay', False):
-                self.active_engine.play()
-                self.btn_play.setText("||")
-                self.paused = False
-                self._pending_autoplay = False
+        try:
+            self.active_engine.load(str(path))
+            self._fill_colour_combos()
+            self._configure_for(engine_key)
+            if engine_key == 'stream':
+                self.audio.load(self._pending_audio_path or path)
             else:
-                self.btn_play.setText("►")
-                self.paused = True
-            # self.setFocus() # Removed to prevent focus stealing from file list
+                self.audio.clear()
+            # Selecting shows the first frame; it plays only when asked.
+            if self._pending_autoplay and engine_key != 'image':
+                self.active_engine.play()
+            self._pending_autoplay = False
         except Exception as e:
             logging.exception(f"Engine Load Error: {e}")
-            self.screen.set_text(f"Error: {e}")
-            # Ensure we don't crash
+            self.screen.set_text("This file could not be opened.")
             try:
                 self.stop_media()
             except RuntimeError as stop_err:
                 logging.debug(f"stop_media failed during engine-load error recovery: {stop_err}")
-        
+
+    def _fill_colour_combos(self):
+        engine = self.active_engine
+        self.combo_view.blockSignals(True)
+        self.combo_view.clear()
+        views = getattr(engine, 'views', None) if engine is self.engines['image'] else None
+        if views:
+            for v in views:
+                self.combo_view.addItem(v)
+            self.combo_view.setCurrentText(getattr(engine, 'view', None) or views[0])
+        else:
+            self.combo_view.addItem("Standard")
+        self.combo_view.blockSignals(False)
+
+        self.combo_input.blockSignals(True)
+        self.combo_input.clear()
+        spaces = list(getattr(engine, 'input_spaces', None) or []) if engine is self.engines['image'] else []
+        current = getattr(engine, 'input_space', "") if spaces else ""
+        if current and current not in spaces:
+            spaces.insert(0, current)
+        for space in spaces:
+            self.combo_input.addItem(space)
+        if current:
+            self.combo_input.setCurrentText(current)
+        self.combo_input.blockSignals(False)
 
     def change_view_transform(self, index):
         """Update OCIO View"""
         view = self.combo_view.currentText()
         if hasattr(self.active_engine, 'set_view_transform'):
-            # We assume Display is constant "sRGB" for now or retrieved from engine
             display = getattr(self.active_engine, 'display', 'sRGB')
             self.active_engine.set_view_transform(display, view)
 
+    def change_input_space(self, index):
+        space = self.combo_input.currentText()
+        if space and hasattr(self.active_engine, 'set_input_space'):
+            self.active_engine.set_input_space(space)
 
     def _activate_engine(self, key):
         """Disconnect old, Connect new."""
-        # 1. Disconnect Old
         if self.active_engine:
-            try:
-                self.active_engine.frame_ready.disconnect(self.update_screen)
-                self.active_engine.position_changed.disconnect(self.update_slider_pos)
-                self.active_engine.duration_changed.disconnect(self.set_duration)
-                self.active_engine.finished.disconnect(self.on_engine_finished)
-                self.active_engine.error_occurred.disconnect(self.on_engine_error)
-            except (TypeError, RuntimeError):
-                pass
-            
-        # 2. Set New
+            for signal, slot in self._engine_links():
+                try:
+                    signal.disconnect(slot)
+                except (TypeError, RuntimeError):
+                    pass
         self.active_engine = self.engines[key]
-        
-        # 3. Connect New
-        self.active_engine.frame_ready.connect(self.update_screen)
-        self.active_engine.position_changed.connect(self.update_slider_pos)
-        self.active_engine.duration_changed.connect(self.set_duration)
-        self.active_engine.finished.connect(self.on_engine_finished)
-        self.active_engine.error_occurred.connect(self.on_engine_error)
-        
-        # 4. Sync State
+        for signal, slot in self._engine_links():
+            signal.connect(slot)
         self.active_engine.set_target_size(self.screen.size())
         self.active_engine.set_speed(self.get_current_speed())
         self.active_engine.set_loop(self.btn_loop.isChecked())
@@ -516,13 +526,25 @@ class AdvancedPlayer(QWidget):
         except AttributeError:
             pass
 
+    def _engine_links(self):
+        e = self.active_engine
+        return ((e.frame_ready, self.update_screen), (e.position_changed, self.update_slider_pos),
+                (e.duration_changed, self.set_duration), (e.finished, self.on_engine_finished),
+                (e.error_occurred, self.on_engine_error), (e.state_changed, self._on_engine_state),
+                (e.looped, self._on_looped))
+
     def on_engine_finished(self):
         sender = self.sender()
         if sender is not None and sender is not self.active_engine:
             return
         if self._is_closing:
             return
-        self.btn_play.setText("►")
+        self._set_play_icon(False)
+        self.audio.pause()
+
+    def _on_looped(self):
+        if self.media_kind == "stream":
+            self.audio.seek(0.0)
 
     def on_engine_error(self, message):
         sender = self.sender()
@@ -531,189 +553,277 @@ class AdvancedPlayer(QWidget):
         if self._is_closing:
             return
         logging.error(f"Engine Error: {message}")
-        self.screen.set_text(f"Playback Error:\n{message}")
         self.stop_media()
+        self.screen.set_text(f"This file could not be played.\n{message}")
 
     def stop_media(self):
         if self.active_engine:
             self.active_engine.stop()
-        self.btn_play.setText("►")
+        self.audio.clear()
+        self._set_play_icon(False)
         self.slider.setValue(0)
         self.update_time_label(0)
         self.current_path = None
 
-    # --- DELEGATED CONTROLS ---
-
+    # --------------------------------------------------------- controls
     def toggle_play(self):
-        if not self.active_engine: return
-        
-        # Use simple text check for now, can be improved with state tracking
-        if self.btn_play.text() == "►":
-            self.active_engine.play()
-            self.btn_play.setText("||") # Immediate Feedback
-        else:
+        if not self.active_engine or self.media_kind == "image":
+            return
+        if self.is_playing():
             self.active_engine.pause()
-            self.btn_play.setText("►") # Immediate Feedback
+        else:
+            self.active_engine.play()
+
+    def play(self):
+        if self.active_engine and self.media_kind != "image":
+            self.active_engine.play()
+
+    def pause(self):
+        if self.active_engine:
+            self.active_engine.pause()
 
     def step_active(self, frames):
+        if self.active_engine and self.media_kind != "image":
+            self.active_engine.step(frames)
+            self.audio.pause()
+
+    def seek(self, frame):
         if self.active_engine:
-             self.active_engine.step(frames)
-             self.btn_play.setText("►") # Stepping pauses usually
+            self.active_engine.seek(frame)
+            if self.media_kind == "stream" and self.current_fps > 0:
+                self.audio.seek(frame / self.current_fps)
 
     def toggle_loop(self):
         loop = self.btn_loop.isChecked()
         if self.active_engine:
             self.active_engine.set_loop(loop)
-            
+
     def change_speed(self):
+        speed = self.get_current_speed()
         if self.active_engine:
-            self.active_engine.set_speed(self.get_current_speed())
+            self.active_engine.set_speed(speed)
+        self.audio.set_rate(speed)
 
     def get_current_speed(self):
         txt = self.combo_speed.currentText()
-        return float(txt.replace('x', ''))
+        try:
+            return float(txt.replace('x', ''))
+        except ValueError:
+            return 1.0
 
-    # --- UI UPDATES ---
-
+    # ------------------------------------------------------------- updates
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if self.active_engine:
-            dpr = self.devicePixelRatio()
-            self.active_engine.set_pixel_ratio(dpr)
+            self.active_engine.set_pixel_ratio(self.devicePixelRatio())
             self.active_engine.set_target_size(self.screen.size())
 
     def update_screen(self, image):
-        # Delegate to VideoWidget (paintEvent)
-        # No pixmap conversion needed here (VideoWidget handles QImage drawing directly)
         self.screen.set_image(image)
 
     def set_duration(self, frames):
-        self.total_frames = frames
-        self.slider.setRange(0, frames)
-        if hasattr(self.active_engine, 'fps'):
+        """The bar runs from the first frame to the last - not one past it (MED-123)."""
+        self.total_frames = max(1, int(frames or 1))
+        self.slider.setRange(0, self.total_frames - 1)
+        if hasattr(self.active_engine, 'fps') and self.active_engine.fps:
             self.current_fps = self.active_engine.fps
-        self.update_time_label(0)
-        self.duration_changed.emit(frames)
+        self.update_time_label(self.slider.value())
+        self.duration_changed.emit(self.total_frames)
 
     def update_slider_pos(self, frame):
         if not self.is_slider_dragging:
             self.slider.setValue(frame)
             self.update_time_label(frame)
         self.frame_changed.emit(frame)
+        if self.media_kind == "stream":
+            self._sync_counter += 1
+            if self._sync_counter % 12 == 0:
+                self.audio.sync(self.active_engine.position_seconds(), self.is_playing())
 
     def on_slider_pressed(self):
         self.is_slider_dragging = True
+        self._was_playing = self.is_playing()
         if self.active_engine:
             self.active_engine.pause()
 
     def on_slider_released(self):
         self.is_slider_dragging = False
-        if self.active_engine:
-            self.active_engine.seek(self.slider.value())
-            # Auto-resume if it was playing? 
-            # Original behavior: if self.btn_play.text() == "||": self.worker.play()
-            if self.btn_play.text() == "||":
-                self.active_engine.play()
+        self.seek(self.slider.value())
+        if getattr(self, "_was_playing", False) and self.active_engine:
+            self.active_engine.play()
 
     def on_slider_move(self, val):
         self.update_time_label(val)
-        # Debounced scrub preview: show the frame at slider position during drag
         if self.is_slider_dragging and self.active_engine:
             self._scrub_target = val
-            self._scrub_timer.start()  # Restart debounce timer
+            self._scrub_timer.start()
 
     def _do_scrub_seek(self):
-        """Execute the debounced scrub seek."""
         if self.active_engine and self.is_slider_dragging:
             self.active_engine.seek(self._scrub_target)
 
-    def update_time_label(self, frame):
+    def time_text(self, frame) -> str:
+        """'12 / 48' (or source frame numbers for a sequence), or a timecode."""
+        frame = max(0, int(frame or 0))
+        last = max(0, self.total_frames - 1)
         if self.show_timecode and self.current_fps > 0:
-            cur_sec = int(frame / self.current_fps)
-            tot_sec = int(self.total_frames / self.current_fps)
-            self.lbl_time.setText(f"{cur_sec//60:02d}:{cur_sec%60:02d} / {tot_sec//60:02d}:{tot_sec%60:02d}")
-        else:
-            self.lbl_time.setText(f"F: {frame} / {self.total_frames}")
+            def tc(f):
+                secs = int(f / self.current_fps)
+                rate = max(1, int(round(self.current_fps)))
+                return f"{secs // 60:02d}:{secs % 60:02d}:{int(f % rate):02d}"
+            return f"{tc(frame)} / {tc(last)}"
+        if self.frame_offset:
+            return f"{self.frame_offset + frame} / {self.frame_offset + last}"
+        return f"{frame + 1} / {last + 1}"
+
+    def update_time_label(self, frame):
+        self.lbl_time.setText(self.time_text(frame))
+        hint = self.lbl_time.fontMetrics().horizontalAdvance(self.lbl_time.text()) + 12
+        if hint > self.lbl_time.minimumWidth():
+            self.lbl_time.setMinimumWidth(hint)
 
     def toggle_time_display(self):
         self.show_timecode = not self.show_timecode
+        self.lbl_time.setToolTip("Time - click to show frame numbers" if self.show_timecode
+                                 else "Frame number - click to show time instead")
         self.update_time_label(self.slider.value())
 
-    # --- EXTRAS ---
+    # ------------------------------------------------------------- snapshot
+    @staticmethod
+    def snapshot_folder() -> Path:
+        return Path.home() / "Pictures" / "Slate_Snaps"
 
-    def take_snapshot(self):
-        # Snapshot from VideoWidget's current image
-        if not self.screen.current_image: return
-        
-        save_dir = Path.home() / "Pictures" / "Slate_Snaps"
-        save_dir.mkdir(parents=True, exist_ok=True)
-        filename = f"Snap_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-        save_path = save_dir / filename
-        
-        self.screen.current_image.save(str(save_path))
-        
-        # Flash Effect (Optional - maybe just overlay?)
-        # For now, just skip the flash or implement custom overlay in VideoWidget
-        # self.screen.flash() # To be implemented if needed
+    def _snapshot_menu(self, pos):
+        menu = QMenu(self)
+        menu.addAction("Save snapshot", lambda: self.take_snapshot())
+        menu.addAction("Save snapshot as…", self._snapshot_as)
+        menu.exec(self.btn_snap.mapToGlobal(pos))
 
+    def _snapshot_as(self):
+        default = str(self.snapshot_folder() / self._snapshot_name())
+        path, _ = QFileDialog.getSaveFileName(self, "Save snapshot", default,
+                                              "PNG picture (*.png);;JPEG picture (*.jpg)")
+        if path:
+            self.take_snapshot(path)
+
+    def _snapshot_name(self) -> str:
+        stem = Path(self.current_path or "frame").stem or "frame"
+        return f"{stem}_f{self.slider.value() + max(self.frame_offset, 1)}_{datetime.now():%Y%m%d_%H%M%S}.png"
+
+    def take_snapshot(self, path: str = None):
+        """
+        Save the frame at the picture's own resolution and say where.
+
+        It used to save what was on screen - a scaled-down frame - silently,
+        to a folder nobody was told about (MED-116).
+        """
+        if not self.active_engine or not self.current_path:
+            return None
+        target = Path(path) if path else self.snapshot_folder() / self._snapshot_name()
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            self._snapshot_done.emit("", str(exc))
+            return None
+        if self.media_kind == "image":
+            image = self.active_engine.full_frame()
+            ok = bool(image is not None and not image.isNull() and image.save(str(target)))
+            self._snapshot_done.emit(str(target) if ok else "", "" if ok else "The picture could not be written.")
+            return str(target) if ok else None
+
+        engine = self.active_engine
+        frame = int(getattr(engine, "current_frame", 0) or 0)
+        fps = float(getattr(engine, "fps", 24.0) or 24.0)
+        ffmpeg = getattr(engine, "ff_path", None)
+        if not ffmpeg:
+            self._snapshot_done.emit("", "ffmpeg was not found.")
+            return None
+        if self.media_kind == "sequence":
+            cmd = [ffmpeg, "-y", "-loglevel", "error", "-start_number",
+                   str(engine.start_frame_idx + frame), "-i", engine.source, "-frames:v", "1",
+                   str(target)]
+        else:
+            cmd = [ffmpeg, "-y", "-loglevel", "error", "-ss", f"{frame / fps:.3f}",
+                   "-i", engine.source, "-frames:v", "1", str(target)]
+
+        def run():
+            try:
+                kwargs = {}
+                if sys.platform == "win32":
+                    kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=60, **kwargs)
+                ok = result.returncode == 0 and target.exists()
+                self._snapshot_done.emit(str(target) if ok else "",
+                                         "" if ok else (result.stderr.strip() or "ffmpeg failed"))
+            except Exception as exc:
+                self._snapshot_done.emit("", str(exc))
+
+        threading.Thread(target=run, daemon=True, name="slate-snapshot").start()
+        return str(target)
+
+    def _on_snapshot_done(self, path, error):
+        from ..components.feedback import toast
+        from PySide6.QtGui import QDesktopServices
+        from PySide6.QtCore import QUrl
+        if path:
+            folder = str(Path(path).parent)
+            self.snapshot_saved.emit(path)
+            toast(self, f"Snapshot saved: {Path(path).name}", "success",
+                  action=("Open folder", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(folder))))
+        else:
+            toast(self, "The snapshot could not be saved.", "error", details=error)
+
+    # ------------------------------------------------------------- full screen
     def toggle_fullscreen(self):
         """Toggle fullscreen mode seamlessly without rebuilding the player."""
+        from ..core.icons import icon as draw_icon
         if not self._is_fullscreen:
-            # Enter Fullscreen
             global_pos = self.mapToGlobal(self.rect().topLeft())
             self._cached_parent = self.parentWidget()
             self._cached_layout = self._cached_parent.layout() if self._cached_parent else None
             self._cached_layout_index = -1
             self._cached_geometry = self.geometry()
-
-            # Find our position in the parent layout if we have one
             if self._cached_layout:
                 parent_layout = self._cached_layout
                 for i in range(parent_layout.count()):
                     item = parent_layout.itemAt(i)
                     if item and item.widget() == self:
                         self._cached_layout_index = i
-                        # Create a placeholder so the layout doesn't collapse
                         self._placeholder = QWidget(self._cached_parent)
                         self._placeholder.setSizePolicy(self.sizePolicy())
                         self._placeholder.setMinimumSize(self.minimumSize())
                         parent_layout.replaceWidget(self, self._placeholder)
                         break
-
-            # Detach from parent and go fullscreen
             self.hide()
             self.setParent(None)
-            self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
+            self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint
+                                | Qt.WindowType.WindowStaysOnTopHint)
             self.move(global_pos)
             self.showFullScreen()
-            self.btn_fullscreen.setText("IN")
             self._is_fullscreen = True
+            self.btn_fullscreen.setIcon(draw_icon("collapse", Gate.TEXT, 16))
+            self.btn_fullscreen.setToolTip("Leave full screen (Esc or F)")
             self.setFocus()
         else:
-            # Exit Fullscreen
             self.hide()
-
-            # CRITICAL: reparent BEFORE changing window flags.
-            # Calling setWindowFlags on a parentless widget destroys and
-            # recreates the native window, breaking child signal connections.
+            # Reparent BEFORE changing window flags: setWindowFlags on a
+            # parentless widget recreates the native window.
             if self._cached_parent:
                 self.setParent(self._cached_parent)
-
-            self.setWindowFlags(Qt.Widget)
-
+            self.setWindowFlags(Qt.WindowType.Widget)
             if self._placeholder and self._cached_layout:
                 self._cached_layout.replaceWidget(self._placeholder, self)
                 self._placeholder.deleteLater()
                 self._placeholder = None
-
             self.show()
             self.raise_()
             self.activateWindow()
-            if hasattr(self, "controls_widget") and self.controls_widget:
+            if self.controls_widget:
                 self.controls_widget.setEnabled(True)
                 self.controls_widget.setVisible(True)
-            self.btn_fullscreen.setText("FS")
             self._is_fullscreen = False
+            self.btn_fullscreen.setIcon(draw_icon("expand", Gate.TEXT, 16))
+            self.btn_fullscreen.setToolTip("Full screen (F)")
             self._cached_parent = None
             self._cached_layout = None
             self._cached_layout_index = -1
@@ -721,7 +831,6 @@ class AdvancedPlayer(QWidget):
             safe_single_shot(0, self, self._refresh_after_fullscreen_restore)
 
     def _refresh_after_fullscreen_restore(self):
-        """Re-sync engine target after fullscreen restore to keep controls/playback responsive."""
         if not self.active_engine:
             return
         try:
@@ -730,52 +839,51 @@ class AdvancedPlayer(QWidget):
         except Exception as exc:
             logging.debug("AdvancedPlayer: fullscreen restore refresh skipped: %s", exc)
 
-    def keyPressEvent(self, event):
-        """VFX-standard keyboard shortcuts; only active when player has focus and media is loaded."""
-        if not self.active_engine or not self.hasFocus():
-            super().keyPressEvent(event)
-            return
-
-        if event.isAutoRepeat():
-            return
-
+    # ------------------------------------------------------------- keys
+    def handle_key(self, event) -> bool:
+        """
+        The player's keys, whoever has the focus (MED-117): the gallery and
+        Quick Look pass them on, so they work without clicking into the player.
+        """
+        if not self.active_engine:
+            return False
+        if event.isAutoRepeat() and event.key() not in (Qt.Key.Key_Left, Qt.Key.Key_Right,
+                                                         Qt.Key.Key_Comma, Qt.Key.Key_Period):
+            return True
         key = event.key()
-        
         if key == Qt.Key.Key_Space:
             self.toggle_play()
-        elif key == Qt.Key.Key_Right:
-            self.step_active(1)   # Forward 1 frame
-        elif key == Qt.Key.Key_Left:
-            self.step_active(-1)  # Backward 1 frame
-        elif key == Qt.Key.Key_L:
-            # Forward play
-            self.active_engine.play()
-            self.btn_play.setText("||")
-        elif key == Qt.Key.Key_K:
-            # Pause
-            self.active_engine.pause()
-            self.btn_play.setText("►")
-        elif key == Qt.Key.Key_J:
-            # Step backward (no true reverse in FFmpeg pipe mode)
+        elif key in (Qt.Key.Key_Right, Qt.Key.Key_Period):
+            self.step_active(1)
+        elif key in (Qt.Key.Key_Left, Qt.Key.Key_Comma, Qt.Key.Key_J):
+            # ffmpeg cannot decode backwards, so J steps back a frame.
             self.step_active(-1)
+        elif key == Qt.Key.Key_L:
+            self.play()
+        elif key == Qt.Key.Key_K:
+            self.pause()
+        elif key == Qt.Key.Key_M:
+            if self.audio.has_audio:
+                self.set_muted(not self.audio.is_muted())
         elif key == Qt.Key.Key_Home:
-            self.active_engine.seek(0)
+            self.seek(0)
         elif key == Qt.Key.Key_End:
-            self.active_engine.seek(self.total_frames)
-        elif key == Qt.Key.Key_Escape:
-            if self._is_fullscreen:
-                event.accept()
-                safe_single_shot(0, self, self.toggle_fullscreen)
-                return
-        elif key == Qt.Key.Key_F:
-            event.accept()
+            self.seek(self.total_frames - 1)
+        elif key == Qt.Key.Key_Escape and self._is_fullscreen:
             safe_single_shot(0, self, self.toggle_fullscreen)
-            return
+        elif key == Qt.Key.Key_F:
+            safe_single_shot(0, self, self.toggle_fullscreen)
         else:
-            super().keyPressEvent(event)
+            return False
+        return True
+
+    def keyPressEvent(self, event):
+        if self.hasFocus() and self.handle_key(event):
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def closeEvent(self, event):
         self._is_closing = True
         self.stop_media()
         super().closeEvent(event)
-

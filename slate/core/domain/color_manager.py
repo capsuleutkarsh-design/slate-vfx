@@ -127,6 +127,18 @@ class ColorManager:
         result = [(name, label) for name, label in _WANTED if name in all_cs]
         return result
 
+    def scene_linear_space(self) -> str:
+        """The config's scene-linear colourspace (ACEScg in the built-in ACES config)."""
+        if not self.is_available():
+            return "ACEScg"
+        try:
+            name = self._config.getRoleColorSpace("scene_linear")
+            if name:
+                return name
+        except Exception:
+            pass
+        return "ACEScg"
+
     def get_displays(self) -> List[str]:
         """List available display devices."""
         if not self.is_available():

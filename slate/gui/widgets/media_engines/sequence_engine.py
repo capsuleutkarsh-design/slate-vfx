@@ -1,5 +1,7 @@
 import sys
 import subprocess
+from pathlib import Path
+
 from .stream_engine import StreamEngine
 
 
@@ -7,126 +9,61 @@ class SequenceEngine(StreamEngine):
     """
     Specialized engine for Numbered Sequences (EXR, DPX).
     Inherits StreamEngine's producer-consumer architecture.
-    Only overrides FFmpeg command construction for sequence-specific args.
+
+    Loading no longer runs ffprobe and ffmpeg on the interface thread - up to
+    27 seconds of timeouts on a slow share, on every selection (MED-110). The
+    frame count comes from the file names (a folder listing), the picture
+    size from a probe of one frame on a thread, and decoding starts when that
+    answer is back, like a movie's.
     """
     def __init__(self, parent=None):
         super().__init__(parent)
         self.start_frame_idx = 0
         self.seq_pattern = ""
+        self.seq_frames = 0
 
-    def set_sequence_details(self, pattern_path, start_frame):
+    def set_sequence_details(self, pattern_path, start_frame, frame_count=0):
         """Configure sequence specifics before loading."""
         self.seq_pattern = pattern_path
-        self.start_frame_idx = start_frame
+        self.start_frame_idx = int(start_frame or 0)
+        self.seq_frames = int(frame_count or 0)
 
     def load(self, source_path: str):
-        """Override load to use sequence pattern as source."""
-        # Use the sequence pattern instead of the single file path
+        """Load from the printf pattern; the frame named is probed for its size."""
+        self._probe_frame = source_path
+        super().load(source_path)
         if self.seq_pattern:
             self.source = self.seq_pattern
-        else:
-            self.source = source_path
 
-        # Delegate to StreamEngine's load, which handles metadata, producer, consumer
-        # But we need to extract metadata from the actual file (not the pattern)
-        self.stop()
-
-        if not self.ff_path:
+    def _probe(self, source_path: str) -> dict:
+        from ....core.domain.metadata_engine import SmartMetadataManager
+        frames = self.seq_frames
+        if not frames:
             try:
-                from ....utils.resource_manager import ResourcePathManager
-                checked_path = ResourcePathManager.describe_tool_search("ffmpeg")
+                from ....utils.sequence_utils import sequence_for
+                seq = sequence_for(Path(getattr(self, "_probe_frame", source_path)))
+                frames = seq.frame_count if seq else 0
             except Exception:
-                checked_path = "Unknown"
-            self.error_occurred.emit(
-                "FFmpeg not found.\n"
-                f"Checked: {checked_path}\n"
-                "Also searched system PATH and Slate_FFMPEG_PATH."
-            )
-            return
-
-        try:
-            from ....core.domain.metadata_engine import SmartMetadataManager
-            meta = SmartMetadataManager.extract_tech_metadata(source_path)
-            self.fps = meta.get('fps', 24.0) or 24.0
-            duration_sec = meta.get('duration_sec', 0) or 0
-
-            # For sequences, duration might not be in metadata — estimate from frame count
-            if duration_sec <= 0:
-                # Try to count frames from sequence pattern
-                try:
-                    from ....utils.sequence_utils import SequenceDetector
-                    from pathlib import Path
-                    seq = SequenceDetector.find_sequence(Path(source_path))
-                    if seq:
-                        start, end = SequenceDetector.get_frame_range(seq)
-                        self.total_frames = end - start + 1
-                    else:
-                        self.total_frames = 100  # fallback
-                except Exception:
-                    self.total_frames = 100
-            else:
-                self.total_frames = int(duration_sec * self.fps)
-
-            # Resolution scaling (reuse StreamEngine's logic)
-            target_w, target_h = self.target_size
-            native_w = meta.get('width', 1280)
-            native_h = meta.get('height', 720)
-
-            decode_w, decode_h = native_w, native_h
-
-            if target_w > 0 and target_h > 0:
-                native_long = max(native_w, native_h)
-                target_long = max(target_w, target_h)
-
-                if native_long > (target_long * 1.2):
-                    desired_long = int(target_long * 1.5)
-                    desired_long = max(desired_long, 720)
-
-                    if desired_long < native_long:
-                        ratio = desired_long / native_long
-                        decode_w = int(native_w * ratio)
-                        decode_h = int(native_h * ratio)
-
-            # Safety Cap: 1080p Max
-            if decode_w > 1920:
-                scale = 1920 / decode_w
-                decode_w = 1920
-                decode_h = int(decode_h * scale)
-
-            # Alignment (must be even for FFmpeg)
-            if decode_w % 2 != 0: decode_w += 1
-            if decode_h % 2 != 0: decode_h += 1
-
-            self.render_w = decode_w
-            self.render_h = decode_h
-
-            self.duration_changed.emit(self.total_frames)
-
-            # Start Producer (inherited from StreamEngine)
-            self.current_frame = 0
-            self.paused = False
-            self._start_producer(0)
-
-            # Start Consumer (inherited QTimer from StreamEngine)
-            interval = max(1, int(1000 / self.fps))
-            self.playback_timer.start(interval)
-
-        except Exception as e:
-            self.error_occurred.emit(f"Sequence Load Failed: {e}")
+                frames = 0
+        meta = SmartMetadataManager.extract_tech_metadata(getattr(self, "_probe_frame", source_path))
+        # A sequence has no rate of its own: it plays at 24 unless the
+        # project says otherwise.
+        return {"fps": 24.0, "frames": frames or 1, "width": int(meta.get("width") or 0),
+                "height": int(meta.get("height") or 0)}
 
     def _launch_ffmpeg(self, start_time_sec=0):
         """Override: sequence-specific FFmpeg command with -start_number."""
-        # Calculate start frame from time offset
-        frames_to_skip = int(start_time_sec * self.fps) if start_time_sec > 0 else 0
+        frames_to_skip = int(round(start_time_sec * self.fps)) if start_time_sec > 0 else 0
         start_num = self.start_frame_idx + frames_to_skip
 
         cmd = [
             self.ff_path,
             '-loglevel', 'error',
+            '-framerate', f"{self.fps:g}",
             '-start_number', str(start_num),
             '-i', self.source,
+        ] + self._video_args() + [
             '-f', 'rawvideo', '-pix_fmt', 'rgba',
-            '-s', f'{self.render_w}x{self.render_h}',
             '-'
         ]
 
