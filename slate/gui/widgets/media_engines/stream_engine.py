@@ -208,8 +208,11 @@ class StreamEngine(BaseMediaEngine):
             except Exception as exc:
                 logging.debug("Async metadata probe failed for %s: %s", source_path, exc)
                 info = {"fps": 24.0, "frames": 0, "width": 0, "height": 0}
-            self.metadata_resolved.emit(float(info["fps"]), int(info["frames"]),
-                                        int(info["width"]), int(info["height"]), int(token))
+            try:
+                self.metadata_resolved.emit(float(info["fps"]), int(info["frames"]),
+                                            int(info["width"]), int(info["height"]), int(token))
+            except RuntimeError:
+                pass  # the player was closed while the file was being probed
 
         threading.Thread(target=_task, daemon=True, name="slate-metadata-probe").start()
 
@@ -485,8 +488,11 @@ class StreamEngine(BaseMediaEngine):
             self.position_changed.emit(self.current_frame)
         except queue.Empty:
             if self.running and attempts > 0:
-                # Buffer empty, check again shortly
-                QTimer.singleShot(50, lambda: self._force_frame_pull(attempts - 1))
+                # Buffer empty, check again shortly. Tied to this engine, so a
+                # retry never fires after the player has been closed.
+                QTimer.singleShot(50, self, lambda: self._force_frame_pull(attempts - 1))
+        except RuntimeError:
+            pass  # the engine was deleted under a pending retry
 
     def seek(self, frame_num):
         if self.fps > 0:
