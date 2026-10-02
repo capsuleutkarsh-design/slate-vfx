@@ -1109,10 +1109,9 @@ class HomeTab(QWidget):
     @staticmethod
     def status_colour(status: str) -> str:
         """The dashboard's own status colours: Retake is not Review."""
-        from ..tabs.vfx_dashboard_pro.ui.status_delegate import StatusDelegate
-        colour = StatusDelegate.STATUS_COLORS.get(str(status or "").strip().upper())
+        colour = Gate.STATUS.get(str(status or "").strip().upper())
         if colour is not None:
-            return colour.name()
+            return colour
         text = str(status or "").strip().lower()
         if text in ("approved", "done", "resolved"):
             return Gate.OK
