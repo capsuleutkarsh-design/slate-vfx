@@ -530,10 +530,18 @@ def test_documents_filed_by_an_earlier_run_are_left_out(tmp_path, db):
 # ------------------------------------------------------------------ verify round
 def test_a_shot_past_260_characters_is_recognised_on_a_rerun(tmp_path, db):
     """NEW-ingest-1: long project paths looked empty, so every re-run copied again."""
+    from slate.core.infra.file_operations import long_path
     drive = tmp_path / "drive"
-    _plates(drive, "REEL_02/SH_095_" + "very_long_client_name_" * 4, name="SH_095_frame_with_a_long_name")
-    target = tmp_path / ("p" * 120)
-    _run(drive, target)
+    # A legal shot name (shot names are capped at 64 characters, the
+    # dashboard's rule); the length comes from a deep projects folder and
+    # long frame names, as on a real studio share.
+    shot = "SH_095_very_long_client_name_v"
+    _plates(drive, f"REEL_02/{shot}", name="SH_095_very_long_client_frame_name_plate_main")
+    target = tmp_path / ("projects_" + "p" * 70) / ("show_" + "s" * 60)
+    worker, _ = _run(drive, target)
+    landed = [Path(root) / name for root, _d, files in os.walk(long_path(target)) for name in files]
+    assert worker.errors == 0 and len(landed) == 4
+    assert max(len(str(p).replace("\\\\?\\", "")) for p in landed) > 260
     survey = isv.survey_drive(drive)
     assert survey.mark_unchanged(target / "PRJ" / "05_Reels") == 1
 
