@@ -344,6 +344,19 @@ class AdminUsersTab(QWidget):
         self.tabs.currentChanged.connect(self._refresh_current)
         main_layout.addWidget(self.tabs)
 
+    def heightForWidth(self, width):
+        """
+        No height-for-width: fill the page frame, and let the users table and
+        the permissions list scroll inside it.
+
+        The wrapped subtitle and status lines made the layout report a
+        height-for-width, and the page frame (PageScroll) then sized this page
+        to its *preferred* height - 658 px in a 591 px frame at 1280x720 - so the
+        whole page scrolled as well, and the role editor's Save and Delete
+        buttons sat below the fold.
+        """
+        return -1
+
     def _refresh_current(self, _index):
         page = self.tabs.currentWidget()
         if page is self.role_editor and self.role_editor is not None:
