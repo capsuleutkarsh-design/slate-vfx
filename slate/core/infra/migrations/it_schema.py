@@ -293,16 +293,15 @@ def legacy_owners_to_loans(db) -> bool:
     """
     if not (_table_exists(db, "hardware_inventory") and _table_exists(db, "asset_assignments")):
         return True
+    from datetime import date
+    from slate.core.domain import hardware as hw
     rows = db.execute_query(
         "SELECT h.machine_name, h.status, u.username FROM hardware_inventory h "
         "LEFT JOIN ut_users u ON LOWER(u.username) = LOWER(TRIM(h.assigned_to)) "
-        "WHERE TRIM(COALESCE(h.assigned_to, '')) <> '' AND NOT EXISTS ("
-        "  SELECT 1 FROM asset_assignments a WHERE LOWER(a.machine_name) = LOWER(h.machine_name) "
-        "  AND a.returned_on IS NULL)", fetch="all")
+        "WHERE TRIM(COALESCE(h.assigned_to, '')) <> '' AND " + hw.not_on_loan_sql("h.machine_name"),
+        fetch="all")
     if rows is None:
         return False
-    from datetime import date
-    from slate.core.domain import hardware as hw
     moved = 0
     for row in rows:
         row = dict(row)
