@@ -62,23 +62,43 @@ def advanced_value(shot, field: str) -> str:
         return ""
 
 
+def advanced_values(shot, field: str) -> List[str]:
+    """
+    Every way a field's value is written: the grid shows '24 Dec 2026' and
+    'Low' while the shot stores '2026-12-24' and 3, and a rule may use either.
+    """
+    name = _OLD_FIELD_NAMES.get(field, field)
+    texts = [advanced_value(shot, name)]
+    if name == "Target" and shot.target:
+        from slate.core.domain.dates import format_date
+        texts += [str(shot.target), format_date(shot.target)]
+    elif name == "Priority":
+        texts.append(str(shot.priority))
+    return [t.strip().lower() for t in texts if t is not None]
+
+
+# The operators as the dialog writes them now, and as older saved rules did.
+OPERATOR_NAMES = {"Contains": "contains", "Equals": "is", "Not Equals": "is not",
+                  "Does Not Contain": "does not contain", "Is Empty": "is empty",
+                  "Is Not Empty": "is not empty"}
+
+
 def rule_passes(shot, rule) -> bool:
-    op = rule.get("operator")
+    op = OPERATOR_NAMES.get(rule.get("operator"), rule.get("operator"))
     value = str(rule.get("value", "")).strip().lower()
-    text = advanced_value(shot, rule.get("field", ""))
-    lowered = text.strip().lower()
-    if op == "Is Empty":
-        return lowered == ""
-    if op == "Is Not Empty":
-        return lowered != ""
-    if op == "Equals":
-        return lowered == value
-    if op == "Not Equals":
-        return lowered != value
-    if op == "Contains":
-        return value in lowered
-    if op == "Does Not Contain":
-        return value not in lowered
+    texts = advanced_values(shot, rule.get("field", ""))
+    if op == "is empty":
+        return not any(texts)
+    if op == "is not empty":
+        return any(texts)
+    if op == "is":
+        return value in texts
+    if op == "is not":
+        return value not in texts
+    if op == "contains":
+        return any(value in t for t in texts)
+    if op == "does not contain":
+        return not any(value in t for t in texts)
     return True
 
 
@@ -110,10 +130,17 @@ class DashboardFilterMixin:
         combo = getattr(self, "scope_combo", None)
         return (combo.currentData() if combo is not None else None) or "all"
 
+    @staticmethod
+    def _pick_key(shot):
+        """A shot's database id (it survives a live update swapping the object), or the object."""
+        sid = getattr(shot, "id", -1)
+        return int(sid) if sid is not None and int(sid) >= 0 else ("obj", id(shot))
+
     def _shot_passes_filters(self, shot) -> bool:
+        # 'Show only' narrows what the other filters let through; it does not replace them.
         only = getattr(self, "_only_shots", None)
-        if only:
-            return id(shot) in only
+        if only and self._pick_key(shot) not in only:
+            return False
 
         status = self._status_filter_value()
         if status is not None and shot_status.canonical(shot.status) != status:
@@ -375,7 +402,7 @@ class DashboardFilterMixin:
 
     def show_only_shots(self, shots, label: str = ""):
         """Narrow the grid to these shots (removable from the filter chip)."""
-        self._only_shots = {id(s) for s in shots or []}
+        self._only_shots = {self._pick_key(s) for s in shots or []}
         self.apply_filters()
 
     def _update_shown_count(self):

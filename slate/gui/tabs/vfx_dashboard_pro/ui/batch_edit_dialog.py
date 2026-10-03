@@ -47,7 +47,7 @@ class BatchEditDialog(QDialog):
         subtitle = QLabel("Tick what to change. It becomes a pending edit on every selected shot - "
                           "Save writes it, Ctrl+Z takes it back.")
         subtitle.setWordWrap(True)
-        subtitle.setStyleSheet(f"font-size: 12px; color: {Gate.INFO};")
+        subtitle.setStyleSheet(f"font-size: 12px; color: {Gate.TEXT_2};")
         header_layout.addWidget(subtitle)
         layout.addLayout(header_layout)
 
@@ -112,10 +112,9 @@ class BatchEditDialog(QDialog):
         # 5. Target Date
         self.target_cb = QCheckBox("Target")
         self.target_cb.setStyleSheet("font-weight: 600;")
-        self.target_edit = QDateEdit()
-        from slate.gui.core.data_display import setup_date_edit
-        setup_date_edit(self.target_edit)
-        self.target_edit.setDate(QDate.currentDate())
+        # "No date" clears the target on every shot; a date sets it.
+        from .date_fields import OptionalDateField
+        self.target_edit = OptionalDateField()
         self.target_edit.setEnabled(False)
         self.target_cb.toggled.connect(self.target_edit.setEnabled)
         grid.addWidget(self.target_cb, 4, 0)
@@ -137,6 +136,17 @@ class BatchEditDialog(QDialog):
         btn_layout.addWidget(self.apply_btn)
 
         layout.addLayout(btn_layout)
+        # Nothing ticked, nothing to apply: the button says so by being off.
+        self.apply_btn.setEnabled(False)
+        self.apply_btn.setToolTip("Tick at least one field to change")
+        for box in (self.status_cb, self.artist_cb, self.priority_cb, self.type_cb, self.target_cb):
+            box.toggled.connect(self._sync_apply)
+
+    def _sync_apply(self, *_):
+        ticked = any(b.isChecked() for b in (self.status_cb, self.artist_cb, self.priority_cb,
+                                              self.type_cb, self.target_cb))
+        self.apply_btn.setEnabled(ticked)
+        self.apply_btn.setToolTip("" if ticked else "Tick at least one field to change")
 
     def _on_apply(self):
         # Verify at least one option is checked
@@ -162,5 +172,5 @@ class BatchEditDialog(QDialog):
         if self.type_cb.isChecked():
             updates["shot_type"] = self.type_combo.currentText()
         if self.target_cb.isChecked():
-            updates["target"] = self.target_edit.date().toString("yyyy-MM-dd")
+            updates["target"] = self.target_edit.value()
         return updates

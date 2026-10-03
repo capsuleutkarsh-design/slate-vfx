@@ -43,7 +43,12 @@ class UserItemWidget(QWidget):
         layout.addWidget(self.avatar)
 
         self.name_label = QLabel()
-        self.name_label.setText(QFontMetrics(self.name_label.font()).elidedText(
+        # Measured in the bold face it is drawn in: measured in the regular one,
+        # the bold text was clipped mid-ellipsis ('Rathore-Ven..').
+        bold = self.name_label.font()
+        bold.setBold(True)
+        self.name_label.setFont(bold)
+        self.name_label.setText(QFontMetrics(bold).elidedText(
             self.display_name, Qt.TextElideMode.ElideRight, 150))
         self.name_label.setToolTip(self.display_name)
         self.name_label.setStyleSheet(f"color: {Gate.TEXT}; font-weight: 600;")
@@ -110,6 +115,7 @@ class UsersListWidget(QWidget):
         """
         users: names (or {'username', 'display_name'} dicts); counts: {name: open shots}.
         """
+        given = counts is not None
         counts = counts or {}
         self._people = []
         for u in users or []:
@@ -119,7 +125,9 @@ class UsersListWidget(QWidget):
             else:
                 username = display = str(u)
             if username:
-                self._people.append((username, display, counts.get(display, counts.get(username))))
+                # With counts given, nobody is left without a number: 0 is a count.
+                self._people.append((username, display, counts.get(display, counts.get(username, 0))
+                                     if given else None))
         self._rebuild()
 
     def _rebuild(self):

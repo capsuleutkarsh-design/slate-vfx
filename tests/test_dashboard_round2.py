@@ -473,3 +473,71 @@ def test_department_from_job_title(title, family):
     from slate.gui.tabs.vfx_dashboard_pro.ui.dashboard_widget import DashboardWidget
     fake = SimpleNamespace(user_data={"job_title": title})
     assert DashboardWidget._detect_user_department_family(fake) == family
+
+
+# ------------------------------------------------------------------ filters, groups, dialogs
+class TestFiltersAndGroups:
+
+    def test_rules_match_what_the_grid_shows(self):
+        """DSH2-049 / DSH2-121."""
+        from slate.gui.tabs.vfx_dashboard_pro.controllers.filter_mixin import rule_passes
+        shot = Shot(shot_name="SH010", target="2026-12-24", priority=3)
+        assert rule_passes(shot, {"field": "Target", "operator": "is", "value": "24 Dec 2026"})
+        assert rule_passes(shot, {"field": "Target", "operator": "contains", "value": "Dec"})
+        assert rule_passes(shot, {"field": "Priority", "operator": "Equals", "value": "3"})   # an old rule
+        assert rule_passes(shot, {"field": "Priority", "operator": "is", "value": "low"})
+
+    def test_target_sorts_dates_then_text_then_blanks(self):
+        """DSH2-122."""
+        from PySide6.QtCore import Qt
+        from slate.gui.tabs.vfx_dashboard_pro.ui.shot_proxy_models import ShotFilterProxy
+        from slate.gui.tabs.vfx_dashboard_pro.ui.shot_table_model import ShotTableModel
+        shots = [Shot(shot_name=n, target=t) for n, t in
+                 (("A", ""), ("B", "TBD"), ("C", "2026-01-02"), ("D", "Hold"), ("E", ""))]
+        model = ShotTableModel(shots, user_role="supervisor")
+        proxy = ShotFilterProxy()
+        proxy.setSourceModel(model)
+        proxy.sort(model.column_index("target"), Qt.SortOrder.AscendingOrder)
+        assert [s.shot_name for s in proxy.shots()] == ["C", "D", "B", "A", "E"]
+
+    def test_group_headings_follow_an_edit(self):
+        """DSH2-056 / DSH2-102."""
+        from slate.gui.tabs.vfx_dashboard_pro.ui.shot_proxy_models import ShotFilterProxy, ShotGroupModel
+        from slate.gui.tabs.vfx_dashboard_pro.ui.shot_table_model import ShotTableModel
+        a = Shot(shot_name="A", status="WIP", edit_frames=10)
+        b = Shot(shot_name="B", status="OMIT", edit_frames=99)
+        b.dept("comp").bid_days = 5
+        model = ShotTableModel([a, b], user_role="supervisor")
+        proxy = ShotFilterProxy()
+        proxy.setSourceModel(model)
+        groups = ShotGroupModel()
+        groups.setSourceModel(proxy)
+        groups.set_group_by("Status")
+        model.apply_edit([a], lambda s: setattr(s, "status", "APPROVED"), "status change")
+        titles = {p["title"]: p for k, p in groups._rows if k == "header"}
+        assert "APPROVED" in titles and "WIP" not in titles
+        groups.set_group_by("Reel / Sequence")
+        header = next(p for k, p in groups._rows if k == "header")
+        assert header["total_frames"] == 10 and header["total_bids"] == 0
+
+    def test_batch_edit_needs_a_ticked_field(self, qtbot):
+        """DSH2-044."""
+        from slate.gui.tabs.vfx_dashboard_pro.ui.batch_edit_dialog import BatchEditDialog
+        dialog = BatchEditDialog(3)
+        qtbot.addWidget(dialog)
+        assert not dialog.apply_btn.isEnabled()
+        dialog.target_cb.setChecked(True)
+        assert dialog.apply_btn.isEnabled()
+        assert dialog.get_updates() == {"target": ""}
+
+    def test_add_shots_lists_what_it_skips(self, qtbot):
+        """DSH2-047."""
+        from slate.gui.tabs.vfx_dashboard_pro.ui.add_shots_dialog import AddShotsDialog
+        dialog = AddShotsDialog(existing_reels=["R01"], existing_shots=[("R01", "SH010")])
+        qtbot.addWidget(dialog)
+        dialog.reel_input.setCurrentText("R01")
+        dialog.shots_input.setPlainText("SH010\nNEW_A\nnew_a\nNEW_B")
+        values = dialog.get_values()
+        assert values["shots"] == ["NEW_A", "NEW_B"]
+        assert values["skipped"] == ["SH010", "new_a"]
+        assert "SH010" in dialog.preview_label.text()

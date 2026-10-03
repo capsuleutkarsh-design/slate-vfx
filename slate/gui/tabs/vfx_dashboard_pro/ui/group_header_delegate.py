@@ -127,7 +127,10 @@ class GroupHeaderDelegate(QStyledItemDelegate):
             counted = int(group_data.get("counted", count) or 0)
             approved = int(group_data.get("approved_count", 0) or 0)
             pct = int(approved / counted * 100) if counted else 0
-            pct_text = f"{approved}/{counted} approved ({pct}%)"
+            omitted = int(group_data.get("count", 0) or 0) - counted
+            # Done or approved, the rule the production summary uses; the
+            # difference from the shot count is said, not left to guess.
+            pct_text = f"{approved}/{counted} done or approved ({pct}%)" +                 (f" · {omitted} omitted" if omitted > 0 else "")
             pct_font = QFont(base)
             pct_font.setBold(True)
             painter.setFont(pct_font)

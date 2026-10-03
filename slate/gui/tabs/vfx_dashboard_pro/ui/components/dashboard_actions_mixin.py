@@ -162,11 +162,15 @@ class DashboardActionsMixin:
                 failed_status = True
 
         count = len(result.created)
+        skipped = list(values.get("skipped") or []) + [n for n in values["shots"] if n not in result.created]
+        skipped_text = (f" Skipped {len(skipped)} already there: {', '.join(skipped[:8])}"
+                        + ("…" if len(skipped) > 8 else "") + ".") if skipped else ""
         if failed_status:
-            self._notify(f"Added {count} shot(s), but their status and priority could not be set.",
-                         "warning")
+            self._notify(f"Added {count} shot(s), but their status and priority could not be set."
+                         + skipped_text, "warning", 10000)
         else:
-            self._notify(f"Added {count} shot{'s' if count != 1 else ''}.", "success")
+            self._notify(f"Added {count} shot{'s' if count != 1 else ''}." + skipped_text, "success",
+                         10000 if skipped else 4000)
         self.reload_shots()
 
     def export_to_excel_click(self):

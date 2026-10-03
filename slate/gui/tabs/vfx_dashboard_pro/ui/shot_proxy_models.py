@@ -38,9 +38,11 @@ class ShotFilterProxy(QSortFilterProxyModel):
 
     def set_predicate(self, predicate: Optional[Callable]):
         self._predicate = predicate
+        self._warned = False
         self.invalidateFilter()
 
     def refilter(self):
+        self._warned = False
         self.invalidateFilter()
 
     def filterAcceptsRow(self, source_row, source_parent):
@@ -52,19 +54,30 @@ class ShotFilterProxy(QSortFilterProxyModel):
             return False
         try:
             return bool(self._predicate(shot))
-        except Exception:
-            return True
+        except Exception as exc:
+            # A filter that cannot be worked out does not let the row through
+            # (the grid would look filtered and not be); said once per filter.
+            if not getattr(self, "_warned", False):
+                import logging
+                logging.warning("A filter could not be applied to %s: %s", shot.shot_name, exc)
+                self._warned = True
+            return False
 
     def lessThan(self, left, right):
         a = left.data(SORT_ROLE)
         b = right.data(SORT_ROLE)
         # Blank cells sort last in both directions: a shot with no target is
-        # not "earliest", it is unscheduled.
-        if a is None or b is None:
-            if a is None and b is None:
-                return self._tie(left, right)
+        # not "earliest", it is unscheduled. Text that is not a date ('TBD',
+        # sort key (1, text)) comes after the dates and before the blanks.
+        def rank(v):
+            if v is None:
+                return 2
+            return 1 if isinstance(v, (tuple, list)) and v and v[0] == 1 else 0
+        if rank(a) != rank(b):
             descending = self.sortOrder() == Qt.SortOrder.DescendingOrder
-            return (a is None) if descending else (b is None)
+            return rank(a) > rank(b) if descending else rank(a) < rank(b)
+        if a is None:
+            return self._tie(left, right)
         if a == b:
             return self._tie(left, right)
         try:
@@ -233,6 +246,13 @@ class ShotGroupModel(QAbstractProxyModel):
             return
         if not top_left.isValid():
             return
+        if self.group_by not in ("None", "", None):
+            # Headings count what is under them: an edit can move a shot to
+            # another group or change a group's totals, so the groups are
+            # worked out again (rows keep their order).
+            self._capture()
+            self._release()
+            return
         rows = [self._from_source.get(r, -1) for r in range(top_left.row(), bottom_right.row() + 1)]
         rows = [r for r in rows if r >= 0]
         if not rows:
@@ -300,19 +320,23 @@ class ShotGroupModel(QAbstractProxyModel):
         for key in sorted(order, key=lambda k: groups[k]["sort"]):
             group = groups[key]
             members = [shot for _, shot in group["rows"]]
+            # Omitted shots and N/A departments are not work: left out of the
+            # totals as the production summary leaves them out.
+            counted = [s for s in members if not shot_status.is_omitted(s.status)]
             total_frames = 0
             total_bids = 0.0
-            for s in members:
+            for s in counted:
                 try:
                     total_frames += int(float(s.edit_frames or 0))
                 except (TypeError, ValueError):
                     pass
                 for dept in getattr(s, "departments", {}).values():
+                    if shot_status.is_omitted(getattr(dept, "status", "")):
+                        continue
                     try:
                         total_bids += float(getattr(dept, "bid_days", 0) or 0)
                     except (TypeError, ValueError):
                         pass
-            counted = [s for s in members if not shot_status.is_omitted(s.status)]
             info = {
                 "type": "header",
                 "group_key": key,

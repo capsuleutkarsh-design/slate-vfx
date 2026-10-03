@@ -536,7 +536,8 @@ class HomeLoaderWorker(QThread):
     def _figure_waiting_review(self):
         placeholders = ", ".join(["%s"] * len(REVIEW_STATUSES))
         return _count(self._db().execute_query(
-            "SELECT COUNT(*) AS c FROM tracking_shots WHERE UPPER(COALESCE(status, '')) IN (%s)"
+            "SELECT COUNT(*) AS c FROM tracking_shots s JOIN tracking_projects p ON p.code = s.project_code "
+            "WHERE p.active = 1 AND UPPER(COALESCE(s.status, '')) IN (%s)"
             % placeholders, tuple(sorted(REVIEW_STATUSES)), fetch="one"))
 
     def _figure_open_tickets(self):

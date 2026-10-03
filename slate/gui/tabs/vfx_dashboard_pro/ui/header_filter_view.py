@@ -145,7 +145,10 @@ class FilterHeaderView(QHeaderView):
         opt.rect = rect
         opt.section = logical_index
         opt.text = text
-        opt.textAlignment = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        # Headings line up with their cells: centred over centred pills and numbers.
+        align = model.headerData(logical_index, Qt.Orientation.Horizontal,
+                                 Qt.ItemDataRole.TextAlignmentRole) if model is not None else None
+        opt.textAlignment = Qt.AlignmentFlag(int(align)) if align is not None else             (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         if self.isSortIndicatorShown() and self.sortIndicatorSection() == logical_index:
             opt.sortIndicator = (QStyleOptionHeader.SortIndicator.SortDown
                                  if self.sortIndicatorOrder() == Qt.SortOrder.AscendingOrder

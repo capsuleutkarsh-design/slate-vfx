@@ -94,7 +94,7 @@ def build_dashboard_ui(widget):
         QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
     widget.project_combo.setMinimumContentsLength(18)
     widget.project_combo.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-    widget.project_combo.setMaximumWidth(sp(360, minimum=300))
+    widget.project_combo.setMaximumWidth(sp(640, minimum=520))
     widget.project_combo.currentIndexChanged.connect(widget.on_project_changed)
     row1.addWidget(widget.project_combo)
 

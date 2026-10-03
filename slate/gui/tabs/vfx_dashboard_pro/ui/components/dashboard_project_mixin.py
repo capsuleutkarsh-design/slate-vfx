@@ -208,6 +208,8 @@ class DashboardProjectMixin:
                         and shot_status.canonical((getattr(s, "_baseline", None) or {}).get("status"))
                         != shot_status.APPROVED]
         try:
+            # ponytail: the save runs on the UI thread - one read and a few batched
+            # statements; move it to a worker if large saves to a remote server still stall.
             ok = self.data_handler.write_shots(pending)
         except StaleDataError as exc:
             return self._resolve_conflicts(exc, pending)

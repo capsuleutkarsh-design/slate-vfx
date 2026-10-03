@@ -340,10 +340,12 @@ class ShotDetailWidget(QWidget):
         self.prev_version_label = QLabel()
         self.prev_version_label.setStyleSheet(f"color: {Gate.TEXT_DIM};")
         self.prev_version_label.setTextFormat(Qt.TextFormat.PlainText)
-        version_row = QHBoxLayout()
+        version_box = QWidget()
+        version_row = QHBoxLayout(version_box)
+        version_row.setContentsMargins(0, 0, 0, 0)
         version_row.addWidget(self.curr_version_edit, 1)
         version_row.addWidget(self.prev_version_label)
-        form.addRow("Version", version_row)
+        form.addRow("Version", version_box)
 
         self.target_edit = OptionalDateField()
         self.target_edit.value_changed.connect(self._changed)
@@ -356,7 +358,9 @@ class ShotDetailWidget(QWidget):
 
         # Linked heroes: a list you can add to and remove from. The old combo
         # appended its choice on every save and could never take one away.
-        hero_box = QVBoxLayout()
+        hero_widget = QWidget()
+        hero_box = QVBoxLayout(hero_widget)
+        hero_box.setContentsMargins(0, 0, 0, 0)
         hero_box.setSpacing(4)
         self.similar_list = QListWidget()
         self.similar_list.setMaximumHeight(self._sp(70, minimum=60))
@@ -372,7 +376,14 @@ class ShotDetailWidget(QWidget):
         self.similar_remove_btn = make_button("Unlink", "secondary", on_click=self._remove_similar)
         hero_row.addWidget(self.similar_remove_btn)
         hero_box.addLayout(hero_row)
-        form.addRow("Linked to", hero_box)
+        form.addRow("Linked to", hero_widget)
+        # One right edge for every field, at a width that suits a value like
+        # 'Prep' or '48' (they stretched to 1,150 px on a wide screen); the
+        # date's clear button sits inside that edge.
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        for field in (self.status_combo, self.type_combo, self.priority_combo, self.frames_edit,
+                      version_box, self.target_edit, hero_widget):
+            field.setMaximumWidth(self._sp(380, minimum=340))
         return form
 
     def _init_departments_section(self):
@@ -397,25 +408,28 @@ class ShotDetailWidget(QWidget):
         return group
 
     def _create_dept_grid_row(self, layout, row, name, key):
+        # The row fits a 656 px panel at 1280x720: names wrap, combos and
+        # number boxes ask for less (they used to push a sideways scrollbar).
         label = QLabel(name)
+        label.setWordWrap(True)
         layout.addWidget(label, row, 0)
 
         artist_combo = QComboBox()
         artist_combo.setEditable(True)
         artist_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         artist_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        artist_combo.setMinimumContentsLength(8)
+        artist_combo.setMinimumContentsLength(5)
         artist_combo.currentTextChanged.connect(self._changed)
         layout.addWidget(artist_combo, row, 1)
 
         status_combo = QComboBox()
         status_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        status_combo.setMinimumContentsLength(7)
+        status_combo.setMinimumContentsLength(5)
         status_combo.currentIndexChanged.connect(self._changed)
         layout.addWidget(status_combo, row, 2)
 
         bid_spin = QDoubleSpinBox()
-        bid_spin.setRange(0.0, 9999.9)
+        bid_spin.setRange(0.0, 999.9)
         bid_spin.setDecimals(1)
         bid_spin.setSingleStep(0.5)
         bid_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
@@ -429,7 +443,7 @@ class ShotDetailWidget(QWidget):
         # Days actually spent, for comparing with the bid (Bidding tracking).
         # The lowest value means "not recorded" (shown as -): 0 days is a real answer.
         actual_spin = QDoubleSpinBox()
-        actual_spin.setRange(-0.01, 9999.99)
+        actual_spin.setRange(-0.01, 999.99)
         actual_spin.setDecimals(2)
         actual_spin.setSingleStep(0.25)
         actual_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
@@ -559,6 +573,8 @@ class ShotDetailWidget(QWidget):
                 self.frames_edit.setValue(0)
             self.curr_version_edit.setText(shot.curr_version or "")
             self.prev_version_label.setText(f"Previous: {shot.prev_version}" if shot.prev_version else "")
+            # Hidden when empty, so the Version box ends where the other fields do.
+            self.prev_version_label.setVisible(bool(shot.prev_version))
             self.target_edit.set_value(shot.target)
             self.sow_edit.setPlainText(shot.sow or "")
             self.hero_checkbox.setChecked(bool(shot.is_hero))

@@ -188,7 +188,7 @@ class TestAddShotsDialog:
 
         values = dialog.get_values()
         assert values == {"reel": "ReelA", "shots": ["SH010"],
-                          "status": "WIP", "priority": 1}
+                          "status": "WIP", "priority": 1, "skipped": []}
 
 
 class TestNewProjectDefaults:

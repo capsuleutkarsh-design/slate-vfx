@@ -484,7 +484,7 @@ class DashboardWidget(
         pending = len(self.unsaved_shots())
         offline = is_offline_fallback()
         if pending:
-            button.setText(f"Save {pending} change{'s' if pending != 1 else ''}")
+            button.setText(self._save_label())
         else:
             button.setText("Saved" if self.current_project else "Save changes")
         button.setEnabled(bool(can_save and pending and self.current_project and not offline))
@@ -496,6 +496,16 @@ class DashboardWidget(
                               "to the database (Ctrl+S)")
         else:
             button.setToolTip("Nothing waiting to be saved")
+
+    def _save_label(self) -> str:
+        """'Save 6 changes (1 shot)': the count is of changes, and says how many shots when it differs."""
+        from .shot_table_model import changed_fields
+        shots = self.unsaved_shots()
+        changes = sum(max(1, len(changed_fields(s))) for s in shots)
+        text = f"Save {changes} change{'s' if changes != 1 else ''}"
+        if changes != len(shots):
+            text += f" ({len(shots)} shot{'s' if len(shots) != 1 else ''})"
+        return text
 
     def _can_ever_save(self) -> bool:
         """Has a Save button at all: full edit rights, and not a lead with no department."""
@@ -806,6 +816,9 @@ class DashboardWidget(
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        combo = getattr(self, "project_combo", None)
+        if combo is not None:
+            combo.updateGeometry()          # its room depends on the bar's width
         self._fit_toolbar()
 
     def _fit_toolbar(self):
@@ -1316,10 +1329,8 @@ class DashboardWidget(
                     set_field(s, path, value)
             applied = self.table_model.apply_edit([shot], change, f"panel changes on {shot.shot_name}")
             if applied:
-                pending = len(self.unsaved_shots())
                 self.detail_widget.show_apply_result(
-                    True, f"Applied. Save {pending} change{'s' if pending != 1 else ''} to write "
-                          "it to the database.")
+                    True, f"Applied. {self._save_label()} writes it to the database.")
             else:
                 self.detail_widget.show_apply_result(True, "Nothing changed.")
             return
@@ -1382,7 +1393,7 @@ class DashboardWidget(
             menu = QMenu(self)
             several = len(selected_shots) > 1
             if several and self._can_manage_shots():
-                menu.addSection(f"{len(selected_shots)} shots selected")
+                self._menu_heading(menu, f"{len(selected_shots)} shots selected")
                 menu.addAction(f"Batch edit {len(selected_shots)} shots…",
                                lambda: self.open_batch_edit_dialog(selected_shots))
                 st_menu = menu.addMenu("Set status")
@@ -1399,7 +1410,9 @@ class DashboardWidget(
                 menu.addSeparator()
 
             primary = selected_shots[0]
-            menu.addSection(primary.shot_name if not several else f"{primary.shot_name} only")
+            if several:
+                menu.addSeparator()
+            self._menu_heading(menu, primary.shot_name if not several else f"{primary.shot_name} only")
 
             details = menu.addAction("Open details", lambda: self.open_detail_dock(primary))
             details.setShortcut("Return")
@@ -1425,6 +1438,16 @@ class DashboardWidget(
             menu.exec(self.table.viewport().mapToGlobal(pos))
         except Exception as e:
             logging.exception(f"Context Menu Error: {e}")
+
+    @staticmethod
+    def _menu_heading(menu, text):
+        """A heading line in a menu (the app style draws addSection as a plain gap)."""
+        action = menu.addAction(text)
+        action.setEnabled(False)
+        font = action.font()
+        font.setBold(True)
+        action.setFont(font)
+        return action
 
     def _folder_shortcuts(self):
         """Scan, every department in departments.json, and Output - one list for menu and panel."""

@@ -89,7 +89,7 @@ def shot_name_problem(name, what: str = "Shot name") -> Optional[str]:
     if len(text) > SHOT_NAME_MAX:
         return f"{what} '{text[:20]}…' is {len(text)} characters; the limit is {SHOT_NAME_MAX}."
     if not _SHOT_ALLOWED.match(text):
-        return f"{what} '{text}' can only use letters, digits, _ - and ."
+        return f"{what} '{text}' can only use English letters (A-Z), digits, _ - and ."
     # What is left of the file-name rules: Windows device names, a final dot.
     return name_problem(text, what)
 

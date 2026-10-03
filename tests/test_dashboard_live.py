@@ -391,26 +391,15 @@ class _CountingDb:
     def __init__(self):
         self.queries = 0
 
-    def get_connection(self):
-        db = self
+    def execute_query(self, *args, **kwargs):
+        self.queries += 1
+        return {"n": 3, "v": 7}
 
-        class _Conn:
-            def __enter__(self):
-                return self
 
-            def __exit__(self, *exc):
-                return False
-
-            def cursor(self):
-                return self
-
-            def execute(self, *args):
-                db.queries += 1
-
-            def fetchone(self):
-                return ("2026-09-28 10:00:00",)
-
-        return _Conn()
+def test_the_fallback_check_does_not_read_any_clock():
+    """DSH2-061: it compares a count and the sum of versions, not MAX(last_updated)."""
+    from slate.gui.tabs.vfx_dashboard_pro.core.poll_worker import PollWorker
+    assert PollWorker("P1", _CountingDb())._get_max_timestamp() == (3, 7, 1)
 
 
 def _wait(app, seconds):

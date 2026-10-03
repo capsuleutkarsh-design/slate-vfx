@@ -500,8 +500,12 @@ class ShotTableModel(QAbstractTableModel):
             except (TypeError, ValueError):
                 return None
         if col_key == "target":
-            # By date; text that is not a date ('TBD') sorts with the blanks.
-            return _iso(value)
+            # Dates first, then text that is not a date ('TBD') together, then blanks.
+            iso = _iso(value)
+            if iso:
+                return (0, iso)
+            text = str(value or "").strip().lower()
+            return (1, text) if text and text != "-" else None
         if col_key == "plate_range":
             return float(shot.first_frame) if shot.frame_count else None
         text = str(value or "").strip()
@@ -602,6 +606,10 @@ class ShotTableModel(QAbstractTableModel):
             return self.headers[section]
         if role == COLUMN_KEY_ROLE:
             return key
+        if role == Qt.ItemDataRole.TextAlignmentRole:
+            if key in self._departments or key == "status" or key in self.CENTRED_COLUMNS:
+                return int(Qt.AlignmentFlag.AlignCenter)
+            return None
         if role == Qt.ItemDataRole.ToolTipRole:
             if key in self._departments:
                 dept = self._departments[key]
