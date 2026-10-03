@@ -150,3 +150,88 @@ def test_the_page_never_scrolls_and_the_buttons_stay_in_view(um, monkeypatch, he
     for button in (editor.btn_save, editor.btn_delete, editor.btn_rename):
         bottom = button.mapTo(frame.viewport(), button.rect().bottomLeft()).y()
         assert bottom <= frame.viewport().height()
+
+
+# ------------------------------------------------------------ round 2
+
+def _row(panel, username):
+    return [panel.grid.item(r, 0).text() for r in range(panel.grid.rowCount())].index(username)
+
+
+def test_your_own_account_cannot_be_deactivated_or_deleted(um):
+    """HR2-068."""
+    um.add_user("hr.meera", "pw1234", ["HR"], "Meera", "HR")
+    um.set_acting_user("hr.meera")
+    panel = _panel(um)
+    panel.grid.selectRow(_row(panel, "hr.meera"))
+    assert not panel.deactivate_btn.isEnabled() and not panel.delete_btn.isEnabled()
+    assert "your own account" in panel.deactivate_btn.toolTip()
+    panel.grid.selectRow(_row(panel, "diya"))
+    assert panel.deactivate_btn.isEnabled()
+
+
+def test_status_says_system_account_and_leaving(um):
+    """HR2-067 / HR2-074."""
+    from datetime import date, timedelta
+    um.update_user("aarav", last_day=(date.today() + timedelta(days=10)).isoformat())
+    panel = _panel(um)
+    status = panel.COLUMNS.index("Status")
+    assert panel.grid.item(_row(panel, "aarav"), status).text().startswith("Leaving ")
+    admin = _row(panel, "admin")
+    assert panel.grid.item(admin, status).text() == "System account"
+    assert panel.grid.item(admin, panel.COLUMNS.index("Joined")).toolTip() == ""
+
+
+def test_the_edit_dialog_has_a_clearable_last_day(um):
+    """HR2-059."""
+    from slate.gui.tabs.admin_users_tab import UserDialog
+    from slate.core.domain.user_manager import UserManager
+    um.update_user("aarav", last_day="2026-01-15")
+    dialog = UserDialog(um, username="aarav", record=um.get_all_users()["aarav"])
+    assert dialog.last_day_input.date().toString("yyyy-MM-dd") == "2026-01-15"
+    dialog.last_day_input.setDate(dialog.NOT_SET)
+    assert dialog.payload()["last_day"] == UserManager.CLEAR
+
+
+def test_reactivate_brings_a_leaver_back(um):
+    """HR2-059: the question is answered Yes in tests."""
+    um.update_user("diya", last_day="2026-01-15")
+    panel = _panel(um)
+    panel.show_inactive.setChecked(True)
+    panel.grid.selectRow(_row(panel, "diya"))
+    assert panel.reactivate_btn.isEnabled()
+    panel.reactivate_user()
+    assert um.is_active("diya") and um._row("diya")["last_day"] is None
+
+
+def test_reset_password_keeps_the_picture(um):
+    """HR2-060 / HR2-069."""
+    um.update_user("aarav", profile_pic_path="C:/pics/aarav.png")
+    panel = _panel(um)
+    panel.grid.selectRow(_row(panel, "aarav"))
+    from PySide6.QtWidgets import QLineEdit, QDialog
+    seen = {}
+    original = QDialog.exec
+
+    def fake_exec(dialog, *a, **k):
+        seen["title"] = dialog.windowTitle()
+        seen["buttons"] = [b.text() for b in dialog.findChildren(QPushButton)]
+        dialog.findChildren(QLineEdit)[0].setText("Fresh123")
+        return 1
+    QDialog.exec = fake_exec
+    try:
+        panel.reset_password()
+    finally:
+        QDialog.exec = original
+    assert seen["title"] == "Reset password" and seen["buttons"] == ["Cancel", "Reset password"]
+    assert um._row("aarav")["profile_pic_path"] == "C:/pics/aarav.png"
+    assert um.authenticate("aarav", "Fresh123")
+
+
+def test_deactivating_a_supervisor_moves_their_team(um):
+    """HR2-063: the dialog is accepted with 'Nobody', so the team goes to HR."""
+    panel = _panel(um)
+    panel.grid.selectRow(_row(panel, "sup.vikram"))
+    panel.deactivate_user()
+    assert not um.is_active("sup.vikram")
+    assert um._row("aarav")["reports_to"] is None

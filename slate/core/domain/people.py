@@ -227,3 +227,20 @@ def find(text: str, db=None, **filters) -> List[Person]:
     if not needle:
         return pool
     return [p for p in pool if needle in p.name.casefold() or needle in p.username.casefold()]
+
+
+def plural(count, one: str, many: str = None) -> str:
+    """'1 person', '3 people' - for every count the people screens show (never 'day(s)')."""
+    return "%s %s" % (count, one if count == 1 else (many or one + "s"))
+
+
+def is_service_record(record) -> bool:
+    """
+    Whether a ut_users row (or get_all_users record, with "username") is a
+    service account rather than a person: is_service set, or admin / tester.
+    """
+    record = record or {}
+    flag = record.get("is_service")
+    if flag is not None and str(flag).strip().lower() not in ("", "0", "false", "f", "no", "none"):
+        return True
+    return str(record.get("username") or "").strip().lower() in SERVICE_USERNAMES

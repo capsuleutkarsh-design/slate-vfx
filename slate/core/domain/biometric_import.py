@@ -572,35 +572,70 @@ def _later(a: Optional[str], b: Optional[str]) -> Optional[str]:
     return max(a, b)
 
 
+def outside_employment(days: Iterable[DayRecord], users: dict) -> list:
+    """
+    The days that fall before somebody joined or after their last day: a
+    code reused for a new hire, or a machine still enrolling a leaver. They
+    were imported like any other day, onto an account that had left.
+    users: {username: record with joined_on / last_day / deactivated_on}.
+    """
+    from . import attendance_rules as rules
+    records = {str(k).strip().lower(): v for k, v in (users or {}).items()}
+    out = []
+    for record in days:
+        first, last = rules.expected_window(records.get(str(record.user_id).lower()))
+        if not first <= record.day <= last:
+            out.append(record)
+    return out
+
+
 def apply_days(days: Iterable[DayRecord], attendance, source: str = "") -> dict:
     """
     Write the days into attendance, merging with what is already recorded.
 
     A day the machine and a workstation both saw keeps the earlier in and the
-    later out. A day that already says exactly this is left alone, which is
-    what makes importing the same file twice harmless.
+    later out. An out the automatic punch-out invented is not a punch: the
+    machine's out replaces it, and a day that ends up with both times is no
+    longer an auto-closed or missing punch-out day (it stayed one, and was
+    still counted as missing). A day of several Slate sessions keeps them,
+    stretched to the machine's first in and last out, so its times and its
+    hours agree. A day that already says exactly this is left alone, which
+    is what makes importing the same file twice harmless.
     """
+    from .central_attendance import _meta_dict
     written = unchanged = failed = 0
     failures = []
     for record in days:
         try:
             existing = attendance.get_day(record.user_id, record.day)
+            meta = _meta_dict(existing.get("metadata")) if existing else {}
             old_in = _clock(existing.get("punch_in")) if existing else None
             old_out = _clock(existing.get("punch_out")) if existing else None
+            invented = bool(meta.get("auto_logout") or meta.get("missing_punch_out"))
+            merge_out = None if (invented and record.punch_out) else old_out
             p_in = _earlier(old_in, record.punch_in) if existing else record.punch_in
             if record.overnight:
                 # A next-morning out is "earlier" as a clock time; it is the out.
                 p_out = record.punch_out
             else:
-                p_out = _later(old_out, record.punch_out) if existing else record.punch_out
-            if existing and old_in == p_in and old_out == p_out:
+                p_out = _later(merge_out, record.punch_out) if existing else record.punch_out
+            settled = bool(p_in and p_out)
+            if existing and old_in == p_in and old_out == p_out and not (settled and invented):
                 unchanged += 1
                 continue
+            patch = {"source": "biometric", "file": source,
+                     "imported_at": dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                     "punches": record.punches, "overnight": bool(record.overnight)}
+            if settled:
+                patch.update({"auto_logout": False, "missing_punch_out": False, "cutoff": None})
+            sessions = [dict(s) for s in (meta.get("sessions") or []) if isinstance(s, dict)]
+            if len(sessions) > 1:
+                sessions[0]["in"] = p_in
+                sessions[-1]["out"] = p_out
+                patch["sessions"] = sessions
             ok, message = attendance.write_day(
                 record.user_id, record.day, p_in, p_out, pc_name="BIOMETRIC",
-                metadata={"source": "biometric", "file": source,
-                          "imported_at": dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                          "punches": record.punches, "overnight": bool(record.overnight)})
+                metadata=patch)
             if ok:
                 written += 1
             else:

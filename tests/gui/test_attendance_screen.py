@@ -119,6 +119,11 @@ def test_the_edit_dialog_refuses_out_before_in_and_stays_open():
 def test_the_edit_dialog_needs_a_time_and_a_reason():
     from slate.gui.attendance_tab import EditPunchDialog
     dialog = EditPunchDialog("Aarav", date(2026, 9, 15))
+    # A day with no record opens with both times ready to type (HR2-016).
+    assert not dialog.no_in.isChecked() and not dialog.no_out.isChecked()
+    assert dialog.e_in.isEnabled() and dialog.e_out.isEnabled()
+    dialog.no_in.setChecked(True)
+    dialog.no_out.setChecked(True)
     assert "Enter an in time" in dialog.problem()
     dialog.no_in.setChecked(False)
     dialog.e_in.setTime(QTime(9, 30))
@@ -160,9 +165,20 @@ def test_a_long_name_does_not_take_the_grid(studio):
 
 def test_search_and_location_filter(studio):
     tab = _tab(studio, "hr.meera", ["HR"])
+    reads = []
+    real = tab.attendance.get_full_month_data
+    tab.attendance.get_full_month_data = lambda *a: reads.append(a) or real(*a)
+    tab.team_search.setText("a")
     tab.team_search.setText("aarav")
+    assert _names(tab) != ["Aarav Sharma"], "the search waits for the typing to stop (HR2-020)"
+    assert tab._search_timer.isActive() and tab._search_timer.interval() == 300
+    tab._search_timer.stop()
+    tab._search_timer.timeout.emit()              # the pause after the last key
     assert _names(tab) == ["Aarav Sharma"]
+    assert reads == [], "the people already read are filtered, not read again"
     tab.team_search.setText("")
+    tab._search_timer.stop()
+    tab._search_timer.timeout.emit()
     tab.filter_location.setCurrentIndex(tab.filter_location.findData("Chennai"))
     assert sorted(_names(tab)) == sorted(["Diya Nair", LONG])
 
@@ -220,3 +236,58 @@ def test_the_export_agrees_with_the_grid(tmp_path):
     assert str(ws.cell(row=2, column=1).value).startswith("'"), "formula neutralised"
     first_day = headers.index("01 Tue") + 1
     assert ws.cell(row=2, column=first_day).value == "L 9.5"      # late, 9.5 hours
+
+
+# ------------------------------------------------------------- round 2
+
+def test_a_supervisor_sees_the_people_under_their_leads(studio):
+    """HR2-022: the reporting tree, not one level; HR2-031: no filters that filter nothing."""
+    um = studio["um"]
+    um.add_user("lead.kiran", "pw", ["Supervisor"], "Kiran Lead", "Comp",
+                reports_to="sup.vikram", location="Mumbai")
+    um.add_user("ira", "pw", ["Artist"], "Ira Rao", "Comp", reports_to="lead.kiran",
+                location="Mumbai")
+    from slate.core.domain import people
+    people.refresh()
+    tab = _tab(studio, "sup.vikram", ["Supervisor"])
+    assert "Ira Rao" in _names(tab) and "Kiran Lead" in _names(tab)
+    assert tab.show_system.isHidden()
+
+
+def test_the_wfh_tick_waits_for_the_punch_in(studio):
+    """HR2-011: the refresh keeps a choice made before punching in."""
+    tab = _tab(studio, "aarav", ["Artist"])
+    tab.chk_wfh_box.setChecked(True)
+    tab.refresh_personal_view()
+    assert tab.chk_wfh_box.isChecked()
+    tab.manual_punch("in")
+    assert studio["att"].today_state("aarav")["wfh"] is True
+
+
+def test_team_viewers_get_two_tabs_and_admin_no_punch_card(studio):
+    """HR2-008 / HR2-029."""
+    hr = _tab(studio, "hr.meera", ["HR"])
+    assert hr.pages is not None and hr.pages.count() == 2
+    artist = _tab(studio, "aarav", ["Artist"])
+    assert artist.pages is None
+    admin = _tab(studio, "admin", ["Admin"])
+    assert admin.personal_card.isHidden() and admin.pages.count() == 1
+
+
+def test_the_edit_dialog_shows_every_session():
+    """HR2-001 / HR2-015 / HR2-016."""
+    from slate.gui.attendance_tab import EditPunchDialog
+    dialog = EditPunchDialog("Vihaan", date(2026, 9, 8), "09:00", "19:00", has_record=True,
+                             sessions=[("09:00", "13:00"), ("17:00", "19:00")])
+    dialog.reason.setText("check")
+    assert dialog.values()["sessions"] == [("09:00", "13:00"), ("17:00", "19:00")]
+    assert dialog.no_in.isHidden() and dialog.problem() == ""
+    dialog._add_row()
+    assert len(dialog.values()["sessions"]) == 3
+    dialog._remove_row(dialog._rows[-1])
+    dialog._remove_row(dialog._rows[-1])
+    assert dialog.values()["sessions"] == [("09:00", "13:00")]
+    auto = EditPunchDialog("Aarav", date(2026, 9, 15), "11:30", "19:30", has_record=True,
+                           auto_cutoff="19:30:00", leave={"type": "Casual", "half": ""})
+    texts = " ".join(w.text() for w in auto.findChildren(type(auto.error)))
+    assert "automatic punch-out at 19:30" in texts and "Approved leave: Casual" in texts

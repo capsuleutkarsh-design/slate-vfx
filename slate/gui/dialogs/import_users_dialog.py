@@ -230,7 +230,7 @@ class ImportUsersDialog(QDialog):
             if row.status == "new" and row.fields:
                 details = "Also sets: " + ", ".join(
                     "%s %s" % (user_import.FIELD_LABELS.get(k, "Role" if k == "roles" else k),
-                               ", ".join(v) if isinstance(v, list) else v)
+                               user_import.field_text(k, v))
                     for k, v in row.fields.items())
             cells = [str(row.line), row.username, row.display_name,
                      _STATUS_TEXT.get(row.status, row.status), details]

@@ -8,6 +8,8 @@ from typing import Dict, List, Optional, Any
 from ..infra.server_hub import ServerHub
 from ..infra.audit_logger import AuditLogger
 from slate.utils.safe_json import SafeJsonIO
+from slate.core.domain import people
+from slate.core.domain.people import plural
 
 class UserManager:
     """
@@ -625,6 +627,8 @@ class UserManager:
                 # Deactivated, or past their last day (see deactivate_user).
                 "active": self._flag_active(r),
                 "deactivated_on": r.get('deactivated_on'),
+                # admin, tester: accounts that are not people.
+                "is_service": people.is_service_record(dict(r)),
             }
         return users_dict
 
@@ -722,6 +726,34 @@ class UserManager:
         return bool(db.execute_update(
             "UPDATE ut_users SET must_change_password=%s WHERE LOWER(username)=LOWER(%s)",
             (1 if required else 0, username.strip())))
+
+    def set_password(self, username: str, new: str):
+        """
+        Reset Password: a new password for somebody, and nothing else. Returns
+        (ok, message).
+
+        It went through add_user, an upsert of the whole account, which blanked
+        the person's picture and was audited as 'Updated roles'. The password
+        rule and hashing are add_user's, unchanged (passwords are reviewed with
+        the security work).
+        """
+        row = self._row(username)
+        if not row:
+            return False, "There is no account called %s." % str(username or "").strip()
+        target = row["username"]
+        self._check_account_change(target)
+        cleaned = self.clean_password(new)
+        if not cleaned:
+            return False, "A password cannot be empty or only spaces."
+        # A password an admin set is not forced to change, even for somebody
+        # imported who never signed in with the first one.
+        ok = self._get_db().execute_update(
+            "UPDATE ut_users SET password_hash=%s, must_change_password=0 WHERE username=%s",
+            (self._hash_password(cleaned), target))
+        if not ok:
+            return False, "The password for %s could not be saved. Try again." % target
+        self.audit.log_user_change(self._actor(), target, "Password reset by %s" % self._actor())
+        return True, "Password reset for %s." % people.label(target, self._get_db())
 
     def change_own_password(self, username: str, current: str, new: str):
         """
@@ -849,6 +881,12 @@ class UserManager:
             roles = [roles] if isinstance(roles, str) else list(roles)
             self._check_account_change(target, roles)
             old_roles = self._parse_roles(existing.get("roles"))
+            # Developer is the way back in when everything else is wrong.
+            if self._holds_developer(old_roles) and not self._holds_developer(roles) and not any(
+                    self._holds_developer(d.get("roles")) for u, d in self.active_users().items()
+                    if u.lower() != target.lower()):
+                self._refuse("%s is the last active Developer. Give somebody else the Developer "
+                             "role first." % target)
             if [str(r) for r in old_roles] != [str(r) for r in roles]:
                 sets.append("roles=%s")
                 values.append(json.dumps(roles))
@@ -858,7 +896,11 @@ class UserManager:
             self._check_account_change(target)
 
         manager = kwargs.get("reports_to")
-        if manager not in (None, self.CLEAR) and str(manager).strip():
+        # Only a new Reports to is checked: saving somebody's name or
+        # department must not fail because their existing manager left.
+        changed_manager = str(manager or "").strip().lower() != \
+            str(existing.get("reports_to") or "").strip().lower()
+        if manager not in (None, self.CLEAR) and str(manager).strip() and changed_manager:
             why = self.reports_to_problem(target, manager)
             if why:
                 self.last_error = why
@@ -897,6 +939,33 @@ class UserManager:
         return bool(result)
 
     @staticmethod
+    def _holds_developer(roles) -> bool:
+        roles = [roles] if isinstance(roles, str) else list(roles or [])
+        return any(str(r).strip().lower() == "developer" for r in roles)
+
+    def lockout_warning(self, username: str, new_roles) -> str:
+        """
+        For the signed-in person editing their own account: what they would
+        lose (managing users, editing roles, Full access), or "". The role
+        editor asks the same question before a change to a role you hold.
+        """
+        if not self.acting_user or str(username or "").strip().lower() != self.acting_user.lower():
+            return ""
+        from slate.core.domain import access
+        config = self.roles_config
+        _, old_abilities, old_full = access.holdings(self._acting_roles(), config)
+        _, new_abilities, new_full = access.holdings(list(new_roles or []), config)
+        lost = [label for key, label in (("manage_users", "add and edit users"),
+                                         ("manage_permissions", "edit roles and permissions"))
+                if key in old_abilities and key not in new_abilities]
+        if old_full and not new_full:
+            lost.append("Full access")
+        if not lost:
+            return ""
+        return ("These are your own roles. Without them you will lose: %s - and you may not "
+                "be able to open this screen again.\n\nMake this change?" % ", ".join(lost))
+
+    @staticmethod
     def _forget_people():
         try:
             from slate.core.domain import people
@@ -905,24 +974,30 @@ class UserManager:
             pass
 
     # --------------------------------------------------------- reports to
+    @staticmethod
+    def can_approve(roles) -> bool:
+        """Whether these roles approve leave (a supervisor or lead) or keep it (HR)."""
+        from slate.core.domain import access
+        from slate.core.domain.workplace_access import manages_leave
+        stored = access._role_permission_lists()
+        roles = [roles] if isinstance(roles, str) else list(roles or [])
+        tabs = set()
+        for role in roles:
+            tabs.update(stored.get(str(role).strip().lower(), []))
+        return access.can(roles, "approve_leave") or manages_leave(roles, tabs)
+
     def approvers(self) -> List[str]:
         """
         Who can be somebody's 'Reports to': active people who approve leave
         (a supervisor or lead) or keep it (HR). Anybody else - an artist -
-        left that person's leave waiting for ever.
+        left that person's leave waiting for ever. Service accounts (admin)
+        are not people and are not offered.
         """
-        from slate.core.domain import access
-        from slate.core.domain.workplace_access import manages_leave
-        stored = access._role_permission_lists()
         out = []
         for username, data in (self.get_all_users() or {}).items():
-            if not data.get("active", True):
+            if not data.get("active", True) or data.get("is_service"):
                 continue
-            roles = data.get("roles") or []
-            tabs = set()
-            for role in roles:
-                tabs.update(stored.get(str(role).strip().lower(), []))
-            if access.can(roles, "approve_leave") or manages_leave(roles, tabs):
+            if self.can_approve(data.get("roles") or []):
                 out.append(username)
         return sorted(out, key=str.lower)
 
@@ -952,6 +1027,13 @@ class UserManager:
         if self.would_create_cycle(uid, boss):
             return ("%s already reports to %s (directly or through others), so this "
                     "would make a loop." % (boss, username))
+        # Create, update and import all come here: an artist named as Reports
+        # to made the person's leave skip the supervisor stage without a word.
+        if boss.lower() not in {a.lower() for a in self.approvers()}:
+            if not self.is_active(boss):
+                return "%s is deactivated or has left." % people.label(boss, self._get_db())
+            return ("%s cannot approve leave. Choose a supervisor, lead or HR, or nobody "
+                    "(their leave then goes to HR)." % people.label(boss, self._get_db()))
         return ""
 
     def delete_user(self, u: str) -> bool:
@@ -1096,15 +1178,79 @@ class UserManager:
         """Everybody who has not been deactivated or passed their last day."""
         return {name: data for name, data in self.get_all_users().items() if data.get("active", True)}
 
-    def open_items(self, username: str) -> List[str]:
+    def reports_of(self, manager: str) -> List[str]:
+        """Active people whose Reports to is this person."""
+        wanted = str(manager or "").strip().lower()
+        return sorted(u for u, d in self.active_users().items()
+                      if wanted and str(d.get("reports_to") or "").strip().lower() == wanted)
+
+    def _waiting_requests(self, usernames) -> list:
+        """[(id, user_id)] of these people's requests at the supervisor stage."""
+        from slate.core.domain import leave_policy as lp
+        names = [str(u).lower() for u in usernames or []]
+        if not names:
+            return []
+        rows = self._get_db().execute_query(
+            "SELECT id, user_id, status FROM leave_requests WHERE LOWER(user_id) IN (%s)"
+            % ", ".join(["%s"] * len(names)), tuple(names), fetch="all") or []
+        return [(r["id"], r["user_id"]) for r in rows
+                if lp.normalise_status(r["status"]) == lp.STATUS_PENDING_SUPERVISOR]
+
+    def move_reports(self, manager: str, new_manager: str = ""):
+        """
+        Give everybody who reports to manager a new Reports to, before manager
+        is deactivated. Returns (moved, [problems]).
+
+        Leave waiting at the supervisor stage follows the reporting line, so it
+        moves with them. With no new manager their Reports to is cleared and
+        those requests go to HR, saying why.
+        """
+        from slate.core.domain import leave_policy as lp
+        new = str(new_manager or "").strip()
+        moved, problems = 0, []
+        for username in self.reports_of(manager):
+            # The new manager was one of the team: they report to nobody now.
+            value = new if new and new.lower() != username.lower() else self.CLEAR
+            try:
+                if not self.update_user(username, reports_to=value):
+                    problems.append("%s: could not be saved" % username)
+                    continue
+            except PermissionError as refused:
+                problems.append("%s: %s" % (username, refused))
+                continue
+            moved += 1
+            if value == self.CLEAR:
+                note = "%s left, so it went to HR." % people.display_name(manager, self._get_db())
+                for request_id, _user in self._waiting_requests([username]):
+                    self._get_db().execute_update(
+                        "UPDATE leave_requests SET status=%s, route_note=%s WHERE id=%s",
+                        (lp.STATUS_PENDING_HR, note, request_id))
+        return moved, problems
+
+    def open_items(self, username: str, include_reports: bool = True) -> List[str]:
         """
         What must be handled before somebody is deactivated: leave requests
-        still waiting for a decision, and machines still issued to them.
+        still waiting for a decision, machines still issued to them and - for
+        a supervisor - the people who report to them and the requests waiting
+        on their decision (move_reports). include_reports=False leaves those
+        two out, for a screen that offers the move itself.
         """
         from slate.core.domain import leave_policy as lp
         db = self._get_db()
         found = []
         wanted = str(username or "").strip()
+        if include_reports:
+            team = self.reports_of(wanted)
+            if team:
+                found.append("%s %s to them" % (plural(len(team), "person", "people"),
+                                                 "reports" if len(team) == 1 else "report"))
+                try:
+                    stuck = len(self._waiting_requests(team))
+                except Exception as exc:
+                    logging.debug("Team requests not checked for %s: %s", wanted, exc)
+                    stuck = 0
+                if stuck:
+                    found.append(plural(stuck, "leave request") + " waiting on their decision")
         try:
             rows = db.execute_query(
                 "SELECT status FROM leave_requests WHERE LOWER(user_id)=LOWER(%s)",
@@ -1112,7 +1258,7 @@ class UserManager:
             waiting = sum(1 for r in rows if lp.normalise_status(r["status"]) in (
                 lp.STATUS_PENDING_SUPERVISOR, lp.STATUS_PENDING_HR))
             if waiting:
-                found.append(f"{waiting} leave request(s) waiting for a decision")
+                found.append(plural(waiting, "leave request") + " of their own waiting for a decision")
         except Exception as exc:
             logging.debug("Leave requests not checked for %s: %s", wanted, exc)
         try:
@@ -1122,7 +1268,7 @@ class UserManager:
                 (wanted,), fetch="all") or []
             machines = sorted({str(r["machine_name"]) for r in rows})
             if machines:
-                found.append("machine(s) still issued: " + ", ".join(machines))
+                found.append(plural(len(machines), "machine") + " still issued: " + ", ".join(machines))
         except Exception as exc:
             logging.debug("Issued machines not checked for %s: %s", wanted, exc)
         return found
@@ -1161,29 +1307,64 @@ class UserManager:
         return True, (f"{uid} is deactivated. Their history is kept, and the account "
                       "can be reactivated at any time.")
 
-    def reactivate_user(self, username: str, by: str = None):
-        """Switch a deactivated account back on. Returns (ok, message)."""
+    def past_last_day(self, username: str):
+        """The recorded last working day if it has passed (the person has left), else None."""
+        row = self._row(username) or {}
+        last = row.get("last_day")
+        return last if last and not self._flag_active({"last_day": last}) else None
+
+    def reactivate_user(self, username: str, by: str = None, clear_last_day: bool = False):
+        """
+        Switch an account back on - somebody who was deactivated, or who left
+        and is coming back. Returns (ok, message).
+
+        A last working day that has passed keeps the account off whatever the
+        switch says, so it is cleared too (clear_last_day) or nothing changes.
+        It used to say 'active again' while the person stayed inactive.
+        """
         uid = str(username or "").strip()
         actor = (by or self.acting_user or "").strip()
+        if not self._row(uid):
+            return False, f"There is no account called {uid}."
         try:
             self._check_account_change(uid)
         except PermissionError as exc:
             return False, str(exc)
+        past = self.past_last_day(uid)
+        if past and not clear_last_day:
+            from slate.core.domain.dates import format_date
+            return False, (f"{uid}'s last working day ({format_date(past)}) has passed, so the "
+                           "account would stay off. Clear the last day to bring them back.")
         ok = self._get_db().execute_update(
-            "UPDATE ut_users SET active=1, deactivated_on=NULL, deactivated_by=NULL "
-            "WHERE LOWER(username)=LOWER(%s)", (uid,))
+            "UPDATE ut_users SET active=1, deactivated_on=NULL, deactivated_by=NULL"
+            + (", last_day=NULL" if past else "") + " WHERE LOWER(username)=LOWER(%s)", (uid,))
         if not ok:
             return False, f"{uid} could not be reactivated. Try again."
-        self.audit.log_user_change(actor or "System", uid, "Reactivated")
-        note = ""
-        try:
-            row = self._get_db().execute_query(
-                "SELECT last_day FROM ut_users WHERE LOWER(username)=LOWER(%s)", (uid,), fetch="one")
-            if row and row.get("last_day") and not self._flag_active({"last_day": row.get("last_day")}):
-                note = " Their last day is in the past - clear it on Edit User if they are back."
-        except Exception:
-            pass
-        return True, f"{uid} is active again.{note}"
+        self.audit.log_user_change(actor or "System", uid,
+                                   "Reactivated" + (", last day cleared" if past else ""))
+        self._forget_people()
+        return True, f"{uid} is active again." + (" Their old last day was cleared." if past else "")
+
+    @staticmethod
+    def account_status(record, today=None):
+        """
+        (text, tone) for a get_all_users record: 'System account', 'Active',
+        'Leaving 30 Oct 2026' (warn), 'Left 15 Sep 2026' / 'Deactivated ...'
+        (dim). The Users list and its export say the same thing.
+        """
+        from datetime import date
+        from slate.core.domain.dates import format_date
+        record = record or {}
+        if record.get("is_service"):
+            return "System account", "dim"
+        if not record.get("active", True):
+            if record.get("deactivated_on"):
+                return "Deactivated " + format_date(record.get("deactivated_on")), "dim"
+            return "Left " + format_date(record.get("last_day")), "dim"
+        last = people._as_date(record.get("last_day"))
+        if last and last >= (today or date.today()):
+            return "Leaving " + format_date(last), "warn"
+        return "Active", ""
 
     def has_history(self, username: str) -> bool:
         """Whether anything in the studio's records points at this account."""

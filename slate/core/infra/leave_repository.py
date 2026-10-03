@@ -33,6 +33,12 @@ except ImportError:                                  # pragma: no cover
 logger = logging.getLogger(__name__)
 
 
+def _days(value) -> str:
+    """'1 day', '0.5 days'."""
+    value = float(value or 0)
+    return "%g day%s" % (value, "" if value == 1 else "s")
+
+
 def as_date(value):
     """
     Whatever the driver handed back, as a date. None when it is not one.
@@ -167,6 +173,9 @@ class LeaveRepository:
         succeeds on its own, so an interruption between them loses the day
         entirely and silently changes what leave costs around it.
         """
+        location = self.known_location(location) or str(location or "All").strip()
+        if self._holiday_taken(as_date(day), location, ignore_id=holiday_id):
+            return False
         try:
             # The return value matters. Two holidays cannot share a date for
             # the same place, so this can be refused - and reporting success
@@ -210,6 +219,36 @@ class LeaveRepository:
                 out.add(text)
         return sorted(out)
 
+    def known_location(self, place) -> str:
+        """
+        A typed place in the spelling the studio already uses ('mumbai' ->
+        'Mumbai'), 'All' for blank or all, or "" when nobody's record and no
+        holiday names it (a holiday for it would apply to nobody).
+        """
+        text = str(place or "").strip()
+        if not text or text.lower() == "all":
+            return "All"
+        known = list(self.locations())
+        known += [str(r.get("location") or "").strip() for r in self.holiday_rows()]
+        for spelling in known:
+            if spelling and spelling.lower() == text.lower():
+                return spelling
+        return ""
+
+    def _holiday_taken(self, day, location, ignore_id=None) -> bool:
+        """Whether this place already has a holiday on that date, whatever the case."""
+        # ponytail: checked before writing, not by a LOWER(location) unique
+        # index; two HR adding the same day in the same second could both land.
+        if day is None:
+            return False
+        for row in self.holiday_rows(day.year):
+            if ignore_id is not None and row.get("id") == ignore_id:
+                continue
+            if as_date(row.get("holiday_date")) == day and \
+                    str(row.get("location") or "All").strip().lower() == location.lower():
+                return True
+        return False
+
     def add_holiday(self, day, name, location="All") -> bool:
         """
         Add a holiday. False when it was not added - including when there is
@@ -219,7 +258,14 @@ class LeaveRepository:
         and does nothing with. That used to read as success: the typed name
         was cleared, the list did not change and nobody was told why. What
         was actually inserted is what counts now.
+
+        The place is matched without regard to case: the table's unique key
+        is case-sensitive, so 'mumbai' slipped in beside 'Mumbai' and both
+        applied to the same people.
         """
+        location = self.known_location(location) or str(location).strip()
+        if self._holiday_taken(as_date(day), location):
+            return False
         try:
             result = self.db.execute_update(
                 "INSERT INTO holiday_calendar (holiday_date, name, location) "
@@ -442,13 +488,17 @@ class LeaveRepository:
         with no manager, a manager who was an artist, and a manager in HR -
         whose queue only ever offered the HR stage.
         """
-        record = self._user_row(username)
+        return self._kind_of(self._user_row(username))
+
+    def _kind_of(self, record, stored=None) -> str:
+        """approver_kind for a ut_users row already read."""
         if not record or not self._is_active_record(record):
             return ""
         roles = self._roles_of(record)
         from slate.core.domain import access
         from slate.core.domain.workplace_access import manages_leave
-        stored = access._role_permission_lists()
+        if stored is None:
+            stored = access._role_permission_lists()
         tabs = set()
         for role in roles:
             tabs.update(stored.get(str(role).strip().lower(), []))
@@ -491,17 +541,80 @@ class LeaveRepository:
         'HR'. 'No approver set - contact HR' when a request is stuck at the
         supervisor stage with nobody able to take it.
         """
-        status = lp.normalise_status(row.get("status"))
-        stage = lp.awaiting(status)
-        if stage != "Supervisor":
-            return stage
-        manager = str(self._user_row(row.get("user_id")).get("reports_to") or "").strip()
-        if manager and self.approver_kind(manager) == "supervisor":
-            from slate.core.domain import people
-            return people.display_name(manager, self.db)
-        return NO_APPROVER
+        return self.waiting_on_all([row])[0]
+
+    def waiting_on_all(self, rows) -> list:
+        """
+        waiting_on for many rows at once, in the same order.
+
+        The queue asked per row - two ut_users reads and a roles read each -
+        so 75 requests took 1.5 s on a local database and every 30-second
+        refresh paid it again. The people are read once here.
+        """
+        stages = [lp.awaiting(row.get("status")) for row in rows]
+        if "Supervisor" not in stages:
+            return stages
+        from slate.core.domain import access, people
+        try:
+            everyone = self.db.execute_query("SELECT * FROM ut_users", fetch="all") or []
+        except DatabaseUnavailableError:
+            raise
+        except Exception:
+            logger.exception("waiting_on_all failed")
+            everyone = []
+        users = {str(dict(u).get("username") or "").strip().lower(): dict(u) for u in everyone}
+        stored = access._role_permission_lists()
+        out = []
+        for row, stage in zip(rows, stages):
+            if stage != "Supervisor":
+                out.append(stage)
+                continue
+            requester = users.get(str(row.get("user_id") or "").strip().lower(), {})
+            manager = str(requester.get("reports_to") or "").strip()
+            if manager and self._kind_of(users.get(manager.lower()), stored) == "supervisor":
+                out.append(people.display_name(manager, self.db))
+            else:
+                out.append(NO_APPROVER)
+        return out
 
     # --------------------------------------------------------------- submit
+    def request_window(self, username) -> tuple:
+        """
+        (first, last) day this person's leave may cover; None where open.
+
+        First is the later of the joining date and the start of the first
+        leave year HR have not closed for them; last is their last day.
+        """
+        record = self._user_row(username)
+        first, last = as_date(record.get("joined_on")), as_date(record.get("last_day"))
+        close = self.last_close(username)
+        if close:
+            opens = date(int(close["leave_year"]) + 1, 1, 1)
+            first = max(first, opens) if first else opens
+        return first, last
+
+    def dates_refusal(self, username, start, end) -> str:
+        """
+        Why leave over these dates cannot be recorded for this person, or "".
+
+        A closed year is drawn under: the balance counts from the line, so
+        leave asked for behind it was charged nothing at all - three free
+        days for a retrospective December request. And nobody takes leave
+        from a job before they start it or after they have left it.
+        """
+        from slate.core.domain.dates import format_date
+        close = self.last_close(username)
+        if close and start.year <= int(close["leave_year"]):
+            return ("HR closed %d, so leave in it can no longer be asked for - ask HR."
+                    % int(close["leave_year"]))
+        record = self._user_row(username)
+        joined, left = as_date(record.get("joined_on")), as_date(record.get("last_day"))
+        if joined and start < joined:
+            return "That is before the joining date (%s)." % format_date(joined)
+        if left and end > left:
+            return "That is after the last working day (%s)." % format_date(left)
+        return ""
+
     def submit(self, username, kind, start, end, half_day, reason, rules=None,
                half_day_part=None) -> "Outcome":
         """
@@ -515,6 +628,9 @@ class LeaveRepository:
         """
         # Checked here as well as in the dialog. The dialog gives the better
         # message; this is what makes the rule true rather than advisory.
+        refusal = self.dates_refusal(username, start, end)
+        if refusal:
+            return Outcome(False, refusal, "dates")
         if self.clash(username, start, end):
             logger.info("Refused an overlapping leave request for %s", username)
             return Outcome(False, "You already have a request covering those days.", "clash")
@@ -580,6 +696,9 @@ class LeaveRepository:
             return Outcome(False, "Somebody else in HR has to grant your own rest.", "own")
         if end < start:
             return Outcome(False, "The end date is before the start date.", "invalid")
+        refusal = self.dates_refusal(username, start, end)
+        if refusal:
+            return Outcome(False, refusal, "dates")
         if self.clash(username, start, end):
             return Outcome(False, "They already have leave covering those days.", "clash")
         charge = lp.days_charged(start, end, self.holidays_for(username, start, end))
@@ -636,6 +755,14 @@ class LeaveRepository:
             current = lp.normalise_status(existing.get("status"))
             now = datetime.now()
             note = str(note or "").strip()
+
+            # The final yes on Comp Off spends ledger days, so there have to
+            # be enough of them on the day of the leave. Two requests against
+            # one earned day were both approved and only one day was spent.
+            if approved and stage != "Supervisor" and current in lp.PENDING_STATUSES:
+                short = self.comp_off_shortfall(existing)
+                if short:
+                    return Outcome(False, short, "comp_off_short")
 
             if stage == "Supervisor":
                 if current != lp.STATUS_PENDING_SUPERVISOR:
@@ -874,7 +1001,7 @@ class LeaveRepository:
         except Exception:
             logger.exception("approved_leave failed")
             return {}
-        out = {}
+        out, holidays_of = {}, {}
         for row in rows:
             row = dict(row)
             if lp.normalise_status(row.get("status")) not in lp.GRANTED_STATUSES:
@@ -885,16 +1012,25 @@ class LeaveRepository:
             first, last = as_date(row.get("start_date")), as_date(row.get("end_date"))
             if first is None or last is None:
                 continue
-            half = bool(row.get("half_day")) and first == last                 and str(row.get("half_day")).lower() not in ("0", "false")
-            day = max(first, start)
-            while day <= min(last, end):
+            half = bool(row.get("half_day")) and first == last \
+                and str(row.get("half_day")).lower() not in ("0", "false")
+            # Only the days the request was charged for: its working days and
+            # any the sandwich rule took. A holiday inside the leave that was
+            # not charged stays a holiday - it showed (and exported) as a day
+            # of leave, so a 2-day charge read as 3 days away.
+            key = (who, first.year, last.year)
+            if key not in holidays_of:
+                holidays_of[key] = self.holidays_for(who, first, last)
+            charge = lp.days_charged(first, last, holidays_of[key], half_day=half)
+            for day in sorted(set(charge["working_days"]) | set(charge["sandwich_days"])):
+                if not start <= day <= end:
+                    continue
                 out.setdefault(who, {})[day] = {
                     "type": (row.get("type") or "Leave").title(),
                     "half": lp.half_day_label(row.get("half_day_part")) if half else "",
                     "days": 0.5 if half else 1.0,
                     "id": row.get("id"),
                 }
-                day = date.fromordinal(day.toordinal() + 1)
         return out
 
     def holiday_names(self, year: int, location: str = None) -> dict:
@@ -990,6 +1126,25 @@ class LeaveRepository:
                 continue
             total += float(row.get("days") or 0) - float(row.get("consumed") or 0)
         return max(0.0, total)
+
+    def comp_off_shortfall(self, row) -> str:
+        """
+        Why this Comp Off request cannot be granted from the ledger, or "".
+        Not a Comp Off request, or enough comp off valid on its first day: "".
+        """
+        if str(row.get("type") or "").strip().title() != "Comp Off":
+            return ""
+        wanted = float(row.get("days_charged") or 0)
+        start = as_date(row.get("start_date")) or date.today()
+        have = self.comp_off_balance(row.get("user_id"), on=start)
+        if have + 1e-9 >= wanted:
+            return ""
+        from slate.core.domain import people
+        from slate.core.domain.dates import format_date
+        return ("%s has only %s of comp off left for %s, and this needs %s. Reject it and "
+                "ask for Unpaid instead." % (
+                    people.display_name(row.get("user_id"), self.db), _days(have),
+                    format_date(start), _days(wanted)))
 
     def spend_comp_off(self, request_id) -> float:
         """
@@ -1149,6 +1304,18 @@ class LeaveRepository:
             return None
         value = (dict(row) or {}).get("latest") if row else None
         return int(value) if value is not None else None
+
+    def closed_years(self) -> list:
+        """Every leave year closed for anybody, newest first."""
+        try:
+            rows = self.db.execute_query(
+                "SELECT DISTINCT leave_year FROM leave_year_close", fetch="all") or []
+        except DatabaseUnavailableError:
+            raise
+        except Exception:
+            logger.exception("closed_years failed")
+            return []
+        return sorted({int(dict(r)["leave_year"]) for r in rows}, reverse=True)
 
     def close_refusal(self, year: int, today: date = None) -> str:
         """
@@ -1324,8 +1491,8 @@ class LeaveRepository:
         today = date.today()
         as_of = as_of or today
         requests = self.for_user(username)
-        joined = self.joined_on(username)
-        left = self.last_day(username)
+        record = self._user_row(username)          # one read for both dates
+        joined, left = as_date(record.get("joined_on")), as_date(record.get("last_day"))
         pool = set(lp.ACCRUED_TYPES)
 
         def start_of(row):
@@ -1422,12 +1589,18 @@ class LeaveRepository:
         }
 
     def taken_by_type(self, username: str, year: int = None) -> dict:
-        """Days granted this leave year per type ('sick days taken'), for reports."""
+        """
+        Days granted this leave year per type ('sick days taken'), for reports.
+
+        Taken means started: approved leave still to come is Booked, and
+        counting it here as well showed the same days twice.
+        """
         year = year or date.today().year
+        today = date.today()
         out = {}
         for row in self.for_user(username):
             start = as_date(row.get("start_date"))
-            if not start or start.year != year:
+            if not start or start.year != year or start > today:
                 continue
             if lp.normalise_status(row.get("status")) not in lp.GRANTED_STATUSES:
                 continue

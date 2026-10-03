@@ -25,7 +25,7 @@ from slate.core.infra.db_results import DatabaseUnavailableError
 from slate.core.infra.gate import Gate
 from slate.core.infra.leave_repository import LeaveRepository, NO_APPROVER
 from slate.core.domain import leave_policy as lp
-from ..core.controls import make_button, page_title
+from ..core.controls import make_button, page_title, prose
 from ..core.offline_notice import on_database_error
 from ..core.empty_state import EmptyState
 from ..core.table_style import style_table
@@ -57,6 +57,12 @@ def days_text(value) -> str:
     """'1 day', '2.5 days'."""
     value = float(value or 0)
     return "%g day%s" % (value, "" if value == 1 else "s")
+
+
+def working_text(value) -> str:
+    """'1 working day', '24 working days'."""
+    value = float(value or 0)
+    return "%g working day%s" % (value, "" if value == 1 else "s")
 
 
 def balance_text(value) -> str:
@@ -201,9 +207,17 @@ class RequestLeaveDialog(QDialog):
         # Nothing beyond the end of next leave year: a date in 2030 was costed
         # as if it were next week.
         last = end_of_next_leave_year()
+        # Nothing before the joining date or the first leave year HR have not
+        # closed, nothing after the last day. The earliest date offered was
+        # 14 Sep 1752, and a request behind the year-end line cost nothing.
+        first, left = repo.request_window(self.username) if self.username else (None, None)
+        if left:
+            last = min(last, left)
         latest = QDate(last.year, last.month, last.day)
         self.start.setMaximumDate(latest)
         self.end.setMaximumDate(latest)
+        if first:
+            self.start.setMinimumDate(QDate(first.year, first.month, first.day))
         # The end can never be before the start - it used to say "nothing to
         # deduct" for a reversed range, as if those were holidays.
         self.end.setMinimumDate(self.start.date())
@@ -212,7 +226,7 @@ class RequestLeaveDialog(QDialog):
         for key, label in self.DURATIONS:
             self.half_day.addItem(label, key)
 
-        self.reason = QPlainTextEdit()
+        self.reason = prose(QPlainTextEdit())
         self.reason.setPlaceholderText("Why, briefly. Your supervisor and HR both see this.")
         self.reason.setFixedHeight(76)
 
@@ -319,13 +333,22 @@ class RequestLeaveDialog(QDialog):
                 "Those dates are all non-working days, so there is nothing to deduct.")
             return
 
-        text = "This will cost <b>%s</b>." % days_text(charge["total"])
+        kind = self.kind.currentText()
+        if kind == "Unpaid":
+            # Unpaid costs nothing from the balance; 'This will cost 24 days'
+            # said otherwise.
+            text = "<b>%s</b>, unpaid - not taken from your balance." % working_text(
+                charge["total"])
+        else:
+            text = "This will cost <b>%s</b>." % days_text(charge["total"])
         if absorbed:
             days = ", ".join(format_date(d, weekday=True) for d in absorbed)
             text += (" That includes %s, because taking the working day between "
-                     "two holidays counts the holidays too." % days)
+                     "two days off counts those days too." % days)
+        elif self.half_day_part() and lp.sandwich_days(
+                start, start, self.repo.holidays_for(self.username, start, start)):
+            text += " A half day does not count the days off either side."
 
-        kind = self.kind.currentText()
         if kind in lp.ACCRUED_TYPES:
             if self.available < 0:
                 text += "  You are overdrawn by %s." % days_text(-self.available)
@@ -333,8 +356,6 @@ class RequestLeaveDialog(QDialog):
                 text += "  You have %s of paid leave available." % days_text(self.available)
         elif kind == "Comp Off":
             text += "  You have %s of comp off for that date." % days_text(self._comp_off_for(start))
-        elif kind == "Unpaid":
-            text += "  Unpaid leave is not deducted from your balance."
         self.cost.setText(text)
 
     def _submit(self):
@@ -350,6 +371,12 @@ class RequestLeaveDialog(QDialog):
         charge = self.charge()
         if not charge["working_days"]:
             self.note.setText("Those dates contain no working days.")
+            self.note.show()
+            return
+        refusal = self.repo.dates_refusal(self.username, self.start.date().toPython(),
+                                          self.end.date().toPython())
+        if refusal:
+            self.note.setText(refusal)
             self.note.show()
             return
 
@@ -423,7 +450,8 @@ class MyLeaveView(QWidget):
                          0, Qt.AlignmentFlag.AlignTop)
         # Withdraw: a request still waiting is simply withdrawn; approved leave
         # that has not started goes to HR as "Cancellation requested".
-        self.btn_cancel = make_button("Withdraw", "ghost", on_click=self.cancel_request)
+        # Secondary, not ghost: disabled, a ghost button read as a label.
+        self.btn_cancel = make_button("Withdraw", "secondary", on_click=self.cancel_request)
         self.btn_cancel.setEnabled(False)
         header.addWidget(self.btn_cancel, 0, Qt.AlignmentFlag.AlignTop)
         root.addLayout(header)
@@ -480,14 +508,14 @@ class MyLeaveView(QWidget):
 
         self._requests = list(requests)
         by_id = {}
+        waits = self.repo.waiting_on_all(self._requests)
         with KeepSelection(self.table):
             self.table.setRowCount(len(requests))
             for r, row in enumerate(requests):
                 by_id[row.get("id")] = row
                 status = lp.normalise_status(row.get("status")) or lp.STATUS_PENDING_SUPERVISOR
                 charge = row.get("days_charged")
-                waiting = self.repo.waiting_on(row) if status in lp.PENDING_STATUSES \
-                    or status == lp.STATUS_CANCEL_REQUESTED else ""
+                waiting = waits[r]
                 reason = row.get("reason") or ""
                 cells = [
                     make_item(format_date(row.get("start_date")),
@@ -545,7 +573,7 @@ class MyLeaveView(QWidget):
 
         taken = self.repo.taken_by_type(self.username)
         if taken:
-            self.taken.setText("Taken in %d: %s" % (date.today().year, ", ".join(
+            self.taken.setText("Taken so far in %d: %s" % (date.today().year, ", ".join(
                 "%s %g" % (kind, days) for kind, days in sorted(taken.items()))))
             self.taken.show()
         else:

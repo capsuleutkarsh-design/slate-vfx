@@ -22,8 +22,8 @@ from datetime import date
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QFormLayout, QDateEdit, QFrame, QHBoxLayout, QInputDialog, QLabel,
-    QLineEdit, QMenu, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QSplitter,
+    QComboBox, QDialog, QFrame, QHBoxLayout, QLabel,
+    QLineEdit, QMenu, QMessageBox, QPlainTextEdit, QScrollArea, QSplitter,
     QTableWidget, QVBoxLayout, QWidget,
 )
 
@@ -31,12 +31,11 @@ from slate.core.infra.db_results import DatabaseUnavailableError
 from slate.core.infra.gate import Gate
 from slate.core.infra.leave_repository import LeaveRepository, as_date, NO_APPROVER
 from slate.core.domain import leave_policy as lp
-from ..core.controls import make_button, page_title
+from ..core.controls import make_button, page_title, prose
 from ..core.offline_notice import on_database_error
 from ..core.empty_state import EmptyState
 from ..core.table_style import style_table
 from ..core.stat_card import StatStrip
-from ..core.data_display import setup_date_edit
 from slate.gui.components.table_tools import (
     KeepSelection, make_item, selected_keys, setup_table,
 )
@@ -45,6 +44,10 @@ from slate.core.domain.dates import format_date
 from .my_leave_view import (
     balance_text, days_text, decision_tooltip, kind_text, status_tone,
 )
+
+# HR's word for a request stuck at the supervisor stage with nobody able to
+# take it: it is theirs to decide, so it is in their 'Waiting on me'.
+STRANDED = "No supervisor can act - yours to decide"
 
 
 def _tone(token: str) -> str:
@@ -176,14 +179,18 @@ class LeaveApprovalsView(QWidget):
         left_box.setContentsMargins(0, 0, 0, 0)
         self.table = QTableWidget(0, len(self.COLUMNS))
         self.table.setHorizontalHeaderLabels(self.COLUMNS)
-        # Body-size rows (they were ~11 px). The reason takes what is left,
-        # after Status and Waiting on have the room their words need, and is
-        # cut with "..." - the full text is in the tooltip and the panel.
+        # Body-size rows (they were ~11 px). The reason takes what is left and
+        # is cut with "..." - the full text is in the tooltip and the panel.
+        # Person and Waiting on have a set width, cut with "..." and named in
+        # full on hover: sized to their contents, one 63-character name pushed
+        # Status, Waiting on and Reason off the screen.
         style_table(self.table, {
-            "Person": "contents", "From": "contents", "To": "contents", "Type": "contents",
-            "Days": "numeric", "Balance after": "numeric", "Status": "contents",
-            "Waiting on": "contents", "Reason": "stretch",
+            "Person": ("interactive", 180), "From": "contents", "To": "contents",
+            "Type": "contents", "Days": "numeric", "Balance after": "numeric",
+            "Status": "contents", "Waiting on": ("interactive", 150), "Reason": "stretch",
         }, multi_select=True)
+        self.table.horizontalHeaderItem(self.COLUMNS.index("Balance after")).setToolTip(
+            "Paid leave left if only this request is approved")
         setup_table(self.table)
         self.table.itemSelectionChanged.connect(self._sync_buttons)
         self.table.itemSelectionChanged.connect(self._show_details)
@@ -233,6 +240,9 @@ class LeaveApprovalsView(QWidget):
                     "Leave requests appear here once somebody's record names you "
                     "as their manager. HR set that on the Users & Roles tab.")
 
+        # Who each request waits on, read once for the whole list.
+        for row, waiting in zip(everything, self.repo.waiting_on_all(everything)):
+            row["_waiting"] = waiting
         self._everything = everything
         self._balances = {}
         self._paint_figures(everything)
@@ -243,7 +253,7 @@ class LeaveApprovalsView(QWidget):
         wanted = self.filter_state.currentData()
         rows = list(self._everything)
         if wanted == "mine":
-            rows = [r for r in rows if r["_status"] in self.mine_first and not self._is_own(r)]
+            rows = [r for r in rows if self._waits_on_me(r)]
         elif wanted == "open":
             rows = [r for r in rows if r["_status"] in
                     lp.PENDING_STATUSES + (lp.STATUS_CANCEL_REQUESTED,)]
@@ -259,7 +269,7 @@ class LeaveApprovalsView(QWidget):
         # Mine first, then soonest starting - somebody leaving on Monday needs
         # an answer before somebody leaving next month.
         rows.sort(key=lambda r: (
-            0 if r["_status"] in self.mine_first else 1,
+            0 if self._waits_on_me(r) else 1,
             str(r.get("start_date") or "9999"),
         ))
         self._rows = rows
@@ -270,6 +280,21 @@ class LeaveApprovalsView(QWidget):
 
     def _is_own(self, row) -> bool:
         return str(row.get("user_id") or "").strip().lower() == self.username.lower()
+
+    def _stranded(self, row) -> bool:
+        """At the supervisor stage with no supervisor able to act: HR's to decide."""
+        return (self.stage == "HR" and row["_status"] == lp.STATUS_PENDING_SUPERVISOR
+                and row.get("_waiting") == NO_APPROVER)
+
+    def _waits_on_me(self, row) -> bool:
+        """
+        This person's decision: their stage, and for HR also requests stranded
+        at the supervisor stage (a supervisor who left, or cannot approve) -
+        those sat in 'Elsewhere in the chain', outside HR's default view.
+        """
+        if self._is_own(row):
+            return False
+        return row["_status"] in self.mine_first or self._stranded(row)
 
     def _paint_banner(self):
         if self.stage != "HR":
@@ -290,7 +315,7 @@ class LeaveApprovalsView(QWidget):
         self.banner.show()
 
     def _paint_figures(self, everything):
-        mine = sum(1 for r in everything if r["_status"] in self.mine_first and not self._is_own(r))
+        mine = sum(1 for r in everything if self._waits_on_me(r))
         open_total = sum(1 for r in everything if r["_status"] in
                          lp.PENDING_STATUSES + (lp.STATUS_CANCEL_REQUESTED,))
         other_stage = max(0, open_total - mine)
@@ -325,13 +350,10 @@ class LeaveApprovalsView(QWidget):
                 self._balances[key] = {}
         return self._balances[key]
 
-    def balance_after(self, row):
+    def balance_before(self, row):
         """
-        The requester's paid-leave balance once this request is granted.
-
-        A pending request is already held against the balance, so 'after' is
-        the balance as it stands; for decided or other-type requests nothing
-        is shown.
+        The requester's paid-leave balance with nothing waiting counted -
+        what granted leave has left. None for decided or other-type requests.
         """
         if (row.get("type") or "").title() not in lp.ACCRUED_TYPES:
             return None
@@ -340,10 +362,23 @@ class LeaveApprovalsView(QWidget):
         balance = self.balance_of(row.get("user_id"))
         if "available" not in balance:
             return None
-        return float(balance["available"])
+        return float(balance["available"]) + float(balance.get("pending_from_pool") or 0)
+
+    def balance_after(self, row):
+        """
+        The paid-leave balance if this request alone is approved.
+
+        It was the balance after every waiting request, so two of somebody's
+        requests (3 and 10 days) both read 17.
+        """
+        before = self.balance_before(row)
+        if before is None:
+            return None
+        return before - float(row.get("days_charged") or 0)
 
     def _paint_rows(self, rows):
         self._by_id = {}
+        me = people.display_name(self.username)
         with KeepSelection(self.table):
             self.table.setRowCount(len(rows))
             for r, row in enumerate(rows):
@@ -356,16 +391,19 @@ class LeaveApprovalsView(QWidget):
                 # A leaver's request still has to be decided; say they have left.
                 if person is not None and (person.has_left() or not person.active):
                     name += " (left)"
-                waiting = self.repo.waiting_on(row) if status in lp.PENDING_STATUSES \
-                    + (lp.STATUS_CANCEL_REQUESTED,) else "-"
+                waiting = row.get("_waiting") or "-"
                 if self._is_own(row) and status in self.actionable:
                     waiting = "Needs another approver"
+                elif self._stranded(row):
+                    waiting = STRANDED
+                elif status == lp.STATUS_PENDING_SUPERVISOR and waiting == me:
+                    waiting = "You"
                 after = self.balance_after(row)
                 reason = row.get("reason") or ""
                 if row.get("cancel_reason") and status == lp.STATUS_CANCEL_REQUESTED:
                     reason = "Withdrawal: %s" % row.get("cancel_reason")
                 cells = [
-                    make_item(name, key=row.get("id"), tooltip=str(who or "")),
+                    make_item(name, key=row.get("id"), tooltip=people.label(who)),
                     make_item(format_date(row.get("start_date")),
                               sort_value=str(row.get("start_date") or "")),
                     make_item(format_date(row.get("end_date")),
@@ -380,8 +418,8 @@ class LeaveApprovalsView(QWidget):
                               if after is not None and after < 0 else None),
                     make_item(status, foreground=_tone(status_tone(status)),
                               tooltip=decision_tooltip(row) or None),
-                    make_item(waiting or "-",
-                              foreground=Gate.BAD if waiting == NO_APPROVER else (
+                    make_item(waiting, tooltip=waiting if waiting != "-" else None,
+                              foreground=Gate.BAD if waiting in (NO_APPROVER, STRANDED) else (
                                   Gate.WARN if status in self.mine_first else None)),
                     make_item(reason, tooltip=reason or None),
                 ]
@@ -485,6 +523,10 @@ class LeaveApprovalsView(QWidget):
             if withdrawals:
                 onward += ("\n\n%d of them ask to withdraw approved leave. Approving gives "
                            "those days back." % len(withdrawals))
+        overdrawn = self.overdrawn_lines(picked)
+        if overdrawn:
+            onward += ("\n\n%s\nReject and ask for Unpaid instead if it should not come "
+                       "from their balance." % "\n".join(overdrawn))
         if QMessageBox.question(
             self, "Approve leave",
             "Approve %d request%s?\n\n%s" % (len(picked), "" if len(picked) == 1 else "s", onward),
@@ -493,39 +535,52 @@ class LeaveApprovalsView(QWidget):
             return
         self._decide(True, picked=picked)
 
+    def overdrawn_lines(self, picked) -> list:
+        """
+        'Pari Shah will be overdrawn by 2 days.' for each person these
+        approvals take below zero. Approve used to say nothing about it.
+        """
+        asked = {}
+        for row in picked:
+            if self.balance_before(row) is not None:
+                key = str(row.get("user_id") or "").strip().lower()
+                before, days = asked.get(key, (self.balance_before(row), 0.0))
+                asked[key] = (before, days + float(row.get("days_charged") or 0))
+        return ["%s will be overdrawn by %s." % (people.display_name(who), days_text(days - before))
+                for who, (before, days) in sorted(asked.items()) if before - days < 0]
+
     def reject_requests(self):
         picked = self._mine()
         if not picked:
             return
-        note, ok = QInputDialog.getText(
-            self, "Reject leave",
-            "Why? The person who asked will see this.")
-        if not ok:
+        dialog = ReasonDialog(
+            "Reject leave", "Reject %s? The person who asked will see why."
+            % people.plural(len(picked), "request"), "Reject", self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        if not note.strip():
-            QMessageBox.information(
-                self, "A reason is needed",
-                "Rejecting without a reason leaves somebody guessing. Add one line.")
-            return
-        self._decide(False, note.strip(), picked=picked)
+        self._decide(False, dialog.reason(), picked=picked)
 
     def revoke_requests(self):
         picked = [r for r in self._selected()
                   if r["_status"] in lp.GRANTED_STATUSES and not self._is_own(r)]
         if not picked:
             return
-        reason, ok = QInputDialog.getText(
-            self, "Revoke approved leave",
-            "Revoke %d approved request%s? The days go back to the balance.\n\n"
-            "Why? The person will see this." % (len(picked), "" if len(picked) == 1 else "s"))
-        if not ok:
+        intro = "Revoke %s? The days go back to the balance." % people.plural(
+            len(picked), "approved request")
+        # Leave already taken does not disappear from attendance: those days
+        # turn into absences, and the export carries them to payroll.
+        started = [r for r in picked
+                   if (as_date(r.get("start_date")) or date.max) <= date.today()]
+        if started:
+            intro += ("\n\n%s already started. Those days will show as absent in "
+                      "attendance." % ("It has" if len(picked) == 1 else
+                                       people.plural(len(started), "of them has",
+                                                     "of them have")))
+        dialog = ReasonDialog("Revoke approved leave", intro, "Revoke", self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        if not reason.strip():
-            QMessageBox.information(
-                self, "A reason is needed",
-                "Taking back approved leave needs a reason the person can read.")
-            return
-        outcomes = [self.repo.revoke(row.get("id"), self.username, reason.strip())
+        reason = dialog.reason()
+        outcomes = [self.repo.revoke(row.get("id"), self.username, reason)
                     for row in picked]
         self._report(sum(1 for o in outcomes if o), picked, outcomes)
         self.refresh()
@@ -566,6 +621,49 @@ class LeaveApprovalsView(QWidget):
             toast(self, "Project rest granted.", "success")
         self.refresh()
         self.changed.emit()
+
+
+class ReasonDialog(QDialog):
+    """
+    The reason the person will read, for a rejection or a revoke.
+
+    It was a bare one-line QInputDialog, and an empty reason closed it and
+    opened a second message; the problem is now said in place.
+    """
+
+    def __init__(self, title, intro, action, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumWidth(420)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(Gate.SPACE_4, Gate.SPACE_4, Gate.SPACE_4, Gate.SPACE_4)
+        root.setSpacing(Gate.SPACE_3)
+        text = QLabel(intro)
+        text.setWordWrap(True)
+        root.addWidget(text)
+        self.text = prose(QPlainTextEdit())
+        self.text.setPlaceholderText("Why? The person will see this.")
+        self.text.setFixedHeight(90)
+        root.addWidget(self.text)
+        self.note = QLabel("A reason is needed - the person will read it.")
+        self.note.setStyleSheet(f"color: {Gate.WARN}; font-size: 12.5px;")
+        self.note.hide()
+        root.addWidget(self.note)
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        buttons.addWidget(make_button("Cancel", "ghost", on_click=self.reject))
+        buttons.addWidget(make_button(action, "danger", on_click=self._accept))
+        root.addLayout(buttons)
+
+    def reason(self) -> str:
+        return self.text.toPlainText().strip()
+
+    def _accept(self):
+        if not self.reason():
+            self.note.show()
+            self.text.setFocus()
+            return
+        self.accept()
 
 
 class DetailsPanel(QFrame):
@@ -617,7 +715,8 @@ class DetailsPanel(QFrame):
 
     def show_request(self, row, balance, charge, away):
         esc = self._esc
-        self.title.setText("%s - %s" % (people.display_name(row.get("user_id")), kind_text(row)))
+        # The same dash as the Joining & Leaving heading.
+        self.title.setText("%s – %s" % (people.display_name(row.get("user_id")), kind_text(row)))
         lines = ["<b>%s to %s</b>" % (esc(format_date(row.get("start_date"), weekday=True)),
                                       esc(format_date(row.get("end_date"), weekday=True)))]
         if charge:
@@ -630,20 +729,35 @@ class DetailsPanel(QFrame):
 
         kind = (row.get("type") or "").title()
         status = lp.normalise_status(row.get("status"))
+        def coloured(value):
+            return "<span style='color:%s'>%s</span>" % (
+                Gate.BAD if value < 0 else Gate.TEXT, esc(balance_text(value)))
+
+        pending = status in lp.PENDING_STATUSES
         if kind in lp.ACCRUED_TYPES and "available" in balance:
             available = float(balance["available"])
-            before = available + days if status in lp.PENDING_STATUSES else available
-            colour = Gate.BAD if available < 0 else Gate.TEXT
+            waiting = float(balance.get("pending_from_pool") or 0)
             lines.append("<br><b>Paid leave</b> (%s)" % esc(lp.POOL_NOTE))
-            if status in lp.PENDING_STATUSES:
-                lines.append("Before this request: %s" % esc(balance_text(before)))
-                lines.append("After: <span style='color:%s'>%s</span>" % (colour, esc(balance_text(available))))
+            if pending:
+                # Before and after this request alone; the other waiting
+                # requests are named separately rather than folded in.
+                before = available + waiting
+                lines.append("Before this request: %s" % coloured(before))
+                lines.append("After this request: %s" % coloured(before - days))
+                if waiting > days:
+                    lines.append("If everything waiting is approved (%s): %s"
+                                 % (esc(days_text(waiting)), coloured(available)))
             else:
-                lines.append("Available now: <span style='color:%s'>%s</span>" % (colour, esc(balance_text(available))))
-            if balance.get("pending_from_pool"):
-                lines.append("Waiting for approval in total: %s" % esc(days_text(balance["pending_from_pool"])))
+                lines.append("Available now: %s" % coloured(available))
         elif kind == "Comp Off" and balance:
-            lines.append("<br><b>Comp off</b>: %s available" % esc(days_text(balance.get("comp_off", 0))))
+            # Less what other requests waiting on comp off already hold.
+            have = float(balance.get("comp_off", 0))
+            held = float(balance.get("comp_off_pending", 0)) - (days if pending else 0)
+            lines.append("<br><b>Comp off</b>: %s earned and unspent" % esc(days_text(have)))
+            if held > 0:
+                lines.append("Held by other requests waiting: %s" % esc(days_text(held)))
+            if pending:
+                lines.append("After this request: %s" % coloured(have - held - days))
 
         notes = decision_tooltip(row)
         if notes:

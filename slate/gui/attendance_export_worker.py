@@ -9,7 +9,9 @@ approved leave. It used to work hours out as out - in, so a 20:00-05:30
 shift was -14.5 hours, and Sunday arrivals counted as late.
 
 Each day is a code and the hours: P present, L late, S short day, A absent,
-LV leave, H holiday, WO weekly off, M missing punch, W still working.
+LV leave, H holiday, WO weekly off, M missing punch, W still working, AU
+closed by the automatic punch-out (the hours end at the cutoff, not at a
+punch); '*' after a code marks a day HR corrected.
 """
 
 from __future__ import annotations
@@ -26,58 +28,47 @@ from slate.core.domain import leave_policy as lp
 CODES = {
     rules.PRESENT: "P", rules.WORKED_OFF: "P", rules.LATE: "L", rules.SHORT: "S",
     rules.ABSENT: "A", rules.LEAVE: "LV", rules.HOLIDAY: "H", rules.WEEKLY_OFF: "WO",
-    rules.MISSING_OUT: "M", rules.MISSING_IN: "M", rules.AUTO: "P", rules.WORKING: "W",
+    rules.MISSING_OUT: "M", rules.MISSING_IN: "M", rules.AUTO: "AU", rules.WORKING: "W",
     rules.FUTURE: "", rules.NONE: "",
 }
 
 # Plain colours for the file itself (Excel, not the app's theme).
 FILL = {
     "header": "2E5090", "off": "E7E6E6", "late": "FFF3E0", "absent": "FFEBEE",
-    "leave": "EDE7F6", "missing": "FFCDD2", "total": "E3F2FD",
+    "leave": "EDE7F6", "missing": "FFCDD2", "total": "E3F2FD", "auto": "E1F5FE",
 }
 
 
 def summarise(row, user_log, year, month, leave=None, now=None, today=None):
     """
     One person's month: {"days": [(code, hours, state, entry)], totals...}.
-    Pure - the tests and the workbook use it alike.
+    Pure - the tests and the workbook use it alike. The counting is
+    rules.month_summary, the one the grid uses; row["expected"] is the
+    person's (first, last) expected day, so nobody is absent on the sheet
+    before they joined or after they left.
     """
-    now = now or datetime.now()
-    today = today or now.date()
-    holidays = row.get("holidays") or set()
-    leave = leave or {}
-    days = calendar.monthrange(year, month)[1]
-    out = {"days": [], "present": 0, "late": 0, "absent": 0, "leave": 0.0,
-           "missing": 0, "hours": 0.0, "wfh": 0, "open_today": False}
-    for d in range(1, days + 1):
-        day = date(year, month, d)
-        entry = user_log.get(f"{d:02d}", {})
-        day_leave = leave.get(day)
-        state = rules.day_state(entry, day, today, holidays, day_leave)
-        hours = rules.day_hours(entry, now, open_counts=(day == today))
-        sessions = rules.sessions_of(entry)
-        if sessions:
-            out["present"] += 1
-            if entry.get("wfh"):
-                out["wfh"] += 1
-            if day == today and sessions[-1][1] is None:
-                out["open_today"] = True
-        if state == rules.LATE:
-            out["late"] += 1
-        if state == rules.ABSENT:
-            out["absent"] += 1
-        if state in (rules.MISSING_OUT, rules.MISSING_IN):
-            out["missing"] += 1
-        if day_leave:
-            out["leave"] += float(day_leave.get("days") or 1.0)
-        out["hours"] += hours
-        out["days"].append((CODES.get(state, ""), hours, state, entry))
-    out["hours"] = round(out["hours"], 2)
-    return out
+    summary = rules.month_summary(user_log, year, month, row.get("holidays") or set(), leave,
+                                  row.get("expected"), now, today)
+    summary["days"] = [(day_code(d["state"], d["entry"]), d["hours"], d["state"], d["entry"])
+                       for d in summary["days"]]
+    return summary
 
 
-def build_workbook(path, year, month, rows, data, leave=None, now=None):
-    """Write the workbook. rows: [{"username", "name", "holidays"}] in sheet order."""
+def day_code(state, entry) -> str:
+    """The sheet's code for a day: an auto punch-out is AU, a corrected day ends in '*'."""
+    code = CODES.get(state, "")
+    entry = entry or {}
+    if code and (entry.get("corrected") or entry.get("edited_by")):
+        code += "*"
+    return code
+
+
+def build_workbook(path, year, month, rows, data, leave=None, now=None, studio_holidays=None):
+    """
+    Write the workbook. rows: [{"username", "name", "holidays", "expected"}] in
+    sheet order. studio_holidays: the holidays for everybody ('All'), shaded in
+    the header as the grid does (only Sundays were).
+    """
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
@@ -101,7 +92,8 @@ def build_workbook(path, year, month, rows, data, leave=None, now=None):
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
     centre = Alignment(horizontal="center", vertical="center")
     first_day_col = 3 + len(totals)
-    studio_off = [not lp.is_working_day(date(year, month, d)) for d in range(1, days + 1)]
+    studio_off = [not lp.is_working_day(date(year, month, d), studio_holidays)
+                  for d in range(1, days + 1)]
 
     for c, text in enumerate(headers, 1):
         cell = ws.cell(row=1, column=c, value=text)
@@ -132,6 +124,8 @@ def build_workbook(path, year, month, rows, data, leave=None, now=None):
                 cell.fill = fill(FILL["off"])
             elif state == rules.LATE:
                 cell.fill = fill(FILL["late"])
+            elif state == rules.AUTO:
+                cell.fill = fill(FILL["auto"])
             elif state == rules.ABSENT:
                 cell.fill = fill(FILL["absent"])
             elif state == rules.LEAVE:
@@ -153,7 +147,8 @@ def build_workbook(path, year, month, rows, data, leave=None, now=None):
     notes = r + 1
     ws.cell(row=notes, column=1,
             value="Codes: P present, L late, S short day, A absent, LV leave, H holiday, "
-                  "WO weekly off, M missing punch, W still working. The number is hours.")
+                  "WO weekly off, M missing punch, W still working, AU closed by the automatic "
+                  "punch-out (hours end at the cutoff), * corrected by HR. The number is hours.")
     if open_today:
         ws.cell(row=notes + 1, column=1,
                 value="Includes today's open sessions up to %s." % now.strftime("%H:%M"))
@@ -174,8 +169,9 @@ class ExcelExportWorker(QThread):
 
     finished_export = Signal(bool, str)  # success, saved path or the reason
 
-    def __init__(self, path, year, month, rows, data, leave=None, now=None):
+    def __init__(self, path, year, month, rows, data, leave=None, now=None, studio_holidays=None):
         super().__init__()
+        self.studio_holidays = studio_holidays
         self.path = path
         self.year = year
         self.month = month
@@ -187,7 +183,7 @@ class ExcelExportWorker(QThread):
     def run(self):
         try:
             build_workbook(self.path, self.year, self.month, self.rows, self.data,
-                           self.leave, self.now)
+                           self.leave, self.now, self.studio_holidays)
             self.finished_export.emit(True, self.path)
         except Exception as exc:
             self.finished_export.emit(False, str(exc))

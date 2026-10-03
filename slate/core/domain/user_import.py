@@ -227,6 +227,7 @@ def plan_import(path, existing_usernames, *, user_manager=None, allowed_roles=No
 
     plan = ImportPlan(columns=sorted(extra))
     seen = set()
+    file_roles = {}
     from slate.core.domain.onboarding_service import EMPLOYMENT_TYPES, employment_value
     for index in range(start, len(cells)):
         row = cells[index]
@@ -261,6 +262,14 @@ def plan_import(path, existing_usernames, *, user_manager=None, allowed_roles=No
                 problems.append("Cannot report to themselves")
             elif boss not in existing and boss not in in_file:
                 problems.append("Reports to %r is nobody in Slate or in this file" % boss)
+            elif boss in existing and user_manager is not None and \
+                    boss != str(records.get(username, {}).get("reports_to") or "").lower():
+                # The rule Add and Edit user use (an approver, no loops).
+                why = user_manager.reports_to_problem(username, boss)
+                if why:
+                    problems.append("Reports to: " + why)
+                else:
+                    fields["reports_to"] = boss
             else:
                 fields["reports_to"] = boss
         if "role" in extra and cell(row, extra["role"]):
@@ -271,6 +280,7 @@ def plan_import(path, existing_usernames, *, user_manager=None, allowed_roles=No
             else:
                 fields["roles"] = [allowed[r.lower()] if allowed else r for r in wanted]
         entry.fields = fields
+        file_roles[username] = fields.get("roles")
 
         if not username:
             entry.status, entry.reason = "invalid", "No username"
@@ -289,18 +299,39 @@ def plan_import(path, existing_usernames, *, user_manager=None, allowed_roles=No
                     entry.status = "update"
                     entry.changes = changes
                     entry.reason = "; ".join("%s: %s -> %s" % (
-                        FIELD_LABELS.get(k, k), old or "-", new) for k, (old, new) in changes.items())
+                        FIELD_LABELS.get(k, k), field_text(k, old) or "-", field_text(k, new))
+                        for k, (old, new) in changes.items())
                     if "roles" in fields:
                         entry.reason += " (roles are not changed by an import)"
                 else:
                     entry.status, entry.reason = "exists", "Already in Slate - nothing to change"
         seen.add(username)
         plan.rows.append(entry)
+    # A manager who is new in this file is checked once the file's roles are
+    # known. With no Role column they get the role chosen for everybody, so
+    # create_user checks them (reports_to_problem) when the import runs.
+    if user_manager is not None:
+        for entry in plan.rows:
+            boss = entry.fields.get("reports_to")
+            roles = file_roles.get(boss) if boss and boss not in existing else None
+            if entry.status in ("new", "update") and roles and not user_manager.can_approve(roles):
+                entry.status = "invalid"
+                entry.reason = "Reports to: %s (%s) cannot approve leave" % (boss, ", ".join(roles))
     return plan
 
 
 FIELD_LABELS = {"display_name": "Name", "job_title": "Department", "joined_on": "Joined",
                 "employment": "Employment", "reports_to": "Reports to", "location": "Location"}
+
+
+def field_text(key, value) -> str:
+    """A planned value as the preview shows it: dates as '5 Oct 2026', like every screen."""
+    if isinstance(value, list):
+        return ", ".join(str(v) for v in value)
+    if key == "joined_on" and value:
+        from slate.core.domain.dates import format_date
+        return format_date(value) or str(value)
+    return str(value or "")
 
 
 def _profile_changes(record: dict, name: str, fields: dict) -> dict:
@@ -419,10 +450,14 @@ def write_template(path) -> Path:
 
 
 def export_users_csv(user_manager, path) -> Path:
-    """Everybody, with the details Users & Roles shows. Never includes passwords."""
+    """
+    Everybody, with the details Users & Roles shows. Never includes passwords.
+    Status and Last Day say who has left; an import does not read them.
+    """
     path = Path(path)
+    from slate.core.domain.user_manager import UserManager
     columns = ("Username", "Display Name", "Department", "Roles", "Joined", "Employment",
-               "Reports To", "Location")
+               "Reports To", "Location", "Status", "Last Day")
     with open(path, "w", newline="", encoding="utf-8-sig") as handle:
         writer = csv.writer(handle)
         writer.writerow(columns)
@@ -431,6 +466,8 @@ def export_users_csv(user_manager, path) -> Path:
             if isinstance(roles, str):
                 roles = [roles]
             joined = data.get("joined_on")
+            last = data.get("last_day")
+            status, _tone = UserManager.account_status(dict(data, username=username))
             # Neutralised: a display name like '=HYPERLINK(...)' is a formula
             # Excel would run when HR opened the file.
             writer.writerow([neutralise(v) for v in (
@@ -438,6 +475,7 @@ def export_users_csv(user_manager, path) -> Path:
                 " | ".join(str(r) for r in roles if r),
                 str(joined)[:10] if joined else "", data.get("employment") or "",
                 data.get("reports_to") or "", data.get("location") or "",
+                status, str(last)[:10] if last else "",
             )])
     return path
 

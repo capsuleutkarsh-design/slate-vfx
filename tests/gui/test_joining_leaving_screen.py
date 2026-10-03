@@ -63,10 +63,12 @@ def test_a_person_joining_and_leaving_has_two_rows(studio):
     assert "aarav" not in names
 
 
-def test_the_right_side_waits_for_a_choice_then_shows_one_direction(studio):
+def test_the_first_person_is_picked_then_one_direction_is_shown(studio):
+    """HR2-083: the first row is chosen instead of an empty half-screen."""
     from slate.gui.tabs.joining_leaving_view import JoiningLeavingView
     view = JoiningLeavingView("hr.meera", "HR", studio)
-    assert view.detail.isHidden() and not view.pick_empty.isHidden()
+    assert not view.detail.isHidden() and view.pick_empty.isHidden()
+    assert view._selected_person is not None and view.people_table.selectedItems()
     row = [r for r in range(view.people_table.rowCount())
            if view.people_table.item(r, 0).text() == "Aarav Sharma"
            and view.people_table.item(r, 1).text() == "Leaving"][0]
@@ -124,3 +126,44 @@ def test_who_gets_which_half(app, mock_db):
     assert joining_teams(["Developer"], ["ALL"]) == ["HR", "IT"]
     assert joining_teams(["HR"], ["HRMS"]) == ["HR"]
     assert joining_teams(["IT"], ["IT"]) == ["IT"]
+
+
+# ------------------------------------------------------------ round 2
+
+def test_the_start_dialog_prefills_from_the_person(studio):
+    """HR2-076: Employment and Department come from the record, not 'Staff'."""
+    from slate.gui.tabs.joining_leaving_view import StartPersonDialog
+    from slate.core.domain.onboarding_service import OnboardingService, LEAVING
+    from slate.core.domain.user_manager import UserManager
+    from slate.core.domain import people
+    UserManager(db=studio).add_user("pari", "pw", ["Artist"], "Pari Shah", "Paint",
+                                    employment="Freelance", joined_on="2026-06-01")
+    people.refresh()
+    dialog = StartPersonDialog(OnboardingService(studio), LEAVING)
+    dialog.person.set_username("pari")
+    assert dialog.employment.currentData() == "Freelance"
+    assert dialog.department.currentText() == "Paint"
+    assert dialog.effective.minimumDate().toString("yyyy-MM-dd") == "2026-06-01"
+
+
+def test_leaving_offers_people_who_have_gone_and_the_hint_shows(studio):
+    """HR2-077 / HR2-078."""
+    from slate.gui.tabs.joining_leaving_view import StartPersonDialog
+    from slate.core.domain.onboarding_service import OnboardingService, JOINING, LEAVING
+    from slate.core.domain.user_manager import UserManager
+    from slate.core.domain import people
+    UserManager(db=studio).add_user("kabir.left", "pw", ["Artist"], "Kabir", "Comp",
+                                    last_day="2026-01-15")
+    people.refresh()
+    leaving = StartPersonDialog(OnboardingService(studio), LEAVING)
+    texts = [leaving.person.itemText(i) for i in range(leaving.person.count())]
+    assert "Kabir (kabir.left) (left)" in texts
+    leaving.person.set_username("kabir.left")
+    assert leaving.start_button.isEnabled() and "already left" in leaving.person_hint.text()
+
+    joining = StartPersonDialog(OnboardingService(studio), JOINING)
+    joining.person.lineEdit().setText("nobody at all")
+    assert "No such person" in joining.person_hint.text()
+    joining.person.lineEdit().setText("Kabir")
+    assert "deactivated or has left" in joining.person_hint.text()
+    assert not joining.start_button.isEnabled()

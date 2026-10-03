@@ -14,13 +14,15 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout, QLabel,
-    QLineEdit, QMessageBox, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout,
+    QCheckBox, QComboBox, QDialog, QFileDialog, QHBoxLayout, QLabel,
+    QMessageBox, QPushButton, QScrollArea, QTableWidget, QTableWidgetItem, QVBoxLayout,
     QHeaderView, QWidget,
 )
 
 from slate.core.domain import biometric_import as bio
+from slate.core.domain.dates import format_date
 from slate.core.infra.gate import Gate
+from slate.gui.core.controls import make_button
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +79,8 @@ class BiometricImportDialog(QDialog):
         self.code_map: dict = {}
         self.result_summary: dict | None = None
         self.file_path: Path | None = None
+        self.outside: list = []
+        self._read = (0, 0)
 
         self.setWindowTitle("Import attendance from the biometric machine")
         self.setMinimumSize(900, 640)
@@ -91,7 +95,17 @@ class BiometricImportDialog(QDialog):
 
     # ------------------------------------------------------------------ ui
     def _build(self):
-        root = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        # Everything but the buttons scrolls, so with the skipped lines open
+        # the unknown codes are not cut to one row and a sliver.
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        body = QWidget()
+        scroll.setWidget(body)
+        outer.addWidget(scroll, 1)
+        root = QVBoxLayout(body)
+        root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(10)
 
         intro = QLabel(
@@ -104,7 +118,7 @@ class BiometricImportDialog(QDialog):
         # 1. File
         file_row = QHBoxLayout()
         self.path_edit = ElidedPath("No file chosen")
-        browse = QPushButton("Choose file...")
+        browse = make_button("Choose file\u2026", "secondary")
         browse.clicked.connect(self.choose_file)
         file_row.addWidget(QLabel("1. File"))
         file_row.addWidget(self.path_edit, 1)
@@ -142,6 +156,7 @@ class BiometricImportDialog(QDialog):
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalScrollBar().valueChanged.connect(
             self.roles_row.horizontalScrollBar().setValue)
+        self.table.setMinimumHeight(180)
         root.addWidget(self.table, 2)
 
         self.mapping_status = QLabel("")
@@ -173,12 +188,23 @@ class BiometricImportDialog(QDialog):
         root.addLayout(unk_row)
 
         self.unknown_table = QTableWidget(0, 3)
-        self.unknown_table.setHorizontalHeaderLabels(["Machine code", "Punches", "Slate Employee ID"])
+        self.unknown_table.setHorizontalHeaderLabels(["Machine code", "Punches", "Person"])
         self.unknown_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.unknown_table.verticalHeader().setVisible(False)
         self.unknown_table.setMaximumHeight(160)
         self.unknown_table.setMinimumHeight(90)
         root.addWidget(self.unknown_table, 1)
+
+        # Days before somebody joined or after their last day: listed, and
+        # left out unless HR say otherwise.
+        self.outside_label = QLabel("")
+        self.outside_label.setWordWrap(True)
+        self.outside_label.setStyleSheet(f"color: {Gate.WARN};")
+        self.outside_label.setVisible(False)
+        root.addWidget(self.outside_label)
+        self.import_outside = QCheckBox("Import those days anyway")
+        self.import_outside.setVisible(False)
+        root.addWidget(self.import_outside)
 
         self.summary = QLabel("")
         self.summary.setWordWrap(True)
@@ -196,13 +222,13 @@ class BiometricImportDialog(QDialog):
         self.failures_table.setVisible(False)
         root.addWidget(self.failures_table)
 
-        buttons = QDialogButtonBox()
-        self.import_btn = buttons.addButton("Import", QDialogButtonBox.ButtonRole.AcceptRole)
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        buttons.addWidget(make_button("Cancel", "ghost", on_click=self.reject))
+        self.import_btn = make_button("Import", "primary", on_click=self.run_import)
         self.import_btn.setEnabled(False)
-        buttons.addButton(QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self.run_import)
-        buttons.rejected.connect(self.reject)
-        root.addWidget(buttons)
+        buttons.addWidget(self.import_btn)
+        outer.addLayout(buttons)
 
     # ---------------------------------------------------------------- file
     def choose_file(self):
@@ -303,12 +329,18 @@ class BiometricImportDialog(QDialog):
 
         punches, skipped = bio.extract_punches(self.header, self.rows, self.mapping)
         self.days, self.unknown = bio.reduce_to_days(punches, self.known_ids, self.code_map)
+        self._read = (len(punches), len(skipped))
         self._fill_unknown()
         self._fill_skipped(skipped)
+        self._show_status()
+        self.summary.setText("")
 
+    def _show_status(self):
+        """The status line, the same after matching a code as after reading the file."""
+        punches, skipped = self._read
         people = len({d.user_id for d in self.days})
         text = ("%s read, %d skipped. %s for %s."
-                % (count(len(punches), "punch", "punches"), len(skipped),
+                % (count(punches, "punch", "punches"), skipped,
                    count(len(self.days), "day"), count(people, "person", "people")))
         if self.unknown:
             text += " %s %s nobody in Slate (%s)." % (
@@ -318,10 +350,20 @@ class BiometricImportDialog(QDialog):
         if self.days:
             first = min(d.day for d in self.days)
             last = max(d.day for d in self.days)
-            text += " Dates %s to %s." % (first.isoformat(), last.isoformat())
+            text += " Dates %s to %s." % (format_date(first), format_date(last))
         self.mapping_status.setText(text)
         self.mapping_status.setStyleSheet("")
-        self.summary.setText("")
+        self.outside = bio.outside_employment(self.days, self._records())
+        if self.outside:
+            shown = ", ".join("%s %s" % (d.user_id, format_date(d.day)) for d in self.outside[:6])
+            more = len(self.outside) - 6
+            self.outside_label.setText(
+                "%s fall before the person joined or after their last day (%s%s). "
+                "They are left out unless you tick below." % (
+                    count(len(self.outside), "day"), shown,
+                    ", and %d more" % more if more > 0 else ""))
+        self.outside_label.setVisible(bool(self.outside))
+        self.import_outside.setVisible(bool(self.outside))
         self.import_btn.setEnabled(bool(self.days))
 
     def _fill_skipped(self, skipped):
@@ -345,18 +387,23 @@ class BiometricImportDialog(QDialog):
         n = getattr(self, "_skipped_count", 0)
         self.btn_skipped.setText(("Hide " if shown else "Show ") + count(n, "skipped line"))
 
+    def _records(self) -> dict:
+        """Everybody's account record, read once per dialog."""
+        if getattr(self, "_all_records", None) is None:
+            try:
+                from slate.core.domain.user_manager import UserManager
+                self._all_records = UserManager().get_all_users() or {}
+            except Exception:
+                self._all_records = {}
+        return self._all_records
+
     def _people_snapshot(self):
         """
         Everybody the codes can be matched to, read once for all the rows:
         active people whose Employee ID Slate knows.
         """
         known = {str(i).strip().lower() for i in self.known_ids}
-        try:
-            from slate.core.domain.user_manager import UserManager
-            records = UserManager().get_all_users() or {}
-        except Exception:
-            records = {}
-        records = {u: r for u, r in records.items() if str(u).strip().lower() in known}
+        records = {u: r for u, r in self._records().items() if str(u).strip().lower() in known}
         for user_id in self.known_ids:          # an ID with no account row still counts
             records.setdefault(user_id, {"display_name": user_id})
 
@@ -386,7 +433,7 @@ class BiometricImportDialog(QDialog):
         for code, count in sorted(self.unknown.items(), key=lambda kv: -kv[1]):
             r = self.unknown_table.rowCount()
             self.unknown_table.insertRow(r)
-            label = code + (f"  -  {names[code]}" if names.get(code) else "")
+            label = code + (f" \u2013 {names[code]}" if names.get(code) else "")
             self.unknown_table.setItem(r, 0, QTableWidgetItem(label))
             self.unknown_table.setItem(r, 1, QTableWidgetItem(str(count)))
             picker = PersonPicker(people, placeholder="Skip, or type a name…")
@@ -396,6 +443,9 @@ class BiometricImportDialog(QDialog):
                 r, max(self.unknown_table.rowHeight(r), picker.sizeHint().height() + 8))
             if names.get(code):
                 picker.suggest(names[code])
+                # Show the start of the name, not its end ('i Gupta (vihaan...').
+                if picker.lineEdit() is not None:
+                    picker.lineEdit().setCursorPosition(0)
                 if picker.username():
                     self._assign(code, picker.username())
             picker.person_changed.connect(lambda username, c=code: self._assign(c, username))
@@ -408,28 +458,29 @@ class BiometricImportDialog(QDialog):
         # Re-reduce with the new match; the unknown list shrinks accordingly.
         punches, _ = bio.extract_punches(self.header, self.rows, self.mapping)
         self.days, self.unknown = bio.reduce_to_days(punches, self.known_ids, self.code_map)
-        self.mapping_status.setText("%s for %s; %s still unmatched." % (
-            count(len(self.days), "day"), count(len({d.user_id for d in self.days}), "person", "people"),
-            count(len(self.unknown), "code")))
-        self.import_btn.setEnabled(bool(self.days))
+        self._show_status()
 
     # ------------------------------------------------------------ import
     def run_import(self):
-        if not self.days:
+        days = self.days
+        if self.outside and not self.import_outside.isChecked():
+            left_out = {(d.user_id, d.day) for d in self.outside}
+            days = [d for d in self.days if (d.user_id, d.day) not in left_out]
+        if not days:
             return
-        people = len({d.user_id for d in self.days})
+        people = len({d.user_id for d in days})
         if QMessageBox.question(
             self, "Import attendance",
             "Write %s of attendance for %s?\n\nA day a workstation "
             "also recorded keeps the earlier in and the later out. Importing the same "
-            "file again changes nothing." % (count(len(self.days), "day"),
+            "file again changes nothing." % (count(len(days), "day"),
                                               count(people, "person", "people")),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
         ) != QMessageBox.StandardButton.Yes:
             return
 
         source = self.file_path.name if self.file_path else ""
-        result = bio.apply_days(self.days, self.attendance, source=source)
+        result = bio.apply_days(days, self.attendance, source=source)
         self.result_summary = result
         bio.save_profile(self.header, self.mapping, self.code_map,
                          label=source or "biometric export")
@@ -448,7 +499,7 @@ class BiometricImportDialog(QDialog):
             self.summary.setText(text)
             QMessageBox.warning(self, "Import attendance", text)
             return
-        QMessageBox.information(self, "Import attendance", text)
+        # Said once, by the Attendance page after this closes.
         self.accept()
 
     def show_failures(self, failures):

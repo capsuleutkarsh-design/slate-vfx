@@ -72,10 +72,53 @@ def test_ticks_wait_for_save_and_revert_puts_them_back(users):
 def test_delete_and_rename_wait_for_a_role(users):
     editor = _editor(users)
     assert not editor.btn_delete.isEnabled() and not editor.btn_rename.isEnabled()
-    editor.refresh_roles(select="Artist")
-    assert editor.btn_delete.isEnabled()
+    users.update_role_permissions("Runner", ["Settings"])
+    editor.refresh_roles(select="Runner")
+    assert editor.btn_delete.isEnabled() and editor.btn_rename.isEnabled()
+    editor.refresh_roles(select="Artist")             # the seeded artist holds it
+    assert editor.btn_rename.isEnabled() and not editor.btn_delete.isEnabled()
+    assert "another role" in editor.btn_delete.toolTip()
     editor.refresh_roles(select="Developer")
     assert not editor.btn_delete.isEnabled(), "Developer cannot be deleted"
+
+
+def test_rename_and_delete_follow_what_the_editor_may_change(users):
+    """HR2-065: HR looking at a role only Admin may change gets no live Rename / Delete."""
+    from slate.gui.role_editor import RoleEditor
+    users.add_user("hr.meera", "pw1234", ["HR"], "Meera", "HR")
+    users.update_role_permissions("Runner", ["ALL"])
+    editor = RoleEditor(users, editor_username="hr.meera")
+    editor.refresh_roles(select="Runner")
+    assert editor._role_refusal
+    assert not editor.btn_rename.isEnabled() and not editor.btn_delete.isEnabled()
+
+
+def test_heading_keeps_the_role_name_and_counts_active_people(users):
+    """HR2-072."""
+    users.add_user("a1", "pw1234", ["Artist"], "A", "Comp")
+    users.add_user("a2", "pw1234", ["Artist"], "B", "Comp")
+    users.deactivate_user("a2")
+    editor = _editor(users)
+    editor.refresh_roles(select="Artist")
+    assert "ARTIST" not in editor.lbl_editing.text() and "Artist" in editor.lbl_editing.text()
+    status = editor.lbl_status.text()
+    assert "user(s)" not in status and "active people" in status and "1 deactivated account" in status
+
+
+def test_the_permission_boxes_share_one_grid(users):
+    """HR2-071: every group's columns line up."""
+    from PySide6.QtCore import QPoint
+    editor = _editor(users)
+    editor.resize(1400, 900)
+    editor.show()
+    QApplication.processEvents()
+
+    def x(cb):
+        return cb.mapTo(editor, QPoint(0, 0)).x()
+    vfx_second = editor.tab_boxes["Rename Tool"]
+    assert x(editor.tab_boxes["HRMS"]) == x(vfx_second)
+    second_ability = list(editor.ability_boxes.values())[1]
+    assert x(second_ability) == x(vfx_second)
 
 
 def test_counts_read_cleanly_and_the_hr_key_is_unchanged(users):

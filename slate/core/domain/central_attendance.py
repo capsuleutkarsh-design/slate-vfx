@@ -208,6 +208,13 @@ class CentralAttendance:
                 return None
 
             user_id = user_name.lower().strip()
+            if automatic:
+                # Accounts that are not people (admin, tester) are never
+                # punched in by signing in.
+                from slate.core.domain import people
+                found = people.person(user_id, self.db)
+                if user_id in people.SERVICE_USERNAMES or (found is not None and found.is_service):
+                    return None
             today_date, now_time = self._server_now()
 
             # SMART AUTO-LOGOUT: close the forgotten days before today.
@@ -393,6 +400,8 @@ class CentralAttendance:
             "wfh": bool(meta.get("wfh", False)),
             "auto_logout": bool(meta.get("auto_logout", False)),
             "missing_punch_out": bool(meta.get("missing_punch_out", False)),
+            "cutoff": _time_text(meta.get("cutoff")),
+            "corrected": bool(meta.get("corrected", False)),
             "overnight": bool(meta.get("overnight", False)),
             "sessions": sessions if len(sessions) > 1 else [],
             "edited_by": meta.get("edited_by") or "",
@@ -468,23 +477,32 @@ class CentralAttendance:
 
     # ------------------------------------------------------------ corrections
     def update_record(self, user_name, year, month, day, in_time, out_time,
-                      editor=None, reason="", overnight=False):
+                      editor=None, reason="", overnight=False, sessions=None):
         """
         HR correcting a day. Returns (ok, message).
 
-        Who and why are kept with the day, and what it said before, so a
-        corrected day can be told from one somebody punched - attendance is
-        what payroll is run from. Both times empty is refused: that wrote an
-        empty row. Use clear_day to remove a day.
+        sessions: [(in, out), ...] for a day of more than one session; left
+        out, the day is the one in_time - out_time. A two-session day used to
+        open as its first in and last out and was saved as one session, so
+        the break became worked hours and the sessions were gone for good.
+
+        Who and why are kept with the day, and what it said before (every
+        session), so a corrected day can be told from one somebody punched -
+        attendance is what payroll is run from. Both times empty is refused:
+        that wrote an empty row. Use clear_day to remove a day.
         """
+        from slate.core.domain import attendance_rules as rules
         try:
             target_date = datetime.date(int(year), int(month), int(day))
         except (TypeError, ValueError) as exc:
             return False, str(exc)
-        in_text = str(in_time or "").strip()
-        out_text = str(out_time or "").strip()
-        if not in_text and not out_text:
-            return False, "Enter an in time, an out time or both. To remove the day, clear it."
+        typed = [(str(a or "").strip(), str(b or "").strip())
+                 for a, b in (sessions or [(in_time, out_time)])]
+        problem = rules.sessions_problem(typed, overnight)
+        if problem:
+            if problem.startswith("Enter an in time"):
+                problem += " To remove the day, clear it."
+            return False, problem
         if editor is not None and not str(reason or "").strip():
             return False, "Say why the day is being corrected."
         before = self.get_day(user_name, target_date) or {}
@@ -499,17 +517,22 @@ class CentralAttendance:
                 "corrected": True}
         if editor is not None:
             history = list(_meta_dict(before.get("metadata")).get("edit_history") or [])
-            history.append({
+            was = {
                 "by": str(editor), "at": meta["edited_at"], "reason": str(reason).strip(),
                 "was_in": _time_text(before.get("punch_in")),
                 "was_out": _time_text(before.get("punch_out")),
-            })
+            }
+            old_sessions = self._sessions(before) if before else []
+            if len(old_sessions) > 1:
+                was["was_sessions"] = [[_time_text(s.get("in")), _time_text(s.get("out"))]
+                                       for s in old_sessions]
+            history.append(was)
             meta.update({"edited_by": str(editor), "edit_reason": str(reason).strip(),
                          "edit_history": history})
-        # A correction replaces the day's times, so any sessions it had are
-        # replaced by the one HR typed.
-        meta["sessions"] = []
-        return self.write_day(user_name, target_date, in_text, out_text,
+        # The sessions HR typed replace the day's; one session needs no list.
+        meta["sessions"] = ([{"in": _time_text(a, True), "out": _time_text(b, True) or None}
+                             for a, b in typed] if len(typed) > 1 else [])
+        return self.write_day(user_name, target_date, typed[0][0], typed[-1][1],
                               pc_name="ADMIN_EDIT", metadata=meta)
 
     def clear_day(self, user_name, day, editor, reason) -> tuple:

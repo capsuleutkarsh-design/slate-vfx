@@ -179,10 +179,16 @@ def test_long_shifts_earn_half_then_whole_days():
     assert lp.comp_off_earned(monday, 19.0, set(), rules)["days"] == 1
 
 
-def test_working_a_weekly_off_earns_a_day_however_short():
+def test_working_a_weekly_off_earns_a_day_from_half_a_standard_day():
+    """HR2-039: a Sunday punch-in with no punch-out (0 hours) earned a full day."""
     rules = lp.policy({"comp_off_enabled": True})
     sunday = date(2026, 9, 13)
-    assert lp.comp_off_earned(sunday, 3.0, set(), rules)["days"] == 1
+    assert lp.comp_off_earned(sunday, 0.0, set(), rules)["days"] == 0
+    assert lp.comp_off_earned(sunday, 3.0, set(), rules)["days"] == 0
+    assert lp.comp_off_earned(sunday, 4.5, set(), rules)["days"] == 1
+    holiday = date(2026, 10, 2)
+    assert lp.comp_off_earned(holiday, 2.0, {holiday}, rules)["days"] == 0
+    assert lp.comp_off_earned(holiday, 6.0, {holiday}, rules)["days"] == 1
 
 
 def test_a_shift_across_midnight_is_counted_not_discarded():

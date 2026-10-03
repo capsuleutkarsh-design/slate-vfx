@@ -177,10 +177,19 @@ class CompOffService:
             if meta.get("auto_logout") or meta.get("missing_punch_out"):
                 continue
             # Every session of the day, overnight ones included (the same
-            # rule the attendance screens use).
-            from .attendance_rules import day_hours
-            hours = round(day_hours({"in": row.get("punch_in"), "out": row.get("punch_out"),
-                                     "sessions": meta.get("sessions")}), 2)
+            # rules the attendance screens use). A session still open - a
+            # Sunday punch-in nobody punched out of - is not a worked day yet,
+            # and neither is one attendance shows as a missing punch.
+            from . import attendance_rules as ar
+            entry = {"in": row.get("punch_in"), "out": row.get("punch_out"),
+                     "sessions": meta.get("sessions"), "auto_logout": meta.get("auto_logout"),
+                     "missing_punch_out": meta.get("missing_punch_out")}
+            if any(out is None for _, out in ar.sessions_of(entry)):
+                continue
+            if ar.day_state(entry, day, holidays=holidays_of(user), rules=rules) in (
+                    ar.MISSING_OUT, ar.MISSING_IN, ar.AUTO, ar.WORKING):
+                continue
+            hours = round(ar.day_hours(entry), 2)
             earned = lp.comp_off_earned(day, hours, holidays_of(user), rules)
             if earned["days"] <= 0:
                 continue

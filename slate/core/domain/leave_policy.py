@@ -252,7 +252,10 @@ def days_charged(start: date, end: date, holidays=None, rules=None,
     day away rather than just the number.
     """
     working = working_days_between(start, end, holidays, rules)
-    absorbed = sandwich_days(start, end, holidays, rules) if working else []
+    # Not for a half day: the rule is about not coming in on the working day
+    # between two days off, and somebody taking half of it does come in. Half
+    # a Saturday between a holiday Friday and a Sunday cost 2.5 days.
+    absorbed = sandwich_days(start, end, holidays, rules) if working and not half_day else []
 
     total = float(len(working) + len(absorbed))
     if half_day and total:
@@ -342,6 +345,10 @@ def comp_off_earned(day: date, hours_worked: float, holidays=None, rules=None) -
       - worked a long enough day
 
     Returns the days earned and the reason, so the ledger can say why.
+
+    A weekly off or holiday counts as worked from half a standard day
+    (comp_off_min_hours). Any punch at all used to earn the full day - a
+    Sunday punch-in with no punch-out, 0 hours, was a day of comp off.
     """
     rules = policy(rules)
     if not rules["comp_off_enabled"]:
@@ -349,6 +356,10 @@ def comp_off_earned(day: date, hours_worked: float, holidays=None, rules=None) -
 
     holidays = set(holidays or ())
     hours = float(hours_worked or 0)
+
+    off_day = day in holidays or is_weekly_off(day, rules)
+    if off_day and hours < comp_off_min_hours(rules):
+        return {"days": 0.0, "reason": ""}
 
     if day in holidays:
         return {"days": float(rules["comp_off_for_holiday"]),
@@ -366,6 +377,11 @@ def comp_off_earned(day: date, hours_worked: float, holidays=None, rules=None) -
         return {"days": 0.5, "reason": "Worked %.1f hours" % hours}
 
     return {"days": 0.0, "reason": ""}
+
+
+def comp_off_min_hours(rules=None) -> float:
+    """Hours on a weekly off or holiday before it counts as worked: half a standard day."""
+    return standard_day_hours(rules) / 2.0
 
 
 def comp_off_expires(earned_on: date, rules=None) -> date:

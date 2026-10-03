@@ -9,6 +9,7 @@ from slate.core.domain import permissions_catalog as catalog
 from slate.core.domain.user_manager import UserManager
 from slate.core.infra.gate import Gate
 from slate.gui.core.controls import make_button
+from slate.core.domain.people import plural
 
 ROLE_NAME_ROLE = Qt.ItemDataRole.UserRole
 
@@ -183,36 +184,45 @@ class RoleEditor(QWidget):
         always.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-style: italic;")
         perm_layout.addWidget(always)
 
-        self.tab_boxes = {}
-        for group in catalog.TAB_GROUPS:
-            perm_layout.addWidget(self._subsection(group))
-            grid = QGridLayout()
-            grid.setHorizontalSpacing(15)
-            grid.setVerticalSpacing(8)
-            tabs = [t for t in catalog.TABS if t.group == group]
-            for i, tab in enumerate(tabs):
-                cb = QCheckBox(tab.label.replace("&", "&&"))   # a single & is a shortcut marker
-                cb.setToolTip(f"Opens: {tab.opens}")
+        # One grid for every group and the abilities, headings spanning a
+        # row, so the columns line up down the page (each group had its own).
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(15)
+        grid.setVerticalSpacing(8)
+        for column in range(3):
+            grid.setColumnStretch(column, 1)
+        row = 0
+
+        def add_boxes(boxes):
+            nonlocal row
+            for i, cb in enumerate(boxes):
                 cb.setCursor(Qt.CursorShape.PointingHandCursor)
                 cb.stateChanged.connect(self.on_perm_changed)
+                grid.addWidget(cb, row + i // 3, i % 3)
+            row += (len(boxes) + 2) // 3
+
+        self.tab_boxes = {}
+        for group in catalog.TAB_GROUPS:
+            grid.addWidget(self._subsection(group), row, 0, 1, 3)
+            row += 1
+            boxes = []
+            for tab in (t for t in catalog.TABS if t.group == group):
+                cb = QCheckBox(tab.label.replace("&", "&&"))   # a single & is a shortcut marker
+                cb.setToolTip(f"Opens: {tab.opens}")
                 self.tab_boxes[tab.key] = cb
-                grid.addWidget(cb, i // 3, i % 3)
-            perm_layout.addLayout(grid)
+                boxes.append(cb)
+            add_boxes(boxes)
 
         # Abilities
-        perm_layout.addWidget(self._section("WHAT THIS ROLE CAN DO"))
-        ability_grid = QGridLayout()
-        ability_grid.setHorizontalSpacing(15)
-        ability_grid.setVerticalSpacing(8)
+        grid.addWidget(self._section("WHAT THIS ROLE CAN DO"), row, 0, 1, 3)
+        row += 1
         self.ability_boxes = {}
-        for i, ability in enumerate(catalog.ABILITIES):
+        for ability in catalog.ABILITIES:
             cb = QCheckBox(ability.label)
             cb.setToolTip(ability.help)
-            cb.setCursor(Qt.CursorShape.PointingHandCursor)
-            cb.stateChanged.connect(self.on_perm_changed)
             self.ability_boxes[ability.key] = cb
-            ability_grid.addWidget(cb, i // 2, i % 2)
-        perm_layout.addLayout(ability_grid)
+        add_boxes(list(self.ability_boxes.values()))
+        perm_layout.addLayout(grid)
         perm_layout.addStretch()
 
         scroll.setWidget(perm_container)
@@ -258,7 +268,9 @@ class RoleEditor(QWidget):
     # ----------------------------------------------------------------- roles
     def refresh_roles(self, select=None):
         self.role_list.clear()
-        users = self.user_manager.get_all_users() or {}
+        # Active people: a deactivated account does not use the role.
+        users = self.user_manager.active_users() if hasattr(self.user_manager, "active_users") \
+            else (self.user_manager.get_all_users() or {})
         counts = {}
         for data in users.values():
             roles = data.get("roles") or []
@@ -268,7 +280,8 @@ class RoleEditor(QWidget):
             n = counts.get(str(role).strip().lower(), 0)
             item = QListWidgetItem(f"{role} ({n})" if n else role)
             item.setData(ROLE_NAME_ROLE, role)
-            item.setToolTip(f"{n} user(s) have this role" if n else "Nobody has this role yet")
+            item.setToolTip("Held by " + plural(n, "active person", "active people") if n
+                            else "No active person has this role")
             self.role_list.addItem(item)
 
         # Reset Interaction State
@@ -364,12 +377,19 @@ class RoleEditor(QWidget):
         self._set_dirty(False)
         self.current_role = item.data(ROLE_NAME_ROLE) or item.text()
         locked = self._is_locked(self.current_role)
-        self.btn_rename.setEnabled(self.can_edit and not locked)
-        self.btn_delete.setEnabled(self.can_edit and not locked)
-        self.lbl_editing.setText(f"Permissions: <span style='color:{Gate.ACCENT};'>{self.current_role.upper()}</span>")
+        import html
+        self.lbl_editing.setText(f"Permissions: <span style='color:{Gate.ACCENT};'>"
+                                 f"{html.escape(str(self.current_role))}</span>")
         self._stored = self.user_manager.role_permissions(self.current_role)
         holders = self.user_manager.users_with_role(self.current_role)
-        status = f"{len(holders)} user(s) have this role." if holders else "Nobody has this role yet."
+        active = set(getattr(self.user_manager, "active_users", lambda: {h: 1 for h in holders})())
+        in_use = [h for h in holders if h in active]
+        gone = len(holders) - len(in_use)
+        status = ("Held by %s" % plural(len(in_use), "active person", "active people")) if in_use \
+            else "No active person has this role"
+        if gone:
+            status += " (and %s)" % plural(gone, "deactivated account")
+        status += "."
         self._role_refusal = ""
         if self._is_locked(self.current_role):
             status += " Developer always has full access and cannot be changed."
@@ -383,6 +403,14 @@ class RoleEditor(QWidget):
                 status += (" You can give only what you hold yourself; Full access and "
                            "the sensitive abilities are for Admin and Developer.")
         self.lbl_status.setText(status)
+        # Only what this editor may actually do: Rename and Delete used to be
+        # live on a role they could not change, and refuse after a dialog.
+        editable = self.can_edit and not locked and not self._role_refusal
+        self.btn_rename.setEnabled(editable)
+        self.btn_delete.setEnabled(editable and not holders)
+        self.btn_delete.setToolTip(
+            "Give %s another role on the Users tab first." % plural(len(holders), "person", "people")
+            if editable and holders else "")
         self._show_stored()
 
     def _show_stored(self, perms=None):
@@ -553,7 +581,8 @@ class RoleEditor(QWidget):
             shown = ", ".join(holders[:10]) + (f" and {len(holders) - 10} more" if len(holders) > 10 else "")
             QMessageBox.warning(
                 self, "Role in use",
-                f"{len(holders)} user(s) still have the {self.current_role} role:\n\n{shown}\n\n"
+                f"{plural(len(holders), 'person', 'people')} still "
+                f"{'has' if len(holders) == 1 else 'have'} the {self.current_role} role:\n\n{shown}\n\n"
                 "Give them another role on the Users tab first, then delete it.")
             return
 
