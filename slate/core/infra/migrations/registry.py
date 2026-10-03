@@ -127,6 +127,8 @@ IT = (
          "slate.core.infra.migrations.it_schema:blank_junk_hardware_values", once=True),
     step("it_adopt_legacy_licences",
          "slate.core.infra.migrations.it_schema:adopt_legacy_licences", once=True),
+    step("it_legacy_owners_to_loans",
+         "slate.core.infra.migrations.it_schema:legacy_owners_to_loans", once=True),
 )
 
 # ---- system (Settings, Data Center, Audit logs, Live Ops) ----

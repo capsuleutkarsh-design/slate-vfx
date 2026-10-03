@@ -172,12 +172,68 @@ def test_a_requester_reply_takes_the_ticket_off_waiting():
     assert changes["waiting_seconds"] == 2 * 3600 and changes["waiting_since"] is None
 
 
-def test_a_requester_reply_reopens_a_closed_ticket():
-    """IT-098."""
-    ticket = _t(status="Closed", submitted_by="ravi", resolved_at=SAT)
-    changes, event = sd.plan_after_reply(ticket, "ravi", MON, CAL)
-    assert changes["status"] == "Open" and changes["resolved_at"] is None
-    assert "Reopened" in event
+def test_a_requesters_thank_you_does_not_reopen_a_resolved_ticket():
+    """IT2-002: replying leaves it resolved; Still broken - reopen is how it goes back."""
+    for status in ("Resolved", "Closed"):
+        ticket = _t(status=status, submitted_by="ravi", resolved_at=SAT)
+        assert sd.plan_after_reply(ticket, "ravi", MON, CAL) == ({}, "")
+
+
+def test_an_it_reply_on_an_owned_ticket_only_records_the_response():
+    ticket = _t(submitted_by="ravi", assigned_to="it.joe", status="In Progress")
+    changes, _ = sd.plan_after_reply(ticket, "it.sana", MON.replace(hour=11), CAL)
+    assert changes == {"first_response_at": MON.replace(hour=11)}
+
+
+def test_handling_records_the_response_and_the_owner_once():
+    """IT2-014."""
+    now = MON.replace(hour=11)
+    assert sd.plan_handled(_t(), "it.sana", now) == {"first_response_at": now, "assigned_to": "it.sana"}
+    assert sd.plan_handled(_t(first_response_at=MON, assigned_to="it.joe"), "it.sana", now) == {}
+
+
+def test_durations_never_round_up_to_a_unit_that_is_not_there():
+    """IT2-080."""
+    assert sd.format_duration(0.999) == "59 min"
+    assert sd.format_duration(8.6, around_the_clock=False, calendar=CAL) == "8 h"
+    assert sd.format_duration(17.6, around_the_clock=False, calendar=CAL) == "1 d 8 h"
+    assert sd.format_duration(23.6) == "23 h"
+    assert sd.format_duration(24.0) == "1 d"
+    assert sd.format_duration(0.01) == "1 min"
+
+
+def test_an_escalated_ticket_is_measured_from_the_escalation():
+    """IT2-013: sla_from restarts the promise."""
+    ticket = _t(priority="P1", created_at=MON.replace(hour=10) - (MON - SAT),
+                sla_from=MON.replace(hour=10))
+    state = sd.sla_state(ticket, MON.replace(hour=10, minute=5), CAL)
+    assert state["state"] != "breached" and state["hours_left"] == pytest.approx(0.25 - 5 / 60)
+
+
+def test_a_day_ending_before_it_starts_is_logged_not_silent(caplog):
+    """IT2-079."""
+    with caplog.at_level("WARNING"):
+        cal = sd.calendar_from({"start": "22:00", "end": "06:00", "days": [0, 1, 2, 3, 4]})
+    assert cal.start == sd.DEFAULT_CALENDAR.start
+    assert "end before they start" in caplog.text
+
+
+def test_the_working_days_are_the_studio_policys_weekly_offs(monkeypatch):
+    """The working week is kept once: the studio policy's weekly offs."""
+    import slate.core.infra.studio_settings as settings
+    import slate.core.infra.studio_policy as policy
+
+    class _NoHolidays:
+        def execute_query(self, *_a, **_k):
+            return []
+
+    monkeypatch.setattr(settings, "get_setting",
+                        lambda key, default=None, db=None: {"start": "09:00", "end": "18:00",
+                                                            "days": [0, 1, 2, 3, 4, 5]})
+    monkeypatch.setattr(policy, "studio_rules", lambda db=None: {"weekly_offs": [5, 6]})
+    cal = sd.studio_calendar(_NoHolidays())
+    assert cal.days == frozenset({0, 1, 2, 3, 4})
+    assert cal.describe() == "Mon–Fri, 09:00–18:00"
 
 
 def test_an_it_reply_picks_up_an_unassigned_ticket():
@@ -199,6 +255,16 @@ def test_monthly_report_counts_kept_promises():
     report = sd.sla_report(tickets, 2026, 9)
     assert report == [{"priority": "P2", "count": 2, "response_pct": 100,
                        "resolution_pct": 50, "median_hours": 8.0}]
+    # IT2-017: a span of months.
+    assert [line["count"] for line in sd.sla_report(tickets, 2026, 9, months=12)] == [2, 1]
+
+
+def test_a_ticket_resolved_before_outcomes_were_stored_is_measured_not_missed():
+    """IT2-016."""
+    legacy = {"priority": "P3", "created_at": MON.replace(hour=10),
+              "first_response_at": MON.replace(hour=11), "resolved_at": MON.replace(hour=15)}
+    [line] = sd.sla_report([legacy], 2026, 9, calendar=CAL)
+    assert line["response_pct"] == 100 and line["resolution_pct"] == 100
 
 
 def test_the_help_pages_describe_what_the_screens_do():

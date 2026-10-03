@@ -78,17 +78,29 @@ class HardwareRepository:
     # ------------------------------------------------------------- reading
     def machines(self) -> list:
         """
-        Every machine, with who holds it on the ledger (holder) and their name.
-        Raises on a refused read - a failed read is not an empty inventory.
+        Every machine, with who holds it on the ledger (holder), their name,
+        and how many loans it has ever had. Raises on a refused read - a failed
+        read is not an empty inventory.
+
+        Who holds a machine is the ledger's alone. The old typed-in
+        assigned_to used to stand in for it, so a machine read "Assigned to
+        artist16" while Collect was off and the leaving checklist never asked
+        for it back; it is only a note now. A machine in service is Active
+        when somebody holds it and Available when nobody does, whatever the
+        status column was left saying. Names sort as people count them:
+        WS-COMP-2 before WS-COMP-10.
         """
+        from slate.core.domain.batch_rename import natural_key
         extra = sorted(self.columns() - {"location", "cpu"})
         rows = self.db.execute_query(
             "SELECT h.id, h.machine_name, h.gpu, h.cpu, h.storage, h.ram, h.status, h.location, "
-            "       h.assigned_to%s, a.user_id AS holder, u.display_name "
+            "       h.assigned_to%s, a.user_id AS holder, u.display_name, "
+            "       (SELECT COUNT(*) FROM asset_assignments x "
+            "        WHERE LOWER(x.machine_name) = LOWER(h.machine_name)) AS loans "
             "FROM hardware_inventory h "
             "LEFT JOIN asset_assignments a ON LOWER(a.machine_name) = LOWER(h.machine_name) "
             "     AND a.returned_on IS NULL "
-            "LEFT JOIN ut_users u ON LOWER(u.username) = LOWER(COALESCE(a.user_id, h.assigned_to)) "
+            "LEFT JOIN ut_users u ON LOWER(u.username) = LOWER(a.user_id) "
             "ORDER BY LOWER(h.machine_name)" % "".join(", h." + c for c in extra), fetch="all")
         if rows is None:
             reason = self.db.last_error() if hasattr(self.db, "last_error") else ""
@@ -101,19 +113,39 @@ class HardwareRepository:
                 continue
             seen.add(key)
             r["status"] = hw.normalise_status(r.get("status"))
+            if r["status"] in (hw.ACTIVE, hw.AVAILABLE, ""):
+                r["status"] = hw.status_for_service(bool(r.get("holder")))
             out.append(r)
+        out.sort(key=lambda r: natural_key(r.get("machine_name") or ""))
         return out
 
     @staticmethod
-    def counts(rows) -> dict:
+    def figure(row) -> str:
+        """
+        The one figure a machine counts in: 'retired' (end of life), else
+        'on_loan' (somebody holds it - in repair or not), else 'repair', else
+        'available'. The figures add up to the total, and clicking one shows
+        exactly what it counted; a machine in repair while still on loan was in
+        two of them, an Active one with no loan in none.
+        """
+        if hw.is_end_of_life(row.get("status")):
+            return "retired"
+        if row.get("holder"):
+            return "on_loan"
+        if row.get("status") == hw.REPAIR:
+            return "repair"
+        return "available"
+
+    @classmethod
+    def counts(cls, rows) -> dict:
         """The figures: total in service, available, in repair, out on loan."""
-        live = [r for r in rows if not hw.is_end_of_life(r.get("status"))]
+        figures = [cls.figure(r) for r in rows]
         return {
-            "total": len(live),
-            "available": sum(1 for r in live if r.get("status") == hw.AVAILABLE and not r.get("holder")),
-            "repair": sum(1 for r in live if r.get("status") == hw.REPAIR),
-            "on_loan": sum(1 for r in live if r.get("holder")),
-            "retired": len(rows) - len(live),
+            "total": len(rows) - figures.count("retired"),
+            "available": figures.count("available"),
+            "repair": figures.count("repair"),
+            "on_loan": figures.count("on_loan"),
+            "retired": figures.count("retired"),
         }
 
     @staticmethod
@@ -138,6 +170,26 @@ class HardwareRepository:
             return False
         return not (exclude and str(dict(row)["machine_name"]).lower() == exclude.lower())
 
+    def events(self, machine_name) -> list:
+        """Status changes and renames of this machine, newest first."""
+        from .migrations.workplace_schema import _table_exists
+        if not _table_exists(self.db, "hardware_events"):
+            return []
+        rows = self.db.execute_query(
+            "SELECT happened_at, done_by, what FROM hardware_events "
+            "WHERE LOWER(machine_name) = LOWER(%s) ORDER BY happened_at DESC, id DESC",
+            (machine_name,), fetch="all")
+        return [dict(r) for r in rows or []]
+
+    def _log(self, tx, machine_name, by, what):
+        """A line for the machine's History (inside the change's own transaction)."""
+        from datetime import datetime
+        from .migrations.workplace_schema import _table_exists
+        if _table_exists(self.db, "hardware_events"):
+            tx.write("INSERT INTO hardware_events (machine_name, happened_at, done_by, what) "
+                     "VALUES (%s, %s, %s, %s)",
+                     (machine_name, datetime.now().replace(microsecond=0), by or None, what))
+
     def history(self, machine_name) -> list:
         """Every loan of this machine, newest first."""
         rows = self.db.execute_query(
@@ -160,7 +212,7 @@ class HardwareRepository:
     def add(self, name: str, fields: dict, status: str = hw.AVAILABLE):
         """A new machine (never Active - nobody has it yet). Returns the WriteResult."""
         name = str(name or "").strip()
-        problem = hw.name_problem(name)
+        problem = hw.name_problem(name, (fields or {}).get("type"))
         if problem:
             raise HardwareError(problem)
         if self.exists(name):
@@ -217,18 +269,24 @@ class HardwareRepository:
                                     % (name, people.display_name(holder)))
             if not self.service.return_machine(name, holder):
                 raise HardwareError("%s could not be collected back, so its status was not changed." % name)
-        result = self.db.execute_update(
-            "UPDATE hardware_inventory SET status = %s WHERE LOWER(machine_name) = LOWER(%s)",
-            (target, name))
-        if not getattr(result, "changed", bool(result)):
+        try:
+            with atomic(self.db) as tx:
+                tx.write("UPDATE hardware_inventory SET status = %s WHERE LOWER(machine_name) = LOWER(%s)",
+                         (target, name), expect_rows=True)
+                self._log(tx, name, by, "Status set to %s" % target)
+        except DatabaseUnavailableError:
+            raise
+        except Exception as exc:
             raise HardwareError("%s was not changed: %s" % (
-                name, getattr(result, "error", "") or "it is no longer in the inventory"))
+                name, str(exc) or "it is no longer in the inventory"))
         return target
 
-    def rename(self, old: str, new: str) -> bool:
+    def rename(self, old: str, new: str, by: str = "") -> bool:
         """Rename a machine and everything that names it, together."""
         new = str(new or "").strip()
-        problem = hw.name_problem(new)
+        kind = self.db.execute_query("SELECT type FROM hardware_inventory WHERE LOWER(machine_name) = LOWER(%s)",
+                                     (old,), fetch="one") if "type" in self.columns() else None
+        problem = hw.name_problem(new, dict(kind).get("type") if kind else None)
         if problem:
             raise HardwareError(problem)
         if new.lower() != old.lower() and self.exists(new):
@@ -239,6 +297,10 @@ class HardwareRepository:
                      (new, old), expect_rows=True)
             tx.write("UPDATE asset_assignments SET machine_name = %s WHERE LOWER(machine_name) = LOWER(%s)",
                      (new, old))
+            if _table_exists(self.db, "hardware_events"):
+                tx.write("UPDATE hardware_events SET machine_name = %s WHERE LOWER(machine_name) = LOWER(%s)",
+                         (new, old))
+            self._log(tx, new, by, "Renamed from %s" % old)
             if _table_exists(self.db, "onboarding_workflows") and _column_exists(
                     self.db, "onboarding_workflows", "asset_name"):
                 tx.write("UPDATE onboarding_workflows SET asset_name = %s "
@@ -287,9 +349,14 @@ class HardwareRepository:
         """
         Add machines Live Ops has seen; refresh the specs of known ones without
         ever blanking a value somebody typed. Returns {added, updated, failed,
-        unreadable: [file names]}.
+        unreadable: [file names], bad_names: [names], end_of_life: [(name,
+        status)]} - a Retired, Lost or Disposed machine reporting in is named,
+        not refreshed in silence.
         """
-        summary = {"added": 0, "updated": 0, "failed": 0, "unreadable": [], "names": []}
+        summary = {"added": 0, "updated": 0, "failed": 0, "unreadable": [], "names": [],
+                   "bad_names": [], "end_of_life": []}
+        statuses = {str(r.get("machine_name") or "").lower(): r.get("status")
+                    for r in self.machines()}
         for path in sorted(Path(status_dir).glob("*.json")):
             try:
                 spec = self.read_report(path)
@@ -298,9 +365,14 @@ class HardwareRepository:
                 summary["unreadable"].append(path.name)
                 continue
             name = spec["machine_name"]
-            if not name or hw.name_problem(name):
+            if not name:
                 summary["unreadable"].append(path.name)
                 continue
+            if hw.name_problem(name):
+                summary["bad_names"].append(name)
+                continue
+            if hw.is_end_of_life(statuses.get(name.lower())):
+                summary["end_of_life"].append((name, statuses[name.lower()]))
             try:
                 if self.exists(name):
                     result = self.db.execute_update(

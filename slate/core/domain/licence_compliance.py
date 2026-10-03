@@ -45,13 +45,15 @@ SOON = "Renews soon"
 UNDER = "Under-used"
 OK = "Healthy"
 UNKNOWN = "No readings"
+# Measured before, but not inside the peak window: not the same as never.
+STALE = "Not measured lately"
 
 # Worst first. A screen that sorts by this shows the audit risk above the
 # housekeeping, which is the order somebody in IT actually works in.
-SEVERITY = {OVER: 0, EXPIRED: 1, SOON: 2, UNDER: 3, UNKNOWN: 4, OK: 5}
+SEVERITY = {OVER: 0, EXPIRED: 1, SOON: 2, UNDER: 3, STALE: 4, UNKNOWN: 4, OK: 5}
 
 TONE = {OVER: "BAD", EXPIRED: "BAD", SOON: "WARN",
-        UNDER: "INFO", UNKNOWN: "IDLE", OK: "OK"}
+        UNDER: "INFO", STALE: "IDLE", UNKNOWN: "IDLE", OK: "OK"}
 
 
 def _register_setting():
@@ -141,7 +143,8 @@ def is_renewal_due(left, renewal_days: int = RENEWAL_SOON_DAYS) -> bool:
     return left is not None and left <= renewal_days
 
 
-def state(seats, peak, expiry, today: date = None, renewal_days: int = RENEWAL_SOON_DAYS) -> str:
+def state(seats, peak, expiry, today: date = None, renewal_days: int = RENEWAL_SOON_DAYS,
+          last_days: int = None) -> str:
     """
     One word for where this licence stands.
 
@@ -160,7 +163,7 @@ def state(seats, peak, expiry, today: date = None, renewal_days: int = RENEWAL_S
     if left is not None and left <= renewal_days:
         return SOON
     if peak is None:
-        return UNKNOWN
+        return UNKNOWN if last_days is None else STALE
     use = utilisation(peak, seats)
     if use is not None and use < UNDER_USED_RATIO:
         return UNDER
@@ -169,6 +172,13 @@ def state(seats, peak, expiry, today: date = None, renewal_days: int = RENEWAL_S
 
 def tone(state_name: str) -> str:
     return TONE.get(state_name, "IDLE")
+
+
+def money_text(amount, currency=None) -> str:
+    """A yearly cost as people read it: no '.00' on a whole amount ('₹35,00,000')."""
+    from slate.core.domain.money import format_money, to_decimal
+    value = to_decimal(amount)
+    return format_money(value, currency, decimals=0 if value == value.to_integral_value() else 2)
 
 
 def keep_seats(peak) -> int:
@@ -199,7 +209,7 @@ def spare_cost(annual_cost, seats, peak) -> Optional[Decimal]:
 
 
 def describe(seats, peak, expiry, today: date = None, renewal_days: int = RENEWAL_SOON_DAYS,
-             spare_cost_text: str = "") -> str:
+             spare_cost_text: str = "", last_days: int = None) -> str:
     """
     The finding, in a sentence somebody can act on.
 
@@ -209,7 +219,12 @@ def describe(seats, peak, expiry, today: date = None, renewal_days: int = RENEWA
     """
     seats = int(seats or 0)
     left = days_until(expiry, today)
-    name = state(seats, peak, expiry, today, renewal_days)
+    name = state(seats, peak, expiry, today, renewal_days, last_days)
+    # A licence measured before, just not inside the window (last_days: how
+    # long ago the newest reading is). It used to read "No usage has been
+    # recorded" - false, and the same for every licence once readings lapse.
+    lapsed = ("Nothing measured in this window - the last reading was %s ago."
+              % plural(last_days, "day")) if last_days is not None else ""
     renewal = ""
     if left is not None and left <= renewal_days:
         renewal = " %s - decide before purchasing needs lead time." % renewal_phrase(left)
@@ -223,7 +238,8 @@ def describe(seats, peak, expiry, today: date = None, renewal_days: int = RENEWA
         return ("%s. Anyone relying on it is already stuck." % renewal_phrase(left))
     if name == SOON:
         if peak is None:
-            detail = " Nothing has been measured, so there is no case for changing the seat count."
+            detail = (" " + lapsed + " Take a fresh one before deciding." if lapsed else
+                      " Nothing has been measured, so there is no case for changing the seat count.")
         else:
             use = utilisation(peak, seats) or 0.0
             spare = max(0, seats - int(peak))
@@ -246,6 +262,8 @@ def describe(seats, peak, expiry, today: date = None, renewal_days: int = RENEWA
         return ("Never more than %d of %s in use at once. %s %s being paid for and not "
                 "worked with.%s" % (int(peak), plural(seats, "seat"), plural(spare, "seat"),
                                     "is" if spare == 1 else "are", cost))
+    if name == STALE:
+        return lapsed + " Record usage again so the peak means something."
     if name == UNKNOWN:
         return ("No usage has been recorded, so there is nothing to renew "
                 "against except the invoice.")

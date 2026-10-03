@@ -198,8 +198,12 @@ def test_the_one_time_repair_normalises_stored_values(repo):
     db.execute_update("INSERT INTO hardware_inventory (machine_name, status, location) VALUES (%s, %s, %s)",
                       ("render-node-02", "active", "N/A"))
     it_schema.normalise_hardware(db)
+    stored = db.execute_query("SELECT status FROM hardware_inventory WHERE machine_name = %s",
+                              ("render-node-02",), fetch="one")
+    assert dict(stored)["status"] == "Active"
     row = _row(repo, "render-node-02")
-    assert row["status"] == "Active" and row["location"] is None
+    # Nobody holds it on the ledger, so in service it reads Available (IT2-035).
+    assert row["status"] == "Available" and row["location"] is None
 
 
 def test_one_issuable_rule_for_hardware_and_joining(repo):
@@ -221,3 +225,69 @@ def test_old_none_gb_values_read_and_store_as_nothing(repo):
                            ("OLD-RAM", "Available", "None GB"))
     it_schema.blank_junk_hardware_values(repo.db)
     assert _row(repo, "OLD-RAM")["ram"] is None
+
+
+
+# ------------------------------------------------------------------ round 2
+
+def test_the_ledger_alone_says_who_holds_a_machine(repo):
+    """IT2-035: a typed-in owner is moved onto the ledger once, or left as a note."""
+    from slate.core.infra.migrations import it_schema
+    db = repo.db
+    for name, owner in (("WS-ROTO-05", "artist02"), ("WS-ROTO-06", "Somebody Old")):
+        db.execute_update("INSERT INTO hardware_inventory (machine_name, status, assigned_to) "
+                          "VALUES (%s, 'Active', %s)", (name, owner))
+    assert _row(repo, "WS-ROTO-05")["holder"] is None                  # not the typed copy
+    it_schema.legacy_owners_to_loans(db)
+    assert repo.holder("WS-ROTO-05") == "artist02"
+    assert _row(repo, "WS-ROTO-05")["status"] == hw.ACTIVE
+    assert repo.holder("WS-ROTO-06") is None and _row(repo, "WS-ROTO-06")["status"] == hw.AVAILABLE
+    assert "WS-ROTO-06" in repo.service.available_machines()
+    assert "WS-ROTO-05" not in repo.service.available_machines()
+
+
+def test_the_figures_add_up_and_name_one_place_each(repo):
+    """IT2-036: in repair while on loan counts once (on loan)."""
+    repo.add("WS-1", {})
+    repo.add("WS-2", {}, status=hw.REPAIR)
+    repo.add("WS-3", {})
+    repo.service.issue_machine("WS-3", "artist02", "it")
+    repo.db.execute_update("UPDATE hardware_inventory SET status = 'Repair' WHERE machine_name = 'WS-3'")
+    counts = repo.counts(repo.machines())
+    assert counts == {"total": 3, "available": 1, "repair": 1, "on_loan": 1, "retired": 0}
+
+
+def test_numbered_machines_sort_as_counted(repo):
+    """IT2-043."""
+    for name in ("WS-COMP-10", "WS-COMP-2", "WS-COMP-1"):
+        repo.add(name, {})
+    assert [r["machine_name"] for r in repo.machines()] == ["WS-COMP-1", "WS-COMP-2", "WS-COMP-10"]
+
+
+def test_peripherals_need_a_name_not_a_hostname_and_sizes_read_in_tb():
+    """IT2-047 / IT2-042."""
+    assert hw.name_problem("Dell U2723QE #3")
+    assert hw.name_problem("Dell U2723QE #3", "Monitor") == ""
+    assert hw.size_text("9315 GB") == "9.1 TB" and hw.size_text("512 GB") == "512 GB"
+    assert hw.size_text(None) == hw.MISSING
+
+
+def test_status_changes_and_renames_are_in_the_history(repo):
+    """IT2-049."""
+    repo.add("WS-9", {})
+    repo.set_status("WS-9", hw.RETIRED, by="it.sana")
+    repo.rename("WS-9", "WS-9B", by="it.sana")
+    whats = [e["what"] for e in repo.events("WS-9B")]
+    assert whats == ["Renamed from WS-9", "Status set to Retired"]
+
+
+def test_sync_names_bad_names_and_end_of_life_machines(repo, tmp_path):
+    """IT2-038 / IT2-040."""
+    import json
+    repo.add("WS-OLD", {})
+    repo.set_status("WS-OLD", hw.RETIRED)
+    (tmp_path / "a.json").write_text(json.dumps({"ComputerName": "NEW BOX 7"}))
+    (tmp_path / "b.json").write_text(json.dumps({"ComputerName": "WS-OLD", "CPU": "i7"}))
+    summary = repo.sync_from_reports(tmp_path)
+    assert summary["bad_names"] == ["NEW BOX 7"] and summary["unreadable"] == []
+    assert summary["end_of_life"] == [("WS-OLD", hw.RETIRED)]

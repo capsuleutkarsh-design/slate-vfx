@@ -14,8 +14,9 @@ standard ITIL one.
 Response and resolution are different promises, and only response is a promise
 about attention: it is when a human has looked at it, not when it is fixed.
 
-The clocks run on the studio's working hours (Settings > Studio Currency,
-Rates & Hours; Mon-Sat 10:00-19:00 by default, studio holidays skipped). A
+The clocks run on the studio's working hours (the hours from Settings > Studio
+Currency, Rates & Hours, the days from the studio policy's weekly offs; Mon-Sat
+10:00-19:00 by default, studio holidays skipped). A
 P1 is the exception and runs around the clock: a studio-wide outage at 23:00
 is still an outage. The promise shown to the person raising a ticket is worded
 from the same calendar the queue measures with, so the two cannot disagree -
@@ -292,6 +293,12 @@ def calendar_from(working_hours: Optional[dict], holidays: Iterable = ()) -> Bus
     except (TypeError, ValueError):
         days = DEFAULT_CALENDAR.days
     if end <= start:
+        # Settings refuses a day that ends before it starts (a night shift
+        # across midnight cannot be told apart from a typo there), so this is
+        # an old or hand-written value: said in the log, not swapped silently.
+        logger.warning("Working hours %s-%s end before they start; the SLA clock uses %s-%s.",
+                       hours.get("start"), hours.get("end"),
+                       DEFAULT_CALENDAR.start.strftime("%H:%M"), DEFAULT_CALENDAR.end.strftime("%H:%M"))
         start, end = DEFAULT_CALENDAR.start, DEFAULT_CALENDAR.end
     clean = set()
     for value in holidays or ():
@@ -311,6 +318,10 @@ def studio_calendar(db=None) -> BusinessCalendar:
     """
     The studio's working hours and studio-wide holidays, from the database.
 
+    The working days are the studio policy's weekly offs (Settings > Studio
+    Policy), the one place the working week is kept - the days leave and
+    attendance count too. The hours of the day come from working_hours.
+
     A holiday that belongs to one office only does not stop the desk: IT
     answer the whole studio. An unreachable database still raises, so the
     screen can say so; anything else falls back to the default hours.
@@ -321,7 +332,11 @@ def studio_calendar(db=None) -> BusinessCalendar:
         DatabaseUnavailableError = ConnectionError
     try:
         from slate.core.infra.studio_settings import get_setting
-        hours = get_setting("working_hours", db=db)
+        hours = dict(get_setting("working_hours", db=db) or {})
+        from slate.core.domain import leave_policy as lp
+        from slate.core.infra.studio_policy import studio_rules
+        offs = {int(d) for d in lp.policy(studio_rules(db)).get("weekly_offs") or []}
+        hours["days"] = [d for d in range(7) if d not in offs]
     except DatabaseUnavailableError:
         raise
     except Exception as exc:
@@ -391,6 +406,15 @@ def _as_datetime(value):
         return None
 
 
+def clock_start(ticket: dict):
+    """
+    When the ticket's promises are measured from: when it was raised, or when
+    IT last raised its priority. An old P4 escalated to P1 used to be measured
+    from the day it was raised - breached the moment it was escalated.
+    """
+    return _as_datetime(ticket.get("sla_from")) or _as_datetime(ticket.get("created_at"))
+
+
 def response_due(created_at, priority: str, calendar: BusinessCalendar = None):
     created = _as_datetime(created_at)
     if created is None:
@@ -456,7 +480,7 @@ def sla_state(ticket: dict, now: datetime = None, calendar: BusinessCalendar = N
                 "around_the_clock": clock}
 
     against = "response" if _as_datetime(ticket.get("first_response_at")) is None else "resolution"
-    created = _as_datetime(ticket.get("created_at"))
+    created = clock_start(ticket)
     if created is None:
         return {"state": "paused" if status == WAITING else "met", "hours_left": None,
                 "against": against, "due": None, "around_the_clock": clock}
@@ -485,18 +509,22 @@ SLA_ORDER = {"breached": 0, "at risk": 1, "met": 2, "paused": 3, "closed": 4}
 
 def format_duration(hours: float, around_the_clock: bool = True,
                     calendar: BusinessCalendar = None) -> str:
-    """'45 min', '3 h', '2 d 4 h'. Days are working days on a working-hours clock."""
+    """
+    '45 min', '3 h', '2 d 4 h'. Days are working days on a working-hours clock.
+
+    Whole units are counted down, never rounded up: 8.6 h on a 9-hour day was
+    '9 h' and 0.999 h '60 min' - a full unit that was not there yet.
+    """
     calendar = calendar or DEFAULT_CALENDAR
-    hours = abs(float(hours or 0))
-    if hours < 1:
-        return "%d min" % max(1, round(hours * 60))
+    minutes = int(abs(float(hours or 0)) * 60 + 1e-6)
+    if minutes < 60:
+        return "%d min" % max(1, minutes)
+    whole = minutes // 60
     day = 24.0 if around_the_clock else calendar.day_hours
-    if hours < day:
-        return "%d h" % round(hours)
-    days = int(hours // day)
-    rest = round(hours - days * day)
-    if rest >= day:
-        days, rest = days + 1, 0
+    if whole < day:
+        return "%d h" % whole
+    days = int(whole // day)
+    rest = int(whole - days * day)
     return "%d d %d h" % (days, rest) if rest else "%d d" % days
 
 
@@ -507,12 +535,12 @@ def sla_text(state: dict, calendar: BusinessCalendar = None) -> str:
     """
     name = (state or {}).get("state")
     if name == "closed" or not state:
-        return "-"
+        return "—"
     if name == "paused":
         return "Paused - waiting on requester"
     left = state.get("hours_left")
     if left is None:
-        return "-"
+        return "—"
     span = format_duration(left, state.get("around_the_clock", True), calendar)
     if state.get("against") == "response":
         return "%s left to reply" % span if left >= 0 else "%s overdue - no reply yet" % span
@@ -596,7 +624,7 @@ def outcome(ticket: dict, resolved_at: datetime, calendar: BusinessCalendar = No
     calendar = calendar or DEFAULT_CALENDAR
     priority = normalise_priority(ticket.get("priority"))
     clock = around_the_clock(priority)
-    created = _as_datetime(ticket.get("created_at"))
+    created = clock_start(ticket)
     if created is None:
         return {"response_met": None, "resolution_met": None, "resolution_hours": None}
     responded = _as_datetime(ticket.get("first_response_at")) or resolved_at
@@ -652,14 +680,31 @@ def is_requester(ticket: dict, username: str) -> bool:
             == str(username or "").strip().lower() != "")
 
 
+def plan_handled(ticket: dict, actor: str, now: datetime = None) -> dict:
+    """
+    What IT touching a ticket records: the first response, and the owner when
+    nobody had it. Replying, resolving and asking the requester something are
+    all responses - resolving straight from the queue used to leave the ticket
+    'Not yet picked up' with its response promise missed.
+    """
+    changes = {}
+    if _as_datetime(ticket.get("first_response_at")) is None:
+        changes["first_response_at"] = now or datetime.now()
+    if not str(ticket.get("assigned_to") or "").strip():
+        changes["assigned_to"] = actor
+    return changes
+
+
 def plan_after_reply(ticket: dict, author: str, now: datetime = None,
                      calendar: BusinessCalendar = None):
     """
     What a reply does to the ticket: (column changes, event line or "").
 
     From the person who raised it: a ticket waiting on them goes back to IT
-    (In Progress, the wait banked); a resolved or closed one is reopened - a
-    "still broken" after closure used to vanish from the queue.
+    (In Progress, the wait banked). A resolved or closed one stays as it is -
+    the reply reaches IT, and "Still broken - reopen" is how it goes back. The
+    most common reply to a fix is a thank-you, and it used to reopen the
+    ticket (straight into "Breached - no reply yet").
 
     From IT: the first reply is the response; on an unassigned Open ticket it
     also picks the ticket up for whoever replied.
@@ -669,31 +714,35 @@ def plan_after_reply(ticket: dict, author: str, now: datetime = None,
     if is_requester(ticket, author):
         if current == WAITING:
             return plan_status_change(ticket, "In Progress", now, calendar) or {}, ""
-        if current in CLOSED_STATUSES:
-            return (plan_status_change(ticket, "Open", now, calendar) or {},
-                    "Reopened by the requester's reply.")
         return {}, ""
-    changes = {}
-    if _as_datetime(ticket.get("first_response_at")) is None:
-        changes["first_response_at"] = now
-    if current == "Open" and not str(ticket.get("assigned_to") or "").strip():
-        changes["assigned_to"] = author
+    changes = plan_handled(ticket, author, now)
+    if current == "Open" and "assigned_to" in changes:
         changes["status"] = "In Progress"
+    else:
+        changes.pop("assigned_to", None)
     return changes, ""
 
 
 # ------------------------------------------------------------------ reports
 
-def sla_report(tickets: Iterable[dict], year: int, month: int) -> list:
+def sla_report(tickets: Iterable[dict], year: int, month: int, months: int = 1,
+               calendar: BusinessCalendar = None) -> list:
     """
-    One line per priority for tickets resolved in this month: how many, how
-    many kept their promises, and the median working time to fix.
+    One line per priority for tickets resolved in this month (or the `months`
+    months ending with it): how many, how many kept their promises, and the
+    median working time to fix.
+
+    A ticket resolved before outcomes were stored is measured now, from its
+    own times - it used to count as a missed promise.
     """
+    last = year * 12 + month - 1
     rows = {}
     for t in tickets:
         resolved = _as_datetime(t.get("resolved_at"))
-        if resolved is None or (resolved.year, resolved.month) != (year, month):
+        if resolved is None or not 0 <= last - (resolved.year * 12 + resolved.month - 1) < months:
             continue
+        if t.get("resolution_met") is None:
+            t = {**t, **outcome(t, resolved, calendar)}
         p = normalise_priority(t.get("priority"))
         line = rows.setdefault(p, {"priority": p, "count": 0, "response_met": 0,
                                    "resolution_met": 0, "hours": []})

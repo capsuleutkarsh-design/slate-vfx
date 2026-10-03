@@ -44,8 +44,15 @@ from ..core.empty_state import EmptyState
 from ..core.data_display import (
     export_table_dialog, from_qdate, money_item, setup_date_edit, setup_datetime_edit,
 )
-from slate.core.domain.dates import format_date, format_datetime
+from slate.core.domain.dates import MISSING, format_date, format_datetime
 from slate.gui.components import feedback
+from slate.gui.components.state_notice import clear_state, show_load_error
+
+try:
+    from slate.core.infra.postgres_manager import DatabaseUnavailableError
+except ImportError:                                  # pragma: no cover
+    class DatabaseUnavailableError(ConnectionError):
+        """Fallback when the manager cannot be imported."""
 
 logger = logging.getLogger(__name__)
 
@@ -302,18 +309,38 @@ class PeakChart(QWidget):
     def set_data(self, readings, seats):
         self.readings = list(reversed(readings))[-60:]       # oldest -> newest, last 60
         self.seats = int(seats or 0)
+        self.setMouseTracking(True)
         self.update()
+
+    def _bars(self):
+        return self.rect().adjusted(4, 6, -4, -6)
+
+    def event(self, event):
+        # Each bar says when it was taken and what it read.
+        from PySide6.QtCore import QEvent
+        from PySide6.QtWidgets import QToolTip
+        if event.type() == QEvent.Type.ToolTip and self.readings:
+            rect = self._bars()
+            index = int((event.pos().x() - rect.left()) / max(1.0, rect.width() / len(self.readings)))
+            if 0 <= index < len(self.readings):
+                r = self.readings[index]
+                QToolTip.showText(event.globalPos(), "%s: %d in use" % (
+                    format_datetime(r.get("taken_at")), int(r.get("seats_in_use") or 0)), self)
+            return True
+        return super().event(event)
 
     def paintEvent(self, _event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        rect = self.rect().adjusted(4, 6, -4, -6)
+        rect = self._bars()
         painter.fillRect(self.rect(), QColor(Gate.PANEL))
         if not self.readings:
             painter.setPen(QColor(Gate.TEXT_DIM))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "No readings yet")
             return
-        top = max([self.seats] + [int(r.get("seats_in_use") or 0) for r in self.readings]) or 1
+        # Headroom above the highest value, so the seats line's label (drawn
+        # above the line) is never cut off at the top edge.
+        top = (max([self.seats] + [int(r.get("seats_in_use") or 0) for r in self.readings]) or 1) * 1.2
         width = rect.width() / max(1, len(self.readings))
         for i, r in enumerate(self.readings):
             used = int(r.get("seats_in_use") or 0)
@@ -350,6 +377,9 @@ class ReadingsDialog(QDialog):
         root.addWidget(heading)
         self.chart = PeakChart()
         root.addWidget(self.chart)
+        self.span = QLabel("")
+        self.span.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: {Gate.SIZE_SM}px;")
+        root.addWidget(self.span)
 
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["Taken at", "In use", "Source", "Recorded by"])
@@ -376,6 +406,10 @@ class ReadingsDialog(QDialog):
         from slate.gui.components.table_tools import KeepSelection, make_item
         self.readings = self.repo.history(self.licence)
         self.chart.set_data(self.readings, self.licence.get("total_seats"))
+        shown = self.chart.readings
+        self.span.setText("%s from %s to %s - hover a bar for its reading." % (
+            lc.plural(len(shown), "reading"), format_datetime(shown[0].get("taken_at")),
+            format_datetime(shown[-1].get("taken_at"))) if shown else "")
         with KeepSelection(self.table):
             self.table.setRowCount(len(self.readings))
             for r, reading in enumerate(self.readings):
@@ -388,12 +422,14 @@ class ReadingsDialog(QDialog):
                 if seats and used > seats:
                     item.setForeground(QColor(Gate.BAD))
                 self.table.setItem(r, 1, item)
-                source = reading.get("source") or "typed in"
+                # One word for a typed reading, old ('') or new ('manual').
+                source = {"manual": "typed in", "": "typed in"}.get(reading.get("source") or "",
+                                                                    reading.get("source"))
                 if reading.get("legacy"):
                     source += " (before contracts were told apart)"
                 self.table.setItem(r, 2, make_item(source.capitalize() if source else ""))
                 from slate.core.domain import people
-                self.table.setItem(r, 3, make_item(people.display_name(reading.get("recorded_by"), empty="-")))
+                self.table.setItem(r, 3, make_item(people.display_name(reading.get("recorded_by"), empty=MISSING)))
         self._sync()
 
     def _selected(self):
@@ -427,22 +463,41 @@ class ReadingsDialog(QDialog):
         reading = self._selected()
         if reading is None:
             return
+        # A proper dialog: which reading, its number and when it was taken.
         dialog = QDialog(self)
         dialog.setWindowTitle("Correct reading")
-        form = tidy_form(QFormLayout(dialog))
+        dialog.setMinimumWidth(380)
+        root = QVBoxLayout(dialog)
+        root.setContentsMargins(Gate.SPACE_4, Gate.SPACE_4, Gate.SPACE_4, Gate.SPACE_4)
+        root.setSpacing(Gate.SPACE_3)
+        heading = QLabel("Reading of %s" % format_datetime(reading.get("taken_at")))
+        heading.setStyleSheet(f"color: {Gate.TEXT}; font-size: {Gate.SIZE_LG}px; font-weight: 600;")
+        root.addWidget(heading)
+        form = tidy_form(QFormLayout())
         spin = QSpinBox()
         spin.setRange(0, 9999)
         spin.setValue(int(reading.get("seats_in_use") or 0))
         form.addRow("Seats in use", spin)
+        taken = setup_datetime_edit(QDateTimeEdit())
+        when = reading.get("taken_at")
+        if isinstance(when, datetime):
+            taken.setDateTime(QDateTime(when))
+        else:
+            parsed = QDateTime.fromString(str(when or "")[:19], "yyyy-MM-dd HH:mm:ss")
+            taken.setDateTime(parsed if parsed.isValid() else QDateTime.currentDateTime())
+        taken.setMaximumDateTime(QDateTime.currentDateTime().addSecs(300))
+        form.addRow("Taken at", taken)
+        root.addLayout(form)
         row = QHBoxLayout()
         row.addStretch(1)
         row.addWidget(make_button("Cancel", "ghost", on_click=dialog.reject))
         row.addWidget(make_button("Save", "primary", on_click=dialog.accept))
-        form.addRow(row)
-        self._correct_dialog = (dialog, spin)
+        root.addLayout(row)
+        self._correct_dialog = (dialog, spin, taken)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        if self.repo.update_reading(reading.get("id"), spin.value()):
+        if self.repo.update_reading(reading.get("id"), spin.value(),
+                                    taken.dateTime().toPython().replace(microsecond=0)):
             self.changed_anything = True
             feedback.toast(self, "Reading corrected.", "success")
         else:
@@ -542,7 +597,12 @@ class ImportReadingsDialog(QDialog):
             match = server_report.match_licence(reading.product, self.licences, reading.total)
             if match is not None:
                 combo.setCurrentIndex(self.licences.index(match) + 1)
-            include.setChecked(match is not None)
+            # Only the product's own name is ticked by itself; 'nuke_r' (a
+            # render pool) is only suggested for 'Nuke'.
+            include.setChecked(server_report.is_exact(reading.product, match))
+            if match is not None and not include.isChecked():
+                include.setToolTip("Suggested from the name - tick it if %s really is %s"
+                                   % (reading.product, match.get("software_name")))
             combo.currentIndexChanged.connect(lambda _i, c=include, cb=combo: c.setChecked(cb.currentData() is not None))
             include.toggled.connect(self._count)
             self.table.setCellWidget(r, 0, include)
@@ -555,13 +615,33 @@ class ImportReadingsDialog(QDialog):
         self._count()
 
     def _count(self, *_):
-        chosen = len(self.chosen())
+        ticked = sum(1 for include, combo, _r in self.rows if include.isChecked() and combo.currentData())
         if not self.readings:
             self.summary.setText("No licence usage found in this text yet.")
         else:
-            self.summary.setText("%d product%s found, %d to import." % (
-                len(self.readings), "" if len(self.readings) == 1 else "s", chosen))
-        self.ok_btn.setEnabled(chosen > 0)
+            self.summary.setText("%d product%s found, %d ticked to import." % (
+                len(self.readings), "" if len(self.readings) == 1 else "s", ticked))
+        self.ok_btn.setEnabled(ticked > 0)
+
+    def shared(self) -> list:
+        """['nuke_i and nuke_r both go to Nuke'] - products ticked for the same licence."""
+        groups = {}
+        for include, combo, reading in self.rows:
+            licence = combo.currentData()
+            if include.isChecked() and licence is not None:
+                groups.setdefault(licence.get("id"), (licence, []))[1].append(reading.product)
+        return ["%s all go to %s" % (" and ".join(names), licence.get("software_name"))
+                for licence, names in groups.values() if len(names) > 1]
+
+    def accept(self):
+        shared = self.shared()
+        if shared and not feedback.confirm(
+                self, "Import from licence server",
+                "%s.\n\nAdd them up as one reading? Untick the ones that are a separate pool "
+                "(render licences, for instance)." % "; ".join(shared),
+                yes_label="Add them up", no_label="Let me check"):
+            return
+        super().accept()
 
     def chosen(self):
         """[(licence row, seats in use)], products mapped to the same licence added up."""
@@ -629,7 +709,7 @@ class LicenceView(QWidget):
                                       on_click=self.import_readings,
                                       tooltip="Readings from a saved lmstat / rlmstat report")
         self.btn_add = make_button("Add licence", "secondary", on_click=self.add_licence)
-        self.btn_edit = make_button("Edit", "ghost", on_click=self.edit_licence)
+        self.btn_edit = make_button("Edit", "secondary", on_click=self.edit_licence)
         self.btn_remove = make_button("Remove", "danger", on_click=self.remove_licence)
         buttons = [self.btn_readings]
         if not self.read_only:
@@ -671,7 +751,7 @@ class LicenceView(QWidget):
         self.table.doubleClicked.connect(
             lambda _index: self.show_readings() if self.read_only else self.edit_licence())
         self.toolbar = TableToolbar(self.table, placeholder="Search software, vendor or finding…",
-                                    columns=(0, 1, 7, 8), on_refresh=self.refresh)
+                                    columns=(0, 1, 7, 8), on_refresh=self.refresh, noun="licence")
         root.addWidget(self.toolbar)
         root.addWidget(self.table, 1)
 
@@ -679,6 +759,7 @@ class LicenceView(QWidget):
             "No licences recorded",
             "Add what the studio has bought, then record what the licence server "
             "reports. The second one is what makes a renewal decidable.",
+            primary=None if self.read_only else ("Add licence", self.add_licence),
             glyph="key")
         root.addWidget(self.empty, 1)
         self.empty.attach_to(self.table)
@@ -710,13 +791,24 @@ class LicenceView(QWidget):
     def refresh(self, *_):
         days = self.window_pick.currentData() or 90
         self._renewal_days = lc.renewal_window(self.repo.db)
-        self._rows = self.repo.compliance(days, renewal_days=self._renewal_days)
+        try:
+            self._rows = self.repo.compliance(days, renewal_days=self._renewal_days)
+        except DatabaseUnavailableError:
+            raise
+        except Exception as exc:
+            # A failed read is not "No licences recorded".
+            logger.exception("Licences could not be read")
+            show_load_error(self, exc, retry=self.refresh, what="the licences")
+            return
+        clear_state(self)
         self._paint_figures(self._rows)
         self._paint_rows(self._rows)
         self.empty.refresh()
         self._sync_buttons()
-        if not self.read_only:
-            self.repo.send_renewal_reminders()
+        # The first thing to do on an empty screen is Add licence, not Record usage.
+        from ..core.controls import style_button
+        style_button(self.btn_record, "primary" if self._rows else "secondary")
+        style_button(self.btn_add, "secondary" if self._rows else "primary")
 
     def _paint_figures(self, rows):
         over = sum(1 for r in rows if r["state"] == lc.OVER)
@@ -733,7 +825,7 @@ class LicenceView(QWidget):
                                       for r in current if r.get("spare_cost"))
 
         self.fig_over.set_value(over)
-        self.fig_over.set_tone("bad" if over else "ok")
+        self.fig_over.set_tone("bad" if over else "idle")
         self.fig_renew.set_value(renew)
         self.fig_renew.set_tone("warn" if renew else "idle")
         self.fig_renew.setToolTip("Expired, or renewing within %d days" % self._renewal_days)
@@ -810,8 +902,8 @@ class LicenceView(QWidget):
                 name,
                 row["state"],
                 str(seats),
-                "-" if peak is None else str(int(peak)),
-                "-" if use is None else "%d%%" % round(use * 100),
+                MISSING if peak is None else str(int(peak)),
+                MISSING if use is None else "%d%%" % round(use * 100),
                 renews,
                 None,
                 row.get("finding") or "",
@@ -825,11 +917,13 @@ class LicenceView(QWidget):
                 if c == 6:
                     cost = row.get("annual_cost")
                     if cost in (None, ""):
-                        item = make_item("-")
+                        item = make_item(MISSING)
                         item.setForeground(QColor(Gate.TEXT_DIM))
+                        item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                     else:
                         item = money_item(cost, row.get("currency") or None)
-                        tip = [money.format_money(cost, row.get("currency") or None) + " a year"]
+                        item.setText(lc.money_text(cost, row.get("currency") or None))
+                        tip = [lc.money_text(cost, row.get("currency") or None) + " a year"]
                         if row.get("vendor"):
                             tip.append("Vendor: %s" % row.get("vendor"))
                         item.setToolTip("\n".join(tip))
@@ -859,7 +953,9 @@ class LicenceView(QWidget):
                     elif row.get("renewal_due"):
                         item.setForeground(QColor(Gate.WARN))
                 if c == 4 and use is not None:
+                    # An expired licence's use is history, not health.
                     item.setForeground(QColor(
+                        Gate.TEXT_DIM if row["state"] == lc.EXPIRED else
                         Gate.BAD if use > 1 else
                         Gate.INFO if use < lc.UNDER_USED_RATIO else Gate.OK))
                 if c == 7:
@@ -990,13 +1086,15 @@ class LicenceView(QWidget):
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         chosen = dialog.chosen()
-        written = self.repo.import_readings(chosen, taken_at=dialog.taken(),
-                                            recorded_by=self.username or None)
-        if written == len(chosen) and written:
-            feedback.toast(self, "%s imported." % lc.plural(written, "reading"), "success")
+        written, skipped = self.repo.import_readings(chosen, taken_at=dialog.taken(),
+                                                     recorded_by=self.username or None)
+        if written + skipped == len(chosen):
+            feedback.toast(self, "%s imported.%s" % (
+                lc.plural(written, "reading"),
+                " %d already recorded at that time - skipped." % skipped if skipped else ""), "success")
         else:
             feedback.warn(self, "Import from licence server",
-                          "%d of %d readings were saved." % (written, len(chosen)))
+                          "%d of %d readings were saved." % (written, len(chosen) - skipped))
         self.refresh()
         self.changed.emit()
 

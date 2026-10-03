@@ -80,6 +80,16 @@ def _squash(text: str) -> str:
     return re.sub(r"[^a-z0-9]", "", str(text or "").lower())
 
 
+def is_exact(product: str, licence: Optional[dict]) -> bool:
+    """
+    Whether the licence has the product's own name (ignoring case and
+    punctuation). Only these are ticked for import on their own: 'Nuke' for
+    'nuke_r' (a render pool) is a suggestion, and adding it into the
+    interactive seats reported Nuke 18 of 10 in use.
+    """
+    return bool(licence) and _squash(licence.get("software_name")) == _squash(product)
+
+
 def match_licence(product: str, licences: Iterable[dict], total: Optional[int] = None) -> Optional[dict]:
     """
     The licence a server product most likely is: the same name, or the one

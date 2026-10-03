@@ -93,16 +93,13 @@ class MainWindowBuilderMixin:
         # IT get both, like Leave: the queue, and their own tickets. They used
         # to get the queue only, so IT staff could not report a problem of
         # their own (the queue's New ticket logs one for somebody else).
-        from PySide6.QtWidgets import QTabWidget
+        from ..tabs.service_desk_view import desk_pages
         queue = ServiceDeskView(username)
         mine = MyTicketsView(username)
         mine.show_badge = False          # the sidebar count is the queue's
         queue.changed.connect(mine.refresh)
         mine.changed.connect(queue.refresh)
-        both = QTabWidget()
-        both.addTab(queue, "Queue")
-        both.addTab(mine, "My tickets")
-        return both
+        return desk_pages(queue, mine)
 
     def _attendance_tooltip(self) -> str:
         """
@@ -452,11 +449,16 @@ class MainWindowBuilderMixin:
                 roles_now = getattr(self, "user_roles", None)
                 it_screens = sees_it_screens(roles_now, self.allowed_tabs)
                 it_key = None if it_screens else "IT"
+                # Changing anything on Hardware, Licences and Deployment needs
+                # manage_it; the tab key alone reads them (it used to give full
+                # write on two of them and read-only Licences).
+                it_read_only = not manages_it(roles_now, self.allowed_tabs)
 
                 # Hardware Inventory
                 self.tab_coordinator.register_tab_factory(
                     "Hardware",
-                    lambda: screen("slate.gui.tabs.it_inventory_tab", "ItInventoryTab")(user_data=self.user_data),
+                    lambda: screen("slate.gui.tabs.it_inventory_tab", "ItInventoryTab")(
+                        user_data=self.user_data, read_only=it_read_only),
                     icon="🖥️",
                     permission_key=it_key,
                     user_role=self.user_role,
@@ -471,10 +473,9 @@ class MainWindowBuilderMixin:
                 # Head who approves renewals). Changing anything needs
                 # manage_it; everybody else reads it.
                 licence_visible = it_screens or can_view_licences(roles_now, self.allowed_tabs)
-                licence_read_only = not manages_it(roles_now, self.allowed_tabs)
                 self.tab_coordinator.register_tab_factory(
                     "Licences",
-                    lambda: LicenceView(self._current_username(), read_only=licence_read_only),
+                    lambda: LicenceView(self._current_username(), read_only=it_read_only),
                     icon="🔑",
                     permission_key=None if licence_visible else "IT",
                     user_role=self.user_role,
@@ -497,7 +498,8 @@ class MainWindowBuilderMixin:
                 # Auto Deployment
                 self.tab_coordinator.register_tab_factory(
                     "Deployment",
-                    lambda: screen("slate.gui.tabs.it_deployment_tab", "ItDeploymentTab")(user_data=self.user_data),
+                    lambda: screen("slate.gui.tabs.it_deployment_tab", "ItDeploymentTab")(
+                        user_data=self.user_data, read_only=it_read_only),
                     icon="📦",
                     permission_key=it_key,
                     user_role=self.user_role,

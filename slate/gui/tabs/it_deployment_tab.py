@@ -30,7 +30,8 @@ from slate.core.infra.gate import Gate
 from slate.gui.core.data_display import datetime_item, export_table_dialog
 from slate.core.domain import people
 from slate.core.infra.deployment_repository import (
-    STATUSES, DeploymentError, DeploymentRepository, split_machines, success_rate,
+    PACKAGE_MAX, STATUSES, VERSION_MAX, DeploymentError, DeploymentRepository, split_machines,
+    success_rate,
 )
 from slate.gui.components import feedback
 from slate.gui.components.table_tools import (
@@ -54,13 +55,26 @@ COL = {name: i for i, name in enumerate(COLUMNS)}
 TONE = {"Success": "ok", "Failed": "bad", "Pending": "warn"}
 
 
+class _ListCompleter(QCompleter):
+    """Completes the machine after the last comma, keeping the ones before it."""
+
+    def splitPath(self, path):
+        return [path.split(",")[-1].strip()]
+
+    def pathFromIndex(self, index):
+        head = self.widget().text().rsplit(",", 1)
+        return (head[0] + ", " if len(head) > 1 else "") + super().pathFromIndex(index)
+
+
 class AddDeploymentDialog(QDialog):
     """Record an install (several machines at once), or correct a record."""
 
-    def __init__(self, parent=None, machines=(), record=None):
+    def __init__(self, parent=None, machines=(), record=None, retired=None):
         super().__init__(parent)
         self.record = record or {}
         self.known = {m.lower(): m for m in machines}
+        # {lower-case name: status} of end-of-life machines: not offered, and asked about.
+        self.retired = dict(retired or {})
         self.setWindowTitle("Edit record" if record else "Record a deployment")
         self.setMinimumWidth(480)
         root = QVBoxLayout(self)
@@ -70,13 +84,17 @@ class AddDeploymentDialog(QDialog):
 
         self.pkg_input = QLineEdit(str(self.record.get("package_name") or ""))
         self.pkg_input.setPlaceholderText("e.g. Nuke 15.1, OCIO config, NVIDIA driver")
+        self.pkg_input.setMaxLength(PACKAGE_MAX)
         self.version_input = QLineEdit(str(self.record.get("version") or ""))
+        self.version_input.setMaxLength(VERSION_MAX)
         self.version_input.setPlaceholderText("e.g. 15.1v3")
         # Machines from the inventory, with completion; several separated by
         # commas when the same thing went on more than one.
         self.target_input = QLineEdit(str(self.record.get("target_machine") or ""))
         self.target_input.setPlaceholderText("WS-COMP-01, WS-COMP-02" if not record else "")
-        completer = QCompleter(sorted(self.known.values(), key=str.lower), self)
+        self.target_input.setMaxLength(2000)
+        completer = _ListCompleter(sorted((m for m in self.known.values() if m.lower() not in self.retired),
+                                          key=str.lower), self)
         completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         completer.setFilterMode(Qt.MatchFlag.MatchContains)
         self.target_input.setCompleter(completer)
@@ -93,13 +111,12 @@ class AddDeploymentDialog(QDialog):
 
         self.hint = QLabel("")
         self.hint.setWordWrap(True)
-        self.hint.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: {Gate.SIZE_SM}px;")
         root.addWidget(self.hint)
 
         # Enter records the deployment; Cancel is never the default.
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
-        self.cancel_btn = make_button("Cancel", on_click=self.reject)
+        self.cancel_btn = make_button("Cancel", "ghost", on_click=self.reject)
         self.save_btn = make_button("Save" if record else "Record", "primary", on_click=self._save)
         btn_layout.addWidget(self.cancel_btn)
         btn_layout.addWidget(self.save_btn)
@@ -113,9 +130,17 @@ class AddDeploymentDialog(QDialog):
     def unknown(self):
         return [m for m in self.machines() if m.lower() not in self.known]
 
+    def _ended(self):
+        return [m for m in self.machines() if m.lower() in self.retired]
+
     def _show_unknown(self, *_):
-        unknown = self.unknown()
-        self.hint.setText("Not in Hardware: %s" % ", ".join(unknown) if unknown else
+        unknown, ended = self.unknown(), self._ended()
+        problems = (["Not in Hardware: %s" % ", ".join(unknown)] if unknown else []) + \
+                   ["%s is %s" % (m, self.retired[m.lower()]) for m in ended]
+        # A likely typo or a dead machine is a warning, not a neutral note.
+        self.hint.setStyleSheet(f"color: {Gate.WARN if problems else Gate.TEXT_DIM}; "
+                                f"font-size: {Gate.SIZE_SM}px;")
+        self.hint.setText("; ".join(problems) if problems else
                           ("%d machines - one record each." % len(self.machines())
                            if len(self.machines()) > 1 else ""))
 
@@ -134,6 +159,16 @@ class AddDeploymentDialog(QDialog):
                 yes_label="Record anyway", no_label="Check the name"):
             self.target_input.setFocus()
             return
+        ended = self._ended()
+        if ended and not feedback.confirm(
+                self, self.windowTitle(),
+                "%s %s marked %s in Hardware. Record an install on %s anyway?"
+                % (", ".join(ended), "is" if len(ended) == 1 else "are",
+                   " / ".join(sorted({self.retired[m.lower()] for m in ended})),
+                   "it" if len(ended) == 1 else "them"),
+                yes_label="Record anyway", no_label="Check the name"):
+            self.target_input.setFocus()
+            return
         # The inventory's spelling of a known name.
         self.target_input.setText(", ".join(self.known.get(m.lower(), m) for m in self.machines()))
         self.accept()
@@ -142,9 +177,11 @@ class AddDeploymentDialog(QDialog):
 class ItDeploymentTab(QWidget):
     """A record of software installed on workstations (see the module notes)."""
 
-    def __init__(self, user_data=None, parent=None):
+    def __init__(self, user_data=None, parent=None, read_only: bool = False):
         super().__init__(parent)
         self.user_data = user_data or {}
+        # Changing the log needs manage_it; the IT tab key alone reads it.
+        self.read_only = bool(read_only)
         self.repo = DeploymentRepository()
         self._rows = []
         main_layout = QVBoxLayout(self)
@@ -156,13 +193,14 @@ class ItDeploymentTab(QWidget):
     def build_ui(self, main_layout):
         main_layout.addWidget(page_title(
             'Deployment log',
-            'A record of what was installed where. Slate does not push it.'))
+            'A record of what was installed where. Slate does not push it.'
+            + (' - read only' if self.read_only else '')))
 
         # Figures. Worded for a log, not a deploy system: "Pending" meant
         # "somebody typed it and has not said how it went".
         strip = StatStrip(compact=True)
         self.lbl_total = strip.add("Installs recorded", "0", tone="neutral")
-        self.lbl_success = strip.add("Success rate", "-", tone="ok",
+        self.lbl_success = strip.add("Success rate", "—", tone="idle",
                                      tooltip="Of the installs with an outcome")
         self.lbl_pending = strip.add("Awaiting outcome", "0", tone="warn",
                                      on_click=lambda: self._filter_status("Pending"),
@@ -182,6 +220,7 @@ class ItDeploymentTab(QWidget):
         self.btn_delete = make_button("Delete", "danger", on_click=self.delete_deployment)
         for b in (self.btn_record, self.btn_success, self.btn_failed, self.btn_edit, self.btn_delete):
             controls.addWidget(b)
+            b.setVisible(not self.read_only)
         controls.addWidget(make_button("Export\u2026", "ghost", tooltip="Save the rows shown as CSV or Excel",
                                        on_click=self.export_table))
         main_layout.addLayout(controls)
@@ -194,7 +233,7 @@ class ItDeploymentTab(QWidget):
         setup_table(self.grid)
         self.grid.doubleClicked.connect(lambda _i: self.edit_deployment())
         self.toolbar = TableToolbar(self.grid, placeholder="Search package, machine, person or notes\u2026",
-                                    columns=(1, 2, 3, 4, 7, 8), on_refresh=self.load_data)
+                                    columns=(1, 2, 3, 4, 7, 8), on_refresh=self.load_data, noun="record")
         self.filter_cb = self.toolbar.add_filter(
             "Status", [("All statuses", "")] + [(s, s) for s in STATUSES], column=COL["Status"])
         main_layout.addWidget(self.toolbar)
@@ -215,12 +254,20 @@ class ItDeploymentTab(QWidget):
         main_layout.addWidget(self.empty_state)
         self.empty_state.attach_to(self.grid)
 
-        for button in (self.btn_success, self.btn_failed, self.btn_edit, self.btn_delete):
+        for button in (self.btn_success, self.btn_failed, self.btn_delete):
             enable_with_selection(button, self.grid)
+        # Edit is for one record (Mark and Delete take several).
+        self.grid.itemSelectionChanged.connect(self._sync_edit)
+        self._sync_edit()
 
         # First read only now that the table is in the layout: a notice for a
         # failed read takes the table's place.
         self.load_data()
+
+    def _sync_edit(self, *_):
+        count = len(self._selected())
+        self.btn_edit.setEnabled(count == 1)
+        self.btn_edit.setToolTip("Select one record to edit" if count > 1 else "")
 
     def _filter_status(self, status):
         self.filter_cb.setCurrentIndex(max(0, self.filter_cb.findData(status)))
@@ -250,7 +297,9 @@ class ItDeploymentTab(QWidget):
         self.lbl_pending.set_tone("warn" if pending else "idle")
         # Out of the ones that finished, rounded: 2 of 3 is 67%, not 66%.
         rate = success_rate(rows)
-        self.lbl_success.set_value("-" if rate is None else f"{rate}%")
+        self.lbl_success.set_value("\u2014" if rate is None else f"{rate}%")
+        self.lbl_success.set_tone("idle" if rate is None else "ok" if rate >= 90
+                                  else "warn" if rate >= 70 else "bad")
 
         # The selection follows the deployment (by id), not the row number.
         with KeepSelection(self.grid):
@@ -289,7 +338,10 @@ class ItDeploymentTab(QWidget):
                 dim_cell(outcome)
             self.grid.setItem(r, COL["Outcome by"], outcome)
             notes = str(row.get("notes") or "")
-            note_item = make_item(notes.splitlines()[0] if notes else "", tooltip=notes)
+            # Every line, newest last (a failure reason added under the
+            # original note was only on the tooltip).
+            note_item = make_item(" \u00b7 ".join(l.strip() for l in notes.splitlines() if l.strip()),
+                                  tooltip=notes)
             self.grid.setItem(r, COL["Notes"], note_item)
 
     def _selected(self):
@@ -298,15 +350,20 @@ class ItDeploymentTab(QWidget):
         return [by_id[i] for i in ids if i in by_id]
 
     # ------------------------------------------------------------ actions
-    def add_deployment(self):
+    def _machines(self):
         try:
-            machines = self.repo.known_machines()
+            return self.repo.known_machines(), self.repo.retired_machines()
         except DatabaseUnavailableError:
             raise
         except Exception:
             logger.exception("Machine names not read for the completer")
-            machines = []
-        dialog = AddDeploymentDialog(self, machines)
+            return [], {}
+
+    def add_deployment(self):
+        if self.read_only:
+            return
+        machines, retired = self._machines()
+        dialog = AddDeploymentDialog(self, machines, retired=retired)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         pkg = dialog.pkg_input.text().strip()
@@ -326,16 +383,11 @@ class ItDeploymentTab(QWidget):
 
     def edit_deployment(self):
         picked = self._selected()
-        if len(picked) != 1:
+        if len(picked) != 1 or self.read_only:
             return
         record = picked[0]
-        try:
-            machines = self.repo.known_machines()
-        except DatabaseUnavailableError:
-            raise
-        except Exception:
-            machines = []
-        dialog = AddDeploymentDialog(self, machines, record=record)
+        machines, retired = self._machines()
+        dialog = AddDeploymentDialog(self, machines, record=record, retired=retired)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         try:
@@ -379,6 +431,11 @@ class ItDeploymentTab(QWidget):
         if not picked:
             feedback.warn(self, "Mark %s" % new_status.lower(), "Select the deployment to update.")
             return
+        # Marking it again would only overwrite who marked it and when.
+        picked = [d for d in picked if d.get("status") != new_status]
+        if not picked:
+            feedback.toast(self, "Already marked %s." % new_status.lower(), "info")
+            return
         # Changing an outcome somebody already recorded is asked, not silent.
         finished = [d for d in picked if d.get("status") in ("Success", "Failed")
                     and d.get("status") != new_status]
@@ -390,7 +447,11 @@ class ItDeploymentTab(QWidget):
                    "it" if len(finished) == 1 else "them", new_status),
                 yes_label="Change to %s" % new_status, no_label="Keep"):
             return
-        note = self._failure_reason() if new_status == "Failed" else None
+        note = None
+        if new_status == "Failed":
+            asked, note = self._failure_reason()
+            if not asked:
+                return              # Cancel means: do not mark it
         failed = []
         for record in picked:
             try:
@@ -405,17 +466,31 @@ class ItDeploymentTab(QWidget):
                           "%d of %d were not marked %s:\n\n%s"
                           % (len(failed), len(picked), new_status, failed[0]))
         else:
-            feedback.toast(self, "Marked %s." % new_status.lower(), "success")
+            feedback.toast(self, "Marked %s." % new_status.lower(), "success",
+                           action=("Undo", lambda before=list(picked): self._undo(before)))
+
+    def _undo(self, before):
+        """Back to how the records were: status, who marked them, notes."""
+        for record in before:
+            try:
+                self.repo.restore(record)
+            except DatabaseUnavailableError:
+                raise
+            except Exception as exc:
+                feedback.warn(self, "Undo", "Not every record was put back:\n\n%s" % exc)
+                break
+        self.load_data()
 
     def _failure_reason(self):
-        """Why it failed, for the Notes column (optional)."""
+        """(asked, reason): whether to go ahead, and why it failed for Notes (optional)."""
         from PySide6.QtWidgets import QInputDialog
         dialog = QInputDialog(self)
         dialog.setWindowTitle("Mark failed")
         dialog.setLabelText("Why did it fail? (kept in Notes - optional)")
-        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.textValue().strip():
-            return dialog.textValue().strip()
-        return None
+        dialog.setOkButtonText("Mark failed")
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return False, None
+        return True, dialog.textValue().strip() or None
 
     def export_table(self):
         """What the table shows, to CSV or Excel (IT-159)."""

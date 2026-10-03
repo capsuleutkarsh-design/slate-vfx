@@ -131,11 +131,17 @@ class StatCard(QFrame):
         self._tone = tone
         self._restyle()
 
+    def set_selected(self, on: bool):
+        """Outlined while it is the filter in use (a figure clicked to filter by it)."""
+        self._selected = bool(on)
+        self._restyle()
+
     # --------------------------------------------------------------- look
     def _restyle(self):
         hover = f"QFrame#statCard:hover {{ border-color: {Gate.TEXT_DIM}; }}" if self._clickable else ""
+        edge = Gate.ACCENT if getattr(self, "_selected", False) else Gate.LINE
         self.setStyleSheet(
-            f"QFrame#statCard {{ background-color: {Gate.PANEL}; border: 1px solid {Gate.LINE}; "
+            f"QFrame#statCard {{ background-color: {Gate.PANEL}; border: 1px solid {edge}; "
             f"border-radius: {Gate.RADIUS_MD}px; }} {hover}")
         # Square outer corners on the strip would poke out of the rounded card,
         # so it takes the card's radius on its left side only.

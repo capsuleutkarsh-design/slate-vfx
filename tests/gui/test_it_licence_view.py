@@ -148,7 +148,7 @@ def test_cost_is_shown_in_rupees(db, app):
     view = _view(db)
     view.repo.save("Resolve", 4, _in(300), annual_cost=Decimal("150000"), currency="INR")
     view.refresh()
-    assert view.table.item(0, 6).text() == "₹1,50,000.00"
+    assert view.table.item(0, 6).text() == "₹1,50,000"                  # IT2-061
 
 
 def test_the_window_is_ordered_and_remembered(db, app):
@@ -215,9 +215,17 @@ def test_import_maps_products_to_licences(db, app):
             "Users of nuke_r:  (Total of 5 licenses issued;  Total of 1 license in use)\n"
             "Users of mystery:  (Total of 2 licenses issued;  Total of 2 licenses in use)\n")
     dialog = _keep(ImportReadingsDialog(rows, text=text))
-    chosen = {lic["id"]: n for lic, n in dialog.chosen()}
-    assert chosen == {1: 4}                     # nuke_i + nuke_r added up; mystery skipped
-    assert dialog.ok_btn.isEnabled()
+    # IT2-052: prefix matches are suggested, not ticked - a render pool is not
+    # added into the interactive seats.
+    assert dialog.chosen() == []
+    assert dialog.rows[0][1].currentData()["id"] == 1 and not dialog.rows[0][0].isChecked()
+    exact = _keep(ImportReadingsDialog(
+        [{"id": 1, "software_name": "nuke_i", "total_seats": 10}], text=text))
+    assert {lic["id"]: n for lic, n in exact.chosen()} == {1: 3}
+    assert "1 ticked" in exact.summary.text() and exact.ok_btn.isEnabled()
+    dialog.rows[0][0].setChecked(True)
+    dialog.rows[1][0].setChecked(True)
+    assert dialog.shared() == ["nuke_i and nuke_r all go to Nuke"]
 
 
 def test_search_finds_the_vendor_and_rows_are_never_cut(db, app):
@@ -248,3 +256,57 @@ def test_note_fields_use_the_interface_font(db, app):
     from slate.gui.tabs.licence_view import LicenceDialog
     dialog = _keep(LicenceDialog())
     assert dialog.notes.property("prose") is True
+
+
+
+# ------------------------------------------------------------------ round 2
+
+def test_screen_conventions(db, app):
+    """IT2-060 / IT2-062 / IT2-063 / IT2-064 / IT2-065 / IT2-066."""
+    from slate.core.infra.gate import Gate
+    view = _view(db)
+    assert view.fig_over._tone == "idle"
+    view.repo.save("Houdini FX", 3, _in(-12))
+    view.repo.save("Maya", 30, _in(300))
+    ids = {r["software_name"]: r["id"] for r in view.repo.licences()}
+    view.repo.record("Houdini FX", 2, 3, licence_id=ids["Houdini FX"])
+    view.refresh()
+    texts = {view.table.item(r, 0).text(): r for r in range(view.table.rowCount())}
+    assert view.table.item(texts["Maya"], 3).text() == "—"
+    used = view.table.item(texts["Houdini FX"], 4)
+    assert used.foreground().color().name().lower() == Gate.TEXT_DIM.lower()
+    assert view.toolbar.count_label.text() == "2 licences"
+
+
+def test_a_failed_read_says_so(db, app, monkeypatch):
+    """IT2-067."""
+    view = _view(db)
+    monkeypatch.setattr(view.repo, "compliance", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("bad query")))
+    shown = []
+    from slate.gui.tabs import licence_view as module
+    monkeypatch.setattr(module, "show_load_error", lambda w, exc, **k: shown.append(str(exc)))
+    view.refresh()
+    assert shown == ["bad query"]
+
+
+def test_correcting_a_reading_can_fix_its_time(db, app, monkeypatch):
+    """IT2-054 / IT2-068."""
+    from datetime import datetime, timedelta
+    from slate.gui.tabs.licence_view import ReadingsDialog
+    view = _view(db)
+    view.repo.save("Nuke", 10, _in(300))
+    lic = view.repo.licences()[0]
+    view.repo.record("Nuke", 3, 10, licence_id=lic["id"])
+    dialog = _keep(ReadingsDialog(view.repo.compliance(90)[0], view.repo))
+    assert dialog.table.item(0, 2).text() == "Typed in"
+    dialog.table.selectRow(0)
+    monkeypatch.setattr(QDialog, "exec", lambda self: QDialog.DialogCode.Accepted)
+    earlier = datetime.now().replace(microsecond=0, second=0) - timedelta(days=2)
+
+    from PySide6.QtWidgets import QDateTimeEdit
+    real = QDateTimeEdit.dateTime
+    monkeypatch.setattr(QDateTimeEdit, "dateTime",
+                        lambda self: __import__("PySide6.QtCore", fromlist=["QDateTime"]).QDateTime(earlier))
+    dialog.correct()
+    monkeypatch.setattr(QDateTimeEdit, "dateTime", real)
+    assert str(view.repo.history(lic)[0]["taken_at"])[:16] == earlier.strftime("%Y-%m-%d %H:%M")

@@ -76,6 +76,25 @@ def issued_machines(username: str) -> list:
         return []
 
 
+def expected_by(ticket: dict, repo: TicketRepository = None) -> str:
+    """
+    'Reply expected by Mon 11:30' / 'Fix expected by ...' - the promise as the
+    requester can check it, or '' when nothing is running (closed, waiting on
+    them). It used to be said once, in the toast when the ticket was sent.
+    """
+    from datetime import datetime
+    from slate.core.domain.dates import format_datetime
+    try:
+        calendar = repo.calendar() if repo is not None else None
+    except DatabaseUnavailableError:
+        calendar = None
+    state = sd.sla_state(ticket, datetime.now(), calendar)
+    if state.get("due") is None or state["state"] in ("closed", "paused"):
+        return ""
+    return "%s expected by %s" % ("Reply" if state["against"] == "response" else "Fix",
+                                  format_datetime(state["due"], weekday=True))
+
+
 class RaiseTicketDialog(QDialog):
     """
     Report a problem. With for_someone_else=True (the IT desk) it also asks who
@@ -145,9 +164,9 @@ class RaiseTicketDialog(QDialog):
             "Shot or project name helps.")
         self.detail.setFixedHeight(110)
 
-        self.machine_note = QLabel("")
-        self.machine_note.setWordWrap(True)
-        self.machine_note.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: {Gate.SIZE_SM}px;")
+        # Ticked by default; untick it when the problem is somewhere else (a
+        # render node, a colleague's machine).
+        self.machine_note = QCheckBox("")
 
         form.addRow("Category", self.category)
         form.addRow("Who is affected", self.impact)
@@ -158,7 +177,7 @@ class RaiseTicketDialog(QDialog):
         outer.addLayout(form)
 
         self.promise = QLabel("")
-        self.promise.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: 12.5px;")
+        self.promise.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: {Gate.SIZE_SM}px;")
         self.promise.setWordWrap(True)
         outer.addWidget(self.promise)
         self.impact.currentIndexChanged.connect(self._show_promise)
@@ -194,11 +213,12 @@ class RaiseTicketDialog(QDialog):
     def _show_machines(self, username):
         self._machines = list(self._machines_of(username)) if username else []
         if self._machines:
-            self.machine_note.setText("Your machine %s will be added to the ticket, so IT "
-                                      "know where to look." % ", ".join(self._machines)
+            self.machine_note.setText("Add my machine %s to the ticket" % ", ".join(self._machines)
                                       if self.person is None else
-                                      "Their machine %s will be added to the ticket."
-                                      % ", ".join(self._machines))
+                                      "Add their machine %s to the ticket" % ", ".join(self._machines))
+            self.machine_note.setToolTip("So IT know where to look. Untick it when the problem "
+                                         "is on another machine.")
+            self.machine_note.setChecked(True)
             self.machine_note.show()
         else:
             self.machine_note.hide()
@@ -241,18 +261,20 @@ class RaiseTicketDialog(QDialog):
             "priority": self.current_priority(),
             "summary": self.summary.text().strip(),
             "detail": self.detail.toPlainText().strip(),
-            "machine": ", ".join(self._machines),
+            "machine": ", ".join(self._machines) if self.machine_note.isChecked() else "",
         }
 
 
 class _BubbleText(QTextBrowser):
     """
-    Message text that wraps anywhere and grows to fit. A QLabel cannot break
-    a 600-character path, so one long token widened every bubble past the
-    dialog and clipped the whole conversation.
+    Conversation text - a message, or a centred event line - that wraps
+    anywhere and grows to fit. A QLabel cannot break a 600-character path, so
+    one long token widened the whole thread past the dialog and clipped every
+    message after it (round 1 fixed the messages and left the event lines).
     """
 
-    def __init__(self, text: str, colour: str, parent=None):
+    def __init__(self, text: str, colour: str, parent=None, size: int = Gate.SIZE_MD,
+                 centred: bool = False):
         super().__init__(parent)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -262,9 +284,13 @@ class _BubbleText(QTextBrowser):
         # No padding: the global text-edit padding made the height below too
         # small, so the text scrolled inside its own bubble.
         self.setStyleSheet(f"QTextBrowser {{ background: transparent; border: none; padding: 0px; "
-                           f"margin: 0px; color: {colour}; font-size: 13px; }}")
+                           f"margin: 0px; color: {colour}; font-size: {size}px; }}")
         self.setViewportMargins(0, 0, 0, 0)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        if centred:
+            option = self.document().defaultTextOption()
+            option.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+            self.document().setDefaultTextOption(option)
         self.setPlainText(text)
         self.document().setDocumentMargin(0)
         self.document().documentLayout().documentSizeChanged.connect(self._fit)
@@ -321,33 +347,32 @@ class TicketThreadDialog(QDialog):
         self.heading.setTextFormat(Qt.TextFormat.PlainText)
         self.heading.setStyleSheet(
             f"color: {Gate.TEXT}; font-family: {Gate.FONT_LABEL_STRONG}; "
-            f"font-size: 19px; font-weight: 600;")
+            f"font-size: {Gate.SIZE_XL}px; font-weight: 600;")
         outer.addWidget(self.heading)
 
         self.meta = QLabel()
         self.meta.setTextFormat(Qt.TextFormat.RichText)
-        self.meta.setStyleSheet("font-size: 12.5px;")
-        outer.addWidget(self.meta)
-
-        # The description folds away so the conversation gets the room.
+        self.meta.setStyleSheet(f"font-size: {Gate.SIZE_SM}px;")
+        # The description folds away so the conversation gets the room. Its
+        # toggle sits on the line above it, not on the conversation's heading.
         self.toggle_body = make_button("Hide description", "ghost", on_click=self._toggle_body)
+        meta_row = QHBoxLayout()
+        meta_row.addWidget(self.meta, 1)
+        meta_row.addWidget(self.toggle_body)
+        outer.addLayout(meta_row)
         self.body = QLabel()
         self.body.setWordWrap(True)
         self.body.setTextFormat(Qt.TextFormat.PlainText)
         self.body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.body.setStyleSheet(
-            f"color: {Gate.TEXT_2}; font-size: 13px; background: {Gate.PANEL}; "
+            f"color: {Gate.TEXT_2}; font-size: {Gate.SIZE_MD}px; background: {Gate.PANEL}; "
             f"border: 1px solid {Gate.LINE}; border-radius: {Gate.RADIUS_MD}px; padding: 12px;")
-        body_row = QHBoxLayout()
         conversation = QLabel("CONVERSATION")
         conversation.setStyleSheet(
-            f"color: {Gate.TEXT_DIM}; font-family: {Gate.FONT_LABEL}; font-size: 11.5px; "
+            f"color: {Gate.TEXT_DIM}; font-family: {Gate.FONT_LABEL}; font-size: {Gate.SIZE_XS}px; "
             f"letter-spacing: 1.6px;")
-        body_row.addWidget(conversation)
-        body_row.addStretch(1)
-        body_row.addWidget(self.toggle_body)
         outer.addWidget(self.body)
-        outer.addLayout(body_row)
+        outer.addWidget(conversation)
 
         self.thread_area = QScrollArea()
         self.thread_area.setWidgetResizable(True)
@@ -379,10 +404,19 @@ class TicketThreadDialog(QDialog):
                                         tooltip="You no longer need help with this")
         self.btn_reopen = make_button("Still broken - reopen", "secondary", on_click=self._reopen,
                                       tooltip="Put the ticket back in IT's queue")
-        for b in (self.btn_fixed, self.btn_withdraw, self.btn_reopen):
+        # IT work the ticket from here too, with the queue's own dialogs: read,
+        # reply and resolve without going back to find the row.
+        self.btn_take = make_button("Assign to me", "secondary", on_click=self._take)
+        self.btn_status = make_button("Set status…", "secondary", on_click=self._set_status)
+        self.btn_priority = make_button("Change priority…", "ghost", on_click=self._change_priority)
+        for b in (self.btn_fixed, self.btn_withdraw, self.btn_reopen, self.btn_take, self.btn_status,
+                  self.btn_priority):
             row.addWidget(b)
         row.addStretch(1)
-        row.addWidget(make_button("Close", "ghost", on_click=self.accept))
+        # "Done", not "Close": tickets have a Closed status, and "This is fixed"
+        # closes the ticket.
+        row.addWidget(make_button("Done", "ghost", on_click=self.accept,
+                                  tooltip="Back to the list (Esc)"))
         self.btn_send = make_button("Send reply", "primary", on_click=self._send,
                                     tooltip="Send (Ctrl+Enter)")
         row.addWidget(self.btn_send)
@@ -433,6 +467,9 @@ class TicketThreadDialog(QDialog):
             f"<span style='color:{_tone(status_tone(status))}'>{_escape(sd.display_status(status, self.side))}</span>",
             f"<span style='color:{Gate.TEXT_DIM}'>{_escape('With ' + owner if owner else 'Not yet picked up')}</span>",
         ]
+        promise = expected_by(t, self.repo)
+        if promise:
+            parts.append(f"<span style='color:{Gate.TEXT_DIM}'>{_escape(promise)}</span>")
         self.meta.setText(sep.join(parts))
         body = sd.body_of(t.get("description"))
         self.body.setText(body)
@@ -443,6 +480,10 @@ class TicketThreadDialog(QDialog):
         if self.side == "it":
             self.reply.setPlaceholderText("Reply to %s" % (
                 people.display_name(t.get("submitted_by")) or "the requester"))
+        elif status in sd.CLOSED_STATUSES:
+            self.reply.setPlaceholderText(
+                "A reply goes to IT and leaves the ticket %s. Not fixed after all? Use "
+                "Still broken - reopen." % status.lower())
         else:
             self.reply.setPlaceholderText(
                 "Add something for IT - what you tried, a shot or project name, an update.")
@@ -458,6 +499,11 @@ class TicketThreadDialog(QDialog):
         self.btn_withdraw.setVisible(requester and sd.is_open(status))
         self.btn_reopen.setVisible(status in sd.CLOSED_STATUSES)
         self.btn_reopen.setText("Still broken - reopen" if requester else "Reopen")
+        it_open = not requester and sd.is_open(status)
+        mine = str(t.get("assigned_to") or "").strip().lower() == self.username.lower()
+        self.btn_take.setVisible(it_open and not mine)
+        self.btn_status.setVisible(not requester and status != "Closed")
+        self.btn_priority.setVisible(it_open)
 
     def _toggle_body(self):
         show = not self.body.isVisible()
@@ -482,7 +528,7 @@ class TicketThreadDialog(QDialog):
             logger.exception("Ticket thread could not be read")
             note = QLabel("The conversation could not be read: %s" % exc)
             note.setWordWrap(True)
-            note.setStyleSheet(f"color: {Gate.BAD}; font-size: 12.5px; background: transparent;")
+            note.setStyleSheet(f"color: {Gate.BAD}; font-size: {Gate.SIZE_SM}px; background: transparent;")
             self.thread_layout.addWidget(note)
             self.thread_layout.addStretch(1)
             return
@@ -493,7 +539,7 @@ class TicketThreadDialog(QDialog):
             blank = QLabel("Nothing yet. IT will reply here." if self.side != "it"
                            else "Nothing yet. Your reply goes to %s." % (
                                people.display_name(self.ticket.get("submitted_by")) or "the requester"))
-            blank.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: 12.5px; background: transparent;")
+            blank.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: {Gate.SIZE_SM}px; background: transparent;")
             self.thread_layout.addWidget(blank)
         else:
             for row in rows:
@@ -513,13 +559,9 @@ class TicketThreadDialog(QDialog):
 
     def _bubble(self, row) -> QFrame:
         if row.get("kind") == "event":
-            line = QLabel("%s   ·   %s" % (row.get("comment_text") or "",
-                                              format_datetime(row.get("timestamp"))))
-            line.setWordWrap(True)
-            line.setTextFormat(Qt.TextFormat.PlainText)
-            line.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-            line.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: 11.5px; background: transparent;")
-            return line
+            return _BubbleText("%s   ·   %s" % (row.get("comment_text") or "",
+                                                format_datetime(row.get("timestamp"))),
+                               Gate.TEXT_DIM, size=Gate.SIZE_XS, centred=True)
 
         mine = (row.get("author") or "").strip().lower() == self.username.lower()
         internal = bool(row.get("internal"))
@@ -550,7 +592,7 @@ class TicketThreadDialog(QDialog):
         who = QLabel(who_text)
         who.setTextFormat(Qt.TextFormat.PlainText)
         who.setStyleSheet(
-            f"color: {Gate.WARN if internal else Gate.TEXT_DIM}; font-size: 11.5px; "
+            f"color: {Gate.WARN if internal else Gate.TEXT_DIM}; font-size: {Gate.SIZE_XS}px; "
             f"background: transparent; border: none;")
         layout.addWidget(who)
         layout.addWidget(_BubbleText(row.get("comment_text") or "", Gate.TEXT_2))
@@ -633,12 +675,52 @@ class TicketThreadDialog(QDialog):
                                 "Withdraw ticket #%s? IT will stop working on it." % self.ticket.get("id"),
                                 yes_label="Withdraw", no_label="Keep it"):
             return
-        self._run("Withdraw ticket", self.repo.withdraw, self.reply.toPlainText().strip())
-        self.reply.clear()
+        if self._run("Withdraw ticket", self.repo.withdraw, self.reply.toPlainText().strip()):
+            self.reply.clear()
 
     def _reopen(self):
-        self._run("Reopen ticket", self.repo.reopen, self.reply.toPlainText().strip())
-        self.reply.clear()
+        """Ask what is still wrong (the requester must say); it goes in as a message."""
+        from PySide6.QtWidgets import QInputDialog
+        ask = QInputDialog(self)
+        ask.setWindowTitle("Reopen ticket #%s" % self.ticket.get("id"))
+        ask.setOption(QInputDialog.InputDialogOption.UsePlainTextEditForTextInput, True)
+        ask.setLabelText("What is still wrong?" if self.side == "requester"
+                         else "Why is it being reopened? (optional - the requester reads this)")
+        ask.setTextValue(self.reply.toPlainText().strip())
+        ask.setOkButtonText("Reopen")
+        if ask.exec() != QDialog.DialogCode.Accepted:
+            return
+        reason = ask.textValue().strip()
+        if not reason and self.side == "requester":
+            feedback.warn(self, "Reopen ticket", "Say what is still wrong, so IT know where to start.")
+            return
+        if self._run("Reopen ticket", self.repo.reopen, reason[:2000]):
+            self.reply.clear()
+
+    # IT's actions, through the queue's own dialogs.
+    def _take(self):
+        if self._run("Assign to me", lambda t, by: self.repo.assign(t, by, by)):
+            feedback.toast(self, "Ticket #%s is yours." % self.ticket.get("id"), "success")
+
+    def _set_status(self):
+        from .service_desk_view import SetStatusDialog
+        dialog = SetStatusDialog([self.ticket], self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        status, note = dialog.values()
+        if self._run("Set status", lambda t, by: self.repo.set_status(t, status, by, note)):
+            feedback.toast(self, "Ticket #%s is now %s." % (
+                self.ticket.get("id"), sd.display_status(status, "it")), "success")
+
+    def _change_priority(self):
+        from .service_desk_view import PriorityDialog
+        dialog = PriorityDialog(self.ticket, self, calendar=self.repo.calendar())
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        priority, reason = dialog.values()
+        if self._run("Change priority", lambda t, by: self.repo.change_priority(t, priority, reason, by)):
+            feedback.toast(self, "Ticket #%s is now %s." % (
+                self.ticket.get("id"), PRIORITY_LABEL[priority]), "success")
 
 
 class MyTicketsView(QWidget):
@@ -646,7 +728,10 @@ class MyTicketsView(QWidget):
 
     changed = Signal()
 
-    COLUMNS = ["#", "Summary", "Category", "Priority", "Status", "With", "Raised"]
+    COLUMNS = ["#", "Summary", "Category", "Priority", "Status", "With", "Last update", "Raised"]
+    # Per machine: the newest message from somebody else that this person has
+    # opened, per ticket - what makes a row bold until it is read.
+    SEEN_KEY = "IT_TICKETS_SEEN"
     # Whether this view owns the "IT Support" sidebar count (not when it sits
     # beside IT's queue, whose count that is).
     show_badge = True
@@ -663,15 +748,25 @@ class MyTicketsView(QWidget):
         root.setContentsMargins(Gate.SPACE_5, Gate.SPACE_4, Gate.SPACE_5, Gate.SPACE_4)
         root.setSpacing(Gate.SPACE_3)
 
-        header = QHBoxLayout()
+        header = self.header = QHBoxLayout()
         header.addWidget(page_title(
             "IT Support", "Report a problem, and follow what happens to it"), 1)
         header.addStretch(1)
         # Centred on the title block (the title keeps SPACE_3 below its text).
+        self.include_closed = QCheckBox("Include closed")
+        self.include_closed.setToolTip("Show resolved and closed tickets as well")
+        self.include_closed.toggled.connect(lambda _on: self._paint())
+        self.btn_open = make_button("Open", "secondary", on_click=self.open_selected,
+                                    tooltip="Read the ticket and reply (Enter, or double-click)")
+        actions = QHBoxLayout()
+        actions.setSpacing(Gate.SPACE_2)
+        for widget in (self.include_closed, self.btn_open,
+                       make_button("Report a problem", "primary", on_click=self.raise_ticket)):
+            actions.addWidget(widget)
         report = QVBoxLayout()
         report.setContentsMargins(0, 0, 0, Gate.SPACE_3)
         report.addStretch(1)
-        report.addWidget(make_button("Report a problem", "primary", on_click=self.raise_ticket))
+        report.addLayout(actions)
         report.addStretch(1)
         header.addLayout(report)
         root.addLayout(header)
@@ -688,22 +783,10 @@ class MyTicketsView(QWidget):
         self.banner_text = QLabel("")
         self.banner_text.setStyleSheet(f"color: {Gate.TEXT}; background: transparent; border: none;")
         banner_row.addWidget(self.banner_text, 1)
-        self.banner_open = make_button("Open", "secondary", on_click=self._open_waiting)
+        self.banner_open = make_button("Answer", "secondary", on_click=self._open_waiting)
         banner_row.addWidget(self.banner_open)
         self.banner.hide()
         root.addWidget(self.banner)
-
-        tools = QHBoxLayout()
-        tools.setSpacing(Gate.SPACE_2)
-        self.include_closed = QCheckBox("Include closed")
-        self.include_closed.setToolTip("Show resolved and closed tickets as well")
-        self.include_closed.toggled.connect(lambda _on: self._paint())
-        tools.addWidget(self.include_closed)
-        tools.addStretch(1)
-        self.btn_open = make_button("Open", "secondary", on_click=self.open_selected,
-                                    tooltip="Read the ticket and reply (Enter, or double-click)")
-        tools.addWidget(self.btn_open)
-        root.addLayout(tools)
 
         self.table = QTableWidget(0, len(self.COLUMNS))
         self.table.setHorizontalHeaderLabels(self.COLUMNS)
@@ -712,10 +795,14 @@ class MyTicketsView(QWidget):
         style_table(self.table, {
             "#": "numeric", "Summary": "stretch", "Category": "contents",
             "Priority": "contents", "Status": "contents", "With": "contents",
-            "Raised": "contents",
+            "Last update": "contents", "Raised": "contents",
         }, multi_select=False)
-        from slate.gui.components.table_tools import setup_table
+        from slate.gui.components.table_tools import clear_sort, setup_table
         setup_table(self.table, multi_select=False)
+        # The screen's own order (waiting on you first) until somebody sorts
+        # by a header - and then their sort, across every refresh. It was
+        # cleared on each 30-second refresh.
+        clear_sort(self.table)
         # Enter / Return and double-click both arrive as "activated" (connecting
         # doubleClicked as well would open the ticket twice).
         self.table.activated.connect(self.open_selected)
@@ -767,8 +854,8 @@ class MyTicketsView(QWidget):
                                  -int(r.get("id") or 0)))
         self._rows = rows
 
-        from slate.gui.components.table_tools import KeepSelection, make_item, clear_sort
-        clear_sort(self.table)
+        from slate.gui.components.table_tools import KeepSelection, make_item
+        seen = self._seen()
         with KeepSelection(self.table):
             self.table.setRowCount(len(rows))
             for r, row in enumerate(rows):
@@ -783,21 +870,29 @@ class MyTicketsView(QWidget):
                     sd.display_status(status, "requester"),
                     # Who has it, by name - it showed the engineer's login.
                     people.display_name(row.get("assigned_to")) or "Not yet picked up",
+                    format_datetime(row.get("last_update")),
                     format_datetime(row.get("created_at")),
                 ]
                 sort_values = [row.get("id"), None, None, sd.priority_rank(priority), None, None,
-                               str(row.get("created_at") or "")]
+                               str(row.get("last_update") or ""), str(row.get("created_at") or "")]
+                # Something new from IT since this person last opened it.
+                unread = self._unread(row, seen)
                 for c, text in enumerate(cells):
                     item = make_item(text, sort_value=sort_values[c],
                                      key=row.get("id") if c == 0 else None,
                                      align=(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-                                     if c in (3, 6) else None)
+                                     if c in (3, 6, 7) else None)
                     if c == 1:
-                        item.setToolTip(summary)
+                        item.setToolTip(summary + ("\n\nNew reply since you last looked" if unread else ""))
                     if c == 3:
                         item.setForeground(QColor(_tone(priority_tone(priority))))
                     if c == 4:
                         item.setForeground(QColor(_tone(status_tone(status))))
+                        item.setToolTip(expected_by(row, self.repo))
+                    if unread:
+                        font = item.font()
+                        font.setBold(True)
+                        item.setFont(font)
                     self.table.setItem(r, c, item)
 
         hidden = len(self._all) - len(rows)
@@ -823,6 +918,7 @@ class MyTicketsView(QWidget):
             more = "" if len(waiting) == 1 else " (and %d more)" % (len(waiting) - 1)
             self.banner_text.setText("IT need your answer on #%s - %s%s" % (
                 first.get("id"), sd.summary_of(first.get("description")), more))
+            self.banner_open.setText("Answer #%s" % first.get("id"))
             self.banner.show()
         else:
             self.banner.hide()
@@ -838,6 +934,32 @@ class MyTicketsView(QWidget):
 
     def _sync_buttons(self, *_):
         self.btn_open.setEnabled(self._selected() is not None)
+
+    # ------------------------------------------------------------ read marks
+    def _seen(self) -> dict:
+        try:
+            from slate.core.infra.global_config import GlobalConfig
+            value = GlobalConfig.get(self.SEEN_KEY, {}) or {}
+            return dict(value) if isinstance(value, dict) else {}
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _unread(row, seen) -> bool:
+        theirs = row.get("last_theirs")
+        return theirs is not None and int(theirs) > int(seen.get(str(row.get("id")), 0) or 0)
+
+    def _mark_read(self, row):
+        theirs = row.get("last_theirs")
+        if theirs is None:
+            return
+        seen = self._seen()
+        seen[str(row.get("id"))] = int(theirs)
+        try:
+            from slate.core.infra.global_config import GlobalConfig
+            GlobalConfig.set(self.SEEN_KEY, seen)
+        except Exception as exc:
+            logger.debug("Read mark not kept: %s", exc)
 
     def _selected(self):
         from slate.gui.components.table_tools import selected_keys
@@ -889,5 +1011,10 @@ class MyTicketsView(QWidget):
         dialog = TicketThreadDialog(row, self.db, self.username, self, side="requester", repo=self.repo)
         dialog.exec()
         self.refresh()
+        # Read now, including whatever came in while it was open.
+        fresh = next((r for r in self._all if r.get("id") == row.get("id")), row)
+        if self._unread(fresh, self._seen()):
+            self._mark_read(fresh)
+            self._paint()
         if dialog.changed_anything:
             self.changed.emit()

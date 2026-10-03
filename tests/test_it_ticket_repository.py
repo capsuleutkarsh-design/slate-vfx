@@ -128,9 +128,9 @@ def test_reopening_clears_resolved_at(repo):
 def test_waiting_twice_is_a_no_op(repo):
     """IT-080."""
     ticket = repo.get(_raise(repo))
-    assert repo.set_status(ticket, sd.WAITING, "it.sana")
+    assert repo.set_status(ticket, sd.WAITING, "it.sana", "Which shot?")
     first = repo.get(ticket["id"])["waiting_since"]
-    assert not repo.set_status(ticket, sd.WAITING, "it.sana")
+    assert not repo.set_status(ticket, sd.WAITING, "it.sana", "Which shot?")
     assert repo.get(ticket["id"])["waiting_since"] == first
 
 
@@ -138,7 +138,7 @@ def test_the_requesters_reply_puts_it_back_with_it(repo, db):
     """IT-079."""
     ticket = repo.get(_raise(repo))
     repo.assign(ticket, "it.sana", "it.sana")
-    repo.set_status(ticket, sd.WAITING, "it.sana")
+    repo.set_status(ticket, sd.WAITING, "it.sana", "Send the log please")
     repo.reply(ticket, "ravi", "Here is the log")
     after = repo.get(ticket["id"])
     assert after["status"] == "In Progress"
@@ -156,12 +156,67 @@ def test_an_it_reply_picks_the_ticket_up(repo, db):
     assert _notes(db, "ravi")
 
 
-def test_a_reply_on_a_closed_ticket_reopens_it(repo):
-    """IT-098."""
+def test_a_thank_you_on_a_resolved_ticket_leaves_it_resolved_and_tells_it(repo, db):
+    """IT2-002 (IT-098 reversed: Still broken - reopen is the way back)."""
     ticket = repo.get(_raise(repo))
-    repo.set_status(ticket, "Closed", "it.sana", "fixed")
-    repo.reply(ticket, "ravi", "still broken")
-    assert repo.get(ticket["id"])["status"] == "Open"
+    repo.set_status(ticket, "Resolved", "it.sana", "fixed")
+    repo.reply(ticket, "ravi", "Thanks, works now!")
+    assert repo.get(ticket["id"])["status"] == "Resolved"
+    assert any("replied on ticket" in m for m in _notes(db, "it.sana"))
+
+
+def test_resolving_from_the_queue_is_a_response_by_its_owner(repo):
+    """IT2-014: the resolve is the response, and whoever resolved it owns it."""
+    ticket = repo.get(_raise(repo))
+    repo.set_status(ticket, "Resolved", "it.sana", "Reset the dongle")
+    after = repo.get(ticket["id"])
+    assert after["assigned_to"] == "it.sana" and after["first_response_at"] is not None
+    assert sd._truthy(after.get("response_met"))
+    asking = repo.get(_raise(repo, summary="Tablet"))
+    repo.set_status(asking, sd.WAITING, "it.joe", "Which tablet?")
+    assert repo.get(asking["id"])["first_response_at"] is not None
+
+
+def test_the_resolve_note_is_a_message_under_the_event_line(repo):
+    """IT2-003 / IT2-008 / IT2-015."""
+    ticket = repo.get(_raise(repo))
+    with pytest.raises(TicketError):
+        repo.set_status(ticket, sd.WAITING, "it.sana", "")
+    repo.set_status(ticket, sd.WAITING, "it.sana", "Which project?")
+    repo.set_status(ticket, "Resolved", "it.sana", "Reinstalled the licence")
+    rows = [(c["kind"], c["comment_text"]) for c in repo.comments(ticket["id"])]
+    assert rows[-4:] == [("event", "Sana Shaikh asked the requester for more information."),
+                         ("reply", "Which project?"),
+                         ("event", "Resolved by Sana Shaikh."),
+                         ("reply", "Reinstalled the licence")]
+
+
+def test_escalating_to_p1_tells_it_and_restarts_the_clock(repo, db):
+    """IT2-012 / IT2-013."""
+    ticket = repo.get(_raise(repo))
+    before = len(_notes(db, "it.joe"))
+    assert repo.change_priority(ticket, "P1", "Whole floor down", "it.sana")
+    after = repo.get(ticket["id"])
+    assert after.get("sla_from") is not None
+    assert len(_notes(db, "it.joe")) == before + 1
+    assert not any("raised to" in m for m in _notes(db, "it.sana"))      # not the person who did it
+    assert any("is now P1 Critical" in m for m in _notes(db, "ravi"))
+    state = sd.sla_state(after, datetime.now(), repo.calendar())
+    assert state["state"] != "breached"
+    with pytest.raises(TicketError):
+        repo.change_priority(ticket, "P2", "x" * 201, "it.sana")
+
+
+def test_reopening_tells_the_others_never_the_person_reopening(repo, db):
+    """IT2-010 / IT2-007."""
+    ticket = repo.get(_raise(repo))
+    repo.assign(ticket, "it.sana", "it.sana")
+    repo.set_status(ticket, "Resolved", "it.sana", "done")
+    seen = len(_notes(db, "it.sana"))
+    repo.reopen(ticket, "it.sana", "Found another cause")
+    assert len(_notes(db, "it.sana")) == seen
+    assert any("reopened by Sana Shaikh" in m for m in _notes(db, "ravi"))
+    assert repo.comments(ticket["id"])[-1]["comment_text"] == "Found another cause"
 
 
 def test_internal_notes_never_reach_the_requester(repo):
@@ -208,6 +263,7 @@ def test_requester_actions(repo):
     repo.withdraw(other, "ravi", "found a spare")
     assert repo.get(other["id"])["status"] == "Closed"
     assert any("Withdrawn" in c["comment_text"] for c in repo.comments(other["id"]))
+    assert any(c["comment_text"] == "found a spare" for c in repo.comments(other["id"]))
 
 
 def test_responded_by_phone_stops_the_response_clock_once(repo):
@@ -220,3 +276,14 @@ def test_responded_by_phone_stops_the_response_clock_once(repo):
 
 def test_it_staff_are_the_people_with_manage_it(repo):
     assert repo.it_staff() == ["it.joe", "it.sana"]
+
+
+def test_my_tickets_know_the_last_update_and_who_wrote_last(repo):
+    """IT2-031."""
+    ticket = repo.get(_raise(repo))
+    repo.reply(ticket, "ravi", "More detail")
+    [mine] = repo.for_requester("ravi")
+    assert mine["last_theirs"] is None and mine["last_update"]
+    repo.reply(ticket, "it.sana", "On it")
+    [mine] = repo.for_requester("ravi")
+    assert mine["last_theirs"] is not None

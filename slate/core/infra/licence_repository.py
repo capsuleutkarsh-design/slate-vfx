@@ -74,18 +74,20 @@ class LicenceRepository:
 
     # ------------------------------------------------------------- purchases
     def licences(self) -> list:
+        """
+        Every licence bought. Raises on a refused read, like the other IT
+        repositories: it used to become [] and the screen said "No licences
+        recorded" over a broken query.
+        """
         extra = self._extras()
-        try:
-            rows = self.db.execute_query(
-                "SELECT id, software_name, total_seats, active_seats, expiration_date%s "
-                "FROM software_licenses ORDER BY software_name"
-                % "".join(", " + c for c in extra), fetch="all") or []
-            return [dict(r) for r in rows]
-        except DatabaseUnavailableError:
-            raise
-        except Exception:
-            logger.exception("licences failed")
-            return []
+        rows = self.db.execute_query(
+            "SELECT id, software_name, total_seats, active_seats, expiration_date%s "
+            "FROM software_licenses ORDER BY software_name"
+            % "".join(", " + c for c in extra), fetch="all")
+        if rows is None:
+            reason = self.db.last_error() if hasattr(self.db, "last_error") else ""
+            raise RuntimeError("The licences could not be read. %s" % (reason or ""))
+        return [dict(r) for r in rows]
 
     # The column's size, so the dialog can stop a name the database would refuse.
     NAME_MAX = 100
@@ -124,12 +126,25 @@ class LicenceRepository:
             values.append(value)
         try:
             if licence_id:
-                result = self.db.execute_update(
-                    "UPDATE software_licenses SET software_name = %%s, total_seats = %%s, "
-                    "expiration_date = %%s%s WHERE id = %%s"
-                    % "".join(", %s = %%s" % c for c in extra),
-                    tuple([software_name, int(total_seats or 0), expiry] + values + [licence_id]))
-                return bool(getattr(result, "changed", result))
+                # Renamed while it was the only licence with its old name: its
+                # name-only readings are its own, so they are tied to it by id
+                # in the same transaction - left behind, they stopped counting
+                # for it and haunted the next licence given the old name.
+                before = next((r for r in self.licences() if r.get("id") == licence_id), None)
+                renamed = (before is not None and self._name_key(before.get("software_name"))
+                           != self._name_key(software_name) and self._legacy_is_theirs(before))
+                with atomic(self.db) as tx:
+                    tx.write(
+                        "UPDATE software_licenses SET software_name = %%s, total_seats = %%s, "
+                        "expiration_date = %%s%s WHERE id = %%s"
+                        % "".join(", %s = %%s" % c for c in extra),
+                        tuple([software_name, int(total_seats or 0), expiry] + values + [licence_id]),
+                        expect_rows=True)
+                    if renamed:
+                        tx.write("UPDATE licence_readings SET licence_id = %s WHERE licence_id IS NULL "
+                                 "AND LOWER(software_name) = LOWER(%s)",
+                                 (licence_id, before.get("software_name")))
+                return True
             result = self.db.execute_update(
                 "INSERT INTO software_licenses "
                 "(software_name, total_seats, active_seats, expiration_date%s) "
@@ -339,18 +354,27 @@ class LicenceRepository:
             logger.exception("update_reading failed")
             return False
 
-    def import_readings(self, rows: Iterable[tuple], taken_at=None, recorded_by: str = None) -> int:
+    def import_readings(self, rows: Iterable[tuple], taken_at=None, recorded_by: str = None) -> tuple:
         """
         Readings from a licence server report: [(licence row, in_use)].
-        Returns how many were written.
+        Returns (written, skipped): a reading already there for that licence
+        at that moment with that number is skipped, so opening the same saved
+        report twice does not double the readings.
         """
-        written = 0
+        taken_at = taken_at or datetime.now().replace(microsecond=0)
+        written = skipped = 0
         for licence, in_use in rows:
+            there = self.db.execute_query(
+                "SELECT id FROM licence_readings WHERE licence_id = %s AND taken_at = %s "
+                "AND seats_in_use = %s", (licence.get("id"), taken_at, int(in_use or 0)), fetch="one")
+            if there:
+                skipped += 1
+                continue
             if self.record(licence.get("software_name"), in_use, licence.get("total_seats"),
                            taken_at=taken_at, licence_id=licence.get("id"),
                            source="server report", recorded_by=recorded_by):
                 written += 1
-        return written
+        return written, skipped
 
     def peaks(self, days: int = 90) -> dict:
         """
@@ -360,19 +384,22 @@ class LicenceRepository:
         lower-case name) for the name-only readings taken before the id
         existed. The two are kept apart: merging them under one key is what
         gave a second contract the first one's usage.
+
+        Every key also carries "last": its newest reading, inside the window
+        or not (peak None and samples 0 when only older readings exist), so a
+        licence measured before the window is not called never measured.
         """
         since = datetime.now() - timedelta(days=max(1, days))
-        try:
-            rows = self.db.execute_query(
-                "SELECT licence_id, LOWER(software_name) AS name, MAX(seats_in_use) AS peak, "
-                "       COUNT(*) AS samples "
-                "FROM licence_readings WHERE taken_at >= %s "
-                "GROUP BY licence_id, LOWER(software_name)", (since,), fetch="all") or []
-        except DatabaseUnavailableError:
-            raise
-        except Exception:
-            logger.exception("peaks failed")
-            return {}
+        rows = self.db.execute_query(
+            "SELECT licence_id, LOWER(software_name) AS name, "
+            "       MAX(CASE WHEN taken_at >= %s THEN seats_in_use END) AS peak, "
+            "       SUM(CASE WHEN taken_at >= %s THEN 1 ELSE 0 END) AS samples, "
+            "       MAX(taken_at) AS last "
+            "FROM licence_readings GROUP BY licence_id, LOWER(software_name)",
+            (since, since), fetch="all")
+        if rows is None:
+            reason = self.db.last_error() if hasattr(self.db, "last_error") else ""
+            raise RuntimeError("The licence readings could not be read. %s" % (reason or ""))
 
         out = {}
         for row in rows:
@@ -380,9 +407,13 @@ class LicenceRepository:
             key = row.get("licence_id")
             if key is None:
                 key = ("name", str(row.get("name") or "").strip())
-            entry = out.setdefault(key, {"peak": 0, "samples": 0})
-            entry["peak"] = max(entry["peak"], int(row.get("peak") or 0))
+            entry = out.setdefault(key, {"peak": None, "samples": 0, "last": None})
+            if row.get("peak") is not None:
+                entry["peak"] = max(entry["peak"] or 0, int(row.get("peak") or 0))
             entry["samples"] += int(row.get("samples") or 0)
+            last = lc.as_date(row.get("last"))
+            if last and (entry["last"] is None or last > entry["last"]):
+                entry["last"] = last
         return out
 
     # -------------------------------------------------------------- reporting
@@ -393,7 +424,6 @@ class LicenceRepository:
         This is the whole module in one call - the view renders it and does no
         arithmetic of its own.
         """
-        from slate.core.domain.money import format_money
         renewal_days = renewal_days or lc.renewal_window(self.db)
         peaks = self.peaks(days)
         licences = self.licences()
@@ -415,15 +445,18 @@ class LicenceRepository:
                 # they were cannot be known, so they count for nobody.
                 unattributed, legacy = True, None
             readings = [r for r in (own, legacy) if r]
-            peak = max(r["peak"] for r in readings) if readings else None
+            measured = [r["peak"] for r in readings if r["peak"] is not None]
+            peak = max(measured) if measured else None
             samples = sum(r["samples"] for r in readings)
+            lasts = [r["last"] for r in readings if r.get("last")]
+            last_days = ((today or date.today()) - max(lasts)).days if lasts and peak is None else None
             expiry = row.get("expiration_date")
 
             currency = row.get("currency") or None
             spare_cost = lc.spare_cost(row.get("annual_cost"), seats, peak)
-            spare_text = format_money(spare_cost, currency) if spare_cost else ""
-            finding = lc.state(seats, peak, expiry, today, renewal_days)
-            text = lc.describe(seats, peak, expiry, today, renewal_days, spare_text)
+            spare_text = lc.money_text(spare_cost, currency) if spare_cost else ""
+            finding = lc.state(seats, peak, expiry, today, renewal_days, last_days)
+            text = lc.describe(seats, peak, expiry, today, renewal_days, spare_text, last_days)
             if unattributed and peak is None:
                 text += (" Older readings of %s were taken before contracts were told apart "
                          "and cannot be counted for one of them." % name)
@@ -451,7 +484,8 @@ class LicenceRepository:
 
     def send_renewal_reminders(self, today: date = None, throttle_seconds: float = 3600) -> int:
         """
-        Remind IT (the header bell) once per licence per threshold: when it
+        Remind IT and the people who approve renewals (the header bell) once
+        per licence per threshold: when it
         enters the studio's renewal window, 14 days before, and on the day it
         expires. Recorded in licence_reminders so no workstation repeats it.
         Returns how many reminders went out. Never raises.
@@ -485,11 +519,14 @@ class LicenceRepository:
                 if not getattr(result, "changed", bool(result)):
                     continue            # already reminded at this threshold
                 if staff is None:
+                    # IT, and the people who approve renewals (view_licences).
                     from .ticket_repository import TicketRepository
-                    staff = TicketRepository(self.db).it_staff()
+                    people_repo = TicketRepository(self.db)
+                    staff = sorted(set(people_repo.it_staff())
+                                   | set(people_repo.it_staff(ability="view_licences")), key=str.lower)
                 name = row.get("software_name")
                 message = ("%s: %s - decide the renewal now." % (name, lc.renewal_phrase(left))
-                           if left >= 0 else "%s has expired (%s)." % (name, lc.renewal_phrase(left).lower()))
+                           if left >= 0 else "%s %s - renew or remove it." % (name, lc.renewal_phrase(left).lower()))
                 try:
                     from slate.core.domain.notification_manager import NotificationManager
                     NotificationManager(self.db).notify(staff, message, "licence")

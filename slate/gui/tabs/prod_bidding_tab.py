@@ -211,7 +211,7 @@ class ProdBiddingTab(QWidget):
 
         self.toolbar = TableToolbar(self.grid, placeholder="Search project, client or person…",
                                     columns=(C_PROJECT, C_CLIENT, C_STATUS, C_BY), on_refresh=self.load_data,
-                                    noun="bids")
+                                    noun="bid")
         self.project_filter = self.toolbar.add_filter("Project", [("All projects", "")], column=C_PROJECT)
         self.status_filter = self.toolbar.add_filter(
             "Status", [("All statuses", "")] + [(DB.status_label(s), DB.status_label(s))

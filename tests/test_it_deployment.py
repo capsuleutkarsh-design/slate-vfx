@@ -180,3 +180,86 @@ def test_a_failure_reason_is_added_to_the_notes_not_written_over_them(repo):
     notes = repo.all()[0]["notes"]
     assert notes.startswith("installed from the share")
     assert "licence server unreachable" in notes and "it.joe" in notes
+
+
+
+# ------------------------------------------------------------------ round 2
+
+def test_cancel_on_the_reason_marks_nothing_and_undo_puts_it_back(sqlite_db, app, monkeypatch):
+    """IT2-069 / IT2-073."""
+    from PySide6.QtWidgets import QDialog, QInputDialog
+    from slate.gui.components import feedback
+    repo = DeploymentRepository(sqlite_db)
+    repo.record("A", ["WS-01"], "it.sana", notes="from the share")
+    tab = _tab()
+    tab.grid.selectRow(0)
+    monkeypatch.setattr(QInputDialog, "exec", lambda self: QDialog.DialogCode.Rejected)
+    tab.update_status("Failed")
+    assert repo.all()[0]["status"] == "Pending"
+    actions = []
+    monkeypatch.setattr(feedback, "toast", lambda *a, **k: actions.append(k.get("action")))
+    monkeypatch.setattr(QInputDialog, "exec", lambda self: QDialog.DialogCode.Accepted)
+    monkeypatch.setattr(QInputDialog, "textValue", lambda self: "disk full")
+    tab.grid.selectRow(0)
+    tab.update_status("Failed")
+    assert repo.all()[0]["status"] == "Failed"
+    label, undo = actions[-1]
+    assert label == "Undo"
+    undo()
+    row = repo.all()[0]
+    assert row["status"] == "Pending" and row["notes"] == "from the share" and not row["completed_by"]
+    repo.set_outcome(row["id"], "Success", "it.ravi")
+    tab.load_data()
+    tab.grid.selectRow(0)
+    tab.update_status("Success")                       # already: nothing overwritten
+    assert repo.all()[0]["completed_by"] == "it.ravi"
+
+
+def test_edit_is_for_one_record_and_notes_show_every_line(sqlite_db, app):
+    """IT2-070 / IT2-072 / IT2-077."""
+    from PySide6.QtWidgets import QAbstractItemView
+    repo = DeploymentRepository(sqlite_db)
+    a = repo.record("A", ["WS-01", "WS-02"], "it.sana", notes="Silent install")[0]
+    repo.set_outcome(a, "Failed", "it.sana", "disk full")
+    tab = _tab()
+    tab.grid.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
+    tab.grid.selectRow(0)
+    tab.grid.selectRow(1)
+    assert not tab.btn_edit.isEnabled() and tab.btn_edit.toolTip()
+    notes = [tab.grid.item(r, 8).text() for r in range(2)]
+    assert any("Silent install" in n and "disk full" in n for n in notes)
+    assert tab.lbl_success._tone == "bad"                # 0% is not good news
+
+
+def test_lengths_end_of_life_and_completion_after_a_comma(sqlite_db, app, monkeypatch):
+    """IT2-071 / IT2-075 / IT2-076 / IT2-078."""
+    from slate.core.infra.gate import Gate
+    from slate.gui.components import feedback
+    from slate.gui.tabs.it_deployment_tab import AddDeploymentDialog
+    repo = DeploymentRepository(sqlite_db)
+    with pytest.raises(DeploymentError):
+        repo.record("x" * 400, ["WS-01"], "it.sana")
+    dialog = AddDeploymentDialog(machines=["WS-COMP-1", "WS-ROTO-4"], retired={"ws-roto-4": "Retired"})
+    _KEEP.append(dialog)
+    assert dialog.pkg_input.maxLength() == 120 and dialog.version_input.maxLength() == 60
+    completer = dialog.target_input.completer()
+    assert completer.splitPath("WS-COMP-1, WS-RO") == ["WS-RO"]
+    completer.setCompletionPrefix("WS")
+    offered = [completer.completionModel().index(i, 0).data() for i in range(completer.completionCount())]
+    assert offered == ["WS-COMP-1"]                      # the retired one is not offered
+    dialog.pkg_input.setText("Nuke")
+    dialog.target_input.setText("WS-ROTO-4, NOPE")
+    assert Gate.WARN in dialog.hint.styleSheet() and "Retired" in dialog.hint.text()
+    asked = []
+    monkeypatch.setattr(feedback, "confirm", lambda *a, **k: asked.append(a[2]) or True)
+    dialog.accept = lambda: None
+    dialog._save()
+    assert any("Retired" in text for text in asked)
+
+
+def test_read_only_hides_the_changes(sqlite_db, app):
+    """IT2-081."""
+    from slate.gui.tabs.it_deployment_tab import ItDeploymentTab
+    tab = ItDeploymentTab(user_data={"username": "intern"}, read_only=True)
+    _KEEP.append(tab)
+    assert not tab.btn_record.isVisibleTo(tab) and not tab.btn_delete.isVisibleTo(tab)

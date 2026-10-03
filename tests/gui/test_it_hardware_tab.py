@@ -256,3 +256,56 @@ def test_issue_is_off_for_a_machine_in_repair(db, app):
     row_c = next(r for r in range(tab.grid.rowCount()) if tab.grid.item(r, 0).text() == "WS-C")
     tab.grid.selectRow(row_c)
     assert not tab.issue_btn.isEnabled()
+
+
+
+# ------------------------------------------------------------------ round 2
+
+def test_figure_filters_show_what_they_count_and_columns_read_well(db, app):
+    """IT2-036 / IT2-037 / IT2-041 / IT2-051 / IT2-064."""
+    from PySide6.QtCore import Qt
+    tab = _tab(db)
+    _seed(tab)
+    tab.repo.update("WS-C", {"asset_tag": "TAG-9277"})
+    tab.load_data()
+    tab.fig_loan.clicked.emit()
+    assert _rows(tab) == ["WS-A"] and tab.fig_loan._selected
+    tab.fig_total.clicked.emit()
+    assert len(_rows(tab)) == 3
+    tab.toolbar.search.setText("TAG-9277")
+    tab.toolbar.filter.apply()
+    assert _rows(tab) == ["WS-C"]
+    assert tab.toolbar.count_label.text() == "1 of 4 machines"
+    assert tab.fig_repair.toolTip()
+    ram = tab.grid.item(0, 6)
+    assert ram.textAlignment() & Qt.AlignmentFlag.AlignRight
+    assert not tab.grid.item(0, 0).textAlignment() & Qt.AlignmentFlag.AlignRight     # names read left
+
+
+def test_delete_says_why_before_it_is_pressed_and_read_only_hides_changes(db, app):
+    """IT2-039 / IT2-081."""
+    from slate.gui.tabs.it_inventory_tab import ItInventoryTab
+    tab = _tab(db)
+    _seed(tab)
+    row_a = next(r for r in range(tab.grid.rowCount()) if tab.grid.item(r, 0).text() == "WS-A")
+    tab.grid.selectRow(row_a)
+    assert not tab.delete_btn.isEnabled() and "Retired" in tab.delete_btn.toolTip()
+    reader = ItInventoryTab(user_data={"username": "intern"}, read_only=True)
+    _KEEP.append(reader)
+    assert not reader.add_btn.isVisibleTo(reader) and not reader.issue_btn.isVisibleTo(reader)
+    assert reader.history_btn.isVisibleTo(reader)
+
+
+def test_the_add_dialog_for_a_monitor_and_the_edit_dialog_has_no_gap(db, app):
+    """IT2-044 / IT2-045 / IT2-046 / IT2-047 / IT2-050."""
+    from slate.gui.tabs.it_inventory_tab import AddPCDialog
+    dialog = AddPCDialog(locations=["Comp Floor 2", "Comp Floor 2", None])
+    _KEEP.append(dialog)
+    assert dialog.inp_location.completer() is not None
+    dialog.inp_type.setCurrentText("Monitor")
+    dialog.inp_name.setText("Dell U2723QE #3")
+    assert dialog.ok_btn.isEnabled()
+    assert not dialog.form.isRowVisible(dialog.inp_cpu)
+    edit = AddPCDialog(edit_data={"machine_name": "WS-A", "status": "Active"})
+    _KEEP.append(edit)
+    assert not edit.name_hint.isVisibleTo(edit)

@@ -229,7 +229,7 @@ class ProdSchedulingTab(QWidget):
 
         self.toolbar = TableToolbar(self.grid, placeholder="Search milestone, project, owner or dependency…",
                                     columns=(C_PROJECT, C_NAME, C_DEPENDS, C_STATUS, C_OWNER, C_DEPT),
-                                    on_refresh=self.load_data, noun="milestones")
+                                    on_refresh=self.load_data, noun="milestone")
         self.project_filter = self.toolbar.add_filter("Project", [("All projects", "")], column=C_PROJECT)
         self.status_filter = self.toolbar.add_filter(
             "Status", [("All statuses", "")] + [(s, s) for s in DS.STATUSES]

@@ -37,16 +37,20 @@ logger = logging.getLogger(__name__)
 _WRITABLE = {
     "status", "assigned_to", "first_response_at", "resolved_at", "waiting_since",
     "waiting_seconds", "priority", "response_met", "resolution_met", "resolution_hours",
+    "sla_from",
 }
 
 TICKET_COLUMNS = (
     "id, submitted_by, category, description, status, priority, created_at, "
     "assigned_to, first_response_at, resolved_at, impact, urgency, waiting_since, "
     "waiting_seconds")
-OPTIONAL_COLUMNS = ("raised_by", "response_met", "resolution_met", "resolution_hours")
+OPTIONAL_COLUMNS = ("raised_by", "response_met", "resolution_met", "resolution_hours", "sla_from")
 
 SUMMARY_MAX = 120
-NOTE_REQUIRED = sd.CLOSED_STATUSES
+REASON_MAX = 200
+# What was done (Resolved / Closed), or what IT need to know (Waiting): the
+# requester reads it, so it cannot be left out.
+NOTE_REQUIRED = sd.CLOSED_STATUSES + (sd.WAITING,)
 
 
 class TicketError(ValueError):
@@ -91,7 +95,25 @@ class TicketRepository:
             % self._select(), (username,), fetch="all")
         if rows is None:
             raise RuntimeError(self._why("Your tickets could not be read."))
-        return [dict(r) for r in rows]
+        tickets = [dict(r) for r in rows]
+        # The newest line the requester can see on each ticket (last_update),
+        # and the newest one somebody else wrote (last_theirs, an id), so the
+        # screen can show what moved since they last looked.
+        sql = ("SELECT ticket_id, MAX(timestamp) AS last_update, "
+               "MAX(CASE WHEN LOWER(author) <> LOWER(%s) THEN id END) AS last_theirs "
+               "FROM it_ticket_comments WHERE ticket_id IN (SELECT id FROM it_tickets "
+               "WHERE LOWER(submitted_by) = LOWER(%s))")
+        params = [username, username]
+        if self._has("it_ticket_comments", "internal"):
+            sql += " AND (internal IS NULL OR internal = %s)"
+            params.append(self._false())
+        activity = {dict(r)["ticket_id"]: dict(r) for r in self.db.execute_query(
+            sql + " GROUP BY ticket_id", tuple(params), fetch="all") or []}
+        for t in tickets:
+            seen = activity.get(t.get("id"), {})
+            t["last_update"] = seen.get("last_update") or t.get("created_at")
+            t["last_theirs"] = seen.get("last_theirs")
+        return tickets
 
     def get(self, ticket_id) -> Optional[dict]:
         row = self.db.execute_query(
@@ -253,43 +275,90 @@ class TicketRepository:
         new = sd.normalise_status(new_status)
         note = (note or "").strip()
         if new in NOTE_REQUIRED and not note:
-            raise TicketError("Say what was done - the person who raised it reads this.")
-        changes = sd.plan_status_change(ticket, new, datetime.now().replace(microsecond=0),
-                                        self.calendar())
-        if changes is None:
+            raise TicketError("Say what was done - the person who raised it reads this."
+                              if new in sd.CLOSED_STATUSES else
+                              "Say what you need from them - the person who raised it reads this.")
+        name = self._name(by)
+        text = {"Resolved": "Resolved by %s.", "Closed": "Closed by %s.", "Open": "Reopened by %s.",
+                "In Progress": "Moved to In Progress by %s.",
+                sd.WAITING: "%s asked the requester for more information."}.get(new, new + " by %s.")
+        if not self._move(ticket, new, by, text % name, note):
             return False
-        verb = {"Resolved": "Resolved", "Closed": "Closed", "Open": "Reopened",
-                "In Progress": "Moved to In Progress",
-                sd.WAITING: "Waiting on the requester"}.get(new, new)
-        text = "%s by %s" % (verb, self._name(by)) + (": %s" % note if note else ".")
-        with atomic(self.db) as tx:
-            self._apply(tx, ticket["id"], changes)
-            self._event(tx, ticket["id"], by, text)
         requester = ticket.get("submitted_by")
         if requester and str(requester).lower() != (by or "").lower():
             message = {
                 "Resolved": "Ticket #%s is resolved: %s" % (ticket["id"], note),
                 "Closed": "Ticket #%s is closed: %s" % (ticket["id"], note),
-                sd.WAITING: "IT need your answer on ticket #%s." % ticket["id"],
+                sd.WAITING: "IT need your answer on ticket #%s: %s" % (ticket["id"], note),
             }.get(new)
             if message:
                 self._notify([requester], message, "ticket")
         return True
 
+    def _move(self, ticket: dict, new: str, by: str, text: str, note: str = "") -> bool:
+        """
+        The status change, its event line and - when there is one - the note as
+        a message from whoever wrote it, in one transaction. What IT did to fix
+        it is the one thing the requester needs to read; it used to be small
+        grey centred text in the event line.
+
+        IT moving a ticket on is also handling it: the first response and the
+        owner are recorded (service_desk.plan_handled). Returns False when the
+        ticket was already in that status.
+        """
+        now = datetime.now().replace(microsecond=0)
+        handled = {}
+        if new != "Open" and not sd.is_requester(ticket, by):
+            handled = sd.plan_handled(ticket, by, now)
+        changes = sd.plan_status_change(dict(ticket, **handled), new, now, self.calendar())
+        if changes is None:
+            return False
+        with atomic(self.db) as tx:
+            self._apply(tx, ticket["id"], dict(handled, **changes))
+            self._event(tx, ticket["id"], by, text)
+            if note:
+                self._comment(tx, ticket["id"], by, note, now=now)
+        return True
+
     def change_priority(self, ticket: dict, priority: str, reason: str, by: str) -> bool:
-        """IT re-prioritise with a reason, which is kept in the thread."""
+        """
+        IT re-prioritise with a reason, which is kept in the thread.
+
+        Raising the priority restarts the promises from now (sla_from): the
+        ticket is measured against the new promise from the moment it was
+        made. A P1 or P2 tells IT, as a new one does; the requester is told
+        the new promise either way.
+        """
         ticket = self._fresh(ticket)
         new = sd.normalise_priority(priority)
         reason = (reason or "").strip()
         if not reason:
             raise TicketError("Give a reason for the change - it is kept with the ticket.")
+        if len(reason) > REASON_MAX:
+            raise TicketError("Keep the reason to %d characters." % REASON_MAX)
         old = sd.normalise_priority(ticket.get("priority"))
         if new == old:
             return False
+        now = datetime.now().replace(microsecond=0)
+        changes = {"priority": new}
+        raised = sd.priority_rank(new) < sd.priority_rank(old)
+        if raised and self._has("it_tickets", "sla_from") and sd.is_open(ticket.get("status")):
+            # The clock and the wait banked so far start again with the new promise.
+            changes.update(sla_from=now, waiting_seconds=0,
+                           waiting_since=now if sd.normalise_status(ticket.get("status")) == sd.WAITING
+                           else None)
         with atomic(self.db) as tx:
-            self._apply(tx, ticket["id"], {"priority": new})
+            self._apply(tx, ticket["id"], changes)
             self._event(tx, ticket["id"], by, "Priority changed from %s to %s by %s: %s" % (
                 sd.PRIORITY_LABEL[old], sd.PRIORITY_LABEL[new], self._name(by), reason))
+        summary = sd.summary_of(ticket.get("description"))
+        if raised and new in ("P1", "P2"):
+            self._notify(self.it_staff(exclude=by), "Ticket #%s raised to %s by %s: %s" % (
+                ticket["id"], sd.PRIORITY_LABEL[new], self._name(by), summary), "ticket")
+        requester = ticket.get("submitted_by")
+        if requester and str(requester).lower() != (by or "").lower():
+            self._notify([requester], "Ticket #%s is now %s" % (
+                ticket["id"], sd.describe_promise(new, self.calendar())), "ticket")
         return True
 
     # ------------------------------------------------------------- talking
@@ -337,32 +406,49 @@ class TicketRepository:
     # ------------------------------------------------- the requester's actions
     def confirm_fixed(self, ticket: dict, by: str) -> bool:
         """The requester says it is fixed: Resolved (or still open) -> Closed."""
-        return self.set_status(ticket, "Closed", by, "Confirmed fixed by the requester.")
+        ticket = self._fresh(ticket)
+        if not self._move(ticket, "Closed", by, "Closed by %s - confirmed fixed." % self._name(by)):
+            return False
+        self._tell_it(ticket, by, "%s confirmed ticket #%s is fixed." % (self._name(by), ticket["id"]))
+        return True
 
     def withdraw(self, ticket: dict, by: str, reason: str = "") -> bool:
         """The requester no longer needs help."""
-        reason = (reason or "").strip() or "No longer needed."
-        return self.set_status(ticket, "Closed", by, "Withdrawn by the requester - %s" % reason)
-
-    def reopen(self, ticket: dict, by: str, reason: str = "") -> bool:
-        """Still broken: back to Open, the old resolution cleared."""
         ticket = self._fresh(ticket)
-        changes = sd.plan_status_change(ticket, "Open", datetime.now().replace(microsecond=0),
-                                        self.calendar())
-        if changes is None:
+        if not self._move(ticket, "Closed", by, "Withdrawn by %s - no longer needed." % self._name(by),
+                          (reason or "").strip()):
             return False
-        text = "Reopened by %s%s" % (self._name(by), (": %s" % reason.strip()) if reason and reason.strip() else ".")
-        with atomic(self.db) as tx:
-            self._apply(tx, ticket["id"], changes)
-            self._event(tx, ticket["id"], by, text)
-        owner = ticket.get("assigned_to")
-        self._notify([owner] if owner else self.it_staff(),
-                     "Ticket #%s was reopened by %s." % (ticket["id"], self._name(by)), "ticket")
+        self._tell_it(ticket, by, "%s withdrew ticket #%s." % (self._name(by), ticket["id"]))
         return True
 
+    def reopen(self, ticket: dict, by: str, reason: str = "") -> bool:
+        """
+        Still broken: back to Open, the old resolution cleared. The reason is
+        a message in the conversation. Whoever has it is told (never the person
+        reopening it), and so is the requester when IT reopened it.
+        """
+        ticket = self._fresh(ticket)
+        if not self._move(ticket, "Open", by, "Reopened by %s." % self._name(by), (reason or "").strip()):
+            return False
+        message = "Ticket #%s was reopened by %s." % (ticket["id"], self._name(by))
+        self._tell_it(ticket, by, message)
+        if not sd.is_requester(ticket, by):
+            self._notify([ticket.get("submitted_by")], message, "ticket")
+        return True
+
+    def _tell_it(self, ticket: dict, by: str, message: str):
+        """The owner, or everybody on the desk when nobody has it - never `by` themself."""
+        owner = ticket.get("assigned_to")
+        recipients = [owner] if owner else self.it_staff()
+        self._notify([r for r in recipients if str(r).lower() != str(by or "").lower()],
+                     message, "ticket")
+
     # ------------------------------------------------------------- people
-    def it_staff(self, exclude: str = None) -> List[str]:
-        """Usernames of everybody who works the queue (the manage_it ability)."""
+    def it_staff(self, exclude: str = None, ability: str = "manage_it") -> List[str]:
+        """
+        Usernames of everybody who works the queue (the manage_it ability) -
+        or, with `ability`, of everybody listed who holds that one.
+        """
         try:
             rows = self.db.execute_query("SELECT username, roles FROM ut_users", fetch="all") or []
         except DatabaseUnavailableError:
@@ -385,7 +471,7 @@ class TicketRepository:
                 continue
             if listed is not None and username.lower() not in listed:
                 continue          # service accounts, leavers, deactivated
-            if can(UserManager._parse_roles(row.get("roles")), "manage_it"):
+            if can(UserManager._parse_roles(row.get("roles")), ability):
                 out.append(username)
         return sorted(out, key=str.lower)
 

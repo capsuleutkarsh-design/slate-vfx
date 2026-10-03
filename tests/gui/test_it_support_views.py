@@ -437,3 +437,182 @@ def test_hash_number_finds_exactly_that_ticket(db, app):
     view.search.setText(str(ids[0]))
     view._apply_filters()
     assert ids[0] in [r["id"] for r in view._rows]
+
+
+# ------------------------------------------------------------------ round 2
+
+def test_a_long_token_in_an_event_line_does_not_widen_the_thread(db, app):
+    """IT2-001 (IT-099 back, for event lines): one text widget for both."""
+    from slate.gui.tabs.my_tickets_view import TicketThreadDialog, _BubbleText
+    from slate.core.infra.ticket_repository import TicketRepository
+    ticket_id = _ticket(db)
+    repo = TicketRepository(db)
+    repo.change_priority({"id": ticket_id}, "P2", "\\\\fileserver01\\projects\\" + "x" * 170, "it.sana")
+    repo.reply({"id": ticket_id}, "ravi", "after the event")
+    dialog = _keep(TicketThreadDialog(repo.get(ticket_id), db, "it.sana", side="it"))
+    dialog.show()
+    app.processEvents()
+    dialog._scroll_to_end()
+    assert dialog.thread_area.horizontalScrollBar().maximum() == 0
+    assert dialog.thread_holder.width() <= dialog.thread_area.viewport().width()
+    lines = [dialog.thread_layout.itemAt(i).widget() for i in range(dialog.thread_layout.count())]
+    assert any(isinstance(w, _BubbleText) and "fileserver01" in w.toPlainText() for w in lines)
+    dialog.close()
+
+
+def test_the_thread_has_done_and_it_actions(db, app, monkeypatch):
+    """IT2-004 / IT2-005 / IT2-009."""
+    from PySide6.QtWidgets import QPushButton
+    from slate.gui.tabs import my_tickets_view as module
+    from slate.gui.tabs import service_desk_view as desk
+    from slate.core.infra.ticket_repository import TicketRepository
+    ticket_id = _ticket(db, text="Nuke\nmore detail")
+    repo = TicketRepository(db)
+    dialog = _keep(module.TicketThreadDialog(repo.get(ticket_id), db, "it.sana", side="it"))
+    labels = [b.text() for b in dialog.findChildren(QPushButton) if b.isVisibleTo(dialog)]
+    assert "Done" in labels and "Close" not in labels
+    assert dialog.btn_take.isVisibleTo(dialog) and dialog.btn_status.isVisibleTo(dialog)
+    # The description toggle is on the meta line, above what it hides.
+    layout = dialog.layout()
+    meta_row = next(layout.itemAt(i).layout() for i in range(layout.count())
+                    if layout.itemAt(i).layout() is not None
+                    and layout.itemAt(i).layout().indexOf(dialog.meta) >= 0)
+    assert meta_row.indexOf(dialog.toggle_body) >= 0
+    dialog._take()
+    assert repo.get(ticket_id)["assigned_to"] == "it.sana"
+    assert not dialog.btn_take.isVisibleTo(dialog)
+
+    class Chosen(desk.SetStatusDialog):
+        def exec(self):
+            self.status.setCurrentIndex(self.status.findData("Resolved"))
+            self.note.setPlainText("Reinstalled")
+            return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(desk, "SetStatusDialog", Chosen)
+    dialog._set_status()
+    assert repo.get(ticket_id)["status"] == "Resolved"
+    requester = _keep(module.TicketThreadDialog(repo.get(ticket_id), db, "ravi", side="requester"))
+    assert not requester.btn_take.isVisibleTo(requester)
+    assert "Still broken" in requester.reply.placeholderText()                  # IT2-002
+
+
+def test_a_failed_withdraw_keeps_what_was_typed_and_reopen_asks_why(db, app, monkeypatch):
+    """IT2-006 / IT2-007."""
+    from PySide6.QtWidgets import QInputDialog
+    from slate.gui.tabs import my_tickets_view as module
+    from slate.gui.components import feedback
+    from slate.core.infra.ticket_repository import TicketError, TicketRepository
+    ticket_id = _ticket(db)
+    repo = TicketRepository(db)
+    dialog = _keep(module.TicketThreadDialog(repo.get(ticket_id), db, "ravi", side="requester"))
+    monkeypatch.setattr(feedback, "confirm", lambda *a, **k: True)
+    monkeypatch.setattr(feedback, "warn", lambda *a, **k: None)
+
+    def refuse(*_a, **_k):
+        raise TicketError("refused")
+
+    monkeypatch.setattr(dialog.repo, "withdraw", refuse)
+    dialog.reply.setPlainText("found a spare")
+    dialog._withdraw()
+    assert dialog.reply.toPlainText() == "found a spare"
+
+    repo.set_status({"id": ticket_id}, "Resolved", "it.sana", "done")
+    dialog.ticket = repo.get(ticket_id)
+    monkeypatch.setattr(QInputDialog, "exec", lambda self: QDialog.DialogCode.Accepted)
+    monkeypatch.setattr(QInputDialog, "textValue", lambda self: "")
+    dialog.reply.setPlainText("")
+    dialog._reopen()                                    # nothing said: refused
+    assert repo.get(ticket_id)["status"] == "Resolved"
+    monkeypatch.setattr(QInputDialog, "textValue", lambda self: "Crashes again on save")
+    dialog._reopen()
+    assert repo.get(ticket_id)["status"] == "Open"
+    assert repo.comments(ticket_id)[-1]["comment_text"] == "Crashes again on save"
+
+
+def test_the_queue_names_the_requester_searches_what_it_shows_and_spares_closed_ones(db, app):
+    """IT2-011 / IT2-021 / IT2-023 / IT2-024 / IT2-025 / IT2-028 / IT2-064."""
+    from slate.core.infra.gate import Gate
+    paused = _ticket(db, status="Waiting on You", waiting_since=datetime.now(), text="Tablet")
+    closed = _ticket(db, status="Closed", text="Old", raised_by="it.joe")
+    view = _desk(db)
+    assert view.table.horizontalHeaderItem(2).text() == "Requester"
+    assert view.filter_status.itemText(0) == "Unresolved"
+    assert view.count_label.text() == "1 of 2 tickets"
+    view.search.setText("paused")
+    view._apply_filters()
+    assert [r["id"] for r in view._rows] == [paused]
+    view.search.setText("")
+    view.filter_status.setCurrentIndex(view.filter_status.findData("all"))
+    r = _row_of(view, closed)
+    assert "Logged by Joe D" in view.table.item(r, 2).toolTip()
+    assert view.table.item(r, 6).foreground().color().name() != Gate.WARN.lower()
+    view.table.selectRow(r)
+    assert view.btn_status.isEnabled() and not view.btn_take.isEnabled()
+    assert not view.act_assign.isEnabled() and not view.act_responded.isEnabled()
+
+
+def test_a_figure_filter_is_shown(db, app):
+    """IT2-022."""
+    _ticket(db, priority="P1", hours_ago=30)
+    _ticket(db)
+    view = _desk(db)
+    view.card_breached.clicked.emit()
+    assert view.card_chip.isVisibleTo(view) and "Breached" in view.card_chip.text()
+    assert view.card_breached._selected
+    view.clear_card()
+    assert not view.card_chip.isVisibleTo(view) and not view.card_breached._selected
+    assert len(view._rows) == 2
+
+
+def test_change_priority_explains_and_says_why_change_is_off(db, app):
+    """IT2-013 / IT2-020."""
+    from slate.gui.tabs.service_desk_view import PriorityDialog
+    dialog = _keep(PriorityDialog({"priority": "P4"}))
+    assert dialog.ok_btn.toolTip() == "Choose a different priority first."
+    dialog.priority.setCurrentIndex(0)
+    assert dialog.ok_btn.toolTip() == "Give a reason first."
+    assert "starts now" in dialog.hint.text()
+    assert dialog.reason.maxLength() == 200
+
+
+def test_my_tickets_keeps_a_header_sort_and_marks_new_replies(db, app, monkeypatch):
+    """IT2-029 / IT2-031 / IT2-030."""
+    from slate.core.infra.global_config import GlobalConfig
+    from slate.core.infra.ticket_repository import TicketRepository
+    monkeypatch.setitem(GlobalConfig._runtime_overrides, "IT_TICKETS_SEEN", {})
+    first = _ticket(db, text="first")
+    second = _ticket(db, text="second")
+    TicketRepository(db).reply({"id": first}, "it.sana", "On it")
+    view = _mine(db)
+    assert view.table.horizontalHeaderItem(6).text() == "Last update"
+    assert view.table.item(_row_of(view, first), 1).font().bold()
+    assert not view.table.item(_row_of(view, second), 1).font().bold()
+    view.table.sortItems(0, Qt.SortOrder.AscendingOrder)
+    view.refresh()
+    assert view.table.item(0, 0).text() == str(first)
+    assert view.table.horizontalHeader().sortIndicatorSection() == 0
+    assert view.header.indexOf(view.btn_open) < 0                 # in the header's action box
+    assert view.btn_open.isVisibleTo(view)
+
+
+def test_my_machine_can_be_left_off_the_ticket(db, app):
+    """IT2-032."""
+    from slate.gui.tabs.my_tickets_view import RaiseTicketDialog
+    dialog = _keep(RaiseTicketDialog(username="ravi", machines_of=lambda u: ["WS-COMP-07"]))
+    assert dialog.machine_note.isChecked()
+    dialog.machine_note.setChecked(False)
+    assert dialog.values()["machine"] == ""
+
+
+def test_the_it_pages_switch_from_the_header(db, app):
+    """IT2-026: no framed tab widget pushing the title down."""
+    from types import SimpleNamespace
+    from PySide6.QtWidgets import QTabBar
+    from slate.gui.components.main_window_builder import MainWindowBuilderMixin
+    it = SimpleNamespace(user_roles=["IT"], allowed_tabs=["IT"], _current_username=lambda: "it.sana")
+    pages = _keep(MainWindowBuilderMixin._build_ticketing_tab(it))
+    assert pages.documentMode() and not pages.tabBar().isVisibleTo(pages)
+    queue_bar = pages.widget(0).findChild(QTabBar)
+    queue_bar.setCurrentIndex(1)
+    assert pages.currentIndex() == 1
+    assert pages.widget(1).findChild(QTabBar).currentIndex() == 1
