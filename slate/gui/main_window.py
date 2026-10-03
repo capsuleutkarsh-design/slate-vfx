@@ -985,44 +985,17 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         try:
             # Get current tab name from TabCoordinator
             current_tab_name = self.tab_coordinator.get_current_tab_name()
-            tab_id = "getting_started"  # Default
             
-            # Map current tab name to help tab ID
-            # Every screen in the sidebar, so F1 always lands somewhere useful.
-            # Half of these were missing, and "Timeline Viewer" pointed at a
-            # section that did not exist - both fell through to the front page.
-            tab_mapping = {
-                "Home": "home",
-                "Build & Ingest": "folder_creator",
-                "CAP Rename": "rename_tool",
-                "Stock Viewer": "stock_browser",
-                "Timeline Viewer": "shot_review",
-                "VFX Dashboard": "dashboard",
-                "Scheduling": "scheduling",
-                "Bidding": "bidding",
-                "Attendance": "attendance",
-                "Leave": "leave",
-                "Joining & Leaving": "joining_leaving",
-                "Hardware": "hardware",
-                "Licences": "licences",
-                "IT Support": "it_support",
-                "Deployment": "deployment",
-                "Users & Roles": "users_roles",
-                "Admin Panel": "admin_panel",
-                "Tester Panel": "tester",
-                "Settings": "settings",
-                "Workspace Info": "workspace_info",
-            }
-            
-            # Get the help tab ID based on current tab
-            tab_id = tab_mapping.get(current_tab_name, "getting_started")
-            
+            from .help_dialog import SCREEN_HELP
+            tab_id = SCREEN_HELP.get(current_tab_name, "getting_started")
+
             logging.info(f"Opening help for tab: {current_tab_name} (help_id: {tab_id})")
             
             # Show help dialog
             # The two shells do not have the same sidebar, so they do not
             # get the same help.
-            show_help(self, tab_id, mode=getattr(self, "app_mode", None))
+            show_help(self, tab_id, mode=getattr(self, "app_mode", None),
+                      screens=self._palette_tab_labels())
             
         except Exception as e:
             logging.exception(f"Error opening help dialog: {e}")

@@ -44,11 +44,37 @@ GROUPS = [
     ("Start here",     ["getting_started", "home"]),
     ("Production",     ["folder_creator", "rename_tool", "stock_browser",
                         "shot_review", "dashboard", "scheduling", "bidding"]),
-    ("HRMS",           ["attendance", "leave", "joining_leaving"]),
+    ("People",         ["attendance", "leave", "joining_leaving"]),
     ("IT & Infra",     ["hardware", "licences", "it_support", "deployment"]),
     ("Administration", ["users_roles", "admin_panel"]),
     ("System",         ["tester", "settings", "workspace_info"]),
 ]
+
+
+# The help page of each sidebar screen. F1 opens it, and a screen somebody
+# does not have is not offered to them in Help either.
+SCREEN_HELP = {
+    "Home": "home",
+    "Build & Ingest": "folder_creator",
+    "CAP Rename": "rename_tool",
+    "Stock Viewer": "stock_browser",
+    "Timeline Viewer": "shot_review",
+    "VFX Dashboard": "dashboard",
+    "Scheduling": "scheduling",
+    "Bidding": "bidding",
+    "Attendance": "attendance",
+    "Leave": "leave",
+    "Joining & Leaving": "joining_leaving",
+    "Hardware": "hardware",
+    "Licences": "licences",
+    "IT Support": "it_support",
+    "Deployment": "deployment",
+    "Users & Roles": "users_roles",
+    "Admin Panel": "admin_panel",
+    "Tester Panel": "tester",
+    "Settings": "settings",
+    "Workspace Info": "workspace_info",
+}
 
 
 def plain_text(content: str) -> str:
@@ -65,10 +91,13 @@ _ROLE_HEADING = Qt.ItemDataRole.UserRole + 1
 class HelpDialog(QDialog):
     """Slate's help, as a browsable table of contents."""
 
-    def __init__(self, parent=None, initial_tab="getting_started", mode=None):
+    def __init__(self, parent=None, initial_tab="getting_started", mode=None, screens=None):
         # Which application this is: "vfx", "ops", or None for both. The two
         # shells do not share a sidebar, so they do not share help.
         self.mode = mode
+        # The screens this person has (sidebar labels), or None for all. An
+        # artist was offered the Admin Panel and Users & Roles pages.
+        self.screens = None if screens is None else set(screens)
         super().__init__(parent)
 
         self.setWindowTitle("Slate Help")
@@ -250,6 +279,10 @@ class HelpDialog(QDialog):
     # --------------------------------------------------------------- populate
     def _populate(self):
         sections = get_all_tabs(self.mode)
+        if self.screens is not None:
+            mine = {SCREEN_HELP[label] for label in self.screens if label in SCREEN_HELP}
+            screen_pages = set(SCREEN_HELP.values())
+            sections = [s for s in sections if s["id"] not in screen_pages or s["id"] in mine]
         available = {s["id"]: s for s in sections}
 
         ordered = []
@@ -368,7 +401,12 @@ class HelpDialog(QDialog):
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:
-            self.accept()
+            # Esc in a search clears it first; Esc again closes Help.
+            if self.search.text():
+                self.search.clear()
+                self.search.setFocus()
+            else:
+                self.accept()
         elif (event.key() == Qt.Key.Key_F
               and event.modifiers() & Qt.KeyboardModifier.ControlModifier):
             self.search.setFocus()
@@ -465,7 +503,7 @@ class HelpDialog(QDialog):
         """
 
 
-def show_help(parent=None, tab_id="getting_started", mode=None):
+def show_help(parent=None, tab_id="getting_started", mode=None, screens=None):
     """
     Show the help window.
 
@@ -475,5 +513,5 @@ def show_help(parent=None, tab_id="getting_started", mode=None):
         mode: "vfx", "ops", or None for everything. Decides which sections are
               offered, so each application's help matches its own sidebar.
     """
-    dialog = HelpDialog(parent, initial_tab=tab_id, mode=mode)
+    dialog = HelpDialog(parent, initial_tab=tab_id, mode=mode, screens=screens)
     dialog.exec()

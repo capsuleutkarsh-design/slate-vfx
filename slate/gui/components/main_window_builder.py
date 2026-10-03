@@ -249,25 +249,28 @@ class MainWindowBuilderMixin:
 
             logging.info(f"[LAZY] Registering tab factories for mode='{mode}' (show_vfx={show_vfx}, show_ops={show_ops})...")
 
+            # Home, above every group heading: folding PRODUCTION used to hide
+            # it, and HR reached it under a heading they had nothing else in.
+            # In the full suite it is built from what this person has
+            # (production and operations); Operations has the punch panel.
+            self.tab_coordinator.register_tab_factory(
+                "Home",
+                lambda: HomeTab(
+                    user_data=self.user_data,
+                    app_context=self.app_context,
+                    main_window=self,
+                    mode=mode if mode in ("ops", "all") else "vfx"
+                ),
+                icon="🏠",
+                permission_key=None,  # Always allowed
+                user_role=self.user_role,
+                allowed_tabs=self.allowed_tabs,
+                tooltip=("Punch in and out, and quick links to your screens" if mode == "ops"
+                         else "Your shots, the studio's figures and quick links to your screens")
+            )
+
             if show_vfx:
                 self.tab_coordinator.add_category_header("PRODUCTION")
-
-                # Home. In the full suite it is built from what this person
-                # has (production and operations), not as the VFX Home.
-                self.tab_coordinator.register_tab_factory(
-                    "Home",
-                    lambda: HomeTab(
-                        user_data=self.user_data,
-                        app_context=self.app_context,
-                        main_window=self,
-                        mode="all" if mode == "all" else "vfx"
-                    ),
-                    icon="🏠",
-                    permission_key=None,  # Always allowed
-                    user_role=self.user_role,
-                    allowed_tabs=self.allowed_tabs,
-                    tooltip="Your shots, the studio's figures and quick links to your screens"
-                )
 
                 def create_folder_creator():
                     # Not wired to on_templates_refreshed: that reloads this
@@ -367,24 +370,9 @@ class MainWindowBuilderMixin:
                 )
 
             if show_ops:
-                self.tab_coordinator.add_category_header("OPERATIONS" if mode == "ops" else "HRMS")
-
-                # In Ops mode, register the dedicated Operations Home tab with Attendance!
-                if mode == "ops":
-                    self.tab_coordinator.register_tab_factory(
-                        "Home",
-                        lambda: HomeTab(
-                            user_data=self.user_data,
-                            app_context=self.app_context,
-                            main_window=self,
-                            mode="ops"
-                        ),
-                        icon="🏠",
-                        permission_key=None,  # Always allowed
-                        user_role=self.user_role,
-                        allowed_tabs=self.allowed_tabs,
-                        tooltip="Punch in and out, and quick links to your screens"
-                    )
+                # One plain name in both apps and in Help ("HRMS" and
+                # "OPERATIONS" before - jargon, and two names for one group).
+                self.tab_coordinator.add_category_header("PEOPLE")
 
                 # Attendance
                 self.tab_coordinator.register_tab_factory(

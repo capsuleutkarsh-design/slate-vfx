@@ -187,3 +187,67 @@ def test_rv_verdicts_are_pending_edits_and_need_the_right(qtbot, mock_db, monkey
     tab._user_can_edit = lambda: True
     win.on_rv_feedback("x")
     assert shot.status == "Approved" and edits and "Not saved yet" in said[-1]
+
+
+# ------------------------------------------------------------------ sidebar, help, notifications
+
+def test_a_screen_that_fails_to_open_leaves_the_sidebar_where_it_was(qtbot, mock_db, monkeypatch):
+    from slate.gui.main_window import VFXFolderCreatorApp
+    from slate.gui.components import feedback
+    monkeypatch.setattr(feedback, "show_error", lambda *a, **k: None)
+    win = VFXFolderCreatorApp({"username": "admin", "user_id": "admin", "display_name": "Admin",
+                               "roles": ["Developer"], "role": "Developer"}, app_mode="all")
+    qtbot.addWidget(win)
+    tc = win.tab_coordinator
+    win._switch_to_tab_label("Settings")
+    showing = win.sidebar_nav.currentRow()
+    label = "Bidding"
+    tc.tab_factories[label]["factory"] = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
+    win._switch_to_tab_label(label)
+    assert win.sidebar_nav.currentRow() == showing
+    assert tc.get_current_tab_name() == "Settings"
+    # Home sits above the groups; the operations group has one plain name.
+    assert tc.tab_labels[0] == "Home" and "__HEADER__PEOPLE" in tc.tab_labels
+    tips = [g["widget"].toolTip() for g in tc.groups]
+    assert any(t.startswith("IT & Infra") for t in tips)
+
+
+def test_help_offers_only_your_screens_and_esc_clears_the_search(qtbot):
+    from PySide6.QtCore import Qt
+    from slate.gui.help_dialog import HelpDialog
+    dialog = HelpDialog(None, mode=None, screens=["Home", "VFX Dashboard", "Leave"])
+    qtbot.addWidget(dialog)
+    ids = {section for _item, section, _text in dialog._items}
+    assert "admin_panel" not in ids and "users_roles" not in ids
+    assert {"getting_started", "dashboard", "leave"} <= ids
+    dialog.show()
+    dialog.search.setText("leave")
+    qtbot.keyClick(dialog, Qt.Key.Key_Escape)
+    assert dialog.search.text() == "" and dialog.isVisible()
+
+
+def test_a_notification_opens_what_it_is_about(qtbot):
+    from slate.gui.components.notification_center import NotificationsDialog, note_target
+    assert note_target({"type": "assignment", "message": "You have been assigned to SH010 (Comp)."}) \
+        == ("shot", "SH010")
+    assert note_target({"type": "update", "message": "SH020 is now Approved."}) == ("shot", "SH020")
+    assert note_target({"type": "ticket", "message": "Asha replied on ticket #4."}) == ("screen", "IT Support")
+    notes = [{"message": "You have been assigned to SH010.", "type": "assignment", "read": False}]
+    dialog = NotificationsDialog(notes)
+    qtbot.addWidget(dialog)
+    dialog._open_item(dialog.list.item(0))
+    assert dialog.target == ("shot", "SH010")
+    failed = NotificationsDialog([], failed=True)
+    qtbot.addWidget(failed)
+    assert "could not be loaded" in failed.empty.text() and "No notifications yet" not in failed.empty.text()
+
+
+def test_a_toast_keeps_both_undo_and_details(qtbot):
+    from PySide6.QtWidgets import QPushButton, QWidget
+    from slate.gui.components.feedback import raw_toast
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    parent.resize(800, 600)
+    toast = raw_toast(parent, "Could not save.", "error", action=("Undo", lambda: None), details="why")
+    names = [b.text() for b in toast.findChildren(QPushButton) if b.objectName() == "toastAction"]
+    assert names == ["Undo", "Details"]
