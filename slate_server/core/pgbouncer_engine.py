@@ -306,8 +306,20 @@ pidfile = {p(self.pid_path)}
             return False
 
         if self.is_ready():
-            say("PgBouncer is already running.")
-            return True
+            leftover = self._leftover_pid() if self._process is None else None
+            if leftover is None:
+                say("PgBouncer is already running.")
+                return True
+            # A pool left behind by an earlier server run (closing the window
+            # used to stop the database and not the pool). It still answers,
+            # but it was set up against a database that has since restarted:
+            # every workstation got "server closed the connection". Replace it.
+            say("Stopping the connection pool left over from the last run...")
+            self._kill_pid(leftover)
+            for _ in range(20):
+                if not self.is_ready():
+                    break
+                time.sleep(0.25)
 
         if not self.write_config(psql_exe=psql_exe):
             say("PgBouncer could not be configured - clients will connect directly.")
@@ -358,9 +370,45 @@ pidfile = {p(self.pid_path)}
         logger.warning("PgBouncer stopped answering; starting it again.")
         return self.start(psql_exe=psql_exe)
 
+    def _leftover_pid(self) -> Optional[int]:
+        """
+        The process id in our own pgbouncer.pid, if that process is still a
+        running pgbouncer.exe - a pool this server's earlier run started and
+        never stopped. Anything else on the port is left alone.
+        """
+        try:
+            pid = int(self.pid_path.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return None
+        if pid <= 0 or sys.platform != "win32":
+            return None
+        try:
+            out = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                capture_output=True, text=True, timeout=10,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            ).stdout or ""
+        except Exception as exc:
+            logger.debug("Could not look up process %s: %s", pid, exc)
+            return None
+        return pid if "pgbouncer.exe" in out.lower() else None
+
+    @staticmethod
+    def _kill_pid(pid: int) -> None:
+        try:
+            subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, timeout=10,
+                           creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
+        except Exception as exc:
+            logger.debug("Could not stop process %s: %s", pid, exc)
+
     def stop(self, progress_callback: Optional[Callable[[str], None]] = None) -> None:
-        """Stop PgBouncer, if this server started it."""
+        """Stop PgBouncer: the one this server started, or one its last run left behind."""
         if self._process is None:
+            leftover = self._leftover_pid()
+            if leftover is not None:
+                if progress_callback:
+                    progress_callback("Stopping PgBouncer...")
+                self._kill_pid(leftover)
             return
         if progress_callback:
             progress_callback("Stopping PgBouncer...")

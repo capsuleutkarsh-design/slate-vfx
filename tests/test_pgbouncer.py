@@ -337,3 +337,64 @@ class TestPermanentFailuresAreNotRetried:
 
         assert PostgresManager._is_worth_retrying(
             psycopg2.OperationalError(message))
+
+
+class TestALeftoverPoolIsReplaced:
+    """
+    Closing the server window stopped the database and left PgBouncer running.
+    The next start saw the port answer, kept the stale pool, and every
+    workstation got "server closed the connection unexpectedly".
+    """
+
+    def _fake_tasklist(self, monkeypatch, image):
+        import subprocess as sp
+        from slate_server.core import pgbouncer_engine as pe
+        killed = []
+
+        def run(cmd, *a, **k):
+            if cmd[0] == "tasklist":
+                return sp.CompletedProcess(cmd, 0, stdout=f'"{image}","4242","Console","1","8,600 K"\n')
+            if cmd[0] == "taskkill":
+                killed.append(cmd[2])
+            return sp.CompletedProcess(cmd, 0, stdout="")
+
+        monkeypatch.setattr(pe.subprocess, "run", run)
+        monkeypatch.setattr(pe.sys, "platform", "win32")
+        if not hasattr(pe.subprocess, "CREATE_NO_WINDOW"):
+            monkeypatch.setattr(pe.subprocess, "CREATE_NO_WINDOW", 0, raising=False)
+        return killed
+
+    def test_our_own_leftover_is_found_by_its_pid_file(self, engine, monkeypatch):
+        engine.conf_dir.mkdir(parents=True, exist_ok=True)
+        engine.pid_path.write_text("4242\n", encoding="utf-8")
+        self._fake_tasklist(monkeypatch, "pgbouncer.exe")
+        assert engine._leftover_pid() == 4242
+
+    def test_another_program_with_that_pid_is_left_alone(self, engine, monkeypatch):
+        engine.conf_dir.mkdir(parents=True, exist_ok=True)
+        engine.pid_path.write_text("4242\n", encoding="utf-8")
+        self._fake_tasklist(monkeypatch, "notepad.exe")
+        assert engine._leftover_pid() is None
+
+    def test_start_replaces_the_leftover_and_writes_a_fresh_config(self, engine, monkeypatch):
+        engine.conf_dir.mkdir(parents=True, exist_ok=True)
+        engine.pid_path.write_text("4242\n", encoding="utf-8")
+        killed = self._fake_tasklist(monkeypatch, "pgbouncer.exe")
+        monkeypatch.setattr(engine, "is_installed", lambda: True)
+        answers = iter([True, False])                     # stale pool answers, then is gone
+        monkeypatch.setattr(engine, "is_ready", lambda: next(answers, False))
+        written = []
+        monkeypatch.setattr(engine, "write_config", lambda psql_exe=None: written.append(1) or False)
+        engine.start(psql_exe=Path("psql.exe"))
+        assert killed == ["4242"] and written == [1]
+
+    def test_stop_ends_a_leftover_too(self, engine, monkeypatch):
+        engine.conf_dir.mkdir(parents=True, exist_ok=True)
+        engine.pid_path.write_text("4242\n", encoding="utf-8")
+        killed = self._fake_tasklist(monkeypatch, "pgbouncer.exe")
+        engine.stop()
+        assert killed == ["4242"]
+
+    def test_closing_the_server_window_stops_the_pool(self):
+        from slate_server.gui import app_window
+        assert "pooler.stop" in inspect.getsource(app_window.UTServerWindow.closeEvent)

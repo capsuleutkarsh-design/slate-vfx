@@ -1473,6 +1473,15 @@ class UTServerWindow(QMainWindow):
                 self._log("> Window closed; the server keeps running in the tray.")
                 return
         self._save_window_geometry()
+        # The pool goes down with the database. It used to be left running:
+        # the next start found it "already running", kept it, and every
+        # workstation was refused until somebody ended pgbouncer.exe by hand.
+        pooler = getattr(getattr(self, "db_engine", None), "pooler", None)
+        if pooler is not None:
+            try:
+                pooler.stop(progress_callback=self._log)
+            except Exception as e:
+                logging.debug(f"Pool stop on close error: {e}")
         try:
             self._log("> Shutting down database engine...")
             self.db_engine.stop()
@@ -1564,6 +1573,9 @@ class UTServerWindow(QMainWindow):
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
             if self.dashboard.toggle_power.isChecked():
+                pooler = getattr(self.db_engine, "pooler", None)
+                if pooler is not None:
+                    pooler.stop()
                 self.db_engine.stop()
             self.sidecar_engine.apply_update()
             QApplication.quit()
