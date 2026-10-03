@@ -11,10 +11,13 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from collections import Counter
+
 from PySide6.QtCore import QEvent, Qt, QThread, Signal, Slot
+from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QLabel,
-    QLineEdit, QMessageBox, QProgressBar, QSizePolicy, QSpinBox, QSplitter,
+    QLineEdit, QProgressBar, QSizePolicy, QSpinBox, QSplitter,
     QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
@@ -35,16 +38,22 @@ SETTINGS_KEY = "cap_rename"
 
 
 class RenameWorker(QThread):
-    """Renames the files in the background (see batch_rename.rename_files)."""
+    """
+    Renames the files in the background (see batch_rename.rename_files) - or,
+    given `undo_journal`, puts a rename's names back, with the same progress
+    and Cancel (an undo of 3,000 files froze the window for seconds).
+    """
 
     progress_signal = Signal(int, str)
     finished_signal = Signal(bool, str, int)   # success, message, count
 
-    def __init__(self, rename_pairs, user: str = "", journal_dir=None):
+    def __init__(self, rename_pairs, user: str = "", journal_dir=None, undo_journal=None):
         super().__init__()
         self.rename_pairs = list(rename_pairs)
         self.user = user
         self.journal_dir = journal_dir
+        self.undo_journal = undo_journal
+        self.undo_result: Optional[br.UndoResult] = None
         self._is_running = True
         self.outcome: Optional[br.RenameOutcome] = None
         self.journal: Optional[Path] = None
@@ -54,6 +63,19 @@ class RenameWorker(QThread):
         self._is_running = False
 
     def run(self):
+        if self.undo_journal is not None:
+            def undo_progress(done, total, _name):
+                self.progress_signal.emit(int(done / max(1, total) * 100),
+                                          f"Putting names back: {min(done, total)} of {total}…")
+            try:
+                self.undo_result = br.undo(self.undo_journal, should_stop=lambda: not self._is_running,
+                                           progress=undo_progress)
+            except Exception as exc:   # a disk vanishing mid-run
+                logger.exception("Undo failed: %s", exc)
+                self.undo_result = br.UndoResult(refused=f"The undo stopped because of an error: {exc}")
+            self.finished_signal.emit(self.undo_result.ok, "", self.undo_result.restored)
+            return
+
         total = len(self.rename_pairs)
 
         def progress(done, _total, name):
@@ -79,10 +101,14 @@ class RenameWorker(QThread):
         if outcome.cancelled:
             self.finished_signal.emit(False, "Rename cancelled - nothing was renamed.", 0)
         elif outcome.failed:
-            message = (f"{len(outcome.failed)} file(s) could not be renamed - see the log. "
-                       f"{outcome.count} renamed.")
             for path, why in outcome.failed:
                 logger.warning("CAP Rename could not rename %s: %s", path, why)
+            if outcome.count:
+                message = (f"{len(outcome.failed)} file(s) could not be renamed; "
+                           f"{outcome.count} renamed - see Details.")
+            else:
+                message = (f"Nothing was renamed: {len(outcome.failed)} file(s) could not be "
+                           f"(in use?) - see Details.")
             self.finished_signal.emit(False, message, outcome.count)
         else:
             self.finished_signal.emit(True, f"Renamed {outcome.count} file(s).", outcome.count)
@@ -103,6 +129,7 @@ class CapRenameTab(QWidget):
         self._is_closing = False
         self._last_folder = ""
         self._busy = False
+        self._failed: Dict[str, str] = {}     # file -> why the last run could not rename it
         self.setAcceptDrops(True)
         self.setup_ui()
         if config_manager is not None:
@@ -224,7 +251,7 @@ class CapRenameTab(QWidget):
         self.table.setColumnCount(3)
         self.table.setHorizontalHeaderLabels(["Original name", "New name", "Status"])
         style_table(self.table, {"Original name": "stretch", "New name": "stretch",
-                                 "Status": ("fixed", 130)})
+                                 "Status": ("interactive", 280)})
         from slate.gui.components.table_tools import setup_table
         setup_table(self.table, sortable=False)
         self.table.setAcceptDrops(True)
@@ -280,6 +307,8 @@ class CapRenameTab(QWidget):
         self.rename_btn = make_button("Rename files", "primary", on_click=self.execute_rename)
         self.rename_btn.setMinimumWidth(140)
         self.rename_btn.setEnabled(False)
+        # Toasts sit above this row, never on the Rename button.
+        self.rename_btn.setProperty("toastsAbove", True)
         action_layout.addWidget(self.rename_btn)
         layout.addLayout(action_layout)
 
@@ -479,7 +508,9 @@ class CapRenameTab(QWidget):
 
         error = plan.pattern_error
         self.pattern_error_label.setVisible(bool(error))
-        self.pattern_error_label.setText(f"The Find pattern is not valid: {error}" if error else "")
+        self.pattern_error_label.setText(f"The Find pattern is not valid: {br.plain_regex_error(error)}"
+                                         if error else "")
+        self.pattern_error_label.setToolTip(error)
         self.search_edit.setStyleSheet(f"QLineEdit {{ border: 1px solid {Gate.BAD}; }}" if error else "")
 
         needed = plan.padding_needed
@@ -501,16 +532,25 @@ class CapRenameTab(QWidget):
         original.setToolTip(str(row.source))
         new_item = QTableWidgetItem(row.new_name)
         status = QTableWidgetItem(row.status)
-        tip = row.reason or row.warning
-        if row.status == br.CONFLICT:
+        failed = self._failed.get(str(row.source))
+        tip = failed or row.reason or row.warning
+        if failed:
             set_cell_status(new_item, "bad")
             set_cell_status(status, "bad", background=False)
+            status.setText(f"Failed - {failed}")
+        elif row.status == br.CONFLICT:
+            set_cell_status(new_item, "bad")
+            set_cell_status(status, "bad", background=False)
+            status.setText(f"{br.CONFLICT} - {row.reason}")       # the reason, not only on hover
         elif row.warning:
             set_cell_status(new_item, "warn")
             set_cell_status(status, "warn", background=False)
             status.setText(f"{br.WILL_RENAME} - check")
         elif row.status == br.WILL_RENAME:
+            # The tint marks the row; the name stays in body text, readable
+            # in every theme (accent on its own tint was 3:1 in Light).
             set_cell_status(new_item, "accent")
+            new_item.setForeground(QBrush(QColor(Gate.TEXT)))
             set_cell_status(status, "accent", background=False)
         if tip:
             new_item.setToolTip(tip)
@@ -526,7 +566,10 @@ class CapRenameTab(QWidget):
             return
         parts = [f"{counts['files']} file(s)", f"{counts['rename']} will be renamed"]
         if counts["conflict"]:
-            parts.append(f"{counts['conflict']} conflict(s)")
+            reasons = Counter(row.reason for row in self._plan.conflicts)
+            common, times = reasons.most_common(1)[0]
+            parts.append(f"{counts['conflict']} conflict(s)"
+                         + (f", mostly: {common}" if len(reasons) > 1 else f": {common}"))
         if counts["warning"]:
             parts.append(f"{counts['warning']} to check")
         self.summary_label.setText("  ·  ".join(parts))
@@ -563,17 +606,31 @@ class CapRenameTab(QWidget):
         self.up_btn.setEnabled(selected and not running)
         self.down_btn.setEnabled(selected and not running)
         self.sort_combo.setEnabled(has_files and not running)
+        self.filter_combo.setEnabled(has_files and not running)
+
+    def _journal_user(self) -> Optional[str]:
+        """Whose renames are offered: the signed-in person's; admins and developers see everyone's."""
+        try:
+            from slate.core.domain.access import is_superuser
+            if is_superuser(self.user_data.get("roles") or self.user_data.get("role") or []):
+                return None
+        except Exception:
+            pass
+        return self._username()
 
     def _sync_undo_button(self):
-        journal = br.latest_journal(self._journal_dir()) if not self._running() else None
+        journal = (br.latest_journal(self._journal_dir(), user=self._journal_user())
+                   if not self._running() else None)
         self.undo_btn.setEnabled(journal is not None)
         if journal is None:
             self.undo_btn.setToolTip("Nothing to undo yet.")
             return
         try:
             record = br.read_journal(journal)
+            who = str(record.get("user") or "")
+            whose = f"{who}'s rename" if who and who != self._username() else "the last rename"
             self.undo_btn.setToolTip(
-                f"Put back the names from the last rename: {record.get('count', 0)} file(s) "
+                f"Put back the names from {whose}: {record.get('count', 0)} file(s) "
                 f"in {record.get('folder') or 'several folders'}.")
         except (OSError, ValueError):
             self.undo_btn.setToolTip("Put back the names from the last rename.")
@@ -764,6 +821,7 @@ class CapRenameTab(QWidget):
             return
 
         self._cleanup_worker()
+        self._failed = {}
         self.worker = RenameWorker(pairs, user=self._username(), journal_dir=self._journal_dir())
         self.worker.progress_signal.connect(self.update_progress)
         self.worker.finished_signal.connect(self.on_rename_finished)
@@ -790,21 +848,27 @@ class CapRenameTab(QWidget):
         worker = self.worker
         if self.sender() is not None and self.sender() is not worker:
             return
+        if getattr(worker, "undo_journal", None) is not None:
+            self._finish_undo(worker)
+            return
         outcome = getattr(worker, "outcome", None)
         renamed = dict((str(old), new) for old, new in (outcome.renamed if outcome else []))
+        self._failed = {str(path): why for path, why in (outcome.failed if outcome else [])}
         if renamed:
             # The list now shows the files under their new names, ready for
             # another pass - clearing it hid what had just happened.
             self.files = [renamed.get(str(f), f) for f in self.files]
+        if renamed or self._failed:
             self._audit(outcome, getattr(worker, "journal", None))
 
         from slate.gui.components.feedback import toast
+        details = "\n".join(f"{Path(path).name}: {why}" for path, why in self._failed.items())
         if success:
             toast(self, msg, "success", action=("Undo", self.undo_last_rename))
         elif count:
-            toast(self, msg, "warning", action=("Undo", self.undo_last_rename))
+            toast(self, msg, "warning", details=details)
         else:
-            toast(self, msg, "info" if outcome and outcome.cancelled else "error")
+            toast(self, msg, "info" if outcome and outcome.cancelled else "error", details=details)
         self._finish_run()
 
     def _finish_run(self):
@@ -828,10 +892,11 @@ class CapRenameTab(QWidget):
         return Path(app_dir) if isinstance(app_dir, (str, Path)) and str(app_dir) else None
 
     def undo_last_rename(self):
+        """Ask, then put the names back in the background (progress and Cancel, like a rename)."""
         if self._running():
             return
-        from slate.gui.components.feedback import toast, warn
-        journal = br.latest_journal(self._journal_dir())
+        from slate.gui.components.feedback import warn
+        journal = br.latest_journal(self._journal_dir(), user=self._journal_user())
         if journal is None:
             warn(self, "Undo last rename", "There is no rename to undo.")
             self._sync_undo_button()
@@ -847,16 +912,39 @@ class CapRenameTab(QWidget):
                              f"{record.get('folder') or 'several folders'}?",
                              "Undo rename"):
             return
-        result = br.undo(journal)
+        self._cleanup_worker()
+        self._undo_record = record
+        self.worker = RenameWorker([], user=self._username(), undo_journal=journal)
+        self.worker.progress_signal.connect(self.update_progress)
+        self.worker.finished_signal.connect(self.on_rename_finished)
+        self.progress_bar.setValue(0)
+        self._busy = True
+        self._set_running(True)
+        self.progress_label.setText(f"Putting names back: 0 of {count}…")
+        self.worker.start()
+
+    def _finish_undo(self, worker):
+        from slate.gui.components.feedback import confirm, toast
+        result = worker.undo_result or br.UndoResult(refused="The undo did not run.")
+        record = getattr(self, "_undo_record", {}) or {}
+        journal = worker.undo_journal
+        self._finish_run()
         if result.refused:
-            warn(self, "Undo last rename", result.refused)
+            # It can never be undone as it stands: offer to drop it, so the
+            # rename before it can be undone again.
+            if confirm(self, "Undo last rename", result.refused + "\n\nForget this rename? Older renames "
+                       "can then be undone.", yes_label="Forget this rename", no_label="Keep it"):
+                br.forget(journal)
+        elif result.cancelled:
+            toast(self, "Undo cancelled - nothing was changed.", "info")
         else:
             new_to_old = {}
             for entry in record.get("pairs") or []:
                 new_to_old[str(entry.get("new", "")).lower()] = Path(entry.get("old", ""))
             self.files = [new_to_old.get(str(f).lower(), f) for f in self.files]
             if result.failed:
-                toast(self, f"{result.restored} name(s) put back; {len(result.failed)} could not be.", "warning")
+                toast(self, f"{result.restored} name(s) put back; {len(result.failed)} could not be.", "warning",
+                      details="\n".join(f"{Path(path).name}: {why}" for path, why in result.failed))
             else:
                 toast(self, f"{result.restored} name(s) put back.", "success")
             self._audit_undo(record, result)
@@ -869,15 +957,21 @@ class CapRenameTab(QWidget):
         return str(data.get("username") or data.get("user_id") or "")
 
     def _audit(self, outcome, journal):
-        """Who renamed what, in the studio audit log (the tab is open to artists)."""
-        folders = sorted({str(old.parent) for old, _ in outcome.renamed})
+        """Who renamed what, in the studio audit log (the tab is open to artists) - failures included."""
+        folders = sorted({str(old.parent) for old, _ in list(outcome.renamed) + list(outcome.failed)})
         details = (f"Renamed {outcome.count} file(s) in {', '.join(folders[:3])}"
                    + (f" (+{len(folders) - 3} more folders)" if len(folders) > 3 else "")
                    + (f"; undo journal {Path(journal).stem}" if journal else ""))
+        status = "SUCCESS"
+        if outcome.failed:
+            status = "PARTIAL" if outcome.count else "FAILED"
+            names = ", ".join(Path(path).name for path, _why in outcome.failed[:10])
+            details += (f"; {len(outcome.failed)} could not be renamed: {names}"
+                        + (" ..." if len(outcome.failed) > 10 else ""))
         logger.info("CAP Rename: %s", details)
         try:
             from slate.core.infra.audit_logger import AuditLogger
-            AuditLogger().log_event("RENAME", self._username() or "unknown", details)
+            AuditLogger().log_event("RENAME", self._username() or "unknown", details, status)
         except Exception as exc:
             logger.debug("Rename not written to the audit log: %s", exc)
 
@@ -891,40 +985,10 @@ class CapRenameTab(QWidget):
             logger.debug("Undo not written to the audit log: %s", exc)
 
     # ------------------------------------------------------------ help
-    def help_text(self) -> str:
-        return """
-        <h3>CAP Rename</h3>
-        <p>Rename many files at once. Nothing changes on disk until you press
-        <b>Rename files</b>, and the preview shows every new name first.</p>
-        <h4>Find and replace</h4>
-        <ul>
-          <li><b>Find / Replace with:</b> plain text, matched without regard to case unless
-              <i>Case sensitive</i> is ticked.</li>
-          <li><b>Use regex:</b> Find is a Python regular expression; refer to groups as
-              <code>\\1</code>, <code>\\2</code> in Replace with (not <code>$1</code>).</li>
-          <li><b>Keep extension</b> (on by default): the extension is never touched.</li>
-          <li><b>Sanitize</b>, <b>To lowercase</b> and <b>Re-pad numbers</b> act on the name
-              before the extension.</li>
-        </ul>
-        <h4>Number as a sequence</h4>
-        <p>Every file becomes <i>base name + number</i>, in the order of the list. Sort the
-        list by name or date, or move files up and down, to set the order.</p>
-        <h4>Conflicts</h4>
-        <p>When two files would end up with the same name, a name is not allowed, or a file
-        with that name is already in the folder, the row says <b>Conflict</b> and nothing is
-        renamed until it is fixed. Remove files with <b>Remove selected</b> or the Delete key.</p>
-        <h4>Undo</h4>
-        <p><b>Undo last rename</b> puts the old names back, even when names were swapped or
-        shifted. It refuses, and changes nothing, if the files were moved or renamed again
-        since.</p>
-        """
-
     def show_help_dialog(self):
-        msg = QMessageBox(self)
-        msg.setWindowTitle("CAP Rename help")
-        msg.setTextFormat(Qt.TextFormat.RichText)
-        msg.setText(self.help_text())
-        msg.exec()
+        """The Help page for CAP Rename - one text, the same as the header's Help."""
+        from slate.gui.help_dialog import show_help
+        show_help(self, "rename_tool")
 
     def closeEvent(self, event):
         self._is_closing = True

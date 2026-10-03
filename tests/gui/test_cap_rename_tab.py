@@ -151,7 +151,7 @@ def test_collisions_and_the_summary_and_filter(tab, tmp_path):
     tab.regex_cb.setChecked(True)
     tab.search_edit.setText(r"IMG_\d+")
     tab.replace_edit.setText("IMG_X")
-    assert _statuses(tab).count(br.CONFLICT) == 12
+    assert sum(s.startswith(br.CONFLICT) for s in _statuses(tab)) == 12
     assert "12 conflict(s)" in tab.summary_label.text() and "13 file(s)" in tab.summary_label.text()
     tab.filter_combo.setCurrentIndex(2)
     assert tab.table.isRowHidden(12) and not tab.table.isRowHidden(0)
@@ -162,7 +162,7 @@ def test_status_words_are_one_case(tab, tmp_path):
     tab._add_paths(_make(tmp_path / "p", ["IMG_1.JPG", "a.exr", "IMG_2.JPG"]))
     tab.search_edit.setText("IMG_1")
     tab.replace_edit.setText("IMG_2")
-    assert set(_statuses(tab)) <= {br.WILL_RENAME, br.UNCHANGED, br.CONFLICT}
+    assert {s.split(" - ")[0] for s in _statuses(tab)} <= {br.WILL_RENAME, br.UNCHANGED, br.CONFLICT}
 
 
 def test_a_bad_pattern_shows_its_reason_under_find(tab, tmp_path):
@@ -170,7 +170,8 @@ def test_a_bad_pattern_shows_its_reason_under_find(tab, tmp_path):
     tab.regex_cb.setChecked(True)
     tab.search_edit.setText("(")
     assert tab.pattern_error_label.isVisibleTo(tab)
-    assert "missing )" in tab.pattern_error_label.text()
+    assert "never closed" in tab.pattern_error_label.text()          # ING2-058: in words
+    assert "missing )" in tab.pattern_error_label.toolTip()
     assert not tab.rename_btn.isEnabled()
     assert _statuses(tab) == [br.UNCHANGED]
 
@@ -207,7 +208,10 @@ def test_names_are_consistent(tab):
 
 
 def test_help_has_no_emoji_and_describes_undo(tab):
-    text = tab.help_text()
+    import json
+    from slate.core.domain import batch_rename as _br
+    text = json.loads((Path(_br.__file__).parents[1] / "help_content.json").read_text(
+        encoding="utf-8"))["rename_tool"]["content"]
     assert "Undo last rename" in text
     assert not re.search("[\U0001F300-\U0001FAFF☀-➿]", text)
 
@@ -222,3 +226,90 @@ def test_building_the_tab_saves_nothing(qtbot, tmp_path):
     widget = crt.CapRenameTab(config)
     qtbot.addWidget(widget)
     assert config.saved == 0
+
+
+# --------------------------------------------------------------- round 2 (ING2-0xx)
+def test_a_failed_file_says_why_and_the_audit_says_failed(tab, tmp_path, monkeypatch):
+    """ING2-049 / ING2-052 / ING2-047."""
+    import os
+    files = _make(tmp_path / "p", ["a_1.exr", "a_2.exr"])
+    audit = []
+    monkeypatch.setattr("slate.core.infra.audit_logger.AuditLogger.log_event",
+                        lambda self, kind, user, details, status="SUCCESS": audit.append((status, details)))
+    real = os.rename
+
+    def locked(a, b):
+        if str(a).endswith("a_2.exr"):
+            raise PermissionError(32, "in use by another program")
+        return real(a, b)
+
+    monkeypatch.setattr(os, "rename", locked)
+    _run_sync(monkeypatch)
+    tab._add_paths(files)
+    tab.search_edit.setText("a_")
+    tab.replace_edit.setText("b_")
+    tab.execute_rename()
+    assert sorted(p.name for p in (tmp_path / "p").iterdir()) == ["a_1.exr", "a_2.exr"]
+    assert any(s.startswith("Failed - in use") for s in _statuses(tab))
+    assert audit and audit[0][0] == "FAILED" and "a_2.exr" in audit[0][1]
+
+
+def test_conflicts_say_why_in_the_status_column(tab, tmp_path):
+    """ING2-054."""
+    tab._add_paths(_make(tmp_path / "p", ["x1.exr", "x2.exr"]))
+    tab.search_edit.setText(r"\d")
+    tab.regex_cb.setChecked(True)
+    tab.replace_edit.setText("")
+    assert all(s.startswith("Conflict - 2 files would take this name") for s in _statuses(tab))
+    assert "Conflict" not in tab.summary_label.text() or "2 files" in tab.summary_label.text()
+
+
+def test_undo_runs_in_the_worker_and_only_offers_my_renames(tab, tmp_path, monkeypatch):
+    """ING2-048 / ING2-051."""
+    _run_sync(monkeypatch)
+    br.write_journal([(tmp_path / "o", tmp_path / "n")], user="someone_else", app_dir=tab._journal_dir())
+    tab._sync_undo_button()
+    assert not tab.undo_btn.isEnabled()                 # not priya's rename
+    tab._add_paths(_make(tmp_path / "p", ["A.exr"]))
+    tab.search_edit.setText("A")
+    tab.replace_edit.setText("B")
+    tab.execute_rename()
+    used = []
+    real_run = crt.RenameWorker.run
+    monkeypatch.setattr(crt.RenameWorker, "run", lambda self: used.append(self.undo_journal) or real_run(self))
+    tab.undo_last_rename()
+    assert used and used[0] is not None
+    assert [p.name for p in (tmp_path / "p").iterdir()] == ["A.exr"]
+
+
+def test_a_refused_undo_can_be_forgotten(tab, tmp_path, monkeypatch):
+    """ING2-050."""
+    _run_sync(monkeypatch)
+    monkeypatch.setattr("slate.gui.components.feedback.confirm", lambda *a, **k: True)
+    tab._add_paths(_make(tmp_path / "p", ["A.exr"]))
+    tab.search_edit.setText("A")
+    tab.replace_edit.setText("B")
+    tab.execute_rename()
+    (tmp_path / "p" / "B.exr").unlink()                 # the renamed file is gone
+    tab.undo_last_rename()
+    assert not tab.undo_btn.isEnabled()
+
+
+def test_list_tools_follow_the_list(tab, tmp_path):
+    """ING2-062 / ING2-059."""
+    from PySide6.QtGui import QIcon
+    assert not tab.filter_combo.isEnabled() and not tab.sort_combo.isEnabled()
+    tab._add_paths(_make(tmp_path / "p", ["A.exr"]))
+    assert tab.filter_combo.isEnabled()
+    icon = tab.up_btn.icon()
+    on = icon.pixmap(16, 16, QIcon.Mode.Normal).toImage()
+    off = icon.pixmap(16, 16, QIcon.Mode.Disabled).toImage()
+    assert on != off
+
+
+def test_help_button_opens_the_help_page(tab, monkeypatch):
+    """ING2-061."""
+    opened = []
+    monkeypatch.setattr("slate.gui.help_dialog.show_help", lambda parent=None, tab_id="", mode=None: opened.append(tab_id))
+    tab.show_help_dialog()
+    assert opened == ["rename_tool"] and not hasattr(tab, "help_text")
