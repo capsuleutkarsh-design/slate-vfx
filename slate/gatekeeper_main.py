@@ -52,6 +52,10 @@ from PySide6.QtGui import QIcon
 from slate.core.infra.qt_compat import Qt, QThread, Signal
 
 from slate.gui.login_dialog import LoginDialog
+# The first-run window lives in its own module; these names stay importable here.
+from slate.gui.dialogs.first_run_dialog import (  # noqa: F401
+    ConnectionTestWorker, FirstRunSetupDialog, test_database_connection,
+)
 from slate.gui.components.qt_safety import safe_single_shot
 from slate.utils.startup_manager import StartupManager
 from slate.utils.resource_manager import ResourcePathManager
@@ -152,7 +156,7 @@ class StartupLoadingDialog(QDialog):
         layout.setContentsMargins(20, 18, 20, 18)
         layout.setSpacing(10)
 
-        title = QLabel("Starting Slate...")
+        title = QLabel("Starting Slate\u2026")
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
 
@@ -185,192 +189,6 @@ class StartupLoadingDialog(QDialog):
 
         if QApplication.primaryScreen():
             self.move(QApplication.primaryScreen().availableGeometry().center() - self.rect().center())
-
-
-class ConnectionTestWorker(QThread):
-    """Try the typed database details off the UI thread (5 s at most)."""
-    done = Signal(bool, str)
-
-    def __init__(self, values, connect=None):
-        super().__init__()
-        self.values = dict(values)
-        self._connect = connect
-
-    def run(self):
-        ok, message = test_database_connection(self.values, connect=self._connect)
-        self.done.emit(ok, message)
-
-
-def test_database_connection(values, connect=None):
-    """(ok, plain sentence) for the database details in the first-run window."""
-    try:
-        if connect is None:
-            import psycopg2
-            connect = psycopg2.connect
-        conn = connect(host=values.get("db_host"), port=int(values.get("db_port") or 5440),
-                       dbname=values.get("db_name"), user=values.get("db_user"),
-                       password=values.get("db_password") or None, connect_timeout=5)
-        try:
-            conn.close()
-        except Exception:
-            pass
-        return True, "Connected. These details work."
-    except Exception as exc:
-        text = str(exc).lower()
-        if "password" in text or "authentication" in text:
-            reason = "the server refused the user name or password"
-        elif "does not exist" in text:
-            reason = "there is no database with that name on the server"
-        elif "timeout" in text or "timed out" in text:
-            reason = "the server did not answer within 5 seconds"
-        else:
-            reason = "the server could not be reached at that address and port"
-        logging.info("First-run connection test failed: %s", exc)
-        return False, f"Not connected: {reason}."
-
-
-class FirstRunSetupDialog(QDialog):
-    """First-run configuration dialog for required runtime paths and DB connection."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Set up Slate on this computer")
-        self.setModal(True)
-        self.setMinimumWidth(560)
-
-        root = QVBoxLayout(self)
-        root.setSpacing(10)
-
-        intro = QLabel(
-            "Tell Slate where the studio's shared folder and its server are. "
-            "Find server fills in the server for you when it is on this network. "
-            "You can change these later in Settings > Paths & Connections."
-        )
-        intro.setWordWrap(True)
-        root.addWidget(intro)
-
-        from slate.gui.core.controls import form_layout, make_button
-        form = form_layout()
-
-        server_wrap = QWidget()
-        server_row = QHBoxLayout(server_wrap)
-        server_row.setContentsMargins(0, 0, 0, 0)
-        self.server_root_input = QLineEdit(str(GlobalConfig.get("SERVER_ROOT", "")))
-        self.server_root_input.setPlaceholderText(
-            "The studio's shared folder - a mapped drive or a \\\\server\\share path")
-        browse_server_btn = QPushButton("Browse\u2026")
-        browse_server_btn.clicked.connect(self._browse_server_root)
-        server_row.addWidget(self.server_root_input, 1)
-        server_row.addWidget(browse_server_btn)
-        form.addRow("Studio shared folder", server_wrap)
-
-        host_wrap = QWidget()
-        host_row = QHBoxLayout(host_wrap)
-        host_row.setContentsMargins(0, 0, 0, 0)
-        self.db_host_input = QLineEdit(str(GlobalConfig.get("db_host", "")))
-        self.db_host_input.setPlaceholderText("e.g. 10.0.0.15 or slate-server")
-        self.find_button = make_button("Find server", "secondary", on_click=self._find_server,
-                                       tooltip="Ask the network where Slate Server is")
-        host_row.addWidget(self.db_host_input, 1)
-        host_row.addWidget(self.find_button)
-        form.addRow("Server address", host_wrap)
-
-        self.db_port_input = QSpinBox()
-        self.db_port_input.setRange(1, 65535)
-        self.db_port_input.setValue(int(GlobalConfig.get("db_port", 5440) or 5440))
-        form.addRow("Port", self.db_port_input)
-
-        self.db_name_input = QLineEdit(str(GlobalConfig.get("db_name", "ut_vfx")))
-        form.addRow("Database name", self.db_name_input)
-
-        self.db_user_input = QLineEdit(str(GlobalConfig.get("db_user", "postgres")))
-        form.addRow("Database user", self.db_user_input)
-
-        self.db_password_input = QLineEdit(str(GlobalConfig.get("db_password", "")))
-        self.db_password_input.setEchoMode(QLineEdit.Password)
-        self.db_password_input.setPlaceholderText("Optional if configured via credential setup")
-        form.addRow("Database password", self.db_password_input)
-
-        root.addLayout(form)
-
-        test_row = QHBoxLayout()
-        self.test_button = make_button("Test connection", "secondary", on_click=self.test_connection)
-        self.test_result = QLabel("")
-        self.test_result.setWordWrap(True)
-        test_row.addWidget(self.test_button)
-        test_row.addWidget(self.test_result, 1)
-        root.addLayout(test_row)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
-        buttons.button(QDialogButtonBox.Ok).setText("Save")
-        buttons.accepted.connect(self._validate_and_accept)
-        buttons.rejected.connect(self.reject)
-        root.addWidget(buttons)
-        self._test_worker = None
-
-    def _set_result(self, ok, message):
-        colour = Gate.OK if ok else Gate.BAD
-        self.test_result.setStyleSheet(f"color: {colour};")
-        self.test_result.setText(message)
-        self.test_button.setEnabled(True)
-        self.test_button.setText("Test connection")
-
-    def test_connection(self, connect=None):
-        """Check the details on a worker thread; the result goes on the line beside."""
-        if self._test_worker is not None and self._test_worker.isRunning():
-            return self._test_worker
-        self.test_button.setEnabled(False)
-        self.test_button.setText("Testing\u2026")
-        self.test_result.setStyleSheet("")
-        self.test_result.setText("Trying the server (up to 5 seconds)\u2026")
-        self._test_worker = ConnectionTestWorker(self.values(), connect=connect)
-        self._test_worker.done.connect(self._set_result)
-        self._test_worker.start()
-        return self._test_worker
-
-    def _find_server(self):
-        from slate.core.infra.network_discovery import discover_server_details
-        self.find_button.setEnabled(False)
-        QApplication.processEvents()
-        try:
-            found = discover_server_details(timeout=2.0)
-        finally:
-            self.find_button.setEnabled(True)
-        if not found:
-            self._set_result(False, "No Slate Server answered on this network. Type its address.")
-            return False
-        self.db_host_input.setText(found["host"])
-        self.db_port_input.setValue(int(found.get("pooler_port") or found.get("db_port") or 5440))
-        self._set_result(True, f"Found Slate Server at {found['host']}.")
-        return True
-
-    def _browse_server_root(self):
-        start_dir = self.server_root_input.text().strip() or str(Path.home())
-        selected = QFileDialog.getExistingDirectory(self, "Choose the studio's shared folder", start_dir)
-        if selected:
-            self.server_root_input.setText(selected)
-
-    def _validate_and_accept(self):
-        missing = [label for label, field in (
-            ("the studio shared folder", self.server_root_input),
-            ("the server address", self.db_host_input),
-            ("the database name", self.db_name_input),
-            ("the database user", self.db_user_input)) if not field.text().strip()]
-        if missing:
-            QMessageBox.warning(self, "Set up Slate", "Fill in " + ", ".join(missing) + ".")
-            return
-        self.accept()
-
-    def values(self):
-        return {
-            "SERVER_ROOT": self.server_root_input.text().strip(),
-            "db_host": self.db_host_input.text().strip(),
-            "db_port": int(self.db_port_input.value()),
-            "db_name": self.db_name_input.text().strip(),
-            "db_user": self.db_user_input.text().strip(),
-            "db_password": self.db_password_input.text().strip(),
-        }
-
 
 
 # --- WORKER CLASS TO FIX UI FREEZE ---
@@ -455,7 +273,9 @@ class ApplicationEntry:
         self.app.aboutToQuit.connect(self._cleanup_background_services)
         self._db_runtime_status = {}
         
-        self.hub = ServerHub(); self.attendance = CentralAttendance()
+        # The shared database manager (built when first used) - not a second
+        # one of its own, which connected (and waited) before any window.
+        self.hub = ServerHub(); self.attendance = CentralAttendance(db=database_manager)
         self.app_context = AppContext(
             db_manager=database_manager,
             server_hub=self.hub,
@@ -468,29 +288,33 @@ class ApplicationEntry:
             self.cleanup_and_exit(getattr(self, "_setup_failed", False) and 1 or 0)
             return
 
-        # Rehydrate DB backend after first-run config writes.
+        # Use the settings as they are now (first-run may have just written
+        # them). Nothing connects here: the sign-in window opens at once and
+        # connects behind it. Connecting here first (with retries) showed
+        # nothing at all for about 30 s whenever the database was down.
         try:
             database_manager.reload_from_config()
         except Exception as exc:
             logging.warning("Database manager reload after setup failed: %s", exc)
-        
-        # FATAL CRASH FIX: Force Database Password Prompt on Main Thread
-        # If we wait until IngestWorker (bg thread) needs it, PySide crashes because QInputDialog 
-        # cannot run in a thread. We must ensure the pool is initialized here.
-        try:
-             with database_manager.get_connection():
-                 pass
-        except Exception as e:
-             logging.warning(f"Startup DB Init / Password Check: {e}")
-        self._db_runtime_status = self._get_db_runtime_status()
-        self._show_gatekeeper_db_warning()
 
-        
         self.startup_mgr = StartupManager()
         self._maybe_cleanup_startup_entry()
-        
+
         self.reporter = None
         self.backup_thread = None
+        self.processed_cmds = []
+        self.cmd_worker = None
+
+        self.icon_path = ResourcePathManager.get_icons_dir() / "app_icon_128.ico"
+        if self.icon_path.exists(): self.app.setWindowIcon(QIcon(str(self.icon_path)))
+
+        self.show_software_login()
+
+    def _start_background_services(self):
+        """Once the database is known: live status, backups and admin commands."""
+        if self._db_runtime_status:
+            return                                  # already started
+        self._db_runtime_status = self._get_db_runtime_status() or {"started": True}
         if not self._is_sqlite_fallback_mode():
             self.reporter = LiveReporter(user_name="Locked")
             self.reporter.start()
@@ -501,9 +325,6 @@ class ApplicationEntry:
             logging.info("Auto backup thread started.")
         else:
             logging.warning("Live reporter and auto backup disabled in SQLite fallback mode.")
-        
-        self.processed_cmds = []
-        self.cmd_worker = None
 
         # Remote command polling is central-sync only. Disable in SQLite fallback mode.
         if not self._is_sqlite_fallback_mode():
@@ -512,11 +333,6 @@ class ApplicationEntry:
             self.cmd_worker.start()
         else:
             logging.warning("Command polling disabled in SQLite fallback mode.")
-        
-        self.icon_path = ResourcePathManager.get_icons_dir() / "app_icon_128.ico"
-        if self.icon_path.exists(): self.app.setWindowIcon(QIcon(str(self.icon_path)))
-
-        self.show_software_login()
 
     def _bring_to_front(self):
         """Another start of this application asked for us: show the open window."""
@@ -544,22 +360,6 @@ class ApplicationEntry:
         active_mode = str(status.get("active_mode", "")).lower()
         fallback_used = bool(status.get("fallback_used", False))
         return active_mode == "sqlite" and fallback_used
-
-    def _show_gatekeeper_db_warning(self):
-        status = self._db_runtime_status or {}
-        if not status:
-            return
-        if not self._is_sqlite_fallback_mode():
-            return
-        requested_mode = str(status.get("requested_mode", "postgres"))
-        message = (
-            "Database fallback is active before login.\n\n"
-            f"Requested: {requested_mode}\n"
-            "Active: sqlite (fallback)\n\n"
-            "Slate is running in LOCAL MODE (standalone).\n"
-            "Central sync features are limited."
-        )
-        QMessageBox.warning(None, "Database Fallback Active", message)
 
     def _get_first_run_flag_path(self) -> Path:
         config_instance = GlobalConfig._instance or GlobalConfig()
@@ -638,11 +438,12 @@ class ApplicationEntry:
         except Exception as exc:
             logging.exception("First-run setup failed: %s", exc, exc_info=True)
             self._setup_failed = True
-            QMessageBox.critical(
-                None,
-                "Setup Error",
-                f"Could not complete first-run setup:\n{exc}",
-            )
+            from slate.gui.components.feedback import show_error
+            show_error(None, "Slate could not be set up on this computer.", exc=exc,
+                       title="Set up Slate",
+                       hint=("Check that the shared folder can be written to from here, "
+                             "then start Slate again. If it keeps happening, copy the "
+                             "details and send them to IT."))
             return False
 
     def _maybe_cleanup_startup_entry(self):
@@ -764,6 +565,7 @@ class ApplicationEntry:
         self.app.setQuitOnLastWindowClosed(False)
         
         self.login_dialog = LoginDialog(app_context=self.app_context, app_mode=self.app_mode)  # Keep reference
+        self.login_dialog.database_ready.connect(self._start_background_services)
         result = self.login_dialog.exec()
         
         # Blocking call finished here

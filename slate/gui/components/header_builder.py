@@ -759,7 +759,8 @@ class HeaderBuilder:
         manager = getattr(self.parent, "user_manager", None)
         if not (username and manager):
             return
-        dialog = ChangePasswordDialog(manager, username, parent=self.parent)
+        dialog = ChangePasswordDialog(manager, username, parent=self.parent,
+                                      display_name=self.user_data.get("display_name", ""))
         if dialog.exec() == dialog.DialogCode.Accepted:
             from .feedback import toast
             toast(self.parent, "Password changed. Use it the next time you sign in.", "success")

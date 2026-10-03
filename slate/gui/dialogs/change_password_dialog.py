@@ -15,7 +15,8 @@ class ChangePasswordDialog(QDialog):
     it), and closing the window means not signing in.
     """
 
-    def __init__(self, user_manager, username, forced=False, current_password=None, parent=None):
+    def __init__(self, user_manager, username, forced=False, current_password=None, parent=None,
+                 display_name=""):
         super().__init__(parent)
         self.user_manager = user_manager
         self.username = username
@@ -29,10 +30,12 @@ class ChangePasswordDialog(QDialog):
             self.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
 
         layout = QVBoxLayout(self)
+        # The person's name, as the header shows it - not their login id.
+        name = str(display_name or "").strip() or username
         intro = QLabel(
-            f"Welcome, {username}. You signed in with the first password you were given. "
+            f"Welcome, {name}. You signed inwith the first password you were given. "
             "Choose your own password to continue. Cancel takes you back to the sign-in screen."
-            if forced else f"Change the password for {username}.")
+            if forced else f"Change the password for {name}.")
         intro.setWordWrap(True)
         intro.setStyleSheet(f"color: {Gate.TEXT_2}; margin-bottom: 6px;")
         layout.addWidget(intro)
@@ -41,11 +44,11 @@ class ChangePasswordDialog(QDialog):
         self.current_input = None
         if not forced:
             self.current_input = self._password_field()
-            form.addRow("Current password:", self.current_input)
+            form.addRow("Current password", self.current_input)
         self.new_input = self._password_field()
-        form.addRow("New password:", self.new_input)
+        form.addRow("New password", self.new_input)
         self.repeat_input = self._password_field()
-        form.addRow("New password again:", self.repeat_input)
+        form.addRow("New password again", self.repeat_input)
         layout.addLayout(form)
 
         # One line for the length rule: it turns red and says what is wrong,

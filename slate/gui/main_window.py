@@ -873,12 +873,8 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
 
         if show_fallback_warning and fallback_used and not self._db_fallback_warned:
             self._db_fallback_warned = True
-            requested_mode = str(status.get("requested_mode", "postgres"))
-            msg = (
-                f"Database fallback active: requested {requested_mode}, using {active_mode}. "
-                "Running in LOCAL MODE (central sync features limited)."
-            )
-            self.show_status(msg, "warning", 9000)
+            from .login_dialog import OFFLINE_TEXT
+            self.show_status(OFFLINE_TEXT, "warning", 9000)
 
     def _refresh_system_health_strip(self, status: Optional[dict] = None):
         """Refresh compact runtime health strip in header."""

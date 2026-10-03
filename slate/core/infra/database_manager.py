@@ -119,15 +119,20 @@ class DatabaseManager:
                 from .postgres_manager import PostgresManager
 
                 backend = PostgresManager()
-                # Force an eager connectivity check so startup fallback is deterministic.
-                with backend.get_connection():
-                    pass
+                # One attempt per address, so the decision (studio database,
+                # local copy, or "unavailable") takes seconds. The retry ladder
+                # made a refused port cost about 28 s here, every start-up.
+                backend._init_pool(retry=False)
                 return backend, "postgres", False
             except Exception as exc:
                 self.bootstrap_error = str(exc)
                 logger.error("Postgres bootstrap failed: %s", exc)
                 if not self.allow_fallback:
-                    raise RuntimeError(
+                    # The error every screen already knows means "no
+                    # database"; a RuntimeError went past the sign-in window's
+                    # handler and ended Slate in the crash handler.
+                    from .db_results import DatabaseUnavailableError
+                    raise DatabaseUnavailableError(
                         "Postgres initialization failed and fallback is disabled. "
                         f"Reason: {exc}"
                     ) from exc
@@ -190,13 +195,21 @@ _manager_instance: Optional[DatabaseManager] = None
 
 
 _manager_building = False
+# Why the last build failed. Kept so every later caller gets the same answer at
+# once: each one used to rebuild (and wait for the network) again, which made
+# the sign-in window take 214 s to appear with the database down.
+# ponytail: kept until reload_from_config() on the proxy, which the sign-in
+# window's Try again calls; a tool that wants to retry calls it too.
+_manager_failure: Optional[BaseException] = None
 
 
 def _get_manager() -> DatabaseManager:
-    global _manager_instance, _manager_building
+    global _manager_instance, _manager_building, _manager_failure
     if _manager_instance is None:
         with _manager_lock:
             if _manager_instance is None:
+                if _manager_failure is not None:
+                    raise _manager_failure
                 if _manager_building:
                     # Something reached for the global manager while it was
                     # still being built. Building a second one here is how a
@@ -209,9 +222,17 @@ def _get_manager() -> DatabaseManager:
                 _manager_building = True
                 try:
                     _manager_instance = DatabaseManager()
+                except Exception as exc:
+                    _manager_failure = exc
+                    raise
                 finally:
                     _manager_building = False
     return _manager_instance
+
+
+def is_connected() -> bool:
+    """Whether the shared manager has been built (asking never connects)."""
+    return _manager_instance is not None
 
 
 class _DatabaseManagerProxy:
@@ -219,6 +240,19 @@ class _DatabaseManagerProxy:
 
     def __getattr__(self, name):
         return getattr(_get_manager(), name)
+
+    def reload_from_config(self, db_path: Optional[str] = None) -> None:
+        """
+        Use the settings as they are now. Built: rebuild. Not built yet (or the
+        last build failed): forget the failure; the next use builds - so this
+        never blocks on the network when nothing was connected.
+        """
+        global _manager_failure
+        with _manager_lock:
+            _manager_failure = None
+            manager = _manager_instance
+        if manager is not None:
+            manager.reload_from_config(db_path)
 
     def __repr__(self):
         mgr = _manager_instance

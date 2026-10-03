@@ -151,15 +151,50 @@ def test_try_again_once_the_database_is_back(qtbot, settings, monkeypatch):
     dialog = LoginDialog(app_context=context)
     qtbot.addWidget(dialog)
     dialog.show()
-    assert dialog.database_unavailable and not dialog.btn_login.isEnabled()
-    assert dialog.retry_btn.isVisible()
+    # The window is up at once; the database is reached behind it.
+    assert dialog.btn_login.text() == "Connecting…" and not dialog.btn_login.isEnabled()
+    qtbot.waitUntil(lambda: dialog.database_unavailable, timeout=3000)
+    assert not dialog.btn_login.isEnabled() and dialog.retry_btn.isVisible()
 
-    assert dialog.retry_database() is False          # still down
-    assert dialog.retry_btn.isVisible() and dialog.retry_btn.isEnabled()
-    assert dialog.retry_database() is True           # back
+    dialog.retry_database()                          # still down
+    qtbot.waitUntil(lambda: dialog.retry_btn.isEnabled() and not dialog.is_connecting(), timeout=3000)
+    assert dialog.retry_btn.isVisible() and dialog.status_lbl.property("state") == "error"
+    with qtbot.waitSignal(dialog.database_ready, timeout=3000):
+        dialog.retry_database()                      # back
     assert dialog.user_manager is users
     assert dialog.btn_login.isEnabled() and dialog.user_input.isEnabled()
     assert not dialog.status_lbl.isVisible() and not dialog.retry_btn.isVisible()
+
+
+def test_working_on_the_local_copy_is_said_on_the_window(qtbot, settings):
+    class LocalContext(FakeContext):
+        def db_manager(self):
+            return type("Db", (), {"is_local_mode": lambda self: True})()
+
+    dialog = LoginDialog(app_context=LocalContext())
+    qtbot.addWidget(dialog)
+    with qtbot.waitSignal(dialog.database_ready, timeout=3000):
+        pass
+    assert dialog.btn_login.isEnabled()
+    assert dialog.status_lbl.text() == login_module.OFFLINE_TEXT
+    assert dialog.status_lbl.alignment() & Qt.AlignmentFlag.AlignLeft   # a paragraph, left-aligned
+
+
+def test_escape_does_not_quit(qtbot, settings):
+    dialog = _dialog(qtbot, settings)
+    dialog.show()
+    qtbot.keyClick(dialog, Qt.Key.Key_Escape)
+    assert dialog.isVisible() and dialog.result() == 0
+
+
+def test_a_message_does_not_move_the_sign_in_button(qtbot, settings):
+    dialog = _dialog(qtbot, settings)
+    dialog.show()
+    qtbot.wait(10)
+    before = dialog.btn_login.mapTo(dialog, dialog.btn_login.rect().topLeft())
+    dialog.show_error("That user name and password do not match. Try again.")
+    qtbot.wait(10)
+    assert dialog.btn_login.mapTo(dialog, dialog.btn_login.rect().topLeft()) == before
 
 
 def test_the_forced_change_gets_the_password_that_signed_in(qtbot, settings, monkeypatch):
@@ -171,7 +206,9 @@ def test_the_forced_change_gets_the_password_that_signed_in(qtbot, settings, mon
         class DialogCode:
             Accepted = 1
 
-        def __init__(self, manager, username, forced=False, current_password=None, parent=None):
+        def __init__(self, manager, username, forced=False, current_password=None, parent=None,
+                     display_name=""):
+            seen["name"] = display_name
             seen["current"] = current_password
 
         def exec(self):
