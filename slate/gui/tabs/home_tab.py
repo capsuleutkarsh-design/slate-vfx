@@ -244,7 +244,7 @@ class QuickActionBtn(QFrame):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
-        self.setMinimumHeight(78)
+        self.setMinimumHeight(54)
         self.setObjectName("QuickBtn")
         self.setProperty("pressed", False)
         self.setStyleSheet(f"""
@@ -252,7 +252,7 @@ class QuickActionBtn(QFrame):
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {Gate.overlay(0.08)}, stop:1 {Gate.overlay(0.02)});
                 border: 1px solid {Gate.overlay(0.1)};
                 border-top: 1px solid {Gate.overlay(0.2)};
-                border-radius: 12px;
+                border-radius: 10px;
             }}
             QFrame#QuickBtn:hover {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {Gate.overlay(0.15)}, stop:1 {Gate.overlay(0.06)});
@@ -264,7 +264,8 @@ class QuickActionBtn(QFrame):
         """)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 12, 18, 12)
+        layout.setContentsMargins(14, 8, 14, 8)
+        layout.setSpacing(2)
 
         title_row = QHBoxLayout()
         title_row.setContentsMargins(0, 0, 0, 0)
@@ -273,20 +274,20 @@ class QuickActionBtn(QFrame):
             from ..core.icons import icon as draw_icon, has_icon
             if has_icon(glyph):
                 mark = QLabel()
-                mark.setPixmap(draw_icon(glyph, Gate.TEXT, 17).pixmap(17, 17))
+                mark.setPixmap(draw_icon(glyph, Gate.TEXT, 15).pixmap(15, 15))
                 mark.setStyleSheet("background: transparent; border: none;")
                 mark.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
                 title_row.addWidget(mark)
 
         lbl_title = QLabel(title)
-        lbl_title.setStyleSheet(f"background: transparent; border: none; color: {Gate.TEXT}; font-size: 15px; font-weight: 700;")
+        lbl_title.setStyleSheet(f"background: transparent; border: none; color: {Gate.TEXT}; font-size: 13px; font-weight: 700;")
         lbl_title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         title_row.addWidget(lbl_title)
         title_row.addStretch(1)
 
         lbl_sub = QLabel(subtitle)
         lbl_sub.setWordWrap(True)
-        lbl_sub.setStyleSheet(f"background: transparent; border: none; color: {Gate.TEXT_2}; font-size: 12px;")
+        lbl_sub.setStyleSheet(f"background: transparent; border: none; color: {Gate.TEXT_2}; font-size: 11px;")
         lbl_sub.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
         layout.addLayout(title_row)
@@ -756,7 +757,7 @@ class HomeTab(QWidget):
             label.setToolTip(tip)
             label.setStyleSheet(
                 f"background: transparent; border: none; color: {Gate.WARN if warn else Gate.OK}; "
-                "font-size: 26px; font-weight: 800;")
+                "font-size: 21px; font-weight: 800;")
 
     # ------------------------------------------------------------ build
     def init_ui(self):
@@ -818,7 +819,7 @@ class HomeTab(QWidget):
         top_bar = QHBoxLayout()
         self.greeting_label = QLabel(greeting(self.user_display_name))
         self.greeting_label.setStyleSheet(
-            f"color: {Gate.TEXT}; font-size: 28px; font-weight: 300; letter-spacing: 1px; background: transparent;")
+            f"color: {Gate.TEXT}; font-size: 24px; font-weight: 300; letter-spacing: 1px; background: transparent;")
         top_bar.addWidget(self.greeting_label)
         top_bar.addStretch()
 
@@ -862,21 +863,21 @@ class HomeTab(QWidget):
         # --- MIDDLE: quick launch and the right-hand panels. Side by side on
         # a wide window, one under the other below 1200 px.
         self.middle = QGridLayout()
-        self.middle.setHorizontalSpacing(32)
-        self.middle.setVerticalSpacing(20)
+        self.middle.setHorizontalSpacing(20)
+        self.middle.setVerticalSpacing(14)
 
         self.quick_launch_panel = self._build_glass_panel()
         self.quick_launch_panel.setMinimumWidth(340)
         ql_layout = QVBoxLayout(self.quick_launch_panel)
-        ql_layout.setContentsMargins(20, 20, 20, 20)
+        ql_layout.setContentsMargins(16, 14, 16, 14)
         ql_title = QLabel("QUICK LAUNCH")
-        ql_title.setStyleSheet(f"color: {Gate.ACCENT}; font-size: 14px; font-weight: 800; letter-spacing: 3px; background: transparent; border: none;")
+        ql_title.setStyleSheet(f"color: {Gate.ACCENT}; font-size: 12px; font-weight: 800; letter-spacing: 2px; background: transparent; border: none;")
         ql_layout.addWidget(ql_title)
 
         # One grid with equal columns, so the tiles line up.
         self.tiles = []
         grid = QGridLayout()
-        grid.setSpacing(14)
+        grid.setSpacing(10)
         for i, (label, subtitle, glyph) in enumerate(self.tile_specs()):
             tile = self._build_quick_action_btn(label, subtitle, glyph)
             tile.clicked.connect(lambda label=label: self._trigger_tab(label))
@@ -896,17 +897,17 @@ class HomeTab(QWidget):
         right.setStyleSheet("background: transparent;")
         right_panel_layout = QVBoxLayout(right)
         right_panel_layout.setContentsMargins(0, 0, 0, 0)
-        right_panel_layout.setSpacing(20)
+        right_panel_layout.setSpacing(14)
 
         # A. Your shots, or the leave pulse
         tasks_panel = self._build_glass_panel()
         tasks_panel.setMinimumWidth(320)
         tasks_layout = QVBoxLayout(tasks_panel)
-        tasks_layout.setContentsMargins(20, 20, 20, 20)
+        tasks_layout.setContentsMargins(16, 14, 16, 14)
         shows_shots = "shots" in self.figures
         title_row = QHBoxLayout()
         tasks_title = QLabel("MY RECENT SHOTS" if shows_shots else "LEAVE: NOW AND NEXT")
-        tasks_title.setStyleSheet(f"color: {Gate.ACCENT}; font-size: 14px; font-weight: 800; letter-spacing: 3px; background: transparent; border: none;")
+        tasks_title.setStyleSheet(f"color: {Gate.ACCENT}; font-size: 12px; font-weight: 800; letter-spacing: 2px; background: transparent; border: none;")
         title_row.addWidget(tasks_title)
         title_row.addStretch(1)
         if shows_shots:
@@ -927,13 +928,13 @@ class HomeTab(QWidget):
         stats_panel = self._build_glass_panel()
         stats_panel.setMinimumWidth(320)
         stats_layout = QVBoxLayout(stats_panel)
-        stats_layout.setContentsMargins(20, 20, 20, 20)
+        stats_layout.setContentsMargins(16, 14, 16, 14)
         stats_title = QLabel("STUDIO FIGURES")
-        stats_title.setStyleSheet(f"color: {Gate.ACCENT}; font-size: 14px; font-weight: 800; letter-spacing: 3px; background: transparent; border: none;")
+        stats_title.setStyleSheet(f"color: {Gate.ACCENT}; font-size: 12px; font-weight: 800; letter-spacing: 2px; background: transparent; border: none;")
         stats_layout.addWidget(stats_title)
         stat_grid = QGridLayout()
-        stat_grid.setHorizontalSpacing(12)
-        stat_grid.setVerticalSpacing(12)
+        stat_grid.setHorizontalSpacing(10)
+        stat_grid.setVerticalSpacing(10)
         self.stat_labels = {}
         for i, key in enumerate(self.stat_figures()):
             box, value = self._build_stat_item(FIGURE_LABELS[key], "-")
@@ -1062,15 +1063,16 @@ class HomeTab(QWidget):
         w = QWidget()
         w.setStyleSheet("background: transparent;")
         lay = QVBoxLayout(w)
-        lay.setContentsMargins(4, 4, 4, 4)
+        lay.setContentsMargins(2, 2, 2, 2)
+        lay.setSpacing(0)
         lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         v = QLabel(value)
-        v.setStyleSheet(f"background: transparent; border: none; color: {Gate.OK}; font-size: 26px; font-weight: 800;")
+        v.setStyleSheet(f"background: transparent; border: none; color: {Gate.OK}; font-size: 21px; font-weight: 800;")
         v.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         l = QLabel(label)
-        l.setWordWrap(True)
+        l.setWordWrap(False)          # one line: wrapped labels were cut in half
         l.setStyleSheet(f"background: transparent; border: none; color: {Gate.TEXT_2}; font-size: 11px; font-weight: 600;")
         l.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
