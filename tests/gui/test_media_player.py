@@ -226,3 +226,29 @@ def test_a_snapshot_of_a_proxy_comes_from_the_original(qtbot, player, tmp_path, 
     image = QImage(saved[0])
     assert (image.width(), image.height()) == (3840, 2160)
     Path(saved[0]).unlink()
+
+
+@pytest.mark.parametrize("width", [280, 360, 420])
+def test_exr_colour_combos_show_whole_names_or_ellipsis(qtbot, width):
+    """
+    MED-112 (final round): squeezed into the tool row the input combo read
+    'Linear Rec.7(' at every window size. Each now has its own line; at
+    inspector widths the names fit, and if not they end in an ellipsis.
+    """
+    from slate.gui.widgets.advanced_player import AdvancedPlayer
+    p = AdvancedPlayer()
+    qtbot.addWidget(p)
+    p.resize(width, 420)
+    p.show()
+    p.combo_input.addItem("Linear Rec.709 (sRGB)")
+    p.combo_view.addItem("ACES 1.0 - SDR Video")
+    p.combo_view.setCurrentIndex(1)
+    p.row_input.show()
+    p.row_view.show()
+    qtbot.wait(50)
+    for combo, text in ((p.combo_input, "Linear Rec.709 (sRGB)"), (p.combo_view, "ACES 1.0 - SDR Video")):
+        shown = combo.displayed_text()
+        assert shown == text or shown.endswith("…")
+        if width >= 360:
+            assert shown == text, (width, shown, combo.width())
+        assert text in combo.toolTip()
