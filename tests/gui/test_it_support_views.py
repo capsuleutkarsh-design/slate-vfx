@@ -579,7 +579,11 @@ def test_my_tickets_keeps_a_header_sort_and_marks_new_replies(db, app, monkeypat
     """IT2-029 / IT2-031 / IT2-030."""
     from slate.core.infra.global_config import GlobalConfig
     from slate.core.infra.ticket_repository import TicketRepository
-    monkeypatch.setitem(GlobalConfig._runtime_overrides, "IT_TICKETS_SEEN", {})
+    store = {"IT_TICKETS_SEEN": {}}                 # read marks kept in memory, not the real config
+    real_get = GlobalConfig.get
+    monkeypatch.setattr(GlobalConfig, "get", classmethod(
+        lambda cls, key, default=None: store[key] if key in store else real_get(key, default)))
+    monkeypatch.setattr(GlobalConfig, "set", classmethod(lambda cls, key, value: store.__setitem__(key, value)))
     first = _ticket(db, text="first")
     second = _ticket(db, text="second")
     TicketRepository(db).reply({"id": first}, "it.sana", "On it")
