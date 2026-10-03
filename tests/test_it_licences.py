@@ -207,8 +207,12 @@ def test_back_filled_readings_keep_their_time_and_the_future_is_refused(repo):
 def test_imported_readings_are_marked_as_such(repo):
     repo.save("Nuke", 10, _in(200))
     lic = repo.licences()[0]
-    assert repo.import_readings([(lic, 3)], recorded_by="it.sana") == 1
+    when = datetime.now().replace(microsecond=0) - timedelta(hours=1)
+    assert repo.import_readings([(lic, 3)], taken_at=when, recorded_by="it.sana") == (1, 0)
     assert repo.history(lic)[0].get("source") == "server report"
+    # IT2-057: the same report again is skipped, not doubled.
+    assert repo.import_readings([(lic, 3)], taken_at=when, recorded_by="it.sana") == (0, 1)
+    assert len(repo.history(lic)) == 1
 
 
 def test_cost_vendor_contract_and_no_expiry_round_trip(repo):
@@ -222,7 +226,7 @@ def test_cost_vendor_contract_and_no_expiry_round_trip(repo):
     repo.record("Resolve Studio", 1, 4, licence_id=row["id"])
     finding = repo.compliance(90)[0]
     assert finding["state"] == lc.UNDER and finding["spare_cost"] == Decimal("90000.00")
-    assert "₹90,000.00" in finding["finding"]
+    assert "₹90,000 a year" in finding["finding"]                      # IT2-061: no '.00'
 
 
 def test_same_name_is_found_ignoring_case(repo):
@@ -273,3 +277,47 @@ def test_two_contracts_are_told_apart_by_the_seats_the_server_issued():
     assert report.match_licence("nuke_i", [studio, project], total=20) is studio
     assert report.match_licence("nuke_i", [studio, project], total=7) is None
     assert report.match_licence("nuke_i", [studio, dict(studio, id=3)], total=20) is None
+
+
+
+# ------------------------------------------------------------------ round 2
+
+def test_a_licence_measured_before_the_window_is_not_called_never_measured(repo):
+    """IT2-053."""
+    repo.save("NukeX", 8, _in(300))
+    lic = repo.licences()[0]
+    repo.record("NukeX", 4, 8, taken_at=datetime.now() - timedelta(days=50), licence_id=lic["id"])
+    [row] = repo.compliance(30)
+    assert row["state"] == lc.STALE and "50 days ago" in row["finding"]
+    assert "No usage has been recorded" not in row["finding"]
+    assert repo.compliance(90)[0]["peak"] == 4
+
+
+def test_renaming_a_licence_takes_its_old_readings_along(repo):
+    """IT2-058."""
+    repo.save("Nuke", 10, _in(300))
+    lic = repo.licences()[0]
+    repo.record("Nuke", 6, 10, licence_id=None)                    # name-only, from before ids
+    assert repo.save("Nuke Studio", 10, _in(300), lic["id"])
+    assert repo.compliance(90)[0]["peak"] == 6
+    repo.save("Nuke", 4, _in(300))                                  # a new licence with the old name
+    fresh = next(r for r in repo.compliance(90) if r["software_name"] == "Nuke")
+    assert fresh["peak"] is None
+
+
+def test_renewal_reminders_reach_approvers_and_read_well(repo):
+    """IT2-056 / IT2-059."""
+    from datetime import date
+    from slate.core.domain import people, access
+    db = repo.db
+    for username, roles in (("it.sana", '["IT"]'), ("prod.head", '["Production Head"]')):
+        db.execute_update("INSERT INTO ut_users (username, display_name, roles) VALUES (%s, %s, %s)",
+                          (username, username, roles))
+    people.refresh()
+    access.reset_cache()
+    repo.save("Houdini FX", 5, date.today() - timedelta(days=12))
+    assert repo.send_renewal_reminders(today=date.today()) == 1
+    rows = db.execute_query("SELECT user_id, message FROM notifications", fetch="all") or []
+    got = {dict(r)["user_id"]: dict(r)["message"] for r in rows}
+    assert "prod.head" in got and "it.sana" in got
+    assert got["it.sana"] == "Houdini FX expired 12 days ago - renew or remove it."
