@@ -3,7 +3,7 @@
 ; Features: HRMS Attendance, Leaves, Onboarding, IT Inventory, DCC Licenses, Ticketing, Deployment, Users & Roles.
 
 #define MyAppName "Slate Operations"
-#define MyAppVersion "BETA 2.0.32"
+#define MyAppVersion "BETA 2.1.0"
 #define MyAppPublisher "UT Studio"
 #define MyAppURL "https://github.com/capsuleutkarsh-design/slate-vfx"
 #define MyAppExeName "Slate_Ops.exe"
