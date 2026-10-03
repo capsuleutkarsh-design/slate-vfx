@@ -132,8 +132,16 @@ class PgBouncerEngine:
 
         import os
         env = dict(os.environ)
-        if self.db_password:
-            env["PGPASSWORD"] = self.db_password
+        # psql logs in as the superuser here, so it needs the superuser's
+        # password - which is the workstations' one until db_admin_password
+        # gives the superuser its own (db_credentials.admin_password).
+        try:
+            from slate_server.core.db_credentials import admin_password
+            superuser_password = admin_password() or self.db_password
+        except Exception:
+            superuser_password = self.db_password
+        if superuser_password:
+            env["PGPASSWORD"] = superuser_password
 
         cmd = [
             str(psql_exe), "-h", "127.0.0.1", "-p", str(self.db_port),

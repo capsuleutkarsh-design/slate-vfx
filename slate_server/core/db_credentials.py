@@ -144,17 +144,43 @@ def reload() -> dict:
     return _settings()
 
 
-def admin_password() -> str:
+def app_password() -> str:
     """
-    The database password, for the server's own administrative queries.
+    The workstations' database password (the application account's).
 
-    The environment wins over every file, so a one-off maintenance session can
-    supply it without writing it down anywhere.
+    SLATE_DB_PASSWORD wins over every file, so a one-off maintenance session
+    can supply it without writing it down anywhere.
     """
     from_env = os.environ.get("SLATE_DB_PASSWORD")
     if from_env:
         return from_env
     return str(_settings().get("db_password") or "")
+
+
+def admin_password() -> str:
+    """
+    The superuser's (postgres) password, for the server's own queries.
+
+    Its own setting, db_admin_password (or SLATE_DB_ADMIN_PASSWORD), when one
+    has been set - the recovery tool sets it, and the security work will. Until
+    then it falls back to the workstations' password, which is what both
+    accounts have always had, so nothing changes on a server that has not been
+    given a separate one. Reading the separate one first is what lets the
+    superuser get its own password without the server then locking itself out
+    (SEC-001's guard: "ship the reader before changing any password").
+    """
+    from_env = os.environ.get("SLATE_DB_ADMIN_PASSWORD")
+    if from_env:
+        return from_env
+    separate = _settings().get("db_admin_password")
+    if separate not in (None, ""):
+        return str(separate)
+    return app_password()
+
+
+def has_separate_admin_password() -> bool:
+    return bool(os.environ.get("SLATE_DB_ADMIN_PASSWORD")
+                or _settings().get("db_admin_password") not in (None, ""))
 
 
 def admin_user() -> str:

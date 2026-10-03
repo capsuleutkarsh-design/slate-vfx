@@ -68,72 +68,30 @@ def _server_home():
     Running from a checkout: the checkout. Installed: the per-user folder.
     They used to be the same folder for both, which is how uninstalling the
     installed build - with "delete its data" - deleted the settings file the
-    development server was using, and the development server then went looking
-    for a database somewhere else and built a new empty one when it got there.
-    An installer must have no way of reaching a checkout's server.
+    development server was using. The answer lives in slate_server.core.
+    server_home now, so the recovery tool reaches the same one without Qt.
     """
-    if getattr(sys, "frozen", False):
-        return os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
-                            "Slate_Central")
-    from pathlib import Path
-    return str(Path(__file__).resolve().parents[2])
+    from slate_server.core.server_home import server_home
+    return server_home()
 
 
 def _default_data_dir(appdata_dir):
     """
-    Where the database is when the settings do not say.
-
-    One answer, fixed, and it is not derived from anything else. This used to be
-    worked out from SERVER_ROOT, a drive letter, and whether a folder existed -
-    inputs that change - and every time the answer changed the server quietly
-    built a new empty cluster at the new one. Four were found on one machine in
-    a day. The studio's real database was a fifth folder that nothing pointed at.
-
-    SLATE_DB_PATH still wins, because it is an explicit instruction. Nothing
-    else is.
+    Where the database is when the settings do not say: SLATE_DB_PATH, or
+    <server home>\LocalDatabase. One answer, fixed, derived from nothing that
+    changes - every time it used to change, a new empty cluster was built.
     """
-    from_env = os.environ.get("SLATE_DB_PATH")
-    if from_env:
-        return from_env
-    return os.path.join(appdata_dir, "LocalDatabase")
+    from slate_server.core.server_home import default_data_dir
+    return default_data_dir(appdata_dir)
 
 
 def _settings_path(appdata_dir):
     """
-    Where the server keeps its settings, carrying forward an older install's.
-
-    The folder and the file were both named after the product, so renaming the
-    product moved both at once. A machine that upgrades therefore finds no
-    settings at all - and the code below treats "no settings" as "first run",
-    falls back to a default path that is not there, falls back again to a local
-    one, and runs initdb. The result is a server that starts cleanly onto an
-    empty database while the real one sits untouched somewhere else, which is
-    the worst of both worlds: nothing errors, and nothing is there.
-
-    So before deciding this is a first run, look where the previous name kept
-    its settings and bring them across. The old file is copied, not moved, so
-    an older build on the same machine still finds what it expects.
+    The server's settings file, carrying forward an older install's so an
+    upgrade is not mistaken for a first run (see server_home.settings_path).
     """
-    import shutil
-
-    current = os.path.join(appdata_dir, "slate_server_config.json")
-    if os.path.exists(current):
-        return current
-
-    local = os.path.dirname(appdata_dir)
-    for folder, name in (("UT_Central", "ut_server_config.json"),):
-        previous = os.path.join(local, folder, name)
-        if os.path.exists(previous):
-            try:
-                shutil.copy2(previous, current)
-                print(f"Carried settings forward from {previous}")
-            except OSError as exc:
-                # Not fatal - the server can still be pointed at a database by
-                # hand in Settings. But say so, because the alternative is a
-                # silently empty one.
-                print(f"Could not carry settings forward from {previous}: {exc}")
-            return current
-    return current
+    from slate_server.core.server_home import settings_path
+    return settings_path(appdata_dir)
 
 
 class DBWorker(QThread):
@@ -292,8 +250,10 @@ class UTServerWindow(QMainWindow):
             self.settings_view.input_db_name.setText("ut_vfx")
         self.settings_view.input_max_conn.setText(str(cfg_max_conn))
         try:
-            from slate_server.core.db_credentials import admin_password
-            self.settings_view.input_db_password.setText(admin_password())
+            # The workstations' password - not the superuser's, once that
+            # has one of its own (db_admin_password).
+            from slate_server.core.db_credentials import app_password
+            self.settings_view.input_db_password.setText(app_password())
         except Exception:
             pass
         # Which file these came from. It did not exist on the machine where all
