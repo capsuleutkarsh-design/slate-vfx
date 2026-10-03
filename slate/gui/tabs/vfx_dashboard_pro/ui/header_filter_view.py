@@ -87,7 +87,7 @@ class FilterHeaderView(QHeaderView):
 
     def clear_filters(self, emit: bool = True):
         had = bool(self.active_filters)
-        self.active_filters = {}
+        self.active_filters.clear()          # shared with the frozen heading: never rebound
         self.viewport().update()
         if emit and had:
             self.filter_changed.emit()

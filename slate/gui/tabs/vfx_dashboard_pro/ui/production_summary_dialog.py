@@ -65,7 +65,7 @@ def _table(headers, rows, stretch=None):
         for c, value in enumerate(row):
             text = number_text(value) if isinstance(value, (int, float)) else str(value)
             item = QTableWidgetItem(text)
-            if c > 0 and isinstance(value, (int, float)):
+            if c > 0 and (isinstance(value, (int, float)) or text.endswith("%")):
                 item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             table.setItem(r, c, item)
     style_table(table, {stretch: "stretch"} if stretch else None, multi_select=False)
@@ -84,7 +84,8 @@ def _table(headers, rows, stretch=None):
 class ProductionSummaryDialog(QDialog):
     """Read-only roll-up of the shots on screen, or of the whole project."""
 
-    def __init__(self, shots, project_name="", parent=None, today=None, all_shots=None):
+    def __init__(self, shots, project_name="", parent=None, today=None, all_shots=None,
+                 whole_label="whole project"):
         super().__init__(parent)
         self.setWindowTitle("Production summary")
         self.setMinimumSize(760, 620)
@@ -92,6 +93,8 @@ class ProductionSummaryDialog(QDialog):
         self.shown_shots = list(shots or [])
         self.all_shots = list(all_shots) if all_shots is not None else list(self.shown_shots)
         self.filtered = len(self.shown_shots) != len(self.all_shots)
+        # What "all of it" is for this person: an artist only has their own shots.
+        self.whole_label = whole_label
 
         outer = QVBoxLayout(self)
         title = QLabel(project_name or "Production summary")
@@ -127,7 +130,7 @@ class ProductionSummaryDialog(QDialog):
         self.summary = summary
         as_of = f"As of {format_date(self.today)}"
         if whole:
-            self.caption.setText(f"{as_of} · whole project, {len(self.all_shots)} shots")
+            self.caption.setText(f"{as_of} · {self.whole_label}, {len(self.all_shots)} shots")
         else:
             self.caption.setText(f"{as_of} · Filtered: {len(self.shown_shots)} of {len(self.all_shots)} shots")
 
@@ -138,10 +141,13 @@ class ProductionSummaryDialog(QDialog):
         tiles.setSpacing(10)
         omitted = f" ({summary.omitted} omitted, not counted)" if summary.omitted else ""
         tiles.addWidget(_headline(number_text(summary.total_shots), "Shots" + omitted))
-        tiles.addWidget(_headline(f"{number_text(summary.percent_complete)}%", "Approved", Gate.ACCENT))
+        # Approved and finished (Done, Delivered) shots, as the group headings count.
+        tiles.addWidget(_headline(f"{number_text(summary.percent_complete)}%", "Done or approved",
+                                  Gate.ACCENT))
         tiles.addWidget(_headline(number_text(summary.outstanding_bid_days), "Bid days left", Gate.ACCENT))
         tiles.addWidget(_headline(len(summary.late), "Overdue", Gate.BAD if summary.late else Gate.TEXT_2))
-        tiles.addWidget(_headline(len(summary.unassigned), "Nobody assigned",
+        # Not the board's "Unassigned" (no shot artist): nobody on any department either.
+        tiles.addWidget(_headline(len(summary.unassigned), "No artist on any department",
                                   Gate.WARN if summary.unassigned else Gate.TEXT_2))
         tiles.addStretch()
         layout.addLayout(tiles)
@@ -173,7 +179,7 @@ class ProductionSummaryDialog(QDialog):
                                     [(e.shot_name, e.reel, format_date(e.target), e.status, e.artist)
                                      for e in summary.due_soon], stretch="Artist"))
         if summary.unassigned:
-            layout.addWidget(_section("Nobody assigned"))
+            layout.addWidget(_section("Open shots with no artist on any department"))
             names = QLabel(", ".join(summary.unassigned))
             names.setWordWrap(True)
             names.setStyleSheet(f"color: {Gate.WARN};")

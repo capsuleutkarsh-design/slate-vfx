@@ -84,7 +84,10 @@ def merge_shots(current: list, fresh: list, checked_ids: Set[int],
         new = fresh_by_id.pop(sid, None)
         if protected(shot):
             result.shots.append(shot)
-            result.kept.append(shot)
+            # Only news when the stored copy really moved on from the one these
+            # edits were made to (a plain Refresh read the same version back).
+            if new is None or int(getattr(new, "version", 0) or 0) != int(getattr(shot, "version", 0) or 0):
+                result.kept.append(shot)
             continue
         if new is None or not visible(new):
             result.removed.append(shot)
@@ -219,11 +222,7 @@ class DashboardLiveUpdateMixin:
         current = list(getattr(self, "all_shots", None) or [])
         try:
             if full:
-                fresh = handler.read_shots()
-                if current and not fresh:
-                    # read_shots() answers a failure with an empty list. A
-                    # whole project vanishing is far likelier to be that.
-                    raise RuntimeError("the project came back empty")
+                fresh = handler.read_shots()        # raises when it could not be read
                 checked = {_shot_id(s) for s in current} | {_shot_id(s) for s in fresh}
                 checked.discard(None)
             else:
@@ -353,10 +352,24 @@ class DashboardLiveUpdateMixin:
             changed = {_shot_id(s) for s in result.replaced} | {_shot_id(s) for s in result.removed}
             if open_id is not None and open_id in changed:
                 fresh = next((s for s in result.replaced if _shot_id(s) == open_id), None)
+                name = detail.shot.shot_name
                 busy = getattr(detail, "has_unapplied_changes", lambda: False)()
-                if fresh is not None and not busy and hasattr(self, "open_detail_dock"):
+                if fresh is None:
+                    if busy:
+                        detail.note_changed_elsewhere(
+                            f"{name} was removed by someone else. These changes cannot be applied.")
+                    else:
+                        self.close_detail_dock(force=True)
+                    self._notify(f"{name} was removed by someone else.", "warning", 6000)
+                elif busy:
+                    # Keep what is typed, on the shot as it is now: Apply puts
+                    # these changes on top of theirs.
+                    detail.shot = fresh
+                    detail.note_changed_elsewhere(
+                        "Someone else saved this shot while you were editing. Apply puts your "
+                        "changes on top of theirs.")
+                elif hasattr(self, "open_detail_dock"):
                     # Show what is there now rather than a copy that is out of date.
                     self.open_detail_dock(fresh)
-                self._notify(
-                    f"{detail.shot.shot_name if fresh is None else fresh.shot_name} was just "
-                    "changed by someone else; the panel shows the latest.", "info", 6000)
+                    self._notify(f"{name} was just changed by someone else; the panel shows the "
+                                 "latest.", "info", 6000)

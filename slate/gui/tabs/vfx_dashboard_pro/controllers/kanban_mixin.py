@@ -112,11 +112,11 @@ class DashboardKanbanMixin:
         old = shot.status
         changed = self.table_model.apply_edit(
             [shot], lambda s: setattr(s, "status", new_status),
-            f"{shot.shot_name} status")
+            f"status change on {shot.shot_name}")
         if changed:
             self._notify(
                 f"{shot.shot_name}: {shot_status.label(old)} → {shot_status.label(new_status)}. "
-                "Not saved yet.", "info", 4000, action=("Undo", self.undo_last_edit))
+                "Not saved yet.", "info", 4000, action=self._undo_action())
 
     def on_kanban_double_clicked(self, task_id):
         shot = self._board_shot(task_id)
@@ -138,7 +138,7 @@ class DashboardKanbanMixin:
             return
         changed = self.table_model.apply_edit(
             [shot], lambda s: setattr(s, "assigned_artist", username),
-            f"{shot.shot_name} artist")
+            f"artist change on {shot.shot_name}")
         if changed:
             self._notify(f"{username} assigned to {shot.shot_name}. Not saved yet.", "info", 4000,
-                         action=("Undo", self.undo_last_edit))
+                         action=self._undo_action())

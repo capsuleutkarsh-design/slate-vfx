@@ -35,7 +35,7 @@ from .dashboard_layout_builder import _build_project_menu, build_dashboard_ui
 from .history_dialog import HistoryDialog
 from .shot_detail import ShotDetailWidget
 from .shot_table_model import SHOT_ROLE, set_field
-from ..core.sqlite_handler import StaleDataError  # noqa: F401  (kept for importers)
+from ..core.sqlite_handler import ProjectClosedError, StaleDataError  # noqa: F401
 
 from ..controllers.thumbnail_mixin import DashboardThumbnailMixin
 from ..controllers.kanban_mixin import DashboardKanbanMixin
@@ -119,6 +119,14 @@ class ClickableLabel(QLabel):
 # into another (the old table made coordinators and producers "supervisor").
 _ROLE_SPELLINGS = {"dev": "developer", "coord": "coordinator", "production": "producer", "pro": "producer"}
 
+# Job-title words that name a department family without using its key, label
+# or name ('Head of Paint', 'Senior Compositor', 'Mograph Lead').
+_DEPARTMENT_WORDS = {
+    "paint": "prep", "painter": "prep", "matte": "dmp", "compositor": "comp",
+    "compositing": "comp", "mograph": "mgfx", "motion": "mgfx", "matchmover": "matchmove",
+    "tracking": "matchmove", "rotoscoping": "roto", "deage": "deage",
+}
+
 
 class DashboardWidget(
     DashboardBuilderMixin,
@@ -135,9 +143,14 @@ class DashboardWidget(
     # ------------------------------------------------------------------
     def _notify(self, message: str, level: str = "info", duration: int = 4000, details: str = "",
                 action=None):
-        """A toast (with an optional action such as Undo), and a copy in the status bar."""
+        """
+        A toast (with an optional action such as Undo). Inside Slate the main
+        window keeps the status-bar copy; only a standalone dashboard writes
+        its own, so a message is never shown three times at once.
+        """
         bar = getattr(self, "status_bar", None)
-        if bar is not None:
+        window = self.window()
+        if bar is not None and (window is self or not callable(getattr(window, "show_feedback", None))):
             bar.showMessage(message, max(duration, 3000))
         try:
             from slate.gui.components.feedback import toast
@@ -162,21 +175,29 @@ class DashboardWidget(
     # ------------------------------------------------------------------
     # Artists' own status: saved at once, with Undo
     # ------------------------------------------------------------------
-    def on_own_status_edited(self, shot, dept_key, status, previous="", undoing=False):
+    def on_own_status_edited(self, shot, dept_key, status, previous="", undoing=False, undo_of=None):
         """
         Save an artist's own status change immediately.
 
         People without full rights have no Save button, so the change is
         written as it is made - with an Undo on the confirmation, which writes
-        the previous status back the same way.
+        the previous status back the same way (``undo_of`` is the status being
+        taken back, so the store lets an undo restore a status the artist
+        could not pick).
         """
-        if not self.data_handler or not hasattr(self.data_handler, "update_department_status"):
-            return False
         dept_name = next((d.name for d in self._departments() if d.key == dept_key), dept_key)
 
         def put_back():
             shot.dept(dept_key).status = previous
             self.table_model.mark_clean([shot])
+
+        if not self.data_handler or not hasattr(self.data_handler, "update_department_status"):
+            # A project kept only in its Excel sheet: there is nowhere to save
+            # one status to, and it must not look saved.
+            put_back()
+            self._notify("This project is kept only in its Excel sheet, so statuses cannot be "
+                         "changed here. Ask production to move it into Slate.", "warning", 8000)
+            return False
 
         try:
             ok = self.data_handler.update_department_status(
@@ -186,10 +207,16 @@ class DashboardWidget(
                 status=status,
                 current_version=getattr(shot, "version", 0),
                 actor_identities=self._artist_identity_candidates(),
+                shot_id=getattr(shot, "id", None),
+                undo_of=undo_of,
             )
         except PermissionError as exc:
             put_back()
             self._notify(str(exc), "warning", 8000)
+            return False
+        except ProjectClosedError as exc:
+            put_back()
+            self._notify(str(exc), "warning", 10000)
             return False
         except StaleDataError:
             put_back()
@@ -204,7 +231,8 @@ class DashboardWidget(
 
         if not ok:
             put_back()
-            self._notify(f"{shot.shot_name}: the status could not be saved.", "error")
+            reason = getattr(self.data_handler, "last_error", "") or ""
+            self._notify(f"{shot.shot_name}: the status could not be saved.", "error", details=reason)
             return False
 
         shot.dept(dept_key).status = status
@@ -213,11 +241,32 @@ class DashboardWidget(
             self._notify(f"{shot.shot_name} {dept_name} is back to {shot_status.label(status)}.",
                          "info", 4000)
         else:
-            self._own_status_undo.append((shot, dept_key, previous, status))
+            entry = {"project": self.current_project.code if self.current_project else "",
+                     "shot": shot, "dept": dept_key, "previous": previous, "status": status}
+            self._own_status_undo.append(entry)
             self._own_status_undo = self._own_status_undo[-50:]
             self._notify(f"{shot.shot_name} {dept_name} set to {shot_status.label(status)}. Saved.",
-                         "success", 8000, action=("Undo", self.undo_last_edit))
+                         "success", 8000, action=("Undo", lambda e=entry: self._undo_own_status(e)))
         return True
+
+    def _undo_own_status(self, entry):
+        """Take back one of this person's own saved statuses - the one the toast is about."""
+        if entry not in self._own_status_undo:
+            self._notify("That change was already taken back.", "info", 3000)
+            return
+        self._own_status_undo.remove(entry)
+        code = self.current_project.code if self.current_project else ""
+        if entry["project"] != code:
+            self._notify(f"That change was made on {entry['project']}. Open it again to undo it.",
+                         "info", 5000)
+            return
+        shot = entry["shot"]
+        # A live update may have swapped the object: find the shot on screen by id.
+        sid = int(getattr(shot, "id", -1) or -1)
+        shot = next((s for s in self.all_shots or [] if s is shot or (sid >= 0 and s.id == sid)), shot)
+        dept = entry["dept"]
+        self.on_own_status_edited(shot, dept, entry["previous"], shot.dept(dept).status,
+                                  undoing=True, undo_of=entry["status"])
 
     def _refresh_saved_shot(self, shot):
         """After a save of one shot outside the batch: take its new version and baseline."""
@@ -266,25 +315,68 @@ class DashboardWidget(
     # ------------------------------------------------------------------
     # Undo
     # ------------------------------------------------------------------
-    def undo_last_edit(self):
-        """Take back the last edit (or, for an artist, the last status they saved)."""
+    @staticmethod
+    def _step_text(done) -> str:
+        what = done["description"]
+        if done["count"] > 1 and " on " not in what:
+            what = f"{what} on {done['count']} shots"
+        return what
+
+    def undo_last_edit(self, step=None):
+        """
+        Take back the last edit (or, for an artist, the last status they saved).
+        A toast passes its own `step`: only that edit is taken back, and only
+        while it is still the newest one.
+        """
         model = getattr(self, "table_model", None)
         if model is not None and model.can_edit_freely():
             if not model.can_undo():
                 self._notify("Nothing to undo.", "info", 2000)
                 return
-            undone = model.undo()
+            undone = model.undo(step)
             if undone:
-                what = undone["description"]
-                if undone["count"] > 1:
-                    what = f"{what} on {undone['count']} shots"
-                self._notify(f"Undone: {what}.", "info", 3000)
+                self._notify(f"Undid the {self._step_text(undone)}.", "info", 3000)
+                self._reread_if_changed_elsewhere(undone["shots"])
+            elif step is not None:
+                self._notify("Newer edits were made since. Press Ctrl+Z to step back through them.",
+                             "info", 5000)
             return
         if not self._own_status_undo:
             self._notify("Nothing to undo.", "info", 2000)
             return
-        shot, dept_key, previous, _status = self._own_status_undo.pop()
-        self.on_own_status_edited(shot, dept_key, previous, shot.dept(dept_key).status, undoing=True)
+        self._undo_own_status(self._own_status_undo[-1])
+
+    def redo_last_edit(self):
+        """Put back the last edit that was undone (Ctrl+Y / Ctrl+Shift+Z)."""
+        model = getattr(self, "table_model", None)
+        if model is None or not model.can_edit_freely():
+            return
+        redone = model.redo()
+        if redone:
+            self._notify(f"Redid the {self._step_text(redone)}.", "info", 3000)
+        else:
+            self._notify("Nothing to redo.", "info", 2000)
+
+    def _undo_action(self):
+        """('Undo', callback) for a toast about the edit just made - that edit only."""
+        step = self.table_model.last_step()
+        return ("Undo", lambda st=step: self.undo_last_edit(st))
+
+    def _reread_if_changed_elsewhere(self, shots):
+        """
+        A shot left clean by an undo or a discard while someone else had saved
+        it still shows the old values: read it again from the database.
+        """
+        ids = set()
+        for shot in shots or []:
+            if getattr(shot, "_remote_changed", False) and not getattr(shot, "_modified", False):
+                shot._remote_changed = False
+                if int(getattr(shot, "id", -1) or -1) >= 0:
+                    ids.add(int(shot.id))
+        if ids and hasattr(self, "_init_live_updates"):
+            self._init_live_updates()
+            self._live_pending_ids |= ids
+            self._schedule_live_apply(0)
 
     def on_edits_changed(self):
         self.update_unsaved_indicator()
@@ -304,12 +396,41 @@ class DashboardWidget(
         """Shots with edits that are not in the database yet."""
         return [s for s in (self.all_shots or []) if getattr(s, "_modified", False)]
 
+    def _panel_has_changes(self) -> bool:
+        panel = getattr(self, "detail_widget", None)
+        return bool(panel is not None and getattr(panel, "has_unapplied_changes", lambda: False)())
+
     def has_unsaved_changes(self) -> bool:
-        return bool(self.unsaved_shots())
+        return bool(self.unsaved_shots()) or self._panel_has_changes()
 
     def unsaved_summary(self) -> str:
         count = len(self.unsaved_shots())
-        return f"{count} shot{'s have' if count != 1 else ' has'} unsaved edits on the VFX Dashboard"
+        text = f"{count} shot{'s have' if count != 1 else ' has'} unsaved edits on the VFX Dashboard"
+        if self._panel_has_changes():
+            text += " (and the shot panel has changes that are not applied)"
+        return text
+
+    def _settle_panel(self, before: str) -> bool:
+        """
+        Apply or drop the shot panel's unapplied changes before something
+        would throw them away. False when the person cancels (or Apply failed).
+        """
+        panel = getattr(self, "detail_widget", None)
+        if not self._panel_has_changes():
+            return True
+        answer = QMessageBox.question(
+            self, "Apply the panel's changes",
+            f"The panel has changes to {panel.shot.shot_name} that are not applied yet. "
+            f"Apply them before you {before}?",
+            QMessageBox.StandardButton.Apply | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Apply)
+        if answer == QMessageBox.StandardButton.Cancel:
+            return False
+        if answer == QMessageBox.StandardButton.Apply:
+            panel.apply_changes()
+            return not panel.has_unapplied_changes()
+        panel.load_data()
+        return True
 
     def update_unsaved_indicator(self):
         """The Save button carries the count: 'Save 3 changes'."""
@@ -345,8 +466,11 @@ class DashboardWidget(
     def confirm_discarding_changes(self, action: str) -> bool:
         """
         Ask before throwing away pending edits. True when it is safe to go on.
-        Offers to save rather than making it a straight save-or-lose.
+        Offers to save rather than making it a straight save-or-lose. The
+        shot panel's unapplied changes are settled first.
         """
+        if not self._settle_panel(action):
+            return False
         pending = self.unsaved_shots()
         if not pending:
             return True
@@ -373,6 +497,7 @@ class DashboardWidget(
             # A failed save must not silently become a discard.
             return not self.has_unsaved_changes()
         self.table_model.discard_changes()
+        self._reread_if_changed_elsewhere(pending)
         return True
 
     # ------------------------------------------------------------------
@@ -443,7 +568,12 @@ class DashboardWidget(
             return
 
         if not self.all_shots:
-            if self._is_artist_scope():
+            failed = getattr(self, "_read_failed", None)
+            if failed:
+                state.set_message(f"{failed} could not be read",
+                                  "The database did not answer, so nothing is shown. Nothing has "
+                                  "changed - try again in a moment (Refresh).")
+            elif self._is_artist_scope():
                 state.set_message("No shots assigned to you",
                                   "Shots you are named on - as the artist or on any department - "
                                   "appear here as soon as production assigns them.")
@@ -963,10 +1093,11 @@ class DashboardWidget(
         self.search_input.selectAll()
 
     def on_escape(self):
-        if self.detail_container.isVisible():
-            self.close_detail_dock()
-        elif self.search_input.hasFocus() and self.search_input.text():
+        # Esc in a search box with text clears it first; otherwise it closes the panel.
+        if self.search_input.hasFocus() and self.search_input.text():
             self.search_input.clear()
+        elif self.detail_container.isVisible():
+            self.close_detail_dock()
 
     def quick_look_current(self):
         if self.table.state() == self.table.State.EditingState:
@@ -1047,12 +1178,13 @@ class DashboardWidget(
                     setattr(shot, field, value)
 
         names = ", ".join(sorted({self._field_name(f) for f in updates}))
-        changed = self.table_model.apply_edit(shots, change, f"{names}")
+        changed = self.table_model.apply_edit(shots, change, f"{names} change")
         if not changed:
             self._notify("Those shots already had those values.", "info", 3000)
             return
-        self._notify(f"{names.capitalize()} changed on {len(changed)} shot{'s' if len(changed) != 1 else ''}. "
-                     "Not saved yet.", "info", 6000, action=("Undo", self.undo_last_edit))
+        self._notify(f"{names[:1].upper() + names[1:]} changed on {len(changed)} "
+                     f"shot{'s' if len(changed) != 1 else ''}. Not saved yet.", "info", 6000,
+                     action=self._undo_action())
 
     @staticmethod
     def _field_name(field):
@@ -1064,18 +1196,8 @@ class DashboardWidget(
     # ------------------------------------------------------------------
     def open_detail_dock(self, shot):
         if self.detail_widget:
-            if getattr(self.detail_widget, "has_unapplied_changes", lambda: False)() \
-                    and self.detail_widget.shot is not shot:
-                answer = QMessageBox.question(
-                    self, "Apply the panel's changes",
-                    f"The panel has changes to {self.detail_widget.shot.shot_name} that are not "
-                    "applied yet. Apply them before opening another shot?",
-                    QMessageBox.StandardButton.Apply | QMessageBox.StandardButton.Discard
-                    | QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Apply)
-                if answer == QMessageBox.StandardButton.Cancel:
-                    return
-                if answer == QMessageBox.StandardButton.Apply:
-                    self.detail_widget.apply_changes()
+            if self.detail_widget.shot is not shot and not self._settle_panel("open another shot"):
+                return
             self.detail_layout.removeWidget(self.detail_widget)
             self.detail_widget.deleteLater()
             self.detail_widget = None
@@ -1116,16 +1238,33 @@ class DashboardWidget(
                 new_sizes[0] = max(200, total - target_detail - middle)
                 self.splitter.setSizes(new_sizes)
 
+    def _shot_on_screen(self, shot):
+        """The grid's own object for this shot (a live update may have swapped it), or None."""
+        shots = self.all_shots or []
+        if any(s is shot for s in shots):
+            return shot
+        sid = int(getattr(shot, "id", -1) if getattr(shot, "id", None) is not None else -1)
+        return next((s for s in shots if sid >= 0 and s.id == sid), None)
+
     def on_detail_apply(self, shot, changes: dict):
         """The panel's Apply: its changes become one pending edit (or, for an artist, a saved status)."""
         if not changes:
             self.detail_widget.show_apply_result(True, "Nothing changed.")
             return
+        target = self._shot_on_screen(shot)
+        if target is None:
+            self.detail_widget.show_apply_result(
+                False, f"{shot.shot_name} is no longer in this project - someone removed it - so "
+                       "these changes cannot be applied.")
+            return
+        if target is not shot:
+            self.detail_widget.shot = target
+            shot = target
         if self.table_model.can_edit_freely():
             def change(s):
                 for path, value in changes.items():
                     set_field(s, path, value)
-            applied = self.table_model.apply_edit([shot], change, f"{shot.shot_name} details")
+            applied = self.table_model.apply_edit([shot], change, f"panel changes on {shot.shot_name}")
             if applied:
                 pending = len(self.unsaved_shots())
                 self.detail_widget.show_apply_result(
@@ -1146,13 +1285,17 @@ class DashboardWidget(
         self.detail_widget.show_apply_result(saved_all, "Saved." if saved_all else
                                              "Not everything could be saved - see the message.")
 
-    def close_detail_dock(self):
+    def close_detail_dock(self, force: bool = False) -> bool:
+        """Close the shot panel - after asking about changes it has not applied."""
         if self.detail_container is None:
-            return
+            return True
+        if not force and not self._settle_panel("close the panel"):
+            return False
         self.detail_container.hide()
         if self.detail_widget:
             self.detail_widget.deleteLater()
             self.detail_widget = None
+        return True
 
     # ------------------------------------------------------------------
     # Context menu
@@ -1377,11 +1520,6 @@ class DashboardWidget(
             self._notify("The project root could not be saved.", "error",
                          details=getattr(self.project_manager, "last_error", "") or "")
 
-    @staticmethod
-    def _friendly_header_name(field_name: str) -> str:
-        text = str(field_name or "").replace("_", " ").strip()
-        return text.title() if text else ""
-
     def add_project_click(self):
         dialog = AddProjectDialog(self)
         if dialog.exec():
@@ -1391,14 +1529,14 @@ class DashboardWidget(
                 folder_base=data['folder_base'], sheet_name=data['sheet_name'],
                 header_row=data['header_row'], data_start_row=data['data_start_row'])
             if not project:
-                self._notify("The project could not be created.", "error",
-                             details=getattr(self.project_manager, "last_error", "") or "")
+                reason = getattr(self.project_manager, "last_error", "") or ""
+                self._notify(f"The project could not be created. {reason}".strip(), "error", 10000)
                 return
             self.load_projects()
-            idx = self.project_combo.findData(data['code'])
+            idx = self.project_combo.findData(project.code)
             if idx >= 0:
                 self.project_combo.setCurrentIndex(idx)
-            self._notify(f"Project {data['code']} created.", "success")
+            self._notify(f"Project {project.code} created.", "success")
 
     def archive_project_click(self):
         """Hide the project from every list; its shots and history stay, and it can come back."""
@@ -1463,10 +1601,13 @@ class DashboardWidget(
             self._notify("You don't have permission to delete a project.", "warning")
             return
         code = self.current_project.code
+        if not self.confirm_discarding_changes("delete the project"):
+            return
         text, ok = QInputDialog.getText(
             self, "Delete project permanently",
-            f"This removes {code}, all of its shots and their department rows for good. "
-            f"It cannot be undone - Archive keeps everything and is reversible.\n\n"
+            f"This removes {code}, all of its shots, their department rows, versions, review "
+            f"notes and delivery packages for good. It cannot be undone - Archive keeps "
+            f"everything and is reversible.\n\n"
             f"The change history is kept for the audit log.\n\n"
             f"Type the project code ({code}) to delete it:",
             QLineEdit.EchoMode.Normal, "")
@@ -1475,9 +1616,10 @@ class DashboardWidget(
         if text.strip() != code:
             self._notify("The code did not match, so nothing was deleted.", "info")
             return
-        self.table_model.discard_changes()
         if self.project_manager.delete_project(code, roles=self.user_roles,
                                                by=self.user_data.get("username", "")):
+            # Only now are edits still on screen meaningless.
+            self.table_model.discard_changes()
             self.project_combo.setCurrentIndex(0)
             self.load_projects()
             self._notify(f"{code} deleted.", "success")
@@ -1591,16 +1733,26 @@ class DashboardWidget(
     def _detect_user_department_family(self) -> Optional[str]:
         job_title = str(getattr(self, "user_data", {}).get("job_title", "")).strip().lower()
         dept = str(getattr(self, "user_data", {}).get("department", "")).strip().lower()
-        search = f"{job_title} {dept}".strip()
-        if not search:
-            return None
+        import re
         from slate.core.domain.departments import load_departments, families
+
+        def words(text):
+            return " ".join(re.findall(r"[a-z0-9]+", str(text or "").lower()))
+
+        # Whole words only: 'ai' is inside 'paint' and 'trainee', which put a
+        # Paint Lead in the AI department.
+        title = f" {words(job_title + ' ' + dept)} "
+        if not title.strip():
+            return None
         for d in load_departments():
-            if d.key.lower() in search or d.name.lower() in search or d.label.lower() in search:
-                return d.family
-        for fam in families().keys():
-            if fam.lower() in search:
-                return fam
+            for phrase in (d.key, d.label, d.name):
+                if words(phrase) and f" {words(phrase)} " in title:
+                    return d.family
+        known = families()
+        for word in title.split():
+            family = _DEPARTMENT_WORDS.get(word)
+            if family in known:
+                return family
         return None
 
     @staticmethod

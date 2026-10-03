@@ -12,7 +12,8 @@ class DepartmentInfo:
     wip_date: Optional[str] = None
     target: Optional[str] = None
     # Days actually spent, against bid_days (Bidding's tracking reads it).
-    actual_days: float = 0.0
+    # None is "not recorded", which is not the same as 0 days.
+    actual_days: Optional[float] = None
     
     def to_dict(self):
         return asdict(self)

@@ -4,6 +4,7 @@ from dataclasses import asdict
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..models.shot_model import Shot, DepartmentInfo
+from slate.core.domain import shot_status
 from slate.core.domain.access import ( artist_statuses, can_set_status,
     OfflineError, can_edit_dashboard, can_edit_own_status, is_offline_fallback,
 )
@@ -22,7 +23,9 @@ class StaleDataError(Exception):
 
     ``conflicts`` says which shots, so the dashboard can show them - reel
     included - and re-apply only the person's own edits:
-    [{"shot_id", "shot_name", "reel", "local_version", "db_version"}].
+    [{"shot_id", "shot_name", "reel", "local_version", "db_version", "kind"}],
+    kind being "changed" (saved by someone else), "deleted" (the shot is gone)
+    or "added" (someone else added a shot of that name first).
     """
 
     def __init__(self, message: str = "", conflicts=None):
@@ -30,18 +33,55 @@ class StaleDataError(Exception):
         self.conflicts = list(conflicts or [])
 
 
+class ProjectClosedError(Exception):
+    """The project was deleted or archived by someone else, so nothing was saved."""
+
+    def __init__(self, message: str, archived: bool = False):
+        super().__init__(message)
+        self.archived = archived
+
+
 def _conflict_message(conflicts) -> str:
     names = [f"{c['shot_name']} ({c['reel']})" if c.get("reel") else c["shot_name"]
              for c in conflicts]
     shown = ", ".join(names[:5]) + (f" and {len(names) - 5} more" if len(names) > 5 else "")
-    return f"Someone else saved {shown} after you opened {'it' if len(names) == 1 else 'them'}."
+    kinds = {c.get("kind", "changed") for c in conflicts}
+    one = len(names) == 1
+    if kinds == {"deleted"}:
+        return f"{shown} {'was' if one else 'were'} deleted by someone else."
+    if kinds == {"added"}:
+        return f"Someone else added {shown} a moment ago."
+    return f"Someone else saved {shown} after you opened {'it' if one else 'them'}."
+
+
+# Not part of a shot's history: where its files and thumbnail were found.
+_NOT_LOGGED = {"thumbnail_path", "folder_paths"}
+
+
+def _history_text(value) -> str:
+    """A stored value as one line of history text."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    if isinstance(value, (list, tuple)):
+        return ", ".join(_history_text(v.get("text") if isinstance(v, dict) else v) for v in value)
+    if isinstance(value, dict):
+        return json.dumps(value, default=str)
+    return str(value)
 
 
 class SQLiteHandler:
     """
-    Adapter compatible with ExcelHandler APIs, backed by tracking_shots/tracking_tasks.
-    """
+    The dashboard's shots in the database (tracking_shots/tracking_tasks).
 
+    One write path, ``_write``, used by every save - the toolbar Save, the
+    artist's own status, Add shots: the shot rows are written under a version
+    lock and only the department rows that changed are written, in one
+    transaction; then every changed field goes into the history.
+    """
 
     def __init__(
         self,
@@ -103,6 +143,24 @@ class SQLiteHandler:
         if not can_edit_dashboard(self.user_roles):
             raise PermissionError(f"User role(s) {self.user_roles} not authorized to make changes.")
 
+    def _check_project_open(self):
+        """
+        The project must still exist and be active. A project somebody deleted
+        came back on the next save of anyone who still had it open; one they
+        archived kept taking saves nobody else could see.
+        """
+        rows = self.db_manager.execute_query(
+            "SELECT active FROM tracking_projects WHERE code=%s", (self.project_code,), fetch="all")
+        if rows is None:
+            raise RuntimeError(f"Could not check that project {self.project_code} is still open.")
+        if not rows:
+            raise ProjectClosedError(
+                f"{self.project_code} was deleted by someone else, so nothing was saved.")
+        if str(dict(rows[0]).get("active")).strip().lower() not in ("1", "t", "true", "y", "yes"):
+            raise ProjectClosedError(
+                f"{self.project_code} was archived by someone else, so nothing was saved. "
+                "It has to be restored before it takes changes.", archived=True)
+
     @staticmethod
     def _serialize_shot(shot: Shot) -> str:
         # Underscored fields are UI state, not shot data. Storing _modified
@@ -111,104 +169,98 @@ class SQLiteHandler:
         data = {k: v for k, v in asdict(shot).items() if not k.startswith("_")}
         return json.dumps(data, default=str)
 
-    def _get_db_shot_row(self, shot_name: str,
-                         reel: str = None) -> Optional[Dict[str, Any]]:
-        """
-        One shot's row. The reel is part of a shot's identity, so a name on its
-        own can match more than one row - SH010 may exist in ReelA and ReelB.
-        """
-        if reel is not None:
-            return self.db_manager.execute_query(
-                "SELECT id, data_json, version FROM tracking_shots "
-                "WHERE project_code=%s AND reel=%s AND shot_name=%s",
-                (self.project_code, reel, shot_name), fetch="one",
-            )
+    # ------------------------------------------------------------------
+    # Reading
+    # ------------------------------------------------------------------
+    def _task_columns(self) -> Dict[str, Any]:
+        """Which tracking_tasks columns this database has (they grew over time)."""
+        cols = getattr(self, "_task_cols", None)
+        if cols is None:
+            from slate.core.infra.migrations.workplace_schema import _column_exists
 
+            def has(column):
+                return _column_exists(self.db_manager, "tracking_tasks", column)
+
+            cols = {
+                "artist": "artist" if has("artist") else "artist_name",
+                "project_code": has("project_code"),
+                "actual_days": has("actual_days"),
+            }
+            self._task_cols = cols
+        return cols
+
+    def _read(self, where: str = "", params=()) -> List[Shot]:
+        """
+        Shots of this project as the dashboard shows them: the stored data with
+        each department row applied. A failed read raises - an empty list must
+        only ever mean "no shots", or an outage looks like an empty project.
+        """
         rows = self.db_manager.execute_query(
-            "SELECT id, data_json, version, reel FROM tracking_shots "
-            "WHERE project_code=%s AND shot_name=%s",
-            (self.project_code, shot_name), fetch="all",
-        ) or []
-        if len(rows) > 1:
-            logging.warning(
-                "Shot name '%s' exists in %d reels on project %s; "
-                "pass the reel to address one of them.",
-                shot_name, len(rows), self.project_code,
-            )
-        return rows[0] if rows else None
+            "SELECT id, reel, shot_name, data_json, version FROM tracking_shots "
+            "WHERE project_code=%s" + where, (self.project_code, *params), fetch="all")
+        if rows is None:
+            raise RuntimeError(f"The shots of {self.project_code} could not be read.")
+        rows = [dict(r) for r in rows]
+        tasks_by_shot: Dict[int, Dict[str, Dict[str, Any]]] = {}
+        ids = [int(r["id"]) for r in rows]
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            marks = ",".join(["%s"] * len(chunk))
+            tasks = self.db_manager.execute_query(
+                f"SELECT * FROM tracking_tasks WHERE shot_id IN ({marks})", tuple(chunk), fetch="all")
+            if tasks is None:
+                raise RuntimeError(f"The department rows of {self.project_code} could not be read.")
+            for task in tasks:
+                task = dict(task)
+                if task.get("shot_id") is None or not task.get("department"):
+                    continue
+                tasks_by_shot.setdefault(int(task["shot_id"]), {})[task["department"]] = task
+
+        from slate.core.infra.tracking_repository import shot_row_to_dict
+        shots = []
+        for row in rows:
+            try:
+                item = shot_row_to_dict(row)
+                if item is None:
+                    continue
+                shot = Shot.from_dict(item)
+                shot.id = int(row["id"])
+                v_raw = row.get("version")
+                shot.version = int(v_raw) if v_raw is not None else int(shot.version or 1)
+                self._apply_task_overrides(shot, tasks_by_shot.get(shot.id, {}))
+                shots.append(shot)
+            except Exception as e:
+                logging.exception(f"Failed to deserialize shot {row.get('shot_name', row.get('id'))}: {e}")
+        return shots
+
+    def read_shots(self) -> List[Shot]:
+        """Every shot of the project. Raises when the database could not be read."""
+        return self._read()
+
+    def read_shots_by_id(self, shot_ids) -> List[Shot]:
+        """
+        Just these shots, loaded exactly as read_shots() loads them.
+
+        For keeping an open dashboard current: when somebody changes three
+        shots, the other screens read those three, not the whole project. Ids
+        that belong to another project, or no longer exist, are simply not
+        returned. A failed read raises.
+        """
+        ids = sorted({int(i) for i in shot_ids if str(i).strip().lstrip("-").isdigit()})
+        shots: List[Shot] = []
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            marks = ",".join(["%s"] * len(chunk))
+            shots.extend(self._read(f" AND id IN ({marks})", chunk))
+        return shots
 
     @staticmethod
-    def _safe_json_load(raw: Any) -> Dict[str, Any]:
-        if isinstance(raw, dict):
-            return dict(raw)
-        if not raw:
-            return {}
-        try:
-            parsed = json.loads(raw)
-            return parsed if isinstance(parsed, dict) else {}
-        except Exception:
-            return {}
-
-    def _build_tasks_payload(self, shot_id: int, shot: Shot) -> List[Dict[str, Any]]:
-        tasks_payload = []
-        for dept_key in department_keys():
-            dept = shot.dept(dept_key)
-            artist_name = dept.artist or ""
-            tasks_payload.append(
-                {
-                    "shot_id": shot_id,
-                    "department": dept_key,
-                    "status": dept.status or "",
-                    "artist": artist_name,
-                    "artist_id": self.db_manager.get_user_id(artist_name) if artist_name else None,
-                    "bid_days": dept.bid_days or 0.0,
-                    "target": dept.target or dept.eta or "",
-                }
-            )
-        return tasks_payload
-
-    def _save_tasks_for_shot(self, shot_id: int, shot: Shot) -> bool:
-        tasks_payload = self._build_tasks_payload(shot_id, shot)
-        if not tasks_payload:
-            return True
-        result = self.db_manager.save_tracking_tasks(self.project_code, tasks_payload)
-        ok = bool(result is None or result)
-        if ok:
-            self._save_actual_days([(shot_id, shot)])
-        return ok
-
-    def _has_actual_days(self) -> bool:
-        """Whether tracking_tasks has the actual_days column (the production migration adds it)."""
-        known = getattr(self, "_actual_days_column", None)
-        if known is None:
-            try:
-                from slate.core.infra.migrations.workplace_schema import _column_exists
-                known = _column_exists(self.db_manager, "tracking_tasks", "actual_days")
-            except Exception:
-                known = False
-            self._actual_days_column = known
-        return known
-
-    def _save_actual_days(self, shots_by_id) -> None:
-        """
-        Days actually spent per department, into tracking_tasks.actual_days
-        (it also travels in the shot's data, so nothing is lost before the
-        column exists).
-        """
-        if not self._has_actual_days():
-            return
-        for shot_id, shot in shots_by_id:
-            if not shot_id or int(shot_id) <= 0:
-                continue
-            for dept_key in department_keys():
-                days = float(getattr(shot.dept(dept_key), "actual_days", 0.0) or 0.0)
-                self.db_manager.execute_update(
-                    "UPDATE tracking_tasks SET actual_days = %s WHERE shot_id = %s AND department = %s",
-                    (days, int(shot_id), dept_key))
-
-    def _apply_task_overrides(self, shot: Shot, task_map: Dict[str, Dict[str, Any]]):
+    def _apply_task_overrides(shot: Shot, task_map: Dict[str, Dict[str, Any]]):
         # Departments present in the database but not in departments.json are
         # still applied, so removing one from config never destroys its data.
+        # The shot's own artist is never derived from Comp: they are
+        # independent (FIX_PLAN), and filling a cleared artist back in from
+        # Comp undid the clear on the next load.
         for dept_key in set(department_keys()) | set(task_map.keys()):
             task = task_map.get(dept_key)
             if not task:
@@ -218,121 +270,17 @@ class SQLiteHandler:
             dept.artist = task.get("artist") or task.get("artist_name") or dept.artist or ""
             dept.bid_days = float(task.get("bid_days") or 0.0)
             dept.target = task.get("target_date") or task.get("target") or dept.target or ""
-            if task.get("actual_days") is not None:
+            if "actual_days" in task:
+                # The column is the record: NULL is "not recorded", not 0.
+                value = task.get("actual_days")
                 try:
-                    dept.actual_days = float(task.get("actual_days") or 0.0)
+                    dept.actual_days = None if value is None else float(value)
                 except (TypeError, ValueError):
                     pass
 
-        if not shot.assigned_artist and shot.dept("comp").artist:
-            shot.assigned_artist = shot.dept("comp").artist
-
-    def _set_shot_field_value(self, payload: Dict[str, Any], field: str, value) -> Tuple[Any, bool]:
-        field_name = str(field or "").strip()
-        if not field_name:
-            return None, False
-
-        # A shot's status and artist are its own. They used to be copied into
-        # the Comp department here (and only here - the grid left Comp alone),
-        # so what Comp showed depended on which screen made the change.
-        if field_name in {"status", "overall_status"}:
-            old_val = payload.get("status")
-            payload["status"] = value
-            return old_val, old_val != value
-
-        if field_name in {"assigned_artist", "artist"}:
-            old_val = payload.get("assigned_artist")
-            new_value = value or ""
-            payload["assigned_artist"] = new_value
-            return old_val, old_val != new_value
-
-        if field_name in {"curr_version", "version"}:
-            old_val = payload.get("curr_version")
-            payload["curr_version"] = value
-            return old_val, old_val != value
-
-        # Department fields, in any of the spellings callers use:
-        #   "comp_dept.status", "departments.comp.status", "comp.status"
-        dept_target = self._resolve_department_field(field_name)
-        if dept_target:
-            dept_key, leaf = dept_target
-            departments = payload.get("departments")
-            if not isinstance(departments, dict):
-                departments = {}
-                payload["departments"] = departments
-            entry = departments.get(dept_key)
-            if not isinstance(entry, dict):
-                entry = {}
-                departments[dept_key] = entry
-            old_val = entry.get(leaf)
-            entry[leaf] = value
-            return old_val, old_val != value
-
-        if "." in field_name:
-            parts = [p for p in field_name.split(".") if p]
-            if not parts:
-                return None, False
-            target = payload
-            for part in parts[:-1]:
-                node = target.get(part)
-                if not isinstance(node, dict):
-                    node = {}
-                    target[part] = node
-                target = node
-            leaf = parts[-1]
-            old_val = target.get(leaf)
-            target[leaf] = value
-            return old_val, old_val != value
-
-        if field_name not in Shot.__dataclass_fields__:
-            logging.error(
-                "Rejected update to unknown shot field '%s' on project %s",
-                field_name, self.project_code
-            )
-            return None, None   # None (not False) means "invalid field"
-
-        old_val = payload.get(field_name)
-        payload[field_name] = value
-        return old_val, old_val != value
-
-    @staticmethod
-    def _payload_department(payload: Dict[str, Any], key: str) -> Dict[str, Any]:
-        """The department sub-dict inside a shot payload, created if absent."""
-        departments = payload.get("departments")
-        if not isinstance(departments, dict):
-            departments = {}
-            payload["departments"] = departments
-        entry = departments.get(key)
-        if not isinstance(entry, dict):
-            entry = {}
-            departments[key] = entry
-        return entry
-
-    @staticmethod
-    def _resolve_department_field(field_name: str):
-        """
-        Map a field name onto (department_key, attribute), or None.
-
-        Accepts "comp_dept.status", "departments.comp.status" and "comp.status".
-        """
-        parts = [p for p in str(field_name or "").split(".") if p]
-        if len(parts) < 2:
-            return None
-
-        if parts[0] == "departments" and len(parts) >= 3:
-            key, leaf = parts[1], parts[2]
-        elif len(parts) == 2:
-            key, leaf = parts[0], parts[1]
-        else:
-            return None
-
-        key = key[:-5] if key.endswith("_dept") else key
-        key = key.lower()
-
-        if leaf not in DepartmentInfo.__dataclass_fields__:
-            return None
-        return key, leaf
-
+    # ------------------------------------------------------------------
+    # Notifications and history
+    # ------------------------------------------------------------------
     def _is_actor(self, name) -> bool:
         return str(name or "").strip().lower() in self.actor_identities
 
@@ -342,6 +290,12 @@ class SQLiteHandler:
             if dept.key == dept_key:
                 return dept.name
         return str(dept_key or "").title()
+
+    def _family_name(self) -> str:
+        from slate.core.domain.departments import families
+        members = families().get(self.department_family, [])
+        lead = next((d for d in members if d.key == self.department_family), members[0] if members else None)
+        return lead.name if lead else self.department_family.title()
 
     def _notify_assignment(self, shot_name: str, old_artist: str, new_artist: str, dept_key: str = ""):
         if not self.notifier:
@@ -394,312 +348,90 @@ class SQLiteHandler:
             }
         try:
             self.db_manager.log_change_event(
-                self.project_code,
-                entity_type,
-                entity_id,
-                self.username,
-                action,
-                field,
-                old_val,
-                new_val,
-                **details,
+                self.project_code, entity_type, entity_id, self.username, action, field,
+                old_val, new_val, **details,
             )
         except Exception as e:
             logging.warning(f"History log write failed: {e}")
 
-    def _log_shot_and_task_changes(self, shot: Shot, old_data: Dict[str, Any]):
-        old_status = old_data.get("status")
-        if old_status != shot.status:
-            self._log_change("shot", shot.shot_name, "UPDATE", "status", old_status, shot.status, shot)
+    def _log_changes(self, before: Optional[Shot], shot: Shot):
+        """
+        History for every field that changed between `before` (as stored) and
+        `shot` (as saved), and a notification to whoever was assigned or had
+        their status changed. A new shot is one 'added' line.
+        """
+        name = shot.shot_name
+        if before is None:
+            self._log_change("shot", name, "CREATE", "shot", "", "added", shot)
+            before = Shot(shot_name=name, reel_episode=shot.reel_episode, status="")
+            before.departments = {k: DepartmentInfo() for k in shot.departments}
+            log = False
+        else:
+            log = True
+        old, new = before.to_dict(), shot.to_dict()
+        for key in sorted(set(old) | set(new)):
+            if key in _NOT_LOGGED or key == "version":
+                continue
+            if key == "departments":
+                old_depts, new_depts = old.get(key) or {}, new.get(key) or {}
+                for dept in sorted(set(old_depts) | set(new_depts)):
+                    a, b = old_depts.get(dept) or {}, new_depts.get(dept) or {}
+                    for leaf in sorted(set(a) | set(b)):
+                        if (a.get(leaf) or None) == (b.get(leaf) or None):
+                            continue
+                        if log:
+                            self._log_change("task", f"{name}_{dept}",
+                                             "ASSIGN" if leaf == "artist" else "UPDATE",
+                                             f"{dept}_{leaf}", _history_text(a.get(leaf)),
+                                             _history_text(b.get(leaf)), shot, dept)
+                        if leaf == "status":
+                            self._notify_status(name, b.get("artist") or "", a.get(leaf) or "",
+                                                b.get(leaf) or "", dept)
+                        elif leaf == "artist":
+                            self._notify_assignment(name, a.get(leaf) or "", b.get(leaf) or "", dept)
+                continue
+            if old.get(key) == new.get(key):
+                continue
+            if log:
+                self._log_change("shot", name, "ASSIGN" if key == "assigned_artist" else "UPDATE",
+                                 key, _history_text(old.get(key)), _history_text(new.get(key)), shot)
+            if key == "assigned_artist":
+                self._notify_assignment(name, old.get(key) or "", new.get(key) or "")
 
-        old_assigned = old_data.get("assigned_artist")
-        if old_assigned != shot.assigned_artist:
-            self._log_change("shot", shot.shot_name, "ASSIGN", "assigned_artist", old_assigned, shot.assigned_artist, shot)
-            self._notify_assignment(shot.shot_name, old_assigned or "", shot.assigned_artist or "")
-
-        old_departments = old_data.get("departments")
-        if not isinstance(old_departments, dict):
-            old_departments = {}
-
-        for dept_key in department_keys():
-            new_dept = shot.dept(dept_key)
-            # Read either the new "departments" map or the legacy "<key>_dept".
-            old_dept = old_departments.get(dept_key)
-            if not isinstance(old_dept, dict):
-                old_dept = old_data.get(f"{dept_key}_dept", {})
-            if not isinstance(old_dept, dict):
-                old_dept = {}
-
-            old_dept_status = old_dept.get("status", "")
-            old_dept_artist = old_dept.get("artist", "")
-
-            if old_dept_status != new_dept.status:
-                self._log_change(
-                    "task",
-                    f"{shot.shot_name}_{dept_key}",
-                    "UPDATE",
-                    f"{dept_key}_status",
-                    old_dept_status,
-                    new_dept.status,
-                    shot,
-                    dept_key,
-                )
-                self._notify_status(shot.shot_name, new_dept.artist or "", old_dept_status,
-                                    new_dept.status or "", dept_key)
-
-            if old_dept_artist != new_dept.artist:
-                self._log_change(
-                    "task",
-                    f"{shot.shot_name}_{dept_key}",
-                    "ASSIGN",
-                    f"{dept_key}_artist",
-                    old_dept_artist,
-                    new_dept.artist,
-                    shot,
-                    dept_key,
-                )
-                self._notify_assignment(shot.shot_name, old_dept_artist or "", new_dept.artist or "", dept_key)
-
-    def _insert_new_shot(self, shot: Shot) -> bool:
-        shot_tuple = (shot.shot_name, shot.status, shot.priority, self._serialize_shot(shot))
-        return bool(self.db_manager.save_tracking_shots(self.project_code, [shot_tuple]))
-
-    def _stored_rows(self) -> Dict[Tuple[str, str], Dict[str, Any]]:
-        """Every stored shot of the project, keyed by (reel, name), as saved."""
-        rows = self.db_manager.get_tracking_shots(self.project_code) or []
-        return {
-            _shot_key(r.get("reel") or r.get("reel_episode"), r.get("shot_name")): r
-            for r in rows if r.get("shot_name")
-        }
+    # ------------------------------------------------------------------
+    # Writing
+    # ------------------------------------------------------------------
+    def _stored(self) -> Dict[Tuple[str, str], Shot]:
+        """Every stored shot of the project, keyed by (reel, name), as the grid loads them."""
+        return {_shot_key(s.reel_episode, s.shot_name): s for s in self._read()}
 
     @staticmethod
     def find_conflicts(shots, stored) -> List[Dict[str, Any]]:
-        """Shots whose stored version moved on since they were loaded here."""
+        """
+        Shots that cannot be saved over what is stored now: saved by someone
+        else since they were loaded here, deleted, or added by someone else
+        first (a shot never loaded from the database has no id).
+        """
         conflicts = []
         for shot in shots:
             row = stored.get(_shot_key(getattr(shot, "reel_episode", ""), shot.shot_name))
-            if not row:
+            try:
+                mine = int(getattr(shot, "id", -1))
+            except (TypeError, ValueError):
+                mine = -1
+            local_v = int(getattr(shot, "version", 0) or 0)
+            entry = {"shot_name": shot.shot_name, "reel": str(getattr(shot, "reel_episode", "") or ""),
+                     "local_version": local_v}
+            if row is None:
+                if mine >= 0:
+                    conflicts.append(dict(entry, shot_id=mine, db_version=0, kind="deleted"))
                 continue
-            current_v = int(getattr(shot, "version", 0) or 0)
-            db_v = int(row.get("version") or 0)
-            if current_v != 0 and db_v != 0 and current_v != db_v:
-                conflicts.append({
-                    "shot_id": int(row.get("id") or getattr(shot, "id", -1) or -1),
-                    "shot_name": shot.shot_name,
-                    "reel": str(getattr(shot, "reel_episode", "") or ""),
-                    "local_version": current_v,
-                    "db_version": db_v,
-                })
+            db_v = int(row.version or 0)
+            if mine < 0:
+                conflicts.append(dict(entry, shot_id=int(row.id), db_version=db_v, kind="added"))
+            elif local_v != db_v:
+                conflicts.append(dict(entry, shot_id=int(row.id), db_version=db_v, kind="changed"))
         return conflicts
-
-    def _write_single_shot(self, shot: Shot, stored=None, force: bool = False) -> bool:
-        if not shot.shot_name:
-            return False
-
-        db_row = self._get_db_shot_row(shot.shot_name, shot.reel_episode)
-        if not db_row:
-            created = self._insert_new_shot(shot)
-            if not created:
-                self.last_error = f"{shot.shot_name} could not be added to the database."
-                return False
-            db_row = self._get_db_shot_row(shot.shot_name, shot.reel_episode)
-            if not db_row:
-                return False
-            shot_id = int(db_row.get("id") or 0)
-            shot.id = shot_id
-            shot.version = int(db_row.get("version") or 1)
-            if shot_id and not self._save_tasks_for_shot(shot_id, shot):
-                self.last_error = (f"{shot.shot_name} was saved, but its department assignments "
-                                   "could not be.")
-                return False
-            self._log_shot_and_task_changes(shot, {})
-            return True
-
-        old_data = self._safe_json_load(db_row.get("data_json"))
-        shot_id = int(db_row.get("id") or 0)
-        db_version = int(db_row.get("version") or 0)
-        current_version = int(getattr(shot, "version", 0) or 0)
-
-        conflict = {"shot_id": shot_id, "shot_name": shot.shot_name,
-                    "reel": str(shot.reel_episode or ""),
-                    "local_version": current_version, "db_version": db_version}
-        if not force and current_version != 0 and db_version != 0 and current_version != db_version:
-            raise StaleDataError(_conflict_message([conflict]), [conflict])
-
-        # Forcing writes over whatever is stored now, but still only if nobody
-        # saves in between this read and the write.
-        lock_version = db_version
-        shot.version = lock_version
-        json_str = self._serialize_shot(shot)
-
-        success = self.db_manager.update_tracking_shot_safe(
-            self.project_code, shot.shot_name, json_str, lock_version,
-            reel=shot.reel_episode,
-        )
-        if not success:
-            shot.version = current_version
-            raise StaleDataError(_conflict_message([conflict]), [conflict])
-
-        shot.version = lock_version + 1
-        if shot_id and not self._save_tasks_for_shot(shot_id, shot):
-            self.last_error = (f"{shot.shot_name} was saved, but its department assignments "
-                               "could not be.")
-            self._log_shot_and_task_changes(shot, old_data)
-            return False
-        self._log_shot_and_task_changes(shot, old_data)
-        return True
-
-    def _write_batch_shots(self, shots: List[Shot], stored=None, force: bool = False) -> bool:
-        if not shots:
-            return False
-        stored = stored if stored is not None else self._stored_rows()
-
-        # One row per shot: a name repeated in the payload (the same reel and
-        # name twice) would make PostgreSQL refuse the whole statement.
-        unique: Dict[Tuple[str, str], Shot] = {}
-        for shot in shots:
-            if not shot.shot_name:
-                continue
-            key = _shot_key(getattr(shot, "reel_episode", ""), shot.shot_name)
-            if key in unique:
-                logging.warning("Shot %s (%s) was in the save twice; the last copy is kept.",
-                                shot.shot_name, shot.reel_episode)
-            unique[key] = shot
-        if not unique:
-            return False
-
-        batch_data = [(shot.shot_name, shot.status, shot.priority, self._serialize_shot(shot))
-                      for shot in unique.values()]
-        if not self.db_manager.save_tracking_shots(self.project_code, batch_data):
-            reason = ""
-            if hasattr(self.db_manager, "last_error"):
-                try:
-                    reason = self.db_manager.last_error() or ""
-                except Exception:
-                    reason = ""
-            self.last_error = reason or "The database refused the save."
-            return False
-
-        # Keep relational task table in sync for board/assignment features.
-        after = self._stored_rows()
-        tasks_payload = []
-        seen_tasks = set()
-        for key, shot in unique.items():
-            row = after.get(key)
-            if not row:
-                continue
-            shot.id = int(row.get("id") or -1)
-            shot.version = int(row.get("version") or shot.version or 1)
-            for task in self._build_tasks_payload(shot.id, shot):
-                task_key = (task["shot_id"], task["department"])
-                if task_key in seen_tasks:
-                    logging.warning("Department %s of shot id %s twice in one save; kept once.",
-                                    task["department"], task["shot_id"])
-                    continue
-                seen_tasks.add(task_key)
-                tasks_payload.append(task)
-
-        tasks_ok = True
-        if tasks_payload:
-            result = self.db_manager.save_tracking_tasks(self.project_code, tasks_payload)
-            tasks_ok = bool(result is None or result)
-            if tasks_ok:
-                self._save_actual_days([(shot.id, shot) for shot in unique.values()])
-
-        # History and notifications, exactly as for one shot: what changed
-        # against what was stored before this save.
-        for key, shot in unique.items():
-            self._log_shot_and_task_changes(shot, dict(stored.get(key) or {}))
-
-        if not tasks_ok:
-            self.last_error = ("The shots were saved, but their department assignments "
-                               "could not be. Try saving again.")
-            return False
-        return True
-
-    def read_shots(self) -> List[Shot]:
-        """Fetch all shots for this project from DB and deserialize."""
-        try:
-            tasks = self.db_manager.get_tracking_tasks(self.project_code) or []
-            tasks_by_shot: Dict[int, Dict[str, Dict[str, Any]]] = {}
-            for task in tasks:
-                shot_id = task.get("shot_id")
-                dept = task.get("department")
-                if shot_id is None or not dept:
-                    continue
-                tasks_by_shot.setdefault(shot_id, {})[dept] = task
-
-            raw_data = self.db_manager.get_tracking_shots(self.project_code) or []
-            shots = []
-            for item in raw_data:
-                try:
-                    shot = Shot.from_dict(item)
-                    shot.id = int(item.get("id") or -1)
-                    v_raw = item.get("version")
-                    shot.version = int(v_raw) if v_raw is not None else int(getattr(shot, "version", 1) or 1)
-                    self._apply_task_overrides(shot, tasks_by_shot.get(shot.id, {}))
-                    shots.append(shot)
-                except Exception as e:
-                    logging.exception(f"Failed to deserialize shot {item.get('shot_name', 'unknown')}: {e}")
-            return shots
-        except Exception as e:
-            logging.exception(f"SQLiteHandler read_shots failed: {e}")
-            return []
-
-    def read_shots_by_id(self, shot_ids) -> List[Shot]:
-        """
-        Just these shots, loaded exactly as read_shots() loads them.
-
-        For keeping an open dashboard current: when somebody changes three
-        shots, the other screens read those three, not the whole project. Ids
-        that belong to another project, or no longer exist, are simply not
-        returned. A failed read raises: "not returned" must only ever mean
-        "not there", or a hiccup would clear shots off somebody's screen.
-        """
-        ids = sorted({int(i) for i in shot_ids if str(i).strip().lstrip("-").isdigit()})
-        shots: List[Shot] = []
-        for start in range(0, len(ids), 500):
-            chunk = ids[start:start + 500]
-            marks = ",".join(["%s"] * len(chunk))
-            rows = self.db_manager.execute_query(
-                f"SELECT id, reel, shot_name, data_json, version FROM tracking_shots "
-                f"WHERE project_code=%s AND id IN ({marks})",
-                (self.project_code, *chunk), fetch="all")
-            if rows is None:
-                raise RuntimeError("tracking_shots could not be read")
-            if not rows:
-                continue
-            found = [int(r["id"]) for r in rows]
-            marks = ",".join(["%s"] * len(found))
-            tasks = self.db_manager.execute_query(
-                f"SELECT * FROM tracking_tasks WHERE shot_id IN ({marks})",
-                tuple(found), fetch="all")
-            if tasks is None:
-                raise RuntimeError("tracking_tasks could not be read")
-            tasks_by_shot: Dict[int, Dict[str, Dict[str, Any]]] = {}
-            for task in tasks:
-                task = dict(task)
-                if task.get("shot_id") is None or not task.get("department"):
-                    continue
-                tasks_by_shot.setdefault(int(task["shot_id"]), {})[task["department"]] = task
-
-            for row in rows:
-                # The same reading as read_shots(): the stored data plus the
-                # row's id, version and reel.
-                from slate.core.infra.tracking_repository import shot_row_to_dict
-                try:
-                    item = shot_row_to_dict(dict(row))
-                    if item is None:
-                        continue
-                    shot = Shot.from_dict(item)
-                    shot.id = int(row["id"])
-                    v_raw = row.get("version")
-                    shot.version = int(v_raw) if v_raw is not None else int(shot.version or 1)
-                    self._apply_task_overrides(shot, tasks_by_shot.get(shot.id, {}))
-                    shots.append(shot)
-                except Exception as e:
-                    logging.exception(f"Failed to deserialize shot id {row.get('id')}: {e}")
-        return shots
 
     def write_shots(self, shots: List[Shot], force: bool = False) -> bool:
         """
@@ -707,8 +439,10 @@ class SQLiteHandler:
         pending edits). Returns whether everything was written; when it was
         not, ``last_error`` says why.
 
-        A shot somebody else saved since it was loaded here is refused with
-        StaleDataError (naming each shot), unless ``force``.
+        A shot somebody else saved since it was loaded here, deleted or added
+        first is refused with StaleDataError (naming each shot), unless
+        ``force`` (which still never brings a deleted shot back). A deleted or
+        archived project raises ProjectClosedError.
         """
         self.last_error = ""
         if not self.project_code:
@@ -717,17 +451,150 @@ class SQLiteHandler:
             return True
 
         self._check_permission()
-        self._assert_within_department(shots)
+        self._check_project_open()
 
-        stored = self._stored_rows()
-        if not force:
-            conflicts = self.find_conflicts(shots, stored)
-            if conflicts:
-                raise StaleDataError(_conflict_message(conflicts), conflicts)
+        # One copy per shot: a name repeated in one save would be written twice.
+        unique: Dict[Tuple[str, str], Shot] = {}
+        for shot in shots:
+            if shot.shot_name:
+                unique[_shot_key(getattr(shot, "reel_episode", ""), shot.shot_name)] = shot
+        if not unique:
+            return False
 
-        if len(shots) == 1:
-            return self._write_single_shot(shots[0], stored, force=force)
-        return self._write_batch_shots(shots, stored, force=force)
+        stored = self._stored()
+        conflicts = self.find_conflicts(unique.values(), stored)
+        deleted = [c for c in conflicts if c["kind"] == "deleted"]
+        if conflicts and (not force or deleted):
+            raise StaleDataError(_conflict_message(deleted or conflicts), deleted or conflicts)
+
+        self._assert_within_department(unique.values(), stored)
+        pairs = [(shot, stored.get(key)) for key, shot in unique.items()]
+        return self._write(pairs, force=force)
+
+    def _write(self, pairs, force: bool = False) -> bool:
+        """
+        Write (shot, as stored now or None) pairs in one transaction: each shot
+        row under its version lock, then the department rows that changed.
+        History and notifications follow once it is committed.
+        """
+        from slate.core.infra.db_results import DatabaseWriteError
+        from slate.core.infra.transaction import atomic
+        from slate.core.infra.tracking_repository import status_and_priority
+
+        cols = self._task_columns()
+        loaded = [(shot, shot.version) for shot, _before in pairs]
+        done = []
+        task_rows = []
+        try:
+            with atomic(self.db_manager) as tx:
+                for shot, before in pairs:
+                    lock = int(before.version or 0) if before is not None and force \
+                        else int(getattr(shot, "version", 0) or 0)
+                    shot.version = lock
+                    data = self._serialize_shot(shot)
+                    status, priority = status_and_priority(data)
+                    reel = str(shot.reel_episode or "").strip()
+                    if before is None:
+                        try:
+                            result = tx.write(
+                                "INSERT INTO tracking_shots (project_code, reel, shot_name, status, priority, "
+                                "data_json, last_updated, version) VALUES (%s, %s, %s, %s, %s, %s, %s, 1) "
+                                "RETURNING id",
+                                (self.project_code, reel, shot.shot_name, status, priority, data,
+                                 _now()))
+                        except DatabaseWriteError as exc:
+                            if exc.kind == "duplicate":
+                                c = {"shot_id": -1, "shot_name": shot.shot_name, "reel": reel,
+                                     "local_version": 0, "db_version": 1, "kind": "added"}
+                                raise StaleDataError(_conflict_message([c]), [c]) from exc
+                            raise
+                        shot_id, version = int(result.last_id), 1
+                    else:
+                        result = tx.write(
+                            "UPDATE tracking_shots SET data_json=%s, status=%s, priority=%s, "
+                            "version=version+1, last_updated=%s WHERE id=%s AND version=%s",
+                            (data, status, priority, _now(), int(before.id), lock))
+                        if result.rows <= 0:
+                            c = {"shot_id": int(before.id), "shot_name": shot.shot_name, "reel": reel,
+                                 "local_version": lock, "db_version": int(before.version or 0),
+                                 "kind": "changed"}
+                            raise StaleDataError(_conflict_message([c]), [c])
+                        shot_id, version = int(before.id), lock + 1
+                    done.append((shot, before, shot_id, version))
+                    task_rows.extend(self._task_rows(shot_id, shot, before, cols))
+                self._write_tasks(tx, task_rows, cols)
+        except StaleDataError:
+            for shot, version in loaded:
+                shot.version = version
+            raise
+        except (DatabaseWriteError, RuntimeError) as exc:
+            for shot, version in loaded:
+                shot.version = version
+            self.last_error = str(exc) or "The database refused the save."
+            logging.error("Dashboard save refused: %s", exc)
+            return False
+
+        for shot, before, shot_id, version in done:
+            shot.id = shot_id
+            shot.version = version
+            self._log_changes(before, shot)
+        return True
+
+    def _task_rows(self, shot_id, shot, before, cols):
+        """
+        The department rows to write for one shot: every department of a new
+        shot, otherwise only those whose values changed. Re-saving all of them
+        wrote 0 actual days everywhere and put back bid days and targets the
+        department rows held (Bidding writes there).
+        """
+        rows = []
+        keys = list(department_keys()) + [k for k in shot.departments if k not in department_keys()]
+        for key in keys:
+            dept = shot.dept(key)
+            if before is not None:
+                old = before.dept(key)
+                same = (old.status or "", old.artist or "", float(old.bid_days or 0), old.target or "",
+                        old.actual_days) == (dept.status or "", dept.artist or "",
+                                             float(dept.bid_days or 0), dept.target or "", dept.actual_days)
+                if same:
+                    continue
+            row = {"shot_id": shot_id, "department": key, "status": dept.status or "",
+                   "artist": dept.artist or "", "bid_days": float(dept.bid_days or 0.0),
+                   # The target only: an ETA is not a target, and storing it as
+                   # one turned every ETA into a target date on the next load.
+                   "target_date": dept.target or ""}
+            if cols["actual_days"]:
+                row["actual_days"] = dept.actual_days
+            rows.append(row)
+        return rows
+
+    def _write_tasks(self, tx, rows, cols):
+        """Upsert department rows, many per statement."""
+        if not rows:
+            return
+        artist_col = cols["artist"]
+        names = ["shot_id"] + (["project_code"] if cols["project_code"] else []) + \
+            ["department", "status", artist_col, "artist_id", "bid_days", "target_date"] + \
+            (["actual_days"] if cols["actual_days"] else [])
+        target = "(project_code, shot_id, department)" if cols["project_code"] else "(shot_id, department)"
+        updates = ", ".join(f"{n} = EXCLUDED.{n}" for n in names if n not in ("shot_id", "department"))
+        user_ids = {}
+        values = []
+        for row in rows:
+            artist = row["artist"]
+            if artist and artist not in user_ids:
+                user_ids[artist] = self.db_manager.get_user_id(artist)
+            values.append([row["shot_id"]] + ([self.project_code] if cols["project_code"] else []) +
+                          [row["department"], row["status"], artist, user_ids.get(artist) if artist else None,
+                           row["bid_days"], row["target_date"]] +
+                          ([row.get("actual_days")] if cols["actual_days"] else []))
+        group = "(" + ", ".join(["%s"] * len(names)) + ")"
+        for start in range(0, len(values), 50):
+            chunk = values[start:start + 50]
+            tx.write(f"INSERT INTO tracking_tasks ({', '.join(names)}) VALUES "
+                     + ", ".join([group] * len(chunk))
+                     + f" ON CONFLICT {target} DO UPDATE SET {updates}",
+                     [v for row in chunk for v in row])
 
     # ------------------------------------------------------------------
     # Department scoping
@@ -751,14 +618,15 @@ class SQLiteHandler:
             data.pop(key, None)
         return data
 
-    def _assert_within_department(self, shots) -> None:
+    def _assert_within_department(self, shots, stored) -> None:
         """
         A department-scoped role may change only its own department's columns.
 
-        This is checked against what is stored, not against what the grid
-        offered: a lead who edits a comp cell through some path the interface
-        forgot to lock is still stopped here. Creating shots is a coordinator's
-        job, so a scoped role cannot do that either.
+        Each shot is compared with what this person loaded (its baseline), not
+        with what is stored now: somebody else changing another field in the
+        meantime is a conflict (checked first), not this lead's breach. A shot
+        with no baseline (written outside the grid) is compared with the
+        stored row. Creating shots is a coordinator's job.
         """
         allowed = self._scoped_department_keys()
         if allowed is None:
@@ -770,32 +638,22 @@ class SQLiteHandler:
                 "nothing can be edited. Ask an admin to set your job title."
             )
 
-        family_label = self.department_family.title()
-
-        # "Before" is loaded the same way the grid loaded it - through
-        # read_shots, task overrides and all - so an untouched shot compares
-        # equal. Comparing against the raw stored JSON flagged every shot,
-        # because assigned_artist is derived from the comp task on load.
-        before = {}
-        for stored in self.read_shots():
-            key = (str(stored.reel_episode or "").strip().lower(),
-                   str(stored.shot_name or "").strip().lower())
-            before[key] = stored
-
+        family_label = self._family_name()
         for shot in shots:
             if not shot.shot_name:
                 continue
-
-            key = (str(shot.reel_episode or "").strip().lower(),
-                   str(shot.shot_name or "").strip().lower())
-            stored = before.get(key) or before.get(("", key[1]))
-            if stored is None:
+            baseline = getattr(shot, "_baseline", None)
+            before = Shot.from_dict(dict(baseline)) if baseline else \
+                stored.get(_shot_key(shot.reel_episode, shot.shot_name))
+            if before is None:
                 raise PermissionError(
                     f"{shot.shot_name} is not in this project. Adding shots is "
                     "a coordinator's job."
                 )
+            if baseline:
+                before.status = baseline.get("status", before.status)
 
-            if self._shot_level_fields(stored) != self._shot_level_fields(shot):
+            if self._shot_level_fields(before) != self._shot_level_fields(shot):
                 raise PermissionError(
                     f"{shot.shot_name}: as {family_label} lead you can change "
                     f"only the {family_label} columns, not the shot itself."
@@ -804,47 +662,55 @@ class SQLiteHandler:
             for key, info in shot.departments.items():
                 if key in allowed:
                     continue
-                if info.to_dict() != stored.dept(key).to_dict():
+                if info.to_dict() != before.dept(key).to_dict():
                     raise PermissionError(
-                        f"{shot.shot_name}: {key} belongs to another "
+                        f"{shot.shot_name}: {self._department_name(key)} belongs to another "
                         f"department. As {family_label} lead you can change "
                         f"only {family_label}."
                     )
 
-    def _assert_field_within_department(self, field) -> None:
-        """One field, the department scope: shot-level fields are refused for a lead."""
-        allowed = self._scoped_department_keys()
-        if allowed is None:
-            return
-        if not allowed:
-            raise PermissionError(
-                "Your user record does not say which department you lead, so "
-                "nothing can be edited. Ask an admin to set your job title."
-            )
-        family_label = self.department_family.title()
-        target = self._resolve_department_field(field)
-        if not target:
-            raise PermissionError(
-                f"As {family_label} lead you can change only the {family_label} "
-                "columns, not the shot itself."
-            )
-        if target[0] not in allowed:
-            raise PermissionError(
-                f"{target[0]} belongs to another department. As {family_label} lead "
-                f"you can change only {family_label}."
-            )
+    # ------------------------------------------------------------------
+    # An artist's own status
+    # ------------------------------------------------------------------
+    def _is_own_undo(self, shot: Shot, dept_key: str, back_to: str, undo_of: str) -> bool:
+        """
+        Whether putting `back_to` on this department undoes this person's own
+        last change: the department still shows what they set, and the newest
+        history line for it is theirs, from `back_to` to `undo_of`.
+        """
+        if not self.username or (shot.dept(dept_key).status or "") != (undo_of or ""):
+            return False
+        try:
+            from slate.core.infra.change_history import read_history
+            rows = read_history(self.db_manager, self.project_code, shot.shot_name, 50,
+                                shot_id=shot.id, reel=shot.reel_episode)
+        except Exception as exc:
+            logging.debug("Undo check could not read the history: %s", exc)
+            return False
+        field = f"{dept_key}_status"
+        last = next((r for r in rows if r.get("field_changed") == field), None)
+        return bool(last) and str(last.get("author") or "").lower() == self.username.lower() \
+            and (last.get("old_value") or "") == (back_to or "") \
+            and (last.get("new_value") or "") == (undo_of or "")
 
     def update_department_status(self, shot_name: str, reel: str, dept_key: str,
                                  status: str, current_version: int,
-                                 actor_identities=None) -> bool:
+                                 actor_identities=None, shot_id=None, undo_of=None) -> bool:
         """
-        Set the status of one department row.
+        Set the status of one department row - the artist's way in.
 
-        This is the artist's way in. It is deliberately the narrowest write in
-        the system: one field, on one department, on a shot they are named on.
-        The check happens here rather than only in the interface, so a caller
-        that skips the UI cannot widen it.
+        It is deliberately the narrowest write in the system: one field, on one
+        department, on a shot they are named on, through the same save as
+        everything else (so only that department's row is written, with the
+        shot, in one transaction, and the history says so). The check happens
+        here rather than only in the interface, so a caller that skips the UI
+        cannot widen it.
+
+        ``undo_of`` is the status this person set and now takes back: an undo
+        may put back a status they could not choose themselves, but only over
+        their own last change.
         """
+        self.last_error = ""
         if is_offline_fallback():
             raise OfflineError(
                 "The central database is unreachable. Changes made now would "
@@ -859,25 +725,31 @@ class SQLiteHandler:
         full_rights = can_edit_dashboard(self.user_roles)
         if not full_rights and not can_edit_own_status(self.user_roles):
             raise PermissionError("You do not have permission to change a status.")
+        self._check_project_open()
+
+        if shot_id is not None and int(shot_id) >= 0:
+            found = self.read_shots_by_id([shot_id])
+        else:
+            found = self._read(" AND reel=%s AND shot_name=%s", (str(reel or ""), shot_name))
+        if not found:
+            self.last_error = f"{shot_name} is not in this project any more."
+            return False
+        shot = found[0]
+        name = shot.shot_name
 
         # An artist may say "working" or "done, look at it". Approved, Retake
         # and Omit are verdicts - somebody else's to give - so they are refused
         # here, where a caller that skips the dropdown still meets them.
         # Clearing your own status (an Undo back to blank) is allowed too.
-        if str(status or "").strip() and not can_set_status(self.user_roles, status):
-            raise PermissionError(
-                f"'{status}' is a review verdict. You can set "
-                f"{', '.join(sorted(artist_statuses()))}; a supervisor or "
-                "coordinator sets the rest."
-            )
-
-        row = self._get_db_shot_row(shot_name, reel)
-        if not row:
-            return False
-
-        payload = self._safe_json_load(row.get("data_json"))
-        shot = Shot.from_dict(payload)
-        shot.shot_name = shot_name
+        if str(status or "").strip() and not can_set_status(self.user_roles, status) \
+                and not (undo_of is not None and self._is_own_undo(shot, dept_key, status, undo_of)):
+            allowed = ", ".join(sorted(artist_statuses()))
+            if shot_status.canonical(status) in (shot_status.APPROVED, shot_status.RETAKE):
+                reason = f"'{status}' is a review verdict."
+            else:
+                reason = f"'{status}' is set by a supervisor or coordinator."
+            raise PermissionError(f"{reason} You can set {allowed}; a supervisor or "
+                                  "coordinator sets the rest.")
 
         if not full_rights:
             # Somebody without full rights may only touch a department they
@@ -887,105 +759,24 @@ class SQLiteHandler:
                           for i in (actor_identities or []) if str(i).strip()}
             if not assigned or assigned not in identities:
                 raise PermissionError(
-                    f"You are not assigned to {dept_key} on {shot_name}."
+                    f"You are not assigned to {self._department_name(dept_key)} on {name}."
                 )
 
-        db_version = int(row.get("version") or 0)
-        if int(current_version or 0) != 0 and db_version != 0                 and int(current_version or 0) != db_version:
-            raise StaleDataError(
-                f"Shot '{shot_name}' has been modified. Update rejected."
-            )
+        if int(current_version or 0) != 0 and int(current_version or 0) != int(shot.version or 0):
+            raise StaleDataError(f"{name} has been changed by someone else.")
 
-        old_status = shot.dept(dept_key).status
-        if old_status == status:
+        if (shot.dept(dept_key).status or "") == (status or ""):
             return True
 
-        entry = self._payload_department(payload, dept_key)
-        entry["status"] = status
-
-        if not self.db_manager.update_tracking_shot_safe(
-            self.project_code, shot_name,
-            json.dumps(payload, default=str), db_version, reel=reel,
-        ):
-            raise StaleDataError(
-                f"Shot '{shot_name}' has been modified. Update rejected."
-            )
-
-        shot_id = int(row.get("id") or 0)
-        if shot_id:
-            shot.dept(dept_key).status = status
-            self._save_tasks_for_shot(shot_id, shot)
-
-        shot.id = shot_id or -1
-        shot.reel_episode = shot.reel_episode or str(reel or "")
-        self._log_change("task", f"{shot_name}_{dept_key}", "UPDATE",
-                         f"{dept_key}_status", old_status, status, shot, dept_key)
-        self._notify_status(shot_name, shot.dept(dept_key).artist or "",
-                            old_status or "", status or "", dept_key)
+        before = Shot.from_dict(shot.to_dict())
+        before.id, before.version = shot.id, shot.version
+        before.status = shot.status
+        shot.dept(dept_key).status = status
+        if not self._write([(shot, before)]):
+            raise RuntimeError(self.last_error or f"{name}: the status could not be saved.")
         return True
 
-    def update_shot_field(self, shot_name: str, field: str, value, current_version: int,
-                          reel: Optional[str] = None) -> bool:
-        """
-        Updates a specific field of a shot using optimistic locking.
 
-        The same department scope as write_shots applies: a lead may change
-        their own department's fields here and nothing else (the board used to
-        let a Roto lead move a shot to Final through this door).
-        """
-        self._check_permission()
-        self._assert_field_within_department(field)
-
-        try:
-            row = self._get_db_shot_row(shot_name, reel)
-            if not row:
-                return False
-
-            shot_id = int(row.get("id") or 0)
-            db_version = int(row.get("version") or 0)
-            if int(current_version or 0) != 0 and db_version != 0 and int(current_version or 0) != db_version:
-                raise StaleDataError(f"Shot '{shot_name}' has been modified. Update rejected.")
-
-            payload = self._safe_json_load(row.get("data_json"))
-            old_val, changed = self._set_shot_field_value(payload, field, value)
-            if changed is None:
-                return False        # unknown field - never report success
-            if not changed:
-                return True
-
-            json_str = json.dumps(payload, default=str)
-            success = self.db_manager.update_tracking_shot_safe(
-                self.project_code, shot_name, json_str, db_version, reel=reel,
-            )
-            if not success:
-                raise StaleDataError(f"Shot '{shot_name}' has been modified. Update rejected.")
-
-            shot_obj = Shot.from_dict(payload)
-            shot_obj.shot_name = shot_name
-            shot_obj.id = shot_id or -1
-            dept_target = self._resolve_department_field(field)
-            self._log_change("shot", shot_name, "UPDATE", field, old_val, value, shot_obj,
-                             dept_target[0] if dept_target else "")
-
-            if shot_id:
-                self._save_tasks_for_shot(shot_id, shot_obj)
-
-            if field in {"assigned_artist", "artist"}:
-                self._notify_assignment(shot_name, old_val or "", str(value or ""))
-            elif field in {"status", "overall_status"}:
-                target_artist = payload.get("assigned_artist") or ""
-                self._notify_status(shot_name, target_artist, str(old_val or ""), str(value or ""))
-
-            return True
-        except StaleDataError:
-            raise
-        except Exception as e:
-            logging.exception(f"Granular update failed for {shot_name}: {e}")
-            return False
-
-    def create_backup(self):
-        logging.info("SQLiteHandler: Database central backup covers this data.")
-        return "DB_BACKUP_MANAGED_centrally"
-
-    def debug_column_mapping(self):
-        logging.info("SQLiteHandler: No column mapping (Direct Object Storage).")
+def _now() -> str:
+    from datetime import datetime
+    return datetime.now().isoformat()

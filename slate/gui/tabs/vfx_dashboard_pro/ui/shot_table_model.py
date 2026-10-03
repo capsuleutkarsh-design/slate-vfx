@@ -270,6 +270,8 @@ class ShotTableModel(QAbstractTableModel):
         # Edits that can still be taken back, oldest first. Each step is
         # (description, [(shot, snapshot before)]).
         self._undo_stack = []
+        # Steps taken back, newest last; any new edit clears it.
+        self._redo_stack = []
         self.shots: List[Shot] = []
         self._row_of = {}
 
@@ -316,14 +318,12 @@ class ShotTableModel(QAbstractTableModel):
             # A live update swapped some shots: edits to shots still shown can
             # still be taken back; edits to replaced ones cannot.
             still_here = {id(s) for s in shots}
-            kept = []
-            for description, entries in self._undo_stack:
-                entries = [(s, snap) for s, snap in entries if id(s) in still_here]
-                if entries:
-                    kept.append((description, entries))
-            self._undo_stack = kept
+            self.forget_undo_for(
+                [s for _d, e in self._undo_stack for s, _b in e if id(s) not in still_here]
+                + [s for r in self._redo_stack for s, _b in r[1] if id(s) not in still_here])
         else:
             self._undo_stack = []
+            self._redo_stack = []
         for shot in shots:
             # A shot without a baseline is fresh from the database - unless it
             # already carries edits (then there is nothing true to compare to,
@@ -657,8 +657,8 @@ class ShotTableModel(QAbstractTableModel):
             self.own_status_edited.emit(shot, col_key, str(new_value or ""), str(previous or ""))
             return True
 
-        column = self.COLUMNS[index.column()][1]
-        description = f"{shot.shot_name} {column}"
+        path = f"departments.{col_key}.status" if col_key in self._department_keys             else self._SIMPLE_FIELDS.get(col_key, col_key)
+        description = f"{field_label(path)} change on {shot.shot_name}"
         self.apply_edit([shot], lambda s: self._write_cell(s, col_key, new_value), description)
         return True
 
@@ -758,6 +758,7 @@ class ShotTableModel(QAbstractTableModel):
         if not entries:
             return []
         self._undo_stack.append((description or "edit", entries))
+        self._redo_stack = []
         # Bounded: this is for the mistake noticed immediately, not a history.
         while len(self._undo_stack) > self.UNDO_LIMIT:
             self._undo_stack.pop(0)
@@ -768,33 +769,72 @@ class ShotTableModel(QAbstractTableModel):
     def can_undo(self) -> bool:
         return bool(self._undo_stack)
 
-    def undo(self):
+    def can_redo(self) -> bool:
+        return bool(self._redo_stack)
+
+    def last_step(self):
+        """The newest undoable step (for a toast that undoes exactly that one)."""
+        return self._undo_stack[-1] if self._undo_stack else None
+
+    def undo(self, step=None):
         """
-        Take back the last edit step.
+        Take back the last edit step - or, given `step`, that step only if it
+        is still the newest (a toast's Undo must not take back a later edit).
 
         Returns {'description', 'shots', 'shot', 'count'} or None if there was
         nothing to take back. A shot whose edits are all undone is clean again.
         """
-        if not self._undo_stack:
+        if not self._undo_stack or (step is not None and self._undo_stack[-1] is not step):
             return None
         description, entries = self._undo_stack.pop()
-        touched = []
+        touched, after = [], []
         for shot, before in reversed(entries):
+            after.append((shot, snapshot(shot)))
             restore(shot, before)
             shot._modified = self.is_dirty(shot)
             touched.append(shot)
+        self._redo_stack.append((description, entries, after))
         self._emit_rows(touched)
         self.edits_changed.emit()
-        return {
-            "description": description,
-            "shots": touched,
-            "shot": touched[0].shot_name if touched else "",
-            "count": len(touched),
-        }
+        return {"description": description, "shots": touched,
+                "shot": touched[0].shot_name if touched else "", "count": len(touched)}
+
+    def redo(self):
+        """Put the last undone step back. Returns the same dict as undo(), or None."""
+        if not self._redo_stack:
+            return None
+        description, entries, after = self._redo_stack.pop()
+        touched = []
+        for shot, snap in after:
+            restore(shot, snap)
+            shot._modified = self.is_dirty(shot)
+            touched.append(shot)
+        self._undo_stack.append((description, entries))
+        self._emit_rows(touched)
+        self.edits_changed.emit()
+        return {"description": description, "shots": touched,
+                "shot": touched[0].shot_name if touched else "", "count": len(touched)}
 
     def clear_undo(self):
         """Forget pending undo steps, e.g. after a save or a reload."""
         self._undo_stack.clear()
+        self._redo_stack.clear()
+
+    def forget_undo_for(self, shots):
+        """Drop the undo/redo entries of these shots only (they were saved, replaced or rebased)."""
+        gone = {id(s) for s in shots or []}
+        if not gone:
+            return
+        undo = []
+        for description, entries in self._undo_stack:
+            entries = [(s, snap) for s, snap in entries if id(s) not in gone]
+            if entries:
+                undo.append((description, entries))
+        self._undo_stack = undo
+        self._redo_stack = [(d, [(s, b) for s, b in e if id(s) not in gone],
+                             [(s, a) for s, a in after if id(s) not in gone])
+                            for d, e, after in self._redo_stack]
+        self._redo_stack = [r for r in self._redo_stack if r[1]]
 
     def discard_changes(self, shots: Optional[Iterable[Shot]] = None):
         """Put shots back to how they were loaded (all pending shots if none given)."""
@@ -804,10 +844,7 @@ class ShotTableModel(QAbstractTableModel):
             if base is not None:
                 restore(shot, base)
             shot._modified = False
-        self._undo_stack = [
-            (d, [(s, b) for s, b in e if s not in targets]) for d, e in self._undo_stack
-        ]
-        self._undo_stack = [(d, e) for d, e in self._undo_stack if e]
+        self.forget_undo_for(targets)
         self._emit_rows(targets)
         self.edits_changed.emit()
 

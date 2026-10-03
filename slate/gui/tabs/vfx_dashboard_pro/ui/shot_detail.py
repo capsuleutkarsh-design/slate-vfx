@@ -30,7 +30,7 @@ from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QFont, QIcon, QPixmap, QTextOption
 from PySide6.QtWidgets import (
     QAbstractSpinBox, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
-    QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QMenu, QPushButton,
+    QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu, QPushButton,
     QScrollArea, QSizePolicy, QSpinBox, QTabWidget, QTextEdit, QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -59,6 +59,18 @@ def _section(title: str) -> QLabel:
     return label
 
 
+def _hero_link(shot) -> str:
+    """How a linked hero is stored: 'R01/SH010' (a shot is its reel and name)."""
+    reel = str(getattr(shot, "reel_episode", "") or "").strip()
+    return f"{reel}/{shot.shot_name}" if reel else shot.shot_name
+
+
+def _hero_label(link) -> str:
+    """'R01 / SH010' for a stored link; a bare name (linked before reels counted) as it is."""
+    reel, _, name = str(link or "").rpartition("/")
+    return f"{reel} / {name}" if reel else name
+
+
 def _select(combo: QComboBox, value):
     idx = combo.findData(value)
     if idx < 0:
@@ -75,6 +87,8 @@ class ShotDetailWidget(QWidget):
     quick_look_requested = Signal(object)
     rv_review_requested = Signal(object)
     history_requested = Signal(object)
+    # A verdict given in the Versions box: (version, status).
+    verdict_given = Signal(object, str)
 
     def __init__(
         self,
@@ -116,6 +130,7 @@ class ShotDetailWidget(QWidget):
         self._sp = system_engine.scale_px
         self._loaded = {}
         self._loading = False
+        self._elsewhere_note = ""
         self.init_ui()
         self.load_data()
         self.apply_permissions()
@@ -324,6 +339,7 @@ class ShotDetailWidget(QWidget):
         self.curr_version_edit.textChanged.connect(self._changed)
         self.prev_version_label = QLabel()
         self.prev_version_label.setStyleSheet(f"color: {Gate.TEXT_DIM};")
+        self.prev_version_label.setTextFormat(Qt.TextFormat.PlainText)
         version_row = QHBoxLayout()
         version_row.addWidget(self.curr_version_edit, 1)
         version_row.addWidget(self.prev_version_label)
@@ -344,10 +360,12 @@ class ShotDetailWidget(QWidget):
         hero_box.setSpacing(4)
         self.similar_list = QListWidget()
         self.similar_list.setMaximumHeight(self._sp(70, minimum=60))
+        self.similar_list.itemSelectionChanged.connect(self._sync_link_buttons)
         hero_box.addWidget(self.similar_list)
         hero_row = QHBoxLayout()
         self.similar_combo = QComboBox()
         self.similar_combo.setPlaceholderText("Pick a hero shot…")
+        self.similar_combo.currentIndexChanged.connect(self._sync_link_buttons)
         hero_row.addWidget(self.similar_combo, 1)
         self.similar_add_btn = make_button("Link", "secondary", on_click=self._add_similar)
         hero_row.addWidget(self.similar_add_btn)
@@ -409,19 +427,20 @@ class ShotDetailWidget(QWidget):
         layout.addWidget(bid_spin, row, 3)
 
         # Days actually spent, for comparing with the bid (Bidding tracking).
+        # The lowest value means "not recorded" (shown as -): 0 days is a real answer.
         actual_spin = QDoubleSpinBox()
-        actual_spin.setRange(0.0, 9999.9)
-        actual_spin.setDecimals(1)
-        actual_spin.setSingleStep(0.5)
+        actual_spin.setRange(-0.01, 9999.99)
+        actual_spin.setDecimals(2)
+        actual_spin.setSingleStep(0.25)
         actual_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         actual_spin.setAlignment(Qt.AlignmentFlag.AlignRight)
         actual_spin.setSpecialValueText("-")
-        actual_spin.setToolTip("Days actually spent")
+        actual_spin.setToolTip("Days actually spent (- is not recorded; Delete clears it)")
         actual_spin.setMaximumWidth(self._sp(64, minimum=56))
         actual_spin.valueChanged.connect(self._changed)
         layout.addWidget(actual_spin, row, 4)
 
-        target_edit = OptionalDateField()
+        target_edit = OptionalDateField(blank_text="-")
         target_edit.value_changed.connect(self._changed)
         layout.addWidget(target_edit, row, 5)
 
@@ -454,19 +473,44 @@ class ShotDetailWidget(QWidget):
         self.feedback_tabs.addTab(self.director_log, "Director")
         self.feedback_tabs.addTab(self.internal_log, "Internal")
         self.feedback_tabs.currentChanged.connect(self._on_feedback_tab_changed)
-        return self.feedback_tabs
+        box = QWidget()
+        column = QVBoxLayout(box)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.addWidget(self.feedback_tabs)
+        # Feedback is given on a version: the note goes on the selected (or
+        # newest) version and shows here and in the Versions box.
+        self.add_feedback_btn = make_button(
+            "Add note", "secondary", tooltip="Add a note from this tab's source to the selected "
+                                             "or newest version",
+            on_click=lambda: self.versions_group.add_note(
+                self._feedback_tab_order[self.feedback_tabs.currentIndex()].lower()))
+        column.addWidget(self.add_feedback_btn, 0, Qt.AlignmentFlag.AlignLeft)
+        return box
 
     def _init_versions_section(self):
         from .versions_panel import VersionsPanel
         from slate.core.domain.access import can_edit_dashboard
-        return VersionsPanel(
+        panel = VersionsPanel(
             project_code=self.current_project_code,
             shot_name=getattr(self.shot, "shot_name", ""),
+            reel=str(getattr(self.shot, "reel_episode", "") or ""),
             can_edit=can_edit_dashboard(self.user_roles),
             artists=list(self.all_users or []),
-            user_name=str((self.user_data or {}).get("display_name", "")),
+            user_name=str((self.user_data or {}).get("display_name")
+                          or (self.user_data or {}).get("username") or ""),
+            roles=self.user_roles,
+            departments=self.department_scope,
             parent=self,
         )
+        panel.changed.connect(self._show_feedback)
+        panel.version_recorded.connect(self._version_recorded)
+        panel.verdict_given.connect(self.verdict_given.emit)
+        return panel
+
+    def _version_recorded(self, name):
+        """A new version: the shot's Version field follows (an unapplied change, so Apply stages it)."""
+        if self._can_edit_shot() and name:
+            self.curr_version_edit.setText(name)
 
     def _init_dates_section(self):
         box = QWidget()
@@ -520,13 +564,19 @@ class ShotDetailWidget(QWidget):
             self.hero_checkbox.setChecked(bool(shot.is_hero))
 
             self.similar_list.clear()
-            for name in shot.similar_to or []:
-                self.similar_list.addItem(str(name))
+            for link in shot.similar_to or []:
+                item = QListWidgetItem(_hero_label(link))
+                item.setData(Qt.ItemDataRole.UserRole, str(link))
+                self.similar_list.addItem(item)
             self.similar_combo.clear()
-            for s in self.all_shots:
-                if s.is_hero and s.shot_name != shot.shot_name:
-                    self.similar_combo.addItem(s.shot_name)
+            # Heroes are reel and name: SH010 in R02 can link to SH010 in R01.
+            for s in sorted(self.all_shots, key=lambda x: (x.reel_episode or "", x.shot_name)):
+                if s.is_hero and s is not shot and (s.reel_episode, s.shot_name) != (shot.reel_episode,
+                                                                                     shot.shot_name):
+                    link = _hero_link(s)
+                    self.similar_combo.addItem(_hero_label(link), link)
             self.similar_combo.setCurrentIndex(-1)
+            self._sync_link_buttons()
 
             for key, widgets in self.depts.items():
                 dept = shot.dept(key)
@@ -539,6 +589,8 @@ class ShotDetailWidget(QWidget):
                 for n in names:
                     combo.addItem(n, n)
                 combo.setCurrentText(dept.artist or "")
+                if combo.lineEdit() is not None:
+                    combo.lineEdit().setCursorPosition(0)      # a long name shows its start
                 combo.setToolTip(dept.artist or "Nobody assigned")
 
                 status_combo = widgets["status_combo"]
@@ -561,30 +613,56 @@ class ShotDetailWidget(QWidget):
                     widgets["bid_spin"].setValue(float(dept.bid_days or 0.0))
                 except (TypeError, ValueError):
                     widgets["bid_spin"].setValue(0.0)
+                actual = getattr(dept, "actual_days", None)
                 try:
-                    widgets["actual_spin"].setValue(float(getattr(dept, "actual_days", 0.0) or 0.0))
+                    widgets["actual_spin"].setValue(widgets["actual_spin"].minimum() if actual is None
+                                                    else float(actual))
                 except (TypeError, ValueError):
-                    widgets["actual_spin"].setValue(0.0)
-                widgets["target_edit"].set_value(dept.target or dept.eta)
+                    widgets["actual_spin"].setValue(widgets["actual_spin"].minimum())
+                # The target only: an ETA is shown beside it, never as the target.
+                widgets["target_edit"].set_value(dept.target)
+                widgets["target_edit"].setToolTip(
+                    f"Target. ETA {format_date(dept.eta) or dept.eta}" if dept.eta else "Target")
 
             self.mov_date_label.setText(format_date(shot.mov_submission) or "-")
             self.exr_date_label.setText(format_date(shot.exr_submission) or "-")
 
-            def format_log(entries):
-                return "\n".join([f"[{format_date(e.date) or e.date}] {e.text}" if getattr(e, "date", "")
-                                  else f"{e.text}" for e in entries])
-
-            self.internal_log.setPlainText(format_log(shot.feedback_internal) if shot.feedback_internal else "")
-            self.client_log.setPlainText(format_log(shot.feedback_client) if shot.feedback_client else "")
-            self.director_log.setPlainText(format_log(shot.feedback_director) if shot.feedback_director else "")
-            self._feedback_signature_map = self._collect_feedback_signatures()
-            self._update_feedback_tab_badges()
-            self._mark_feedback_tab_seen(self.feedback_tabs.currentIndex())
+            self._show_feedback()
         finally:
             self._loading = False
+            self._elsewhere_note = ""
         self._loaded = self._values()
         self._refresh_text_heights()
         self._changed()
+
+    def _show_feedback(self):
+        """The shot's feedback, and the notes given on its versions, per source."""
+        from slate.core.domain.dates import format_date
+        shot = self.shot
+        versions = list(getattr(self.versions_group, "versions", []) or [])
+        logs = {"client": list(shot.feedback_client), "director": list(shot.feedback_director),
+                "internal": list(shot.feedback_internal)}
+        lines = {key: [f"[{format_date(e.date) or e.date}] {e.text}" if getattr(e, "date", "") else e.text
+                       for e in entries] for key, entries in logs.items()}
+        for version in reversed(versions):                 # oldest version first
+            for note in version.notes:
+                key = (note.source or "internal").lower()
+                who = f" {note.author}" if note.author else ""
+                lines.setdefault(key, []).append(
+                    f"[{format_date(note.note_date) or note.note_date}] {version.version_name}{who}: {note.text}")
+        self.client_log.setPlainText("\n".join(lines.get("client", [])))
+        self.director_log.setPlainText("\n".join(lines.get("director", [])))
+        self.internal_log.setPlainText("\n".join(lines.get("internal", [])))
+        self.add_feedback_btn.setEnabled(self.versions_group.can_edit)
+        self._feedback_signature_map = self._collect_feedback_signatures()
+        self._update_feedback_tab_badges()
+        self._mark_feedback_tab_seen(self.feedback_tabs.currentIndex())
+
+    def note_changed_elsewhere(self, text: str):
+        """Someone else saved or removed this shot while the panel had changes: say so, keep them."""
+        self._elsewhere_note = text
+        self.result_label.setText(text)
+        self.result_label.setStyleSheet(f"color: {Gate.WARN};")
 
     def reload_from_shot(self):
         """The shot changed under the panel (an undo, a board drop): show it, if nothing is half-typed."""
@@ -602,7 +680,8 @@ class ShotDetailWidget(QWidget):
             "target": self.target_edit.value(),
             "sow": self.sow_edit.toPlainText(),
             "is_hero": self.hero_checkbox.isChecked(),
-            "similar_to": [self.similar_list.item(i).text() for i in range(self.similar_list.count())],
+            "similar_to": [self.similar_list.item(i).data(Qt.ItemDataRole.UserRole)
+                           for i in range(self.similar_list.count())],
         }
         for key, w in self.depts.items():
             values[f"departments.{key}.artist"] = w["artist_combo"].currentText().strip()
@@ -610,7 +689,9 @@ class ShotDetailWidget(QWidget):
             values[f"departments.{key}.status"] = (status_combo.currentData()
                                                    if status_combo.currentIndex() >= 0 else "")
             values[f"departments.{key}.bid_days"] = float(w["bid_spin"].value())
-            values[f"departments.{key}.actual_days"] = float(w["actual_spin"].value())
+            spin = w["actual_spin"]
+            values[f"departments.{key}.actual_days"] = (None if spin.value() <= spin.minimum()
+                                                        else round(float(spin.value()), 2))
             values[f"departments.{key}.target"] = w["target_edit"].value()
         return values
 
@@ -640,7 +721,8 @@ class ShotDetailWidget(QWidget):
         self.save_btn.setEnabled(pending and self.save_btn.isVisible())
         self.revert_btn.setEnabled(pending)
         if pending:
-            self.result_label.setText("Changes in this panel are not applied yet.")
+            note = f" {self._elsewhere_note}" if self._elsewhere_note else ""
+            self.result_label.setText("Changes in this panel are not applied yet." + note)
             self.result_label.setStyleSheet(f"color: {Gate.WARN};")
         elif self.result_label.text().startswith("Changes in this panel"):
             self.result_label.setText("")
@@ -664,18 +746,29 @@ class ShotDetailWidget(QWidget):
         self.result_label.setStyleSheet(f"color: {Gate.OK if ok else Gate.BAD};")
 
     def _add_similar(self):
-        name = self.similar_combo.currentText().strip()
-        if not name:
+        link = self.similar_combo.currentData()
+        if not link:
             return
-        existing = {self.similar_list.item(i).text() for i in range(self.similar_list.count())}
-        if name not in existing:
-            self.similar_list.addItem(name)
+        existing = {self.similar_list.item(i).data(Qt.ItemDataRole.UserRole)
+                    for i in range(self.similar_list.count())}
+        if link not in existing:
+            item = QListWidgetItem(_hero_label(link))
+            item.setData(Qt.ItemDataRole.UserRole, link)
+            self.similar_list.addItem(item)
             self._changed()
+        self._sync_link_buttons()
 
     def _remove_similar(self):
         for item in self.similar_list.selectedItems():
             self.similar_list.takeItem(self.similar_list.row(item))
         self._changed()
+        self._sync_link_buttons()
+
+    def _sync_link_buttons(self, *_):
+        """Link needs a hero picked; Unlink a linked shot selected."""
+        editable = self._can_edit_shot()
+        self.similar_add_btn.setEnabled(editable and self.similar_combo.currentIndex() >= 0)
+        self.similar_remove_btn.setEnabled(editable and bool(self.similar_list.selectedItems()))
 
     def _update_status_badge_style(self, status):
         text = shot_status.label(status)
@@ -702,10 +795,9 @@ class ShotDetailWidget(QWidget):
         """The same rules as the grid."""
         shot_editable = self._can_edit_shot()
         for widget in (self.status_combo, self.type_combo, self.priority_combo, self.frames_edit,
-                       self.hero_checkbox, self.similar_combo, self.similar_add_btn,
-                       self.similar_remove_btn):
+                       self.hero_checkbox, self.similar_combo, self.curr_version_edit):
             widget.setEnabled(shot_editable)
-        self.curr_version_edit.setReadOnly(not shot_editable)
+        self._sync_link_buttons()
         self.sow_edit.setReadOnly(not shot_editable)
         self.target_edit.setReadOnly(not shot_editable)
         self.target_edit.setEnabled(shot_editable)
@@ -825,16 +917,23 @@ class ShotDetailWidget(QWidget):
     }
 
     def _find_dcc_target_file(self, app_key: str):
-        exts = self._DCC_FILE_TYPES.get(app_key, [])
+        """
+        The newest work file for this app in the shot's department folders.
+        Scan and output folders (thousands of frames) are not searched, and
+        only three levels deep.
+        """
+        # ponytail: runs on the UI thread; bounded to the work folders and 3 levels. Move to a
+        # worker if a studio keeps deep work trees.
+        exts = tuple(self._DCC_FILE_TYPES.get(app_key, []))
         candidates = []
         for base in self._candidate_shot_roots():
             if not base.exists():
                 continue
-            for ext in exts:
-                try:
-                    candidates.extend(base.rglob(f"*{ext}"))
-                except Exception:
-                    continue
+            top = len(base.parts)
+            for folder, dirs, files in os.walk(base):
+                if len(Path(folder).parts) - top >= 3:
+                    dirs[:] = []
+                candidates.extend(Path(folder) / f for f in files if f.lower().endswith(exts))
 
         def _mtime(p):
             try:
@@ -863,7 +962,8 @@ class ShotDetailWidget(QWidget):
     def _candidate_shot_roots(self):
         roots = []
         if self.project_manager:
-            for key in ("comp", "output", "prep", "scan"):
+            from slate.core.domain.departments import load_departments
+            for key in [d.key for d in load_departments()]:
                 try:
                     path = self.project_manager.get_folder_path(
                         self.current_project_code, key, self.shot.reel_episode, self.shot.shot_name)
@@ -873,9 +973,9 @@ class ShotDetailWidget(QWidget):
                     continue
         folder_paths = getattr(self.shot, "folder_paths", {}) or {}
         if isinstance(folder_paths, dict):
-            for value in folder_paths.values():
+            for key, value in folder_paths.items():
                 text = str(value or "").strip()
-                if text:
+                if text and str(key).lower() not in ("scan", "output", "deliver"):
                     roots.append(Path(text))
         unique, seen = [], set()
         for root in roots:
@@ -920,7 +1020,7 @@ class ShotDetailWidget(QWidget):
 
     def _viewer_can_ack_feedback(self) -> bool:
         owner = self._get_assigned_artist_identity()
-        return (not owner) or owner in self.viewer_identity_keys
+        return bool(owner) and owner in self.viewer_identity_keys
 
     def _load_feedback_seen_state(self) -> dict:
         try:
@@ -962,6 +1062,12 @@ class ShotDetailWidget(QWidget):
         return owner_bucket.setdefault(self._feedback_shot_key(), {})
 
     def _update_feedback_tab_badges(self):
+        if not self._viewer_can_ack_feedback():
+            # Only the shot's artist can read a note "for them"; a dot nobody
+            # else could ever clear helps no one.
+            for idx, tab_name in enumerate(self._feedback_tab_order):
+                self.feedback_tabs.setTabText(idx, tab_name)
+            return
         seen = self._seen_feedback_for_current_shot()
         for idx, tab_name in enumerate(self._feedback_tab_order):
             sig = self._feedback_signature_map.get(tab_name, "")
@@ -976,10 +1082,13 @@ class ShotDetailWidget(QWidget):
         tab_name = self._feedback_tab_order[tab_index]
         sig = self._feedback_signature_map.get(tab_name, "")
         seen = self._seen_feedback_for_current_shot()
+        if seen.get(tab_name, "") == sig:
+            return                      # nothing new: the file is not rewritten on every open
         if sig:
             seen[tab_name] = sig
         else:
             seen.pop(tab_name, None)
+        # ponytail: "seen" is kept per machine (the artist's own); a per-user table would follow them.
         self._save_feedback_seen_state()
         self._update_feedback_tab_badges()
 

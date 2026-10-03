@@ -49,3 +49,46 @@ def clear_placeholder_thumbnails(db) -> bool:
     if fixed:
         logger.info("Cleared %d placeholder thumbnail path(s) from tracking_shots.", fixed)
     return True
+
+
+def unrecorded_actual_days(db) -> bool:
+    """
+    Every dashboard save used to write actual_days = 0 for every department,
+    so "not recorded" (NULL) could not exist and Bidding showed 0 actual days
+    for everything. Those zeros are made NULL again; real numbers stay.
+    """
+    from .workplace_schema import _column_exists
+    if not _column_exists(db, "tracking_tasks", "actual_days"):
+        return True
+    return bool(db.execute_update("UPDATE tracking_tasks SET actual_days = NULL WHERE actual_days = 0"))
+
+
+def fill_shot_artist_from_comp(db) -> bool:
+    """
+    The shot's artist used to be filled in from the Comp department every time
+    a project was read. That no longer happens (the two are independent), so
+    shots that only ever showed an artist that way get it written down once -
+    what everybody sees stays the same.
+    """
+    from .workplace_schema import _column_exists
+    artist = "artist" if _column_exists(db, "tracking_tasks", "artist") else "artist_name"
+    rows = db.execute_query(
+        f"SELECT s.id, s.data_json, t.{artist} AS comp_artist FROM tracking_shots s "
+        f"JOIN tracking_tasks t ON t.shot_id = s.id AND t.department = 'comp' "
+        f"WHERE COALESCE(t.{artist}, '') <> ''", fetch="all")
+    if rows is None:
+        return False
+    for row in rows:
+        row = dict(row)
+        raw = row.get("data_json")
+        try:
+            data = json.loads(raw) if isinstance(raw, str) else dict(raw or {})
+        except (TypeError, ValueError):
+            continue
+        if str(data.get("assigned_artist") or "").strip():
+            continue
+        data["assigned_artist"] = row["comp_artist"]
+        if not db.execute_update("UPDATE tracking_shots SET data_json = %s WHERE id = %s",
+                                 (json.dumps(data, default=str), row["id"])):
+            return False
+    return True
