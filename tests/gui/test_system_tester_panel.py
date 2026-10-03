@@ -138,7 +138,8 @@ def test_generator_rules(panel_for, tmp_path, monkeypatch, qtbot):
     monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warned.append(a[2]))
     artist.test_root.setText(str(tmp_path / "gen"))
     artist.spin_count.setValue(10000)
-    artist.combo_size.setCurrentText("50MB")
+    artist.combo_size.setCurrentIndex(artist.combo_size.findData("50MB"))
+    assert artist.combo_size.currentText() == "50 MB"
     assert "500" in artist.lbl_gen_total.text() or "488" in artist.lbl_gen_total.text()
     assert artist.start_generation() is None and "developers" in warned[-1]
 
@@ -150,7 +151,7 @@ def test_generator_rules(panel_for, tmp_path, monkeypatch, qtbot):
     assert tp.free_space_check(tmp_path, 25 * 1024) == (True, False, "")
 
     artist.spin_count.setValue(3)
-    artist.combo_size.setCurrentText("1KB")
+    artist.combo_size.setCurrentIndex(artist.combo_size.findData("1KB"))
     worker = artist.start_generation()
     assert artist.btn_gen.text() == "Stop"
     qtbot.waitUntil(lambda: artist.generation_worker is None, timeout=5000)
@@ -239,21 +240,12 @@ def test_permission_matrix_is_readable(panel_for):
     assert artist[2] == "Set own shot status"
 
 
-def test_config_sandbox_is_in_memory_and_resets(panel_for, tmp_path):
+def test_config_sandbox_is_gone(panel_for):
+    """SYS2-063: the session override split Slate across two server roots; removed."""
     from slate.core.infra.global_config import GlobalConfig
     panel = panel_for()
-    saved = GlobalConfig.get("SERVER_ROOT")
-    try:
-        panel.conf_path.setText(str(tmp_path / "server"))
-        panel.conf_cache.setText(str(tmp_path / "cache"))
-        panel.apply_config_sandbox()
-        assert GlobalConfig.get("SERVER_ROOT") == str(tmp_path / "server")
-        assert GlobalConfig.local_cache_dir() == tmp_path / "cache"
-        assert not panel.sandbox_banner.isHidden()
-        panel.reset_config_sandbox()
-        assert GlobalConfig.get("SERVER_ROOT") == saved and panel.sandbox_banner.isHidden()
-    finally:
-        GlobalConfig.clear_runtime_overrides()
+    assert not hasattr(panel, "conf_path") and not hasattr(panel, "sandbox_banner")
+    assert not hasattr(GlobalConfig, "set_runtime_override")
 
 
 def test_layout_and_wording(panel_for):
@@ -262,6 +254,7 @@ def test_layout_and_wording(panel_for):
         assert isinstance(artist.tabs.widget(i), QScrollArea)
     names = [artist.tabs.tabText(i) for i in range(artist.tabs.count())]
     assert "Deep folders" in names and "Structure (Chaos)" not in names
+    assert "Utilities" not in names                 # SYS2-073: the button sits by the folder
     assert artist.spin_count.width() <= 140
     labels = [w.text() for w in artist.findChildren(QLabel)]
     assert "TESTER PANEL" not in labels
@@ -322,6 +315,131 @@ def test_a_run_that_does_not_fit_says_so(monkeypatch, tmp_path):
     ok, _ask, message = tp.free_space_check(tmp_path, 6 * 1024 ** 3)
     assert not ok and "does not fit" in message and "10%" not in message
     assert "6.0 GB" in message and "5.0 GB" in message
+
+
+# ------------------------------------------------------------- round 2
+def test_a_folder_with_files_is_never_marked(panel_for, tmp_path, monkeypatch, qtbot):
+    """SYS2-061: the panel works in Slate_tester inside it; Delete removes only that."""
+    downloads = tmp_path / "MyDownloads"
+    downloads.mkdir()
+    for i in range(25):
+        (downloads / f"personal_{i}.pdf").write_bytes(b"x")
+    dev = panel_for(["Developer"])
+    dev.test_root.setText(str(downloads))
+    dev.spin_count.setValue(1)
+    dev.combo_size.setCurrentIndex(dev.combo_size.findData("Empty"))
+    dev.start_generation()
+    qtbot.waitUntil(lambda: dev.generation_worker is None, timeout=5000)
+    assert not tp.is_marked(downloads) and tp.is_marked(downloads / tp.WORK_FOLDER)
+    asked = []
+    monkeypatch.setattr(tp.TesterPanel, "_confirm_wipe", lambda self, f, n: asked.append((f, n)) or True)
+    dev.wipe_folder()
+    qtbot.waitUntil(lambda: dev.folder_job is None, timeout=5000)
+    assert asked == [(downloads / tp.WORK_FOLDER, 1)]
+    assert len(list(downloads.glob("personal_*.pdf"))) == 25
+    assert not (downloads / tp.WORK_FOLDER).exists()
+
+
+def test_old_markers_and_libraries_and_shares(tmp_path):
+    """SYS2-061: round-1 markers do not count; library folders and shares are refused."""
+    old = tmp_path / "old"
+    old.mkdir()
+    (old / ".slate_tester").write_text("x")
+    (old / "keep.txt").write_text("x")
+    assert tp.owned_folder(old) is None and tp.claim_folder(old) == old / tp.WORK_FOLDER
+    assert tp.validate_test_folder(str(Path.home() / "Downloads"))[0] is None
+    assert tp.validate_test_folder("\\\\server\\share\\x")[0] is None
+
+
+def test_deep_folders_can_be_deleted(panel_for, tmp_path, monkeypatch, qtbot):
+    """SYS2-064: what the panel made is its own, whatever tool made it."""
+    dev = panel_for(["Developer"])
+    root = tmp_path / "fresh"
+    dev.test_root.setText(str(root))
+    dev.spin_nest.setValue(2)
+    dev.spin_folders.setValue(1)
+    dev.start_structure()
+    qtbot.waitUntil(lambda: dev.structure_worker is None, timeout=5000)
+    assert tp.owned_folder(root) == root
+    warned = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warned.append(a[2]))
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    (plain / "a").write_text("x")
+    dev.test_root.setText(str(plain))
+    assert dev.wipe_folder() is None and warned[-1].startswith("Nothing in")
+
+
+def test_workflow_sim_is_sized_and_gated(panel_for, tmp_path, monkeypatch):
+    """SYS2-062: the size is shown, large runs need a developer, the disk is checked."""
+    tester = panel_for(["Artist"])
+    tester.test_root.setText(str(tmp_path / "wf"))
+    tester.wf_count.setValue(1000)
+    tester.wf_multiscan.setValue(5)
+    tester.wf_size.setCurrentIndex(tester.wf_size.findData("Random"))
+    assert "50,000 files" in tester.lbl_wf_total.text() and "GB" in tester.lbl_wf_total.text()
+    warned = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warned.append(a[2]))
+    assert tester.start_workflow_sim() is None and "developers" in warned[-1]
+    assert not (tmp_path / "wf").exists()
+    dev = panel_for(["Developer"])
+    dev.test_root.setText(str(tmp_path / "wf"))
+    dev.wf_count.setValue(1000)
+    dev.wf_multiscan.setValue(5)
+    dev.wf_size.setCurrentIndex(dev.wf_size.findData("Random"))
+
+    class Usage:
+        total, free = 200 * 1024 ** 3, 100 * 1024 ** 3
+    monkeypatch.setattr(tp.shutil, "disk_usage", lambda p: Usage())
+    assert dev.start_workflow_sim() is None and "does not fit" in warned[-1]
+
+
+def test_workflow_stops_per_file(tmp_path):
+    worker = tp.WorkflowWorker(tmp_path, count=1000, size_strategy="Empty", file_types=[".exr"])
+    worker.requestInterruption = lambda: None
+    worker.isInterruptionRequested = lambda: True
+    messages = []
+    worker.finished_signal.connect(messages.append)
+    worker.run()
+    assert worker.files_created == 0 and "stopped" in messages[0]
+
+
+def test_folder_compare_uses_relative_paths(tmp_path):
+    """SYS2-068."""
+    for shot in ("SH010", "SH020"):
+        (tmp_path / "src" / shot).mkdir(parents=True)
+        (tmp_path / "src" / shot / "v001.exr").write_bytes(b"x")
+    (tmp_path / "dst" / "SH010").mkdir(parents=True)
+    (tmp_path / "dst" / "SH010" / "v001.exr").write_bytes(b"x")
+    worker = tp.ValidationWorker(tmp_path / "src", tmp_path / "dst", verify_db=False, mode="raw")
+    messages = []
+    worker.finished_signal.connect(messages.append)
+    worker.run()
+    assert "Missing: 1" in messages[0] and "SH020/v001.exr" in messages[0]
+
+
+def test_wording_round_2(panel_for):
+    """SYS2-065/067/070/071/072/076."""
+    dev = panel_for(["Developer"])
+    assert tp.plural(1, "file") == "1 file" and tp.plural(2, "file") == "2 files"
+    dev.spin_count.setValue(1)
+    assert dev.lbl_gen_total.text().startswith("1 file,")
+    assert "Random (up to 10 MB)" in [dev.combo_size.itemText(i) for i in range(dev.combo_size.count())]
+    assert "VACUUM" in dev.btn_vac.text() and dev.btn_vac.text() != "Run VACUUM"
+    assert dev.btn_time.text() == "Set modified dates…"
+    labels = " ".join(w.text() for w in dev.findChildren(QLabel))
+    assert "Slate closes" not in labels and "keeps running" in labels
+    assert dev.test_root.cursorPosition() == 0
+    assert dev.log_area.minimumHeight() >= dev.log_area.fontMetrics().lineSpacing() * 8
+
+
+def test_small_files_is_a_generator_preset(panel_for):
+    """SYS2-066 / SYS2-073."""
+    panel = panel_for()
+    panel.preset_small_files()
+    assert panel.spin_count.value() == 1000 and panel.combo_size.currentData() == "1KB"
+    assert panel.generator_types() == [".jpg"]
+    assert not hasattr(panel, "run_thumb_stress")
 
 
 @pytest.fixture(autouse=True)
