@@ -78,7 +78,7 @@ class StitchConfirmDialog(QDialog):
         header = self.tree.header()
         header.setStretchLastSection(False)
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
         header.resizeSection(3, 220)
@@ -105,6 +105,9 @@ class StitchConfirmDialog(QDialog):
         layout.addLayout(buttons)
 
         self._populate()
+        # The reel column fits its names plus a gap before the parts.
+        self.tree.resizeColumnToContents(1)
+        header.resizeSection(1, header.sectionSize(1) + Gate.SPACE_4)
         self.tree.itemChanged.connect(self._item_changed)
         self._validate()
 
@@ -145,7 +148,7 @@ class StitchConfirmDialog(QDialog):
             name_edit.textChanged.connect(lambda *_: self._validate())
             holder = QWidget()
             holder_layout = QHBoxLayout(holder)
-            holder_layout.setContentsMargins(4, 0, 4, 0)
+            holder_layout.setContentsMargins(4, 0, Gate.SPACE_3, 0)
             holder_layout.addWidget(name_edit)
             self.tree.setItemWidget(item, 3, holder)
 
@@ -179,7 +182,10 @@ class StitchConfirmDialog(QDialog):
                 name_edit.setStyleSheet("")
                 continue
             text = name_edit.text().strip()
-            problem = name_problem(text, f"The merged name for {' + '.join(group.parts)}") if text else None
+            parts = ' + '.join(group.parts)
+            # An emptied name is a problem to fix, not silently the proposal again.
+            problem = (name_problem(text, f"The merged name for {parts}") if text
+                       else f"Enter the shot {parts} become.")
             name_edit.setStyleSheet(f"QLineEdit {{ border: 1px solid {Gate.BAD}; }}" if problem else "")
             if problem:
                 out.append(problem)
@@ -204,8 +210,8 @@ class StitchConfirmDialog(QDialog):
         for group, item, name_edit in self._rows:
             if item.checkState(0) != Qt.CheckState.Checked:
                 continue
-            name = name_edit.text().strip() or group.shot_name
-            if name_problem(name):
+            name = name_edit.text().strip()
+            if not name or name_problem(name):
                 continue
             chosen.append(StitchGroup(shot_name=name, parts=list(group.parts), reel=group.reel,
                                       confident=getattr(group, "confident", True)))

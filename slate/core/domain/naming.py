@@ -52,7 +52,7 @@ def name_problem(name, what: str = "A name", max_length: int = MAX_NAME_LENGTH) 
     bad = [c for c in text if c in FORBIDDEN_CHARACTERS or ord(c) < 32]
     if bad:
         shown = _shown(c if ord(c) >= 32 else "a control character" for c in bad)
-        return f"{what} cannot contain {shown}."
+        return f"{what} cannot contain these characters: {shown}"
     if text != text.strip():
         return f"{what} cannot start or end with a space."
     if text.endswith("."):
@@ -82,14 +82,13 @@ def shot_name_problem(name, what: str = "Shot name") -> Optional[str]:
     text = "" if name is None else str(name)
     if not text.strip():
         return f"{what} is empty."
-    if text != text.strip() or " " in text:
-        return f"{what} '{text.strip()}' has spaces; use _ instead."
-    if ".." in text or "/" in text or "\\" in text:
-        return f"{what} '{text}' contains / \\ or .., which would point outside the shot folder."
     if len(text) > SHOT_NAME_MAX:
         return f"{what} '{text[:20]}…' is {len(text)} characters; the limit is {SHOT_NAME_MAX}."
-    if not _SHOT_ALLOWED.match(text):
-        return f"{what} '{text}' can only use letters, digits, _ - and ."
+    # One sentence for every character rule, so the person sees all of them
+    # at once (a name with a space and a '/' used to hear about the space only).
+    if ".." in text or not _SHOT_ALLOWED.match(text):
+        return (f"{what} '{text}' can only use letters, digits, _ - and . "
+                f"and must start with a letter or digit (no spaces, / or ..).")
     # What is left of the file-name rules: Windows device names, a final dot.
     return name_problem(text, what)
 
@@ -137,8 +136,26 @@ def normalise_shot_name(name: str) -> str:
     text = _BRACKETED.sub(" ", raw)
     text = unicodedata.normalize("NFKD", text)
     text = "".join(c for c in text if not unicodedata.combining(c))
+    if is_clean_shot_name(text):
+        return text                      # only accents came off: 'Ünïcode_030' -> 'Unicode_030'
+    text = "".join(_spelled(c) for c in text)
     text = re.sub(r"[^A-Za-z0-9_\-]+", "_", text)
     text = re.sub(r"_+", "_", text).strip("_-")
     if not text:
         return raw
     return text.upper()
+
+
+def _spelled(char: str) -> str:
+    """
+    A letter of another script by its Unicode name, so a Hindi or Cyrillic
+    folder name keeps telling shots apart ('शॉट 010' -> 'SHATTA_010', not a
+    bare '010' that clashes with every other one). Not a transliteration -
+    the pre-flight marks such names for a person to check.
+    """
+    if char.isascii():
+        return char
+    if unicodedata.category(char)[0] == "M":
+        return ""                        # vowel signs and marks
+    words = unicodedata.name(char, "").split(" LETTER ")
+    return words[1].split()[-1] if len(words) == 2 else ""

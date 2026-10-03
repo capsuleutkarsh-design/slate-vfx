@@ -497,19 +497,6 @@ def test_the_lock_names_the_slate_user_and_can_be_cleared(tmp_path):
     lock.acquired = False
 
 
-def test_the_worker_keeps_the_lock_alive(tmp_path, db, monkeypatch):
-    drive = _drive(tmp_path)
-    touched = []
-
-    class Lock:
-        def touch(self):
-            touched.append(1)
-
-    monkeypatch.setattr(structure, "LOCK_TOUCH_SECONDS", 0)
-    _run(drive, tmp_path / "P", lock=Lock())
-    assert touched
-
-
 def test_default_format_folders_are_upper_case():
     """ING-074."""
     from slate.core.infra.config_manager import ConfigManager

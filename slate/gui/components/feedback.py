@@ -297,6 +297,14 @@ class ToastHost(QObject):
                 bottom = min(bottom, status.mapTo(window, QPoint(0, 0)).y())
         except RuntimeError:
             pass
+        # A screen can mark its primary action row (property toastsAbove):
+        # toasts stack above it instead of covering the button.
+        for widget in window.findChildren(QWidget):
+            try:
+                if widget.property("toastsAbove") and widget.isVisible():
+                    bottom = min(bottom, widget.mapTo(window, QPoint(0, 0)).y())
+            except RuntimeError:
+                continue
         return bottom - self.MARGIN
 
     def layout(self):

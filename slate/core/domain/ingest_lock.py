@@ -26,8 +26,9 @@ from typing import Optional
 LOCK_FILENAME = ".ingest.lock"
 
 # A run that has not touched its lock for this long is treated as abandoned -
-# the machine crashed, or the app was killed. Long enough to cover a big
-# delivery, short enough that nobody waits until tomorrow.
+# the machine crashed, or the app was killed. Build & Ingest touches its lock
+# every few minutes while a run is on screen, paused or not, so a live run is
+# never this old.
 STALE_AFTER = timedelta(hours=6)
 
 
@@ -36,6 +37,7 @@ class LockInfo:
     holder: str = ""
     machine: str = ""
     started_at: str = ""
+    stale: bool = False           # not touched for STALE_AFTER: the run has probably died
 
     def describe(self) -> str:
         who = self.holder or "someone"
@@ -104,7 +106,12 @@ class IngestLock:
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
         if self.path.exists() and _is_stale(self.path):
-            logging.warning("Clearing an abandoned ingest lock at %s", self.path)
+            info = _read(self.path)
+            if info.machine and info.machine.lower() != self.machine.lower():
+                # Another machine's lock: a person decides (the screen asks).
+                info.stale = True
+                raise IngestLocked(info)
+            logging.warning("Clearing an abandoned ingest lock of this machine at %s", self.path)
             try:
                 self.path.unlink()
             except OSError:
@@ -178,9 +185,10 @@ def clear_lock(project_root) -> bool:
     """
     Remove a lock left behind by a crashed or killed run.
 
-    Only offered to admins and developers on screen, with who held it and
-    since when, because clearing a live lock lets two ingests mix their
-    deliveries.
+    Offered on screen to the person (or machine) holding it, to admins and
+    developers, and for a lock nobody has touched for STALE_AFTER - always
+    with who held it and since when, because clearing a live lock lets two
+    ingests mix their deliveries.
     """
     path = _lock_path(project_root)
     try:

@@ -143,7 +143,7 @@ def test_sanitize_keeps_the_extension(tmp_path):
     files = _files(tmp_path, ["IMG_1.JPG", "clip_000 take.1001.dpx"])
     rows = _plan(files, sanitize=True).rows
     assert rows[0].new_name == "IMG_1.JPG" and rows[0].status == br.UNCHANGED
-    assert rows[1].new_name == "clip_000_take_1001.dpx"
+    assert rows[1].new_name == "clip_000_take.1001.dpx"      # ING2-056: the frame separator stays
 
 
 def test_find_and_replace_leaves_the_extension_by_default(tmp_path):
@@ -258,3 +258,81 @@ def test_help_page_describes_the_real_undo():
     page = data["rename_tool"]["content"]
     assert "Undo last rename" in page
     assert "undo_rename" not in page and ".bat" not in page
+
+
+# --------------------------------------------------------------- round 2 (ING2-047 ... ING2-064)
+def test_one_file_in_use_renames_nothing(tmp_path, monkeypatch):
+    """ING2-047: all or nothing - a numbered sequence never gets a hole."""
+    import os
+    files = _files(tmp_path, [f"img_{n}.png" for n in range(1, 6)])
+    plan = _plan(files, mode=br.MODE_SEQUENCE, base_name="sh010_v01_", start=1001)
+    real = os.rename
+
+    def locked(a, b):
+        if str(a).endswith("img_2.png"):
+            raise PermissionError(32, "The process cannot access the file because it is being used")
+        return real(a, b)
+
+    monkeypatch.setattr(os, "rename", locked)
+    outcome = br.rename_files(plan.renames)
+    assert outcome.count == 0 and len(outcome.failed) == 1
+    assert sorted(p.name for p in tmp_path.iterdir()) == [f"img_{n}.png" for n in range(1, 6)]
+
+
+def test_conflict_reasons_say_what_is_wrong(tmp_path):
+    """ING2-064 / ING2-055."""
+    a, b = _files(tmp_path, ["a.txt", "b.txt"])
+    row = _plan([a, b], search="a", replace="b").rows[0]
+    assert row.reason == "b.txt already has this name (it is not being renamed)."
+    deep = tmp_path / ("d" * max(10, 200 - len(str(tmp_path))))
+    deep.mkdir(parents=True)
+    (plate,) = _files(deep, ["plate.exr"])
+    row = _plan([plate], search="plate", replace="p" * 80).rows[0]
+    assert row.status == br.CONFLICT and "Windows allows 260" in row.reason
+
+
+def test_sanitize_keeps_the_frame_separator():
+    """ING2-056."""
+    assert br.sanitize("plate.1001") == "plate.1001"
+    assert br.sanitize("my plate v1.final") == "my_plate_v1_final"
+
+
+def test_regex_errors_in_plain_words():
+    """ING2-058."""
+    assert br.plain_regex_error("missing ), unterminated subpattern at position 0") == \
+        "A bracket ( is opened but never closed."
+    assert "group" in br.plain_regex_error("invalid group reference 2 at position 1")
+
+
+def test_journals_are_per_person_forgettable_and_pruned(tmp_path, monkeypatch):
+    """ING2-051 / ING2-050 / ING2-063."""
+    app = tmp_path / "app"
+    a = br.write_journal([(tmp_path / "x", tmp_path / "y")], user="admin", app_dir=app)
+    b = br.write_journal([(tmp_path / "p", tmp_path / "q")], user="artist", app_dir=app)
+    assert br.latest_journal(app, user="admin") == a
+    assert br.latest_journal(app, user="artist") == b
+    assert br.forget(b) and br.latest_journal(app, user="artist") is None
+    assert br.latest_journal(app) == a
+    monkeypatch.setattr(br, "KEEP_JOURNALS", 3)
+    for n in range(5):
+        br.write_journal([(tmp_path / f"o{n}", tmp_path / f"n{n}")], app_dir=app)
+    assert len(list((app / br.JOURNAL_FOLDER).glob("*.json"))) == 3
+
+
+def test_help_content_has_no_control_characters():
+    """ING2-053: \\1 and \\2 are shown, not U+0001 / U+0002."""
+    import re
+    data = json.loads((Path(br.__file__).parents[1] / "help_content.json").read_text(encoding="utf-8"))
+
+    def strings(value):
+        if isinstance(value, dict):
+            for v in value.values():
+                yield from strings(v)
+        elif isinstance(value, list):
+            for v in value:
+                yield from strings(v)
+        elif isinstance(value, str):
+            yield value
+
+    assert not [s[:40] for s in strings(data) if re.search("[\x00-\x08\x0b\x0c\x0e-\x1f]", s)]
+    assert "<code>\\1</code>" in data["rename_tool"]["content"]

@@ -306,6 +306,43 @@ class ConfigManager:
             logging.info(f"User templates file {self.user_templates_file} does not exist yet.")
             return {}
 
+    # Folder templates define the studio's project layout, so they are the
+    # studio's: kept in the database (studio_settings), with this PC's
+    # templates.json as the offline copy. Build & Ingest calls these two.
+    STUDIO_TEMPLATES_KEY = "folder_templates"
+
+    def sync_studio_templates(self, by: str = "") -> bool:
+        """
+        Take the studio's templates from the database (they win over this
+        PC's copy). The first machine after the upgrade shares what it has.
+        False when the database could not be reached - this PC's copy stays.
+        """
+        try:
+            from slate.core.infra.studio_settings import StudioSettings, register_key
+            register_key(self.STUDIO_TEMPLATES_KEY, {})
+            store = StudioSettings()
+            if not store.is_set(self.STUDIO_TEMPLATES_KEY):
+                return self.share_templates(by) if self.user_templates else True
+            studio = store.get(self.STUDIO_TEMPLATES_KEY) or {}
+            if isinstance(studio, dict) and studio != self.user_templates:
+                self.save_templates({**self.default_templates, **studio})
+            return True
+        except Exception as exc:
+            logging.warning("Studio templates not read from the database: %s", exc)
+            return False
+
+    def share_templates(self, by: str = "") -> bool:
+        """Save this PC's user templates as the studio's. False when the database could not take them."""
+        try:
+            from slate.core.infra.studio_settings import StudioSettings, register_key, set_setting
+            register_key(self.STUDIO_TEMPLATES_KEY, {})
+            saved = bool(set_setting(self.STUDIO_TEMPLATES_KEY, dict(self.user_templates), by=by))
+            StudioSettings.invalidate()
+            return saved
+        except Exception as exc:
+            logging.warning("Templates not shared with the studio: %s", exc)
+            return False
+
     def get_available_templates(self) -> List[str]:
         """SECURE: Get list of all available template keys with validation."""
         return [key for key in self.templates.keys() 

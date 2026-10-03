@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from slate.core.domain.naming import MAX_NAME_LENGTH, name_problem
+from slate.core.infra.file_operations import long_path
 
 logger = logging.getLogger(__name__)
 
@@ -154,13 +155,19 @@ def sanitize(text: str) -> str:
     Letters include their accents and vowel signs (Unicode categories L, M,
     N); the old ASCII-only rule wiped Hindi names down to '_01'.
     """
-    text = re.sub(r"[\s.]+", "_", str(text))
+    text = str(text)
+    # The dot before a trailing frame number is a sequence's separator
+    # (plate.1001): kept, or the whole sequence changes its pattern.
+    frame = re.search(r"\.\d+$", text)
+    tail = frame.group(0) if frame else ""
+    text = text[:frame.start()] if frame else text
+    text = re.sub(r"[\s.]+", "_", text)
     kept = []
     for ch in text:
         if ch in "_-" or unicodedata.category(ch)[0] in "LMN":
             kept.append(ch)
     out = re.sub(r"_+", "_", "".join(kept))
-    return out.strip("_")
+    return out.strip("_") + tail
 
 
 def repad(text: str, digits: int) -> str:
@@ -183,6 +190,27 @@ def _replace(text: str, rules: RenameRules) -> str:
     pattern = rules.search if rules.use_regex else re.escape(rules.search)
     replacement = rules.replace if rules.use_regex else rules.replace.replace("\\", "\\\\")
     return re.sub(pattern, replacement, text, flags=flags)
+
+
+_REGEX_WORDS = (
+    ("missing )", "A bracket ( is opened but never closed."),
+    ("unbalanced parenthesis", "A bracket ) is closed that was never opened."),
+    ("unterminated character set", "A [ is opened but never closed."),
+    ("invalid group reference", "Replace with uses a group (\\1, \\2 ...) that Find does not have."),
+    ("unknown group name", "Replace with names a group that Find does not have."),
+    ("nothing to repeat", "*, + or ? has nothing before it to repeat."),
+    ("multiple repeat", "Two repeats (like ** or +*) in a row."),
+    ("bad escape", "A \\ is followed by a letter that means nothing here."),
+)
+
+
+def plain_regex_error(raw: str) -> str:
+    """The regular expression's complaint in words a person can act on (the raw text stays for the tooltip)."""
+    text = str(raw or "")
+    for needle, words in _REGEX_WORDS:
+        if needle in text.lower():
+            return words
+    return text
 
 
 def check_pattern(rules: RenameRules) -> str:
@@ -274,6 +302,9 @@ def plan(files: Iterable, rules: RenameRules) -> RenamePlan:
     # rows are judged one by one.
     claims = Counter(str(path.parent / new).lower() for path, new, _ in proposals)
     held = {str(p).lower() for p in sources}
+    # Rows that keep their own name: a new name landing on one of them is
+    # taken by that file, not shared by "two files" renaming.
+    staying = {str(path.parent / new).lower(): path.name for path, new, _ in proposals if new == path.name}
 
     for path, new, warning in proposals:
         row = RowPlan(path, new, warning=warning)
@@ -287,10 +318,15 @@ def plan(files: Iterable, rules: RenameRules) -> RenamePlan:
         if reason is None and len(new) > MAX_NAME_LENGTH:
             reason = f"Name too long ({len(new)} characters, max {MAX_NAME_LENGTH})."
         target = str(path.parent / new).lower()
+        if reason is None and target in staying:
+            reason = f"{staying[target]} already has this name (it is not being renamed)."
         if reason is None and claims[target] > 1:
-            reason = "Two or more files would take this name."
+            reason = f"{claims[target]} files would take this name."
         if reason is None and (path.parent / new).exists() and target not in held:
             reason = "A file with this name is already in the folder."
+        full = len(str(path.parent / new))
+        if reason is None and full > 259:
+            reason = f"The full path would be {full} characters - Windows allows 260."
         if reason:
             row.status, row.reason, row.warning = CONFLICT, reason, ""
         else:
@@ -327,9 +363,10 @@ def rename_files(pairs: List[Tuple[Path, Path]],
     Rename in two passes: every file to a holding name, then into place.
 
     One pass is order-dependent - renaming file 2 to what file 3 is called
-    either clobbers file 3 or fails. Stopping during the first pass puts every
-    staged file back under its own name, so a cancelled run changes nothing.
-    A pair that would leave its folder is refused outright.
+    either clobbers file 3 or fails. All or nothing: stopping during the first
+    pass, or one file that cannot be staged (open in Nuke or RV), puts every
+    staged file back under its own name - a numbered sequence never gets a
+    hole. A pair that would leave its folder is refused outright.
     """
     outcome = RenameOutcome()
     total = len(pairs)
@@ -355,17 +392,17 @@ def rename_files(pairs: List[Tuple[Path, Path]],
             continue
         holding = _holding_name(old)
         try:
-            os.rename(old, holding)
+            os.rename(long_path(old), long_path(holding))
             staged.append((holding, old, new))
         except OSError as exc:
             logger.warning("Could not stage %s: %s", old, exc)
             outcome.failed.append((old, exc.strerror or str(exc)))
         tell(index, old.name)
 
-    if outcome.cancelled:
+    if outcome.cancelled or outcome.failed:
         for holding, old, _new in staged:
             try:
-                os.rename(holding, old)
+                os.rename(long_path(holding), long_path(old))
             except OSError as exc:  # pragma: no cover - would need a disk to vanish
                 logger.error("Left %s staged as %s: %s", old.name, holding.name, exc)
         return outcome
@@ -374,13 +411,13 @@ def rename_files(pairs: List[Tuple[Path, Path]],
         try:
             if new.exists():
                 raise FileExistsError(f"{new.name} appeared while renaming")
-            os.rename(holding, new)
+            os.rename(long_path(holding), long_path(new))
             outcome.renamed.append((old, new))
         except OSError as exc:
             logger.warning("Could not rename %s to %s: %s", old.name, new.name, exc)
             outcome.failed.append((old, getattr(exc, "strerror", None) or str(exc)))
             try:
-                os.rename(holding, old)
+                os.rename(long_path(holding), long_path(old))
             except OSError:  # pragma: no cover
                 logger.error("Left %s staged as %s", old.name, holding.name)
         tell(total, new.name)
@@ -389,6 +426,8 @@ def rename_files(pairs: List[Tuple[Path, Path]],
 
 # ------------------------------------------------------------- the journal
 JOURNAL_FOLDER = "rename_undo"
+# The newest this many journals are kept; older renames cannot be undone.
+KEEP_JOURNALS = 50
 
 
 def journal_dir(app_dir=None) -> Path:
@@ -438,14 +477,23 @@ def write_journal(renamed: List[Tuple[Path, Path]], user: str = "", app_dir=None
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / f"{record['id']}.json"
         path.write_text(json.dumps(record, indent=1, ensure_ascii=False), encoding="utf-8")
+        for old in sorted(directory.glob("*.json"), reverse=True)[KEEP_JOURNALS:]:
+            try:
+                old.unlink()
+            except OSError:
+                pass
         return path
     except OSError as exc:
         logger.warning("Could not write the rename undo journal: %s", exc)
         return None
 
 
-def latest_journal(app_dir=None) -> Optional[Path]:
-    """The newest rename that has not been undone yet."""
+def latest_journal(app_dir=None, user: Optional[str] = None) -> Optional[Path]:
+    """
+    The newest rename that has not been undone (or forgotten) yet - of
+    `user` when one is given, so a shared Windows login does not offer one
+    person's rename to another.
+    """
     directory = journal_dir(app_dir)
     try:
         candidates = sorted(directory.glob("*.json"), reverse=True)
@@ -456,9 +504,24 @@ def latest_journal(app_dir=None) -> Optional[Path]:
             record = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        if not record.get("undone"):
-            return path
+        if record.get("undone") or record.get("forgotten"):
+            continue
+        if user is not None and str(record.get("user") or "") != user:
+            continue
+        return path
     return None
+
+
+def forget(journal_path) -> bool:
+    """Drop a rename that can no longer be undone, so the one before it is offered."""
+    try:
+        record = read_journal(journal_path)
+        record["forgotten"] = True
+        Path(journal_path).write_text(json.dumps(record, indent=1, ensure_ascii=False), encoding="utf-8")
+        return True
+    except (OSError, ValueError) as exc:
+        logger.warning("Could not forget the rename %s: %s", journal_path, exc)
+        return False
 
 
 def read_journal(path) -> Dict:
@@ -480,6 +543,7 @@ def _journal_pairs(record: Dict) -> List[Tuple[Path, Path]]:
 class UndoResult:
     restored: int = 0
     refused: str = ""
+    cancelled: bool = False
     failed: List[Tuple[Path, str]] = field(default_factory=list)
 
     @property
@@ -487,7 +551,8 @@ class UndoResult:
         return not self.refused and not self.failed
 
 
-def undo(journal_path) -> UndoResult:
+def undo(journal_path, should_stop: Callable[[], bool] = lambda: False,
+         progress: Callable[[int, int, str], None] = None) -> UndoResult:
     """
     Put the names back. Refused - with nothing touched - when the files have
     changed since: a renamed file gone, or its old name taken by a file that
@@ -518,9 +583,12 @@ def undo(journal_path) -> UndoResult:
                           "so nothing was changed.")
         return result
 
-    outcome = rename_files([(new, old) for old, new in pairs])
+    outcome = rename_files([(new, old) for old, new in pairs], should_stop=should_stop, progress=progress)
     result.restored = outcome.count
     result.failed = outcome.failed
+    if outcome.cancelled or not outcome.renamed:
+        result.cancelled = outcome.cancelled
+        return result                 # nothing changed: the rename can still be undone
     record["undone"] = True
     record["undone_at"] = datetime.now().isoformat(timespec="seconds")
     try:

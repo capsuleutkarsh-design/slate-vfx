@@ -119,9 +119,11 @@ class TestAutoScanIngest:
 
         moved = _relative_files(target / "PRJ" / "05_Reels")
 
-        # The stray file made it across...
-        assert any(name.endswith("stray_plate.exr") for name in moved), (
-            f"root-level file was dropped; destination holds: {sorted(moved)}"
+        # The stray file made it across - filed with the client material
+        # (ING2-032: loose files at the top are not a shot named after the drive)...
+        filed = _relative_files(target / "PRJ" / "01_Frm Client")
+        assert any(name.endswith("stray_plate.exr") for name in filed), (
+            f"root-level file was dropped; client folder holds: {sorted(filed)}"
         )
         # ...and the reel/shot hierarchy is untouched by its presence.
         assert "ReelA/SH010/01_Scan/v001/EXR/SH010.0001.exr" in moved

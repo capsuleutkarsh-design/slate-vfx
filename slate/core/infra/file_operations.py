@@ -149,6 +149,7 @@ class SafeFileOperations:
         MOV/ProRes files used to get a size check only). Returns
         (success, message, bytes_copied).
         """
+        landing = None
         try:
             source, destination = Path(source), Path(destination)
             if not SafeFileOperations.exists(source):
@@ -171,24 +172,32 @@ class SafeFileOperations:
                 return False, disk_msg, 0
 
             long_source = long_path(source)
-            long_dest = long_path(destination)
             if os.path.isdir(long_source):
-                shutil.copytree(long_source, long_dest)
+                shutil.copytree(long_source, long_path(destination))
+                landing = destination
             else:
-                shutil.copy2(long_source, long_dest)
+                # Copied under a '.partial' name and put in place only once it
+                # checks out: a copy that dies half-way (share dropped, disk
+                # full) never leaves a truncated plate under the real name.
+                landing = destination.with_name(destination.name + ".partial")
+                shutil.copy2(long_source, long_path(landing))
 
             verification = SafeFileOperations._verify_copy_result(
-                source, destination, source_checksum, source_size
+                source, landing, source_checksum, source_size
             )
 
             if not verification[0]:
-                SafeFileOperations._safe_delete(destination)
+                SafeFileOperations._safe_delete(landing)
                 return False, f"Copy verification failed: {verification[1]}", 0
+            if landing != destination:
+                os.replace(long_path(landing), long_path(destination))
 
             logging.debug(f"[OK] Verified copy: {source} -> {destination}")
             return True, f"Successfully copied {source.name}", source_size
 
         except Exception as e:
+            if landing is not None and landing != destination and SafeFileOperations.exists(landing):
+                SafeFileOperations._safe_delete(landing)
             error_msg = f"Could not copy {source} to {destination}: {str(e)}"
             logging.exception(error_msg, exc_info=True)
             return False, error_msg, 0
