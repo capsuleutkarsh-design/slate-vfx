@@ -19,7 +19,11 @@ class CheckComboBox(QComboBox):
         # Editable only so the closed box can show our own text; typing is off.
         self.setEditable(True)
         self.lineEdit().setReadOnly(True)
-        self.lineEdit().setStyleSheet("background: transparent; border: none;")
+        # No padding of its own: the app sheet gives every QLineEdit 5px 10px,
+        # which pushed the text lower and further right than any other combo.
+        self.lineEdit().setStyleSheet("background: transparent; border: none; padding: 0px;")
+        # Nothing ticked shows the placeholder, in the placeholder colour.
+        self.lineEdit().setPlaceholderText(placeholder)
         self.lineEdit().installEventFilter(self)
         self.view().viewport().installEventFilter(self)
         self.model().dataChanged.connect(self._update_text)
@@ -69,8 +73,8 @@ class CheckComboBox(QComboBox):
 
     def _update_text(self, *_args):
         chosen = self.checked()
-        text = ", ".join(chosen) if chosen else self._placeholder
+        text = ", ".join(chosen)
         if self.lineEdit() is not None:
             self.lineEdit().setText(text)
             self.lineEdit().setCursorPosition(0)
-        self.setToolTip(text)
+        self.setToolTip(text or self._placeholder)

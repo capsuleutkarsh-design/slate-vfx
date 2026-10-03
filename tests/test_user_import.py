@@ -290,3 +290,35 @@ def test_the_dialog_offers_no_admin_role_and_no_default(tmp_path, users):
     dialog.run_import()
     dialog.wait_for_import()
     assert dialog.imported and "asha" in users.get_all_users()
+
+
+# ------------------------------------------------------------ round 2
+
+def test_an_artist_as_reports_to_is_a_problem_in_the_preview(tmp_path, users):
+    """HR2-062: the shared reports_to_problem, for existing and in-file managers."""
+    users.add_user("sup.vikram", "pw1234", ["Supervisor"], "Vikram", "Comp")
+    users.add_user("aarav.sharma", "pw1234", ["Artist"], "Aarav", "Comp")
+    path = _csv(tmp_path / "people.csv", [
+        ["Username", "Display Name", "Reports To", "Role", "Joined"],
+        ["new.one", "New One", "aarav.sharma", "", ""],
+        ["new.two", "New Two", "sup.vikram", "", "2026-10-05"],
+        ["boss.file", "Boss In File", "", "Compositor", ""],
+        ["new.three", "New Three", "boss.file", "", ""],
+    ])
+    plan = user_import.plan_import(path, list(users.get_all_users()), user_manager=users,
+                                   allowed_roles=["Compositor"])
+    rows = {r.username: r for r in plan.rows}
+    assert rows["new.one"].status == "invalid" and "cannot approve" in rows["new.one"].reason
+    assert rows["new.two"].status == "new"
+    assert rows["new.three"].status == "invalid" and "cannot approve" in rows["new.three"].reason
+    assert user_import.field_text("joined_on", rows["new.two"].fields["joined_on"]) == "5 Oct 2026"
+
+
+def test_the_export_says_who_has_left(tmp_path, users):
+    """HR2-066."""
+    users.add_user("kabir.left", "pw1234", ["Artist"], "Kabir", "Comp", last_day="2026-01-15")
+    out = user_import.export_users_csv(users, tmp_path / "users.csv")
+    with open(out, encoding="utf-8-sig", newline="") as handle:
+        rows = {r["Username"]: r for r in csv.DictReader(handle)}
+    assert rows["kabir.left"]["Status"].startswith("Left") and rows["kabir.left"]["Last Day"] == "2026-01-15"
+    assert rows["admin"]["Status"] == "System account"

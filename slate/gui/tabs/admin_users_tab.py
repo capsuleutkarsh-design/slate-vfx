@@ -9,9 +9,9 @@ may grant (UserManager.set_acting_user) and written to the audit log.
 """
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QTableWidget, QTableWidgetItem, QHeaderView, QComboBox, QMessageBox,
-    QDialog, QFormLayout, QLineEdit, QDateEdit, QCheckBox,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QTableWidget, QComboBox, QMessageBox,
+    QDialog, QLineEdit, QDateEdit, QCheckBox,
 )
 from PySide6.QtCore import Qt, QDate
 from PySide6.QtGui import QColor
@@ -144,6 +144,16 @@ class UserDialog(QDialog):
             QDate.currentDate() if not self.editing else self.NOT_SET))
         form.addRow("Joined on", self.joined_input)
 
+        # Clearable, so somebody who left can be brought back: there was no
+        # last-day field at all, and Reactivate pointed here.
+        self.last_day_input = setup_date_edit(QDateEdit())
+        self.last_day_input.setMinimumDate(self.NOT_SET)
+        self.last_day_input.setSpecialValueText("Not set")
+        self.last_day_input.setDate(self._as_qdate(record.get("last_day")) or self.NOT_SET)
+        self.last_day_input.setToolTip("Their last working day. Once it has passed the account "
+                                       "is switched off. Clear it (Not set) for somebody coming back.")
+        form.addRow("Last working day", self.last_day_input)
+
         self.employment_input = QComboBox()
         self.employment_input.addItem("Not recorded", "")
         for kind in EMPLOYMENT_TYPES:
@@ -187,7 +197,7 @@ class UserDialog(QDialog):
         self.location_input.addItem("")
         self.location_input.addItems(_locations())
         self.location_input.setCurrentText(str(record.get("location") or ""))
-        self.location_input.lineEdit().setPlaceholderText("Mumbai, Chennai, Remote...")
+        self.location_input.lineEdit().setPlaceholderText("Mumbai, Chennai, Remote…")
         form.addRow("Location", self.location_input)
 
         note = QLabel(
@@ -254,10 +264,26 @@ class UserDialog(QDialog):
             self._fail("Enter a first password for the new account.")
             return
         manager = self.reports_input.currentData() or ""
-        if manager and hasattr(self.user_manager, "reports_to_problem"):
+        # Only a new choice is checked: the person's current manager may have
+        # left since, and that must not stop a change to their name.
+        if manager and manager.lower() != str(self.record.get("reports_to") or "").lower() \
+                and hasattr(self.user_manager, "reports_to_problem"):
             why = self.user_manager.reports_to_problem(self.username_input.text().strip(), manager)
             if why:
                 self._fail(why)
+                return
+        joined, last = self.joined_input.date(), self.last_day_input.date()
+        if last != self.NOT_SET and joined != self.NOT_SET and last < joined:
+            self._fail("The last working day is before the joining date.")
+            return
+        was = self._as_qdate(self.record.get("last_day"))
+        if last != self.NOT_SET and last < QDate.currentDate() and last != was:
+            if QMessageBox.question(
+                    self, self.windowTitle(),
+                    "%s is in the past, so this switches the account off now. Save?"
+                    % format_date(last.toPython()),
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
                 return
         self.accept()
 
@@ -279,6 +305,8 @@ class UserDialog(QDialog):
 
         joined = self.joined_input.date()
         joined_text = None if joined == self.NOT_SET else joined.toString("yyyy-MM-dd")
+        last = self.last_day_input.date()
+        last_text = None if last == self.NOT_SET else last.toString("yyyy-MM-dd")
         return {
             "username": self.username_input.text().strip(),
             "password": self.pass_input.text() if self.pass_input is not None else "KEEP_OLD",
@@ -289,6 +317,7 @@ class UserDialog(QDialog):
             "employment": value(self.employment_input.currentData() or "", "employment"),
             "reports_to": value(self.reports_input.currentData() or "", "reports_to"),
             "location": value(self.location_input.currentText().strip(), "location"),
+            "last_day": value(last_text, "last_day"),
         }
 
 
@@ -388,13 +417,14 @@ class UsersPanel(QWidget):
         self.reset_btn = make_button("Reset password", "secondary", on_click=self.reset_password)
         # Deactivate, not delete: a person who leaves keeps their attendance
         # and leave history. Delete is only for an account with no history.
+        self._deactivate_tip = ("Switch the account off. Their history is kept and they disappear "
+                                "from lists and pickers. Can be undone with Reactivate.")
+        self._delete_tip = "Only for an account made by mistake, with no history at all."
         self.deactivate_btn = make_button(
-            "Deactivate", "danger", on_click=self.deactivate_user,
-            tooltip="Switch the account off. Their history is kept and they disappear from "
-                    "lists and pickers. Can be undone with Reactivate.")
+            "Deactivate", "danger", on_click=self.deactivate_user, tooltip=self._deactivate_tip)
         self.reactivate_btn = make_button("Reactivate", "secondary", on_click=self.reactivate_user)
         self.delete_btn = make_button("Delete…", "ghost", on_click=self.delete_user,
-                                      tooltip="Only for an account made by mistake, with no history at all.")
+                                      tooltip=self._delete_tip)
         self._needs_selection = [self.edit_btn, self.reset_btn, self.deactivate_btn,
                                  self.reactivate_btn, self.delete_btn]
         for button in self._needs_selection:
@@ -453,13 +483,17 @@ class UsersPanel(QWidget):
         username = self._selected_username()
         active = self._selected_active()
         protected = username.lower() in PROTECTED_USERNAMES if username else False
+        me = str(getattr(self.user_manager, "acting_user", "") or "").lower()
+        yours = bool(username) and username.lower() == me
         self.edit_btn.setEnabled(bool(username))
         self.reset_btn.setEnabled(bool(username))
-        self.deactivate_btn.setEnabled(bool(username) and bool(active) and not protected)
+        self.deactivate_btn.setEnabled(bool(username) and bool(active) and not protected and not yours)
         self.reactivate_btn.setEnabled(bool(username) and active is False)
-        self.delete_btn.setEnabled(bool(username) and not protected)
-        if protected:
-            self.deactivate_btn.setToolTip("%s is a system account." % username)
+        self.delete_btn.setEnabled(bool(username) and not protected and not yours)
+        why = ("%s is a system account." % username if protected else
+               "This is your own account." if yours else "")
+        self.deactivate_btn.setToolTip(why or self._deactivate_tip)
+        self.delete_btn.setToolTip(why or self._delete_tip)
 
     def import_users(self):
         from slate.gui.dialogs.import_users_dialog import ImportUsersDialog
@@ -501,14 +535,11 @@ class UsersPanel(QWidget):
                 role_str = ", ".join(str(i) for i in roles if i) if isinstance(roles, list) else str(roles or "")
                 joined = data.get('joined_on')
                 active = bool(data.get('active', True))
-                if active:
-                    status = "Active"
-                elif data.get('deactivated_on'):
-                    status = "Deactivated " + format_date(data.get('deactivated_on'))
-                else:
-                    status = "Left " + format_date(data.get('last_day'))
+                status, tone = self.user_manager.account_status(dict(data, username=username))
                 manager = str(data.get('reports_to') or "")
-                no_approver = active and (not manager or manager.lower() not in self._approvers)
+                # System accounts are not people: no joining date or manager to chase.
+                person = active and not data.get('is_service')
+                no_approver = person and (not manager or manager.lower() not in self._approvers)
                 dim = Gate.TEXT_DIM if not active else None
                 cells = [
                     make_item(username, key=username, foreground=dim),
@@ -519,17 +550,18 @@ class UsersPanel(QWidget):
                               sort_value=str(joined)[:10] if joined else None,
                               # A missing joining date is not cosmetic -
                               # accrual counts from it.
-                              foreground=dim or (None if joined else Gate.WARN),
-                              tooltip=None if joined else "No joining date, so leave accrues from 1 January"),
+                              foreground=dim or (None if joined or not person else Gate.WARN),
+                              tooltip=None if joined or not person else
+                              "No joining date, so leave accrues from 1 January"),
                     make_item(str(data.get('employment') or "-"), foreground=dim),
                     make_item(people.display_name(manager) if manager else "-",
                               tooltip=(manager or "") + (" - cannot approve leave; their leave goes to HR"
                                                          if manager and no_approver else
                                                          ("No manager; their leave goes to HR"
-                                                          if not manager else "")),
+                                                          if not manager and person else "")),
                               foreground=dim or (Gate.WARN if no_approver else None)),
                     make_item(str(data.get('location') or "-"), foreground=dim),
-                    make_item(status, foreground=dim),
+                    make_item(status, foreground=dim or (Gate.WARN if tone == "warn" else None)),
                 ]
                 cells[0].setData(Qt.ItemDataRole.UserRole + 1, active)
                 for c, item in enumerate(cells):
@@ -552,6 +584,7 @@ class UsersPanel(QWidget):
                 values["display_name"] or values["username"], values["job_title"],
                 joined_on=values["joined_on"], employment=values["employment"],
                 reports_to=values["reports_to"], location=values["location"],
+                last_day=values["last_day"],
             )
         except PermissionError as refused:
             QMessageBox.warning(self, "Add user", str(refused))
@@ -574,12 +607,22 @@ class UsersPanel(QWidget):
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         values = dialog.payload()
+        # Your own Admin / HR role, unticked by accident, is the way out of
+        # this screen. The role editor already asked; this dialog did not.
+        warning = self.user_manager.lockout_warning(username, values["roles"]) \
+            if hasattr(self.user_manager, "lockout_warning") else ""
+        if warning and QMessageBox.warning(
+                self, "You will lose access", warning,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
         try:
             success = self.user_manager.update_user(
                 username, roles=values["roles"],
                 display_name=values["display_name"] or None, job_title=values["job_title"],
                 joined_on=values["joined_on"], employment=values["employment"],
                 reports_to=values["reports_to"], location=values["location"],
+                last_day=values["last_day"],
             )
         except PermissionError as refused:
             QMessageBox.warning(self, "Edit user", str(refused))
@@ -597,68 +640,71 @@ class UsersPanel(QWidget):
     def reset_password(self):
         username = self._selected_username()
         if not username:
-            QMessageBox.warning(self, "Selection Error",
-                                "Please select a user to reset password.")
             return
-
         dialog = QDialog(self)
-        dialog.setWindowTitle(f"Reset Password for {username}")
-        dialog.setStyleSheet(f"QDialog {{ background-color: {Gate.RAISED}; }}")  # the dialog only: without a selector every field in it took this background
-        layout = QFormLayout(dialog)
-
+        dialog.setWindowTitle("Reset password")
+        dialog.setObjectName("resetDialog")
+        dialog.setStyleSheet(f"QDialog#resetDialog {{ background-color: {Gate.RAISED}; }}")
+        dialog.setMinimumWidth(380)
+        root = QVBoxLayout(dialog)
+        form = form_layout()
+        root.addLayout(form)
+        form.addRow("Person", QLabel(people.label(username)))
         pass_input = QLineEdit()
         pass_input.setEchoMode(QLineEdit.EchoMode.Password)
-        layout.addRow("New Password:", pass_input)
-
-        btn_box = QHBoxLayout()
-        save_btn = QPushButton("Reset")
-        save_btn.setStyleSheet(f"background-color: {Gate.BAD}; font-weight: bold; padding: 4px;")
-        save_btn.clicked.connect(dialog.accept)
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.clicked.connect(dialog.reject)
-        btn_box.addWidget(save_btn)
-        btn_box.addWidget(cancel_btn)
-        layout.addRow(btn_box)
-
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            p = pass_input.text()
-            if not p:
-                QMessageBox.warning(self, "Error", "Password cannot be empty.")
-                return
-            try:
-                curr_user = self.users.get(username, {})
-                success = self.user_manager.add_user(
-                    username, p,
-                    curr_user.get("roles", ["Artist"]),
-                    curr_user.get("display_name", username),
-                    curr_user.get("job_title", ""),
-                )
-                if success:
-                    # A password an admin set is not forced to change, even for
-                    # somebody imported who never signed in with the first one.
-                    self.user_manager.set_must_change_password(username, False)
-                    QMessageBox.information(self, "Success",
-                                            f"Password reset for '{username}'.")
-                else:
-                    QMessageBox.warning(self, "Error",
-                                        f"Failed to reset password for '{username}'.")
-            except PermissionError as refused:
-                QMessageBox.warning(self, "Reset password", str(refused))
-            except Exception as e:
-                QMessageBox.warning(self, "Reset password", f"The password could not be reset: {e}")
+        form.addRow("New password", pass_input)
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        buttons.addWidget(make_button("Cancel", "ghost", on_click=dialog.reject))
+        buttons.addWidget(make_button("Reset password", "primary", on_click=dialog.accept))
+        root.addLayout(buttons)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        # Only the password: it went through add_user, which blanked the
+        # picture and was audited as 'Updated roles'.
+        try:
+            ok, message = self.user_manager.set_password(username, pass_input.text())
+        except PermissionError as refused:
+            ok, message = False, str(refused)
+        except Exception as e:
+            ok, message = False, f"The password could not be reset: {e}"
+        if ok:
+            QMessageBox.information(self, "Reset password", message)
+        else:
+            QMessageBox.warning(self, "Reset password", message)
 
     def deactivate_user(self):
         username = self._selected_username()
         if not username:
             return
-        reply = QMessageBox.question(
-            self, "Deactivate",
-            f"Deactivate {people.label(username)}?\n\nTheir attendance, leave and other history "
-            "are kept. They disappear from lists and pickers. You can reactivate them later.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No)
-        if reply != QMessageBox.StandardButton.Yes:
+        kept = ("Their attendance, leave and other history are kept. They disappear from "
+                "lists and pickers. You can reactivate them later.")
+        blocking = self.user_manager.open_items(username, include_reports=False)
+        if blocking:
+            QMessageBox.warning(self, "Deactivate", "%s still has %s. Handle those first, then "
+                                "deactivate the account." % (people.label(username), "; ".join(blocking)))
             return
+        team = self.user_manager.reports_of(username)
+        if team:
+            # A supervisor's team and the leave waiting on them, moved in the
+            # same step - deactivating left 101 people with nobody to approve.
+            new_manager = self._ask_new_manager(username, kept)
+            if new_manager is None:
+                return
+            moved, problems = self.user_manager.move_reports(username, new_manager)
+            if problems:
+                self.load_data()
+                QMessageBox.warning(self, "Deactivate", "%s moved, but not:\n\n%s\n\n%s is still "
+                                    "active." % (people.plural(moved, "person", "people"),
+                                                 "\n".join(problems[:10]), people.label(username)))
+                return
+        else:
+            reply = QMessageBox.question(
+                self, "Deactivate", f"Deactivate {people.label(username)}?\n\n{kept}",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if reply != QMessageBox.StandardButton.Yes:
+                return
         ok, message = self.user_manager.deactivate_user(username)
         if ok:
             self.load_data()
@@ -666,11 +712,56 @@ class UsersPanel(QWidget):
         else:
             QMessageBox.warning(self, "Deactivate", message)
 
+    def _ask_new_manager(self, username, kept):
+        """Who a leaving supervisor's team reports to from now on: a username, "" (HR) or None (cancel)."""
+        team = self.user_manager.reports_of(username)
+        items = self.user_manager.open_items(username)
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Deactivate")
+        dialog.setObjectName("moveDialog")
+        dialog.setStyleSheet(f"QDialog#moveDialog {{ background-color: {Gate.RAISED}; }}")
+        dialog.setMinimumWidth(460)
+        root = QVBoxLayout(dialog)
+        text = QLabel("%s has %s.\n\nMove their team to somebody else before the account is "
+                      "switched off. Leave waiting on them follows the team.\n\n%s"
+                      % (people.label(username), " and ".join(items), kept))
+        text.setWordWrap(True)
+        root.addWidget(text)
+        form = form_layout()
+        choice = QComboBox()
+        choice.addItem("Nobody (their leave goes to HR)", "")
+        for name in self.user_manager.approvers():
+            if name.lower() != username.lower():
+                choice.addItem(people.label(name), name)
+        form.addRow("New manager", choice)
+        root.addLayout(form)
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        buttons.addWidget(make_button("Cancel", "ghost", on_click=dialog.reject))
+        buttons.addWidget(make_button("Move %s and deactivate" % people.plural(len(team), "person", "people"),
+                                      "danger", on_click=dialog.accept))
+        root.addLayout(buttons)
+        self._move_choice = choice                 # for tests
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return choice.currentData() or ""
+
     def reactivate_user(self):
         username = self._selected_username()
         if not username:
             return
-        ok, message = self.user_manager.reactivate_user(username)
+        # Somebody who left (last day passed) only comes back with that day
+        # cleared - asked here, in the same step.
+        past = self.user_manager.past_last_day(username)
+        if past:
+            if QMessageBox.question(
+                    self, "Reactivate",
+                    "%s's last working day was %s. Reactivate them and clear that last day?"
+                    % (people.label(username), format_date(past)),
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+                return
+        ok, message = self.user_manager.reactivate_user(username, clear_last_day=bool(past))
         if ok:
             self.load_data()
             QMessageBox.information(self, "Reactivate", message)
