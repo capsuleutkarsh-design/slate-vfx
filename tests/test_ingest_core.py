@@ -573,3 +573,28 @@ def test_dry_and_real_runs_count_the_same_new_folders_with_the_lock(tmp_path, db
     lock.release()
     assert lock.created_folder
     assert dry.folders_created == real.folders_created
+
+
+def test_the_report_and_a_rerun_count_shots_like_the_preflight(tmp_path, db):
+    """NEW-ingest-2 (round 3): ScanA/ScanB and stitch parts are one shot in every count."""
+    drive = tmp_path / "drive"
+    _plates(drive, "REEL_01/SH_010")
+    _plates(drive, "REEL_01/SH_9990_A", name="p")
+    _plates(drive, "REEL_01/SH_9990_B", name="q")
+    _plates(drive, "REEL_02/SH_050_ScanA", name="s")
+    _plates(drive, "REEL_02/SH_050_ScanB", name="s", body=b"other")
+    target = tmp_path / "P"
+    survey = isv.survey_drive(drive)
+    mapping = apply_groups([], survey.stitch_groups)
+    worker, _ = _run(drive, target, survey=survey, stitch_mapping=mapping)
+    report = build_report(worker, "PRJ", drive)
+    assert report.shot_count == 3 and report.to_dict()["totals"]["shots"] == 3
+    assert report.headline().startswith("3 shot(s)")
+
+    again = isv.survey_drive(drive)
+    again.mark_unchanged(target / "PRJ" / "05_Reels", stitch_mapping=mapping)
+    assert len({(s.reel, again.destination_of(s, mapping)) for s in again.shots if s.unchanged_from}) == 3
+    second, _ = _run(drive, target, survey=again, stitch_mapping=mapping)
+    second_report = build_report(second, "PRJ", drive)
+    assert second_report.distinct_shots(second.skipped_shots) == 3
+    assert second_report.to_dict()["totals"]["unchanged_shots"] == 3

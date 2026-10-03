@@ -525,7 +525,10 @@ class FolderCreationWorker(QThread):
             if shot.skip:
                 reason = (f"identical to {shot.unchanged_from} already in the project"
                           if shot.unchanged_from else "left out in the pre-flight")
-                self.skipped_shots.append({"reel": shot.reel, "shot": shot.name,
+                # Recorded under the shot it would have become (the merged
+                # name for a stitch part), so it is counted like every shot.
+                self.skipped_shots.append({"reel": shot.reel,
+                                           "shot": survey.destination_of(shot, self.stitch_mapping),
                                            "source": shot.source_name, "reason": reason})
                 self.log_signal.emit(f"[SKIP] {shot.source_name}: {reason}")
                 continue
