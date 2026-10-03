@@ -1,16 +1,9 @@
 """
-Slate - MAIN WINDOW
-=========================
-The primary entry point for the GUI.
-Manages tabs, workflow modes, global settings, and styling.
+Slate - the main window.
 
-FEATURES:
-- Dual Workflow Mode (Standard vs Auto-Scan)
-- Professional Dark Theme Loading
-- Integrated Reporting and Backup tools
-- NEW: Stock Asset Viewer (Proxy Workflow)
-- PowerRename Utility
-- Offline Update System
+The header, the sidebar of screens this person may open, the footer, keyboard
+shortcuts, the command palette, Diagnostics, sign-out, and the RV review
+listener. The screens themselves are built by main_window_builder.
 """
 
 import sys
@@ -83,6 +76,14 @@ SHORTCUTS = (
     ("F11", "Full screen on or off", "toggle_fullscreen", ""),
     ("Ctrl+Shift+S", "Open Settings", "show_settings_tab", ""),
     ("Ctrl+Shift+D", "Diagnostics: version, database and shared folder", "show_runtime_diagnostics", ""),
+)
+
+
+# Keys that work inside a window rather than everywhere - listed on the sheet too.
+OTHER_KEYS = (
+    ("\u2191 \u2193  Tab", "In the palette: move, or fill in the highlighted entry", "", ""),
+    ("Ctrl+F", "In Help: search the pages", "", ""),
+    ("Enter / Esc", "In a window: the main button / close it", "", ""),
 )
 
 
@@ -384,31 +385,34 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
                 )
                 return
 
+            # Only somebody who may change shots in the dashboard may set a
+            # verdict from RV - an artist reviewing their own version could
+            # otherwise mark it Approved.
+            can_edit = getattr(tab, "_user_can_edit", None)
+            if not (callable(can_edit) and can_edit()):
+                self.show_feedback(
+                    f"RV: {shot.shot_name} was not marked {status} - a supervisor or "
+                    "coordinator sets review verdicts in Slate.", "warning", 8000)
+                return
+
+            # A pending change in the dashboard, like any other edit: it shows
+            # in "Save N changes", can be undone, and is saved by the person.
+            # (It used to call a save method the dashboard does not have, and
+            # every verdict ended as "could not be saved - check your permissions".)
             project = getattr(tab, "current_project", None)
-            apply_feedback(
-                shot, feedback,
-                project_root=getattr(project, "folder_base", "") or None,
-                folder_resolver=getattr(tab, "_shot_folder_resolver", None),
-            )
-
-            saved = False
-            if hasattr(tab, "on_shot_save"):
-                try:
-                    tab.on_shot_save(shot)
-                    saved = True
-                except Exception as exc:
-                    logging.exception("Could not save RV verdict: %s", exc)
-
-            if saved:
-                self.show_status(
-                    f"RV: {shot.shot_name} marked {status} and saved.",
-                    level, 8000
-                )
+            applied = tab.table_model.apply_edit(
+                [shot], lambda s: apply_feedback(
+                    s, feedback,
+                    project_root=getattr(project, "folder_base", "") or None,
+                    folder_resolver=getattr(tab, "_shot_folder_resolver", None)),
+                f"{shot.shot_name} RV verdict")
+            if applied:
+                self.show_feedback(
+                    f"RV: {shot.shot_name} marked {status}. Not saved yet - save it in "
+                    "the VFX Dashboard.", level, 8000,
+                    action=("Undo", getattr(tab, "undo_last_edit", None)))
             else:
-                self.show_status(
-                    f"RV: {shot.shot_name} marked {status}, but it could not "
-                    "be saved - check your permissions.", "warning", 8000
-                )
+                self.show_feedback(f"RV: nothing changed on {shot.shot_name}.", "info", 4000)
 
         except Exception as e:
             logging.error(f"Error handling RV feedback: {e}")
@@ -506,12 +510,6 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
             telemetry.track_event("tab_switched", {"tab": tab_text})
         except Exception as e:
             logging.debug(f"Telemetry tracking failed: {e}")
-
-    def set_cinematic_mode(self, enabled: bool):
-        """
-        Disabled: Hiding the sidebar permanently traps the user on the Home tab.
-        """
-        pass
 
     def logout_user(self):
         """Sign out and show the sign-in window again (same application)."""
@@ -616,29 +614,6 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
             return None
         return tc.get_or_create_tab(idx)
 
-    def new_project(self):
-        reply = QMessageBox.question(
-            self, 
-            "New Project", 
-            "Start a new project?\nThis will clear current input fields.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            cleared = 0
-            for label in ("Build & Ingest",):
-                tab = self._get_tab_instance(label, create=False)
-                if tab and hasattr(tab, "clear_all"):
-                    try:
-                        tab.clear_all()
-                        cleared += 1
-                    except Exception as e:
-                        logging.debug(f"New project clear failed for {label}: {e}")
-
-            if cleared:
-                self.status_bar.showMessage("New project started", 3000)
-            else:
-                self.status_bar.showMessage("No loaded workflow tabs to clear", 3000)
-
     def on_templates_refreshed(self):
         """Called when Settings Tab requests a template refresh."""
         try:
@@ -733,6 +708,8 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
             )
             return
 
+        if self.user_data.get("is_service"):
+            return              # admin / tester are not people with a working day
         username = self.user_data.get('user_id', self.user_data.get('username'))
         if not username:
             self.attendance_status_signal.emit(
@@ -777,7 +754,8 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
                         time.sleep(2)
                         
                 if not self.is_closing():
-                    self.signal.emit("Attendance auto-log failed. Please use Attendance tab.", "warning", 6000)
+                    self.signal.emit("Could not punch you in automatically - punch in on Home "
+                                     "or Attendance.", "warning", 6000)
                 if last_error:
                     logging.error(f"Attendance failed after retries: {last_error}")
 
@@ -812,14 +790,11 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         if hasattr(self, 'worker_manager'):
             self.worker_manager.start_workers()
         
-        # Initiate cinematic mode by default for VFX, Ops, and All (both VFX and Ops have cinematic Home!)
-        self.set_cinematic_mode(True)
         if self.user_has_navigated():
             # They have already opened something: leave them there.
             logging.info("Start-up: staying on %s - opened before start-up finished",
                          self.tab_coordinator.get_current_tab_name())
         elif not self._switch_to_tab_label("Home"):
-            self.set_cinematic_mode(False)
             if getattr(self, "app_mode", "all") == "ops":
                 if not self._switch_to_tab_label("Attendance"):
                     if hasattr(self, "tab_coordinator") and self.tab_coordinator.nav_items:
@@ -829,14 +804,6 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
                     self.switch_to_tab_index(0)
         
         self._startup_complete = True
-        
-        # Safety Check: If Home failed to load, disable cinematic mode fallback to prevent UI trap
-        if "Home" not in self.tab_coordinator.tab_instances:
-            logging.warning("Home tab failed to load. Disabling cinematic mode fallback to prevent UI trap.")
-            self.set_cinematic_mode(False)
-        self.idle_timer = QTimer(self)
-        self.idle_timer.timeout.connect(self.check_system_idle)
-        self.idle_timer.start(60000) # Check every minute
 
         # Start Database Monitor
         self.db_monitor = DatabaseMonitor(interval_sec=5)
@@ -872,39 +839,10 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         if hasattr(self, "header_builder") and hasattr(self.header_builder, "set_sync_available"):
             self.header_builder.set_sync_available(active_mode == "sqlite" and fallback_used)
 
-        self._refresh_system_health_strip(status)
-
         if show_fallback_warning and fallback_used and not self._db_fallback_warned:
             self._db_fallback_warned = True
-            requested_mode = str(status.get("requested_mode", "postgres"))
-            msg = (
-                f"Database fallback active: requested {requested_mode}, using {active_mode}. "
-                "Running in LOCAL MODE (central sync features limited)."
-            )
-            self.show_status(msg, "warning", 9000)
-
-    def _refresh_system_health_strip(self, status: Optional[dict] = None):
-        """Refresh compact runtime health strip in header."""
-        if not hasattr(self, "header_builder") or not hasattr(self.header_builder, "set_system_health_status"):
-            return
-        status = status or self._get_db_runtime_status_cached()
-
-        server_root_value = str(GlobalConfig.get("SERVER_ROOT", "")).strip()
-        server_root = Path(server_root_value) if server_root_value else None
-        server_root_ok = bool(server_root and server_root.exists() and server_root.is_dir())
-        exr_enabled = bool(GlobalConfig.exr_loading_enabled())
-        active_mode = str(status.get("active_mode", "")).lower()
-        fallback_used = bool(status.get("fallback_used", False))
-        sync_enabled = active_mode == "postgres" and not fallback_used
-
-        try:
-            self.header_builder.set_system_health_status(
-                server_root_ok=server_root_ok,
-                exr_enabled=exr_enabled,
-                sync_enabled=sync_enabled,
-            )
-        except Exception as exc:
-            logging.debug("Health strip update skipped: %s", exc)
+            from .login_dialog import OFFLINE_TEXT
+            self.show_status(OFFLINE_TEXT, "warning", 9000)
 
     def _get_db_runtime_status_cached(self) -> dict:
         if self._db_runtime_status_cache:
@@ -922,75 +860,44 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         fallback_used = bool(status.get("fallback_used", False))
         return active_mode == "sqlite" and fallback_used
 
-    def diagnostics_text(self) -> str:
+    def diagnostics_text(self, reachable=None) -> str:
         """
-        What IT asks for, in plain words: version, database, shared folder.
-        No passwords or other credentials, ever.
+        What IT asks for: Workspace Info's own fact sheet (one list, so a
+        ticket says the same whichever of the two somebody opened), plus any
+        database problem at start-up. No passwords or other credentials, ever.
+        reachable: whether the shared folder answered (None: still checking).
         """
-        status = self._get_db_runtime_status_cached()
-        active_mode = str(status.get("active_mode", "unknown")).lower()
-        fallback_used = bool(status.get("fallback_used", False))
-        bootstrap_error = status.get("bootstrap_error")
-
-        server_root_value = str(GlobalConfig.get("SERVER_ROOT", "")).strip()
-        server_root = Path(server_root_value) if server_root_value else None
-        server_root_ok = bool(server_root and server_root.exists() and server_root.is_dir())
-        exr_enabled = bool(GlobalConfig.exr_loading_enabled())
-
-        def yes(flag):
-            return "Yes" if flag else "No"
-
-        if active_mode == "postgres" and not fallback_used:
-            database = "Studio database (PostgreSQL)"
-        elif fallback_used:
-            database = "This machine's local copy (SQLite) - the studio database could not be reached"
-        else:
-            database = active_mode.title() or "Unknown"
-        host = str(GlobalConfig.get("db_host", "") or "").strip()
-        port = str(GlobalConfig.get("db_port", "") or "").strip()
-        name = str(GlobalConfig.get("db_name", "") or "").strip()
-        where = ":".join(p for p in (host, port) if p)
-        if name:
-            where = f"{where} / {name}" if where else name
-
-        lines = [
-            f"Slate version: {APP_VERSION} ({getattr(self, 'suite_title', 'Slate')})",
-            f"Signed in as: {getattr(self, 'user_display_name', '')} ({getattr(self, 'current_user', '')})",
-            f"Role: {getattr(self, 'user_role', '')}",
-            "",
-            f"Database: {database}",
-            f"Database server: {where or 'not set'}",
-            f"Working offline (local mode): {yes(fallback_used)}",
-            "",
-            f"Shared folder: {server_root_value or 'not set'}",
-            f"Shared folder reachable: {yes(server_root_ok)}",
-            f"EXR previews: {'On' if exr_enabled else 'Off'}",
-        ]
-        if bootstrap_error:
-            lines += ["", f"Database problem at start-up: {bootstrap_error}"]
-        return "\n".join(lines)
+        from .plugins.workspace_info_plugin import facts_text, workstation_facts
+        text = facts_text(workstation_facts(
+            {"user_data": self.user_data, "main_window": self}, reachable))
+        error = self._get_db_runtime_status_cached().get("bootstrap_error")
+        if error:
+            text += f"\n\nDatabase problem at start-up: {error}"
+        return text
 
     def show_runtime_diagnostics(self):
         """Diagnostics (Ctrl+Shift+D): the facts above, with a Copy button for a ticket."""
         from PySide6.QtWidgets import QPlainTextEdit
         from .core.controls import make_button
-        text = self.diagnostics_text()
+        from .plugins.workspace_info_plugin import check_shared_folder
         dialog = QDialog(self)
         dialog.setWindowTitle("Diagnostics")
-        dialog.setMinimumSize(520, 320)
+        dialog.setMinimumSize(560, 340)
         layout = QVBoxLayout(dialog)
         intro = QLabel("Copy this into an IT ticket if something is not working.")
         intro.setWordWrap(True)
         layout.addWidget(intro)
-        view = QPlainTextEdit(text)
+        view = QPlainTextEdit(self.diagnostics_text())
         view.setReadOnly(True)
+        # Long paths scroll rather than break in the middle of a word.
+        view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         layout.addWidget(view, 1)
         row = QHBoxLayout()
         row.addStretch(1)
         copy_button = make_button("Copy", "secondary")
 
         def copy():
-            QApplication.clipboard().setText(text)
+            QApplication.clipboard().setText(view.toPlainText())
             copy_button.setText("Copied")
 
         copy_button.clicked.connect(copy)
@@ -999,6 +906,9 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         row.addWidget(close_button)
         layout.addLayout(row)
         self._diagnostics_dialog = dialog
+        # The shared folder is checked off the UI thread: an unreachable share
+        # froze the window for the network timeout.
+        check_shared_folder(lambda ok: view.setPlainText(self.diagnostics_text(ok)), owner=dialog)
         dialog.exec()
 
     def _build_sync_disabled_tab(self, title: str, message: str) -> QWidget:
@@ -1026,15 +936,6 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         layout.addStretch(1)
         return panel
 
-    def check_system_idle(self):
-        try:
-            from ..core.infra.idle_monitor import IdleMonitor
-            monitor = IdleMonitor()
-            idle_sec = monitor.get_idle_duration()
-            if idle_sec > 600: 
-                logging.debug(f"System Idle: {idle_sec:.1f}s")
-        except Exception as e:
-            logging.debug(f"Idle monitor check failed: {e}")
 
 
 
@@ -1057,45 +958,6 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         screen = self.screen().availableGeometry().center()
         frame_geo.moveCenter(screen)
         self.move(frame_geo.topLeft())
-
-    def _update_sidebar_responsive_width(self):
-        """Reduce sidebar pressure on narrow windows to prevent tab overlap and animate transition smoothly."""
-        if not hasattr(self, "sidebar_container") or self.sidebar_container is None:
-            return
-
-        if getattr(self, "sidebar_collapsed", False):
-            target = 64
-        else:
-            width = self.width()
-            if width < 1280:
-                target = 180
-            elif width < 1500:
-                target = 205
-            else:
-                target = 240
-                
-        if self.sidebar_container.width() != target:
-            # Stop existing animation if running
-            if hasattr(self, "_sidebar_anim") and self._sidebar_anim.state() == QParallelAnimationGroup.Running:
-                self._sidebar_anim.stop()
-                
-            self._sidebar_anim = QParallelAnimationGroup(self)
-            
-            anim_min = QPropertyAnimation(self.sidebar_container, b"minimumWidth")
-            anim_min.setDuration(250)
-            anim_min.setEasingCurve(QEasingCurve.InOutQuad)
-            anim_min.setStartValue(self.sidebar_container.minimumWidth())
-            anim_min.setEndValue(target)
-            
-            anim_max = QPropertyAnimation(self.sidebar_container, b"maximumWidth")
-            anim_max.setDuration(250)
-            anim_max.setEasingCurve(QEasingCurve.InOutQuad)
-            anim_max.setStartValue(self.sidebar_container.maximumWidth())
-            anim_max.setEndValue(target)
-            
-            self._sidebar_anim.addAnimation(anim_min)
-            self._sidebar_anim.addAnimation(anim_max)
-            self._sidebar_anim.start()
 
     def toggle_fullscreen(self):
         """Toggles between Fullscreen and Normal mode."""
@@ -1125,50 +987,22 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         try:
             # Get current tab name from TabCoordinator
             current_tab_name = self.tab_coordinator.get_current_tab_name()
-            tab_id = "getting_started"  # Default
             
-            # Map current tab name to help tab ID
-            # Every screen in the sidebar, so F1 always lands somewhere useful.
-            # Half of these were missing, and "Timeline Viewer" pointed at a
-            # section that did not exist - both fell through to the front page.
-            tab_mapping = {
-                "Home": "home",
-                "Build & Ingest": "folder_creator",
-                "CAP Rename": "rename_tool",
-                "Stock Viewer": "stock_browser",
-                "Timeline Viewer": "shot_review",
-                "VFX Dashboard": "dashboard",
-                "Scheduling": "scheduling",
-                "Bidding": "bidding",
-                "Attendance": "attendance",
-                "Leave": "leave",
-                "Joining & Leaving": "joining_leaving",
-                "Hardware": "hardware",
-                "Licences": "licences",
-                "IT Support": "it_support",
-                "Deployment": "deployment",
-                "Users & Roles": "users_roles",
-                "Admin Panel": "admin_panel",
-                "Tester Panel": "tester",
-                "Settings": "settings",
-                "Workspace Info": "workspace_info",
-            }
-            
-            # Get the help tab ID based on current tab
-            tab_id = tab_mapping.get(current_tab_name, "getting_started")
-            
+            from .help_dialog import SCREEN_HELP
+            tab_id = SCREEN_HELP.get(current_tab_name, "getting_started")
+
             logging.info(f"Opening help for tab: {current_tab_name} (help_id: {tab_id})")
             
             # Show help dialog
             # The two shells do not have the same sidebar, so they do not
             # get the same help.
-            show_help(self, tab_id, mode=getattr(self, "app_mode", None))
+            show_help(self, tab_id, mode=getattr(self, "app_mode", None),
+                      screens=self._palette_tab_labels())
             
         except Exception as e:
             logging.exception(f"Error opening help dialog: {e}")
-            from PySide6.QtWidgets import QMessageBox
-            QMessageBox.warning(self, "Help Error", 
-                f"Could not open help dialog.\n\nError: {str(e)}") 
+            from .components.feedback import show_error
+            show_error(self, "Help could not be opened.", exc=e)
 
     def periodic_cleanup(self):
         """Run background maintenance tasks."""
@@ -1204,10 +1038,19 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         dialog = QDialog(self)
         dialog.setWindowTitle("Keyboard shortcuts")
         layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(14)
+        heading = QLabel("Keyboard shortcuts")
+        heading.setStyleSheet(f"font-size: 16px; font-weight: 700; color: {Gate.TEXT};")
+        layout.addWidget(heading)
         grid = QGridLayout()
         grid.setHorizontalSpacing(24)
         grid.setVerticalSpacing(8)
-        for row, (keys, label, _method, alias) in enumerate(SHORTCUTS):
+        # Only the screens this person has: Ctrl+Shift+S without Settings did nothing.
+        have = set(getattr(getattr(self, "tab_coordinator", None), "tab_labels", []) or [])
+        rows = [s for s in SHORTCUTS if s[2] != "show_settings_tab" or "Settings" in have]
+        rows += list(OTHER_KEYS)
+        for row, (keys, label, _method, alias) in enumerate(rows):
             key_label = QLabel(keys)
             key_label.setStyleSheet(
                 f"font-family: Consolas, monospace; color: {Gate.TEXT}; "
@@ -1238,6 +1081,7 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
             self.tab_coordinator._reveal_row(rows[n - 1])
             self.sidebar_nav.setCurrentRow(rows[n - 1])
             return True
+        self.show_status(f"There is no screen {n} in your sidebar.", "info", 2500)
         return False
 
     def _switch_to_tab_label(self, label: str) -> bool:
@@ -1254,12 +1098,13 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
             self.sweeper_engine.start_sweep()
             self.show_feedback("Maintenance sweep started.", level="info", duration=2500)
         else:
-            self.show_feedback("Sweeper engine is unavailable.", level="warning", duration=3000)
+            self.show_feedback("Clearing temporary files is not available right now.",
+                               level="warning", duration=3000)
 
     def _rebuild_timeline_from_dashboard(self):
         """Rebuild the Olive lineup from the shots the dashboard is tracking."""
         if not self._switch_to_tab_label("Timeline Viewer"):
-            self.show_feedback("Timeline Viewer is not available for this user.",
+            self.show_feedback("Timeline Viewer is not in your sidebar.",
                                level="warning", duration=3000)
             return
 
@@ -1281,27 +1126,20 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         else:
             self.show_feedback(result.message, level="warning", details=result.detail)
 
-    def _open_named_tab(self, label: str):
-        """Open a named tab through coordinator and show status feedback."""
-        if not self._switch_to_tab_label(label):
-            self.show_feedback(f"Tab '{label}' is not available for this user.", level="warning", duration=3000)
-            return
-        self.show_feedback(f"Opened {label}.", level="info", duration=1800)
-
     def _refresh_stock_viewer(self):
         """Refresh the stock browser tab if available."""
         if not self._switch_to_tab_label("Stock Viewer"):
-            self.show_feedback("Stock Viewer tab is not available for this user.", level="warning", duration=3000)
+            self.show_feedback("Stock Viewer is not in your sidebar.", level="warning", duration=3000)
             return
         stock_tab = self._get_tab_instance("Stock Viewer", create=True)
         if not stock_tab:
-            self.show_feedback("Stock Viewer tab could not be created.", level="error", duration=3000)
+            self.show_feedback("Stock Viewer could not be opened.", level="error", duration=3000)
             return
         if hasattr(stock_tab, "load_library_from_server"):
             stock_tab.load_library_from_server()
             self.show_feedback("Stock Viewer refresh started.", level="info", duration=2200)
             return
-        self.show_feedback("Stock Viewer refresh action is unavailable.", level="warning", duration=3000)
+        self.show_feedback("Stock Viewer cannot be refreshed from here.", level="warning", duration=3000)
 
     def trigger_sync_database(self):
         """
@@ -1405,8 +1243,6 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         # 1. Stop recurring UI timers
         if hasattr(self, 'cleanup_timer') and self.cleanup_timer and self.cleanup_timer.isActive():
             self.cleanup_timer.stop()
-        if hasattr(self, 'idle_timer') and self.idle_timer and self.idle_timer.isActive():
-            self.idle_timer.stop()
         centre = getattr(self, "notification_center", None)
         if centre is not None:
             centre.stop()
@@ -1482,10 +1318,8 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
 
     def show_settings_tab(self):
         """Jump directly to Settings tab"""
-        for i, label in enumerate(self.tab_coordinator.tab_labels):
-            if label == "Settings":
-                self.switch_to_tab_index(i)
-                break
+        if not self._switch_to_tab_label("Settings"):
+            self.show_status("Settings is not available for your role.", "warning", 3000)
     
     def load_plugins(self):
         """Dynamically find and load tabs from 'gui/plugins' directory."""

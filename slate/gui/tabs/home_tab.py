@@ -87,13 +87,16 @@ VFX_TILES = (
 )
 OPS_TILES = (
     ("Attendance", "Your punches and your month", "clock"),
-    ("Leave", "Ask for leave, or decide requests", "leave"),
-    ("IT Support", "Report a problem, or work the queue", "ticket"),
+    ("Leave", "Ask for leave and see your balance", "leave"),
+    ("IT Support", "Report a problem and follow it up", "ticket"),
     ("Users & Roles", "People, roles and permissions", "users"),
     ("Hardware", "Machines and who has them", "monitor"),
     ("Joining & Leaving", "Checklists for joiners and leavers", "handshake"),
 )
 MAX_TILES = 6
+# For the people who work the other side of those two screens.
+DECIDER_SUBTITLES = {"Leave": "Ask for leave, or decide requests",
+                     "IT Support": "Report a problem, or work the queue"}
 
 # Shot statuses that are finished, and those that wait for a review.
 DONE_STATUSES = {"APPROVED", "DONE", "FINAL", "DELIVERED", "OMIT", "OMITTED"}
@@ -221,12 +224,17 @@ def punch_text(punch_in, punch_out, now=None) -> str:
     return "Not punched in today"
 
 
-def greeting(name: str, now=None) -> str:
-    """'Good morning, Priya' - first name, by the time of day."""
+def greeting(name: str, now=None, whole_name: bool = False) -> str:
+    """
+    'Good morning, Priya' - first name, by the time of day. whole_name for an
+    account that is not a person ('System Admin' was greeted as 'System').
+    """
     hour = (now or datetime.now()).hour
     part = "morning" if hour < 12 else "afternoon" if hour < 17 else "evening"
     words = str(name or "").split()
-    return f"Good {part}, {words[0]}" if words else f"Good {part}"
+    if not words:
+        return f"Good {part}"
+    return f"Good {part}, {' '.join(words) if whole_name else words[0]}"
 
 
 class QuickActionBtn(QFrame):
@@ -354,8 +362,11 @@ class HomeLoaderWorker(QThread):
     load_failed = Signal(str)
 
     def __init__(self, username, app_context, parent=None, mode="vfx", identities=(),
-                 figures=(), db=None, report_dir=None):
+                 figures=(), db=None, report_dir=None, leave_stage=""):
         super().__init__(parent)
+        # "HR", "Supervisor" or "": whose leave this person may see on Home
+        # (workplace_access.leave_stage, the Leave queue's own rule).
+        self.leave_stage = leave_stage
         # The login, not the name on screen. Attendance rows are keyed by the
         # username; looking them up by display name meant Home and the
         # Attendance tab kept two separate records for one person.
@@ -444,32 +455,51 @@ class HomeLoaderWorker(QThread):
         return {"punch_in": since, "punch_out": record["punch_out"],
                 "first_in": record["punch_in"], "sessions": len(sessions)}
 
+    def _leave_rows(self) -> list:
+        """
+        The leave this person may see: HR everybody's, a supervisor their
+        reports', everybody else only their own - the Leave queue's rule. It
+        used to be the whole studio's for every artist, sick leave included.
+        """
+        from slate.core.infra.leave_repository import LeaveRepository
+        repo = LeaveRepository(self._db())
+        if self.leave_stage:
+            return repo.stage_requests(self.username, self.leave_stage)
+        return repo.for_user(self.username)
+
     def leave_pulse(self) -> list:
-        """Current and coming leave, soonest first, with dates."""
+        """Current and coming leave (not rejected or cancelled), soonest first."""
+        from slate.core.domain import leave_policy as lp
+        from slate.core.domain.dates import format_range
+        from slate.core.infra.leave_repository import as_date
         db = self._db()
         try:
-            from slate.core.domain.dates import format_range
             today = db_today(db)
-            rows = db.execute_query(
-                "SELECT COALESCE(u.display_name, u.username, l.user_id) AS applicant, "
-                "       l.type AS leave_type, l.status, l.start_date, l.end_date "
-                "FROM leave_requests l "
-                "LEFT JOIN ut_users u ON u.username = l.user_id "
-                "WHERE l.end_date >= %s "
-                "ORDER BY l.start_date, l.id LIMIT 5",
-                (today.isoformat(),), fetch="all") or []
+            rows = [r for r in self._leave_rows()
+                    if lp.normalise_status(r.get("status")) in lp.LIVE_STATUSES
+                    and (as_date(r.get("end_date")) or today) >= today]
         except DatabaseUnavailableError:
             raise
         except Exception as exc:
             logging.debug("Home: leave pulse not read: %s", exc)
             return []
+        rows.sort(key=lambda r: (str(as_date(r.get("start_date")) or ""), r.get("id") or 0))
+        from slate.core.domain import people
+        me = self.username.strip().lower()
         items = []
-        for row in rows:
-            who = _value(row, "applicant", 0) or "Someone"
-            kind = _value(row, "leave_type", 1) or "Leave"
-            when = format_range(_value(row, "start_date", 3), _value(row, "end_date", 4))
-            items.append({"title": f"{who} - {kind}, {when}",
-                          "status": str(_value(row, "status", 2) or "Pending")})
+        for row in rows[:5]:
+            uid = str(row.get("user_id") or "")
+            own = uid.strip().lower() == me
+            when = format_range(row.get("start_date"), row.get("end_date"))
+            # The kind of leave (Sick, Medical) is the person's own business
+            # and HR's - a supervisor sees that a report is away, not why.
+            if own:
+                title = f"You - {row.get('type') or 'Leave'}, {when}"
+            elif self.leave_stage == "HR":
+                title = f"{people.display_name(uid, db)} - {row.get('type') or 'Leave'}, {when}"
+            else:
+                title = f"{people.display_name(uid, db)} - away, {when}"
+            items.append({"title": title, "status": lp.normalise_status(row.get("status"))})
         return items
 
     def _my_shot_rows(self):
@@ -477,7 +507,7 @@ class HomeLoaderWorker(QThread):
         if self._shot_rows_cache is not None:
             return self._shot_rows_cache
         rows = self._db().execute_query(
-            "SELECT s.shot_name, s.status, s.data_json FROM tracking_shots s "
+            "SELECT s.shot_name, s.status, s.data_json, s.project_code FROM tracking_shots s "
             "JOIN tracking_projects p ON p.code = s.project_code "
             "WHERE p.active = 1 ORDER BY s.last_updated DESC LIMIT 3000",
             fetch="all") or []
@@ -490,7 +520,10 @@ class HomeLoaderWorker(QThread):
                 data = {}
             if shot_artists(data) & self.identities:
                 status = _value(row, "status", 1) or data.get("status") or ""
-                mine.append({"title": _value(row, "shot_name", 0), "status": str(status), "shot": True})
+                # The project goes with the shot: the dashboard opens it
+                # before selecting the shot, and two shows can both have SH010.
+                mine.append({"title": _value(row, "shot_name", 0), "status": str(status), "shot": True,
+                             "project": str(_value(row, "project_code", 3) or "")})
         self._shot_rows_cache = mine
         return mine
 
@@ -535,6 +568,8 @@ class HomeLoaderWorker(QThread):
 
     def _figure_waiting_review(self):
         placeholders = ", ".join(["%s"] * len(REVIEW_STATUSES))
+        # Active projects only, like every other figure here: a finished show
+        # with shots left in Review inflated this for ever.
         return _count(self._db().execute_query(
             "SELECT COUNT(*) AS c FROM tracking_shots s JOIN tracking_projects p ON p.code = s.project_code "
             "WHERE p.active = 1 AND UPPER(COALESCE(s.status, '')) IN (%s)"
@@ -570,21 +605,24 @@ class HomeLoaderWorker(QThread):
         return {"value": len(due), "tip": tip, "warn": bool(due)}
 
     def _figure_upcoming_leave(self):
-        # Starting after today and within two weeks - not leave already
-        # running, nor leave a year away.
-        db = self._db()
-        today = db_today(db)
-        return _count(db.execute_query(
-            "SELECT COUNT(*) AS c FROM leave_requests WHERE status = 'Approved' "
-            "AND start_date > %s AND start_date <= %s",
-            (today.isoformat(), (today + timedelta(days=UPCOMING_LEAVE_DAYS)).isoformat()),
-            fetch="one"))
+        # Approved, starting after today and within two weeks - not leave
+        # already running, nor leave a year away. Of the people this person sees.
+        from slate.core.domain import leave_policy as lp
+        from slate.core.infra.leave_repository import as_date
+        today = db_today(self._db())
+        last = today + timedelta(days=UPCOMING_LEAVE_DAYS)
+        return sum(1 for r in self._leave_rows()
+                   if lp.normalise_status(r.get("status")) == lp.STATUS_APPROVED
+                   and today < (as_date(r.get("start_date")) or today) <= last)
 
     def _figure_pending_leave(self):
-        rows = self._db().execute_query(
-            "SELECT status, COUNT(*) AS c FROM leave_requests GROUP BY status", fetch="all") or []
-        return sum(_count(r, 1) for r in rows
-                   if str(_value(r, "status", 0) or "").strip().lower().startswith("pending"))
+        """What waits on this person's decision - as their Leave queue counts it."""
+        from slate.core.domain import leave_policy as lp
+        waiting = lp.STAGE_DECIDES.get(self.leave_stage, ())
+        me = self.username.strip().lower()
+        return sum(1 for r in self._leave_rows()
+                   if lp.normalise_status(r.get("status")) in waiting
+                   and str(r.get("user_id") or "").strip().lower() != me)
 
     def _figure_people_online(self):
         report_dir = self.report_dir
@@ -606,6 +644,8 @@ FIGURE_LABELS = {
     "licence_renewals": "Licences to renew",
     "upcoming_leave": "Leave in the next 2 weeks",
 }
+# Figures that mean somebody has something to do while they are above zero.
+ACTION_FIGURES = {"pending_leave", "open_tickets", "licence_renewals"}
 
 
 class HomeTab(QWidget):
@@ -629,13 +669,20 @@ class HomeTab(QWidget):
         # on screen. The Attendance tab uses exactly this.
         self.username = str(self.user_data.get('user_id')
                             or self.user_data.get('username') or '').strip()
+        # An account that is not a person (admin, tester) has no working day
+        # to punch, and is greeted by its whole name.
+        self.is_service = bool(self.user_data.get("is_service"))
         # The full suite used to build the VFX Home for everybody, so HR and
         # IT had no punch panel there.
-        self.has_punch_panel = self.mode == "ops" or (
-            self.mode == "all" and "Attendance" in self._available_tabs())
+        self.has_punch_panel = not self.is_service and (self.mode == "ops" or (
+            self.mode == "all" and "Attendance" in self._available_tabs()))
+        # Whose leave this person may see (the Leave queue's rule).
+        from slate.core.domain.workplace_access import leave_stage
+        self.leave_stage = leave_stage(self._roles(), self._allowed())
         # Made when it is first needed (a punch): building it connects to
         # the database, which slowed every window that opened on Home.
         self.attendance = None
+        self._punch_worker = None
 
         self._is_loaded = False
         self._cinematic_ended = False
@@ -668,6 +715,9 @@ class HomeTab(QWidget):
                 if e.get("label") and e.get("permitted", True)
                 and not str(e.get("label")).startswith("__HEADER__")]
 
+    def _allowed(self):
+        return list(getattr(self.main_window, "allowed_tabs", []) or [])
+
     def identities(self):
         names = {self.username, self.user_data.get("username"), self.user_data.get("user_id"),
                  self.user_data.get("display_name")}
@@ -698,7 +748,7 @@ class HomeTab(QWidget):
             if not wants_vfx:
                 figures.append("pulse")
             figures.append("people_online")
-            if access.can(roles, "approve_leave") or "Joining & Leaving" in tabs:
+            if self.leave_stage:
                 figures += ["pending_leave", "upcoming_leave"]
             try:
                 from slate.core.domain.workplace_access import manages_it
@@ -726,7 +776,8 @@ class HomeTab(QWidget):
         if self.loader_worker is not None and self.loader_worker.isRunning():
             return False
         worker = HomeLoaderWorker(self.username, self.app_context, self, mode=self.mode,
-                                  identities=self.identities(), figures=self.figures)
+                                  identities=self.identities(), figures=self.figures,
+                                  leave_stage=self.leave_stage)
         worker.progress.connect(self._on_load_progress)
         worker.data_loaded.connect(self._on_data_loaded)
         worker.telemetry_loaded.connect(self._update_telemetry_ui)
@@ -746,19 +797,27 @@ class HomeTab(QWidget):
                 continue
             value = values[key]
             if value is None:
-                label.setText("n/a")
-                label.setToolTip("This figure could not be read just now.")
+                self._set_figure(label, "-", Gate.TEXT_DIM, "This figure could not be read just now.")
                 continue
             # A figure may come with a tooltip and a warning tone.
             tip, warn = "", False
             if isinstance(value, dict):
                 tip, warn = value.get("tip") or "", bool(value.get("warn"))
                 value = value.get("value")
-            label.setText(str(value))
-            label.setToolTip(tip)
-            label.setStyleSheet(
-                f"background: transparent; border: none; color: {Gate.WARN if warn else Gate.OK}; "
-                "font-size: 21px; font-weight: 800;")
+            # A count is plain text; amber only for something waiting to be
+            # done. Every figure was the success green, a backlog and a zero alike.
+            try:
+                waiting = key in ACTION_FIGURES and int(value or 0) > 0
+            except (TypeError, ValueError):
+                waiting = False
+            self._set_figure(label, str(value), Gate.WARN if (warn or waiting) else Gate.TEXT, tip)
+
+    @staticmethod
+    def _set_figure(label, text, colour, tip=""):
+        label.setText(text)
+        label.setToolTip(tip)
+        label.setStyleSheet(f"background: transparent; border: none; color: {colour}; "
+                            "font-size: 21px; font-weight: 800;")
 
     # ------------------------------------------------------------ build
     def init_ui(self):
@@ -818,7 +877,7 @@ class HomeTab(QWidget):
 
         # Top bar
         top_bar = QHBoxLayout()
-        self.greeting_label = QLabel(greeting(self.user_display_name))
+        self.greeting_label = QLabel(greeting(self.user_display_name, whole_name=self.is_service))
         self.greeting_label.setStyleSheet(
             f"color: {Gate.TEXT}; font-size: 24px; font-weight: 300; letter-spacing: 1px; background: transparent;")
         top_bar.addWidget(self.greeting_label)
@@ -851,13 +910,12 @@ class HomeTab(QWidget):
             att_layout.addWidget(self.btn_punch_out)
             top_bar.addWidget(self.attendance_panel)
         else:
-            hub_badge = self._build_glass_panel()
-            badge_layout = QHBoxLayout(hub_badge)
-            badge_layout.setContentsMargins(18, 10, 18, 10)
-            lbl_hub = QLabel("STUDIO HUB" if self.mode == "all" else "VFX PRODUCTION HUB")
-            lbl_hub.setStyleSheet(f"color: {Gate.ACCENT}; font-size: 13px; font-weight: 800; letter-spacing: 2px; background: transparent; border: none;")
-            badge_layout.addWidget(lbl_hub)
-            top_bar.addWidget(hub_badge)
+            # Today's date, as plain text. It was a pill drawn like a button
+            # ("VFX PRODUCTION HUB") that did nothing and repeated the header.
+            from slate.core.domain.dates import format_date
+            self.date_label = QLabel(format_date(date.today(), weekday=True))
+            self.date_label.setStyleSheet(f"color: {Gate.TEXT_2}; font-size: 14px; background: transparent;")
+            top_bar.addWidget(self.date_label)
 
         overlay_layout.addLayout(top_bar)
 
@@ -907,11 +965,13 @@ class HomeTab(QWidget):
         tasks_layout.setContentsMargins(16, 14, 16, 14)
         shows_shots = "shots" in self.figures
         title_row = QHBoxLayout()
-        tasks_title = QLabel("MY RECENT SHOTS" if shows_shots else "LEAVE: NOW AND NEXT")
+        tasks_title = QLabel("MY RECENT SHOTS" if shows_shots
+                             else "LEAVE: NOW AND NEXT" if self.leave_stage else "MY LEAVE")
         tasks_title.setStyleSheet(f"color: {Gate.ACCENT}; font-size: 12px; font-weight: 800; letter-spacing: 2px; background: transparent; border: none;")
         title_row.addWidget(tasks_title)
         title_row.addStretch(1)
         if shows_shots:
+            tasks_title.setToolTip("Your shots in every active project, newest first")
             see_all = QLabel('<a href="all">See all my shots</a>')
             see_all.setStyleSheet(f"color: {Gate.ACCENT}; font-size: 12px; background: transparent;")
             see_all.linkActivated.connect(lambda _h: self.see_all_shots())
@@ -930,18 +990,20 @@ class HomeTab(QWidget):
         stats_panel.setMinimumWidth(320)
         stats_layout = QVBoxLayout(stats_panel)
         stats_layout.setContentsMargins(16, 14, 16, 14)
-        stats_title = QLabel("STUDIO FIGURES")
+        stats_title = QLabel("AT A GLANCE")
         stats_title.setStyleSheet(f"color: {Gate.ACCENT}; font-size: 12px; font-weight: 800; letter-spacing: 2px; background: transparent; border: none;")
         stats_layout.addWidget(stats_title)
         stat_grid = QGridLayout()
         stat_grid.setHorizontalSpacing(10)
         stat_grid.setVerticalSpacing(10)
         self.stat_labels = {}
-        for i, key in enumerate(self.stat_figures()):
+        keys = self.stat_figures()
+        columns = self.figure_columns(len(keys))
+        for i, key in enumerate(keys):
             box, value = self._build_stat_item(FIGURE_LABELS[key], "-")
-            stat_grid.addWidget(box, i // 3, i % 3)
+            stat_grid.addWidget(box, i // columns, i % columns)
             self.stat_labels[key] = value
-        for col in range(3):
+        for col in range(columns):
             stat_grid.setColumnStretch(col, 1)
         stats_layout.addLayout(stat_grid)
         right_panel_layout.addWidget(stats_panel)
@@ -955,16 +1017,35 @@ class HomeTab(QWidget):
         overlay_layout.addStretch(1)
         self.stack.addWidget(self.overlay_widget)
 
+    @staticmethod
+    def figure_columns(count: int) -> int:
+        """Rows that fill: 4 as 2x2, 7 as 4+3, up to three in one row."""
+        if count <= 3:
+            return max(1, count)
+        return 2 if count == 4 else (count + 1) // 2
+
     def tile_specs(self):
-        """The quick links for the screens this person has (at most six)."""
-        if self.mode == "ops":
-            candidates = OPS_TILES
-        elif self.mode == "all":
-            candidates = VFX_TILES + OPS_TILES
-        else:
-            candidates = VFX_TILES
+        """
+        The quick links for the screens this person has (at most six). In the
+        full suite four production and two operations links, so Leave and IT
+        Support are not crowded out by six production screens.
+        """
         have = set(self._available_tabs())
-        return [spec for spec in candidates if spec[0] in have][:MAX_TILES]
+        vfx = [s for s in VFX_TILES if s[0] in have]
+        ops = [s for s in OPS_TILES if s[0] in have]
+        if self.mode == "ops":
+            specs = ops
+        elif self.mode == "all":
+            ops_room = min(len(ops), max(2, MAX_TILES - len(vfx)))
+            specs = vfx[:MAX_TILES - ops_room] + ops[:ops_room]
+        else:
+            specs = vfx
+        # The manager's half of a screen is described only to its managers.
+        from slate.core.domain.workplace_access import manages_it
+        deciders = {"Leave": bool(self.leave_stage),
+                    "IT Support": manages_it(self._roles(), self._allowed())}
+        return [(label, DECIDER_SUBTITLES[label] if deciders.get(label) else sub, glyph)
+                for label, sub, glyph in specs[:MAX_TILES]]
 
     def _arrange(self, wide: bool):
         """Quick launch beside the panels, or above them on a narrow window."""
@@ -992,10 +1073,6 @@ class HomeTab(QWidget):
         super().showEvent(event)
         if self._cinematic_ended:
             self._run_js("if (window.resumeBackground) { window.resumeBackground(); }")
-        else:
-            host = self.window()
-            if hasattr(host, 'set_cinematic_mode'):
-                host.set_cinematic_mode(True)
 
     def hideEvent(self, event):
         # Nothing to draw while another screen is in front.
@@ -1094,17 +1171,26 @@ class HomeTab(QWidget):
             host.show_feedback(f"{tab_label} is not available for you here.", "warning", 3500)
         return opened
 
-    def open_shot(self, shot_name: str):
-        """A task row: the shot, selected in the VFX Dashboard."""
+    def open_shot(self, shot_name: str, project: str = ""):
+        """A task row: the shot's project opened in the VFX Dashboard, the shot selected."""
         jump = getattr(self._host(), "_jump_to_shot_in_review", None)
-        return jump(shot_name) if callable(jump) else False
+        return jump(shot_name, project_code=project) if callable(jump) else False
 
     def see_all_shots(self):
-        """The dashboard in its own 'my shots' scope (every shot naming this person)."""
+        """
+        The dashboard in its own 'my shots' scope. The scope is per project, so
+        the project of the newest shot is opened first - with none open the
+        dashboard said 'No project selected'.
+        """
         host = self._host()
         if not self._trigger_tab("VFX Dashboard"):
             return False
         tab = host._get_tab_instance("VFX Dashboard", create=True) if hasattr(host, "_get_tab_instance") else None
+        newest = next((it.get("project") for it in getattr(self, "_shown_items", None) or []
+                       if it.get("project")), "")
+        opener = getattr(host, "_open_dashboard_project", None)
+        if newest and callable(opener):
+            opener(newest)
         show = getattr(tab, "show_my_shots", None)
         if callable(show) and show():
             return True
@@ -1145,13 +1231,14 @@ class HomeTab(QWidget):
         self._is_loaded = True
         self._clear_tasks()
         self._note_widget(f"{OFFLINE_TITLE}. {OFFLINE_BODY}")
-        retry = QPushButton("Try again")
-        retry.setCursor(Qt.CursorShape.PointingHandCursor)
+        # Home's own button: a plain one took the Light theme's dark text and
+        # nearly vanished on the dark panel.
+        retry = self._build_glass_button("Try again", Gate.ACCENT)
         retry.clicked.connect(self.refresh)
         self.tasks_container_layout.addWidget(retry, 0, Qt.AlignmentFlag.AlignLeft)
+        self._shown_items = None
         for label in self.stat_labels.values():
-            label.setText("n/a")
-            label.setToolTip(OFFLINE_TITLE)
+            self._set_figure(label, "-", Gate.TEXT_DIM, OFFLINE_TITLE)
         if self.has_punch_panel:
             self.lbl_punch_status.setText("Today's punch could not be read")
             self.btn_punch_in.setEnabled(False)
@@ -1167,20 +1254,42 @@ class HomeTab(QWidget):
         if not self._cinematic_ended:
             safe_single_shot(2200, self, self._end_cinematic_mode)
 
+        if self.has_punch_panel:
+            self._refresh_punch_buttons(punch_status)
+        # The minute refresh rebuilt every row, taking keyboard focus off the
+        # one somebody was on. Unchanged rows are left alone.
+        if items == getattr(self, "_shown_items", None):
+            return
+        self._shown_items = [dict(it) for it in items]
         self._clear_tasks()
         if not items:
             self._note_widget("Nothing assigned to you right now." if "shots" in self.figures
-                              else "Nobody is on leave now or soon.")
+                              else "Nobody is on leave now or soon." if self.leave_stage
+                              else "You have no leave coming up.")
         else:
-            from ..tabs.vfx_dashboard_pro.ui.status_delegate import StatusDelegate
+            from PySide6.QtGui import QFontMetrics
             for it in items[:5]:
                 row_widget = ClickableRow() if it.get("shot") else QFrame()
                 if not isinstance(row_widget, ClickableRow):
                     row_widget.setStyleSheet("background: transparent;")
                 row = QHBoxLayout(row_widget)
                 row.setContentsMargins(6, 4, 6, 4)
-                lbl_name = QLabel(str(it.get('title') or 'Item'))
+                project = str(it.get("project") or "")
+                if project:
+                    # Two shows can both have SH010: say which.
+                    lbl_project = QLabel(f"{project} \u00b7")
+                    lbl_project.setStyleSheet(f"background: transparent; border: none; color: {Gate.TEXT_DIM};")
+                    row.addWidget(lbl_project)
+                title = str(it.get('title') or 'Item')
+                lbl_name = QLabel()
                 lbl_name.setStyleSheet(f"background: transparent; border: none; color: {Gate.TEXT}; font-weight: bold;")
+                # ponytail: a fixed 260 px budget, not the live column width; a
+                # resize-aware label if the column ever gets much narrower.
+                font = lbl_name.font()
+                font.setBold(True)
+                lbl_name.setText(QFontMetrics(font).elidedText(title, Qt.TextElideMode.ElideMiddle, 260))
+                if lbl_name.text() != title:
+                    lbl_name.setToolTip(title)
                 status_str = str(it.get('status') or '')
                 lbl_status = QLabel(status_str or "-")
                 lbl_status.setStyleSheet(f"color: {self.status_colour(status_str)}; font-weight: bold; padding: 2px 8px; border-radius: 4px; background-color: {Gate.overlay(0.08)};")
@@ -1188,13 +1297,11 @@ class HomeTab(QWidget):
                 row.addStretch()
                 row.addWidget(lbl_status)
                 if isinstance(row_widget, ClickableRow):
-                    name = str(it.get("title") or "")
-                    row_widget.setToolTip(f"Open {name} in the VFX Dashboard")
-                    row_widget.clicked.connect(lambda name=name: self.open_shot(name))
+                    where = f" ({project})" if project else ""
+                    row_widget.setToolTip(f"Open {title}{where} in the VFX Dashboard")
+                    row_widget.clicked.connect(
+                        lambda name=title, code=project: self.open_shot(name, code))
                 self.tasks_container_layout.addWidget(row_widget)
-
-        if self.has_punch_panel:
-            self._refresh_punch_buttons(punch_status)
 
     @staticmethod
     def status_colour(status: str) -> str:
@@ -1224,15 +1331,14 @@ class HomeTab(QWidget):
     def _end_cinematic_mode(self):
         self._cinematic_ended = True
         self._run_js("if (window.triggerEnter) { window.triggerEnter(); }")
-        host = getattr(self, "main_window", None) or self.window()
-        if hasattr(host, 'set_cinematic_mode'):
-            try:
-                host.set_cinematic_mode(False)
-            except Exception as e:
-                logging.exception(f"Error ending cinematic mode: {e}")
         if hasattr(self, 'click_catcher'):
             self.click_catcher.hide()
-        self._show_overlay()
+        # The panels come up once the big SLATE / READY text has faded (0.8 s
+        # in the page): shown at once, they sat over it for a moment.
+        if HAS_WEBENGINE and isinstance(getattr(self, "web_view", None), QWebEngineView):
+            safe_single_shot(800, self, self._show_overlay)
+        else:
+            self._show_overlay()
 
     def _show_overlay(self):
         self.overlay_widget.show()
@@ -1274,46 +1380,81 @@ class HomeTab(QWidget):
         return self.attendance
 
     def do_punch(self, action: str):
-        if not self.has_punch_panel or self._attendance() is None:
-            return
-        host = self._host()
+        """
+        Punch in or out on a worker: the write and the re-read used to run in
+        the click handler and froze the window on a slow link. Punch out asks
+        first - one stray click ended the day, and only HR could undo it.
+        """
+        if not self.has_punch_panel or self._attendance() is None or self._punch_worker is not None:
+            return None
+        if action == "out":
+            from ..components.feedback import confirm
+            if not confirm(self, "Punch out", f"Punch out at {datetime.now():%H:%M}?",
+                           yes_label="Punch out", no_label="Cancel",
+                           informative="Punching in again later today starts a new session."):
+                return None
+        self.btn_punch_in.setEnabled(False)
+        self.btn_punch_out.setEnabled(False)
+        self.lbl_punch_status.setText("Punching in\u2026" if action == "in" else "Punching out\u2026")
+        attendance, username = self.attendance, self.username
 
-        try:
-            stored = self.attendance.log_action(self.username, action)
-        except ValueError as e:
-            # A rule, not a fault: "Already punched in at 09:42." is the message.
-            if host and hasattr(host, "show_feedback"):
-                host.show_feedback(str(e), "warning", 5000)
+        def work():
+            out = {}
             try:
-                self._update_punch_ui()
-            except Exception:
-                pass
-            return
-        except Exception as e:
-            if host and hasattr(host, "show_feedback"):
-                host.show_feedback("The punch was not saved.", "error", 4000, details=str(e))
-            return
+                out["stored"] = attendance.log_action(username, action)
+            except ValueError as exc:
+                out["rule"] = str(exc)      # "Already punched in at 09:42."
+            except Exception as exc:
+                out["error"] = str(exc)
+            try:
+                out["status"] = self._read_todays_punch()
+            except Exception as exc:
+                logging.debug("Punch: could not read the punch back: %s", exc)
+            return out
 
-        # The punch is in the database. Failing to read it back is a different
-        # problem, and reporting it as a failed punch would send somebody to
-        # press the button again for a punch that already landed.
-        try:
-            self._update_punch_ui()
-        except Exception as e:
-            logging.debug("Punched, but could not refresh the buttons: %s", e)
-            if host and hasattr(host, "show_feedback"):
-                host.show_feedback(
-                    f"Punched {action}. The screen could not be refreshed - open "
+        from slate.core.infra.db_worker import run_db_async
+        self._punch_worker = run_db_async(work, on_success=lambda result: self._punched(action, result),
+                                          on_error=lambda text: self._punched(action, {"error": text}),
+                                          owner=self)
+        return self._punch_worker
+
+    def punch_busy(self) -> bool:
+        return self._punch_worker is not None
+
+    def _punched(self, action, result):
+        self._punch_worker = None
+        host = self._host()
+        say = getattr(host, "show_feedback", None) if host else None
+        status = result.get("status")
+        if status is not None:
+            self._refresh_punch_buttons(status)
+        if result.get("rule"):
+            if say:
+                say(result["rule"], "warning", 5000)
+            return
+        if result.get("error"):
+            if status is None:
+                self.lbl_punch_status.setText("Today's punch could not be read")
+                self.btn_punch_in.setEnabled(True)
+            if say:
+                say("The punch was not saved.", "error", 4000, details=result["error"])
+            return
+        if status is None:
+            # The punch is in the database. Failing to read it back is a
+            # different problem, and reporting it as a failed punch would send
+            # somebody to press the button again for a punch that already landed.
+            if say:
+                say(f"Punched {action}. The screen could not be refreshed - open "
                     "Attendance to check.", "warning", 5000)
             return
-
-        if host and hasattr(host, "show_feedback"):
+        if say:
+            stored = result.get("stored")
             # The time the database stored, which is what the record says.
             stored_time = _time_text((stored or {}).get("time")) if isinstance(stored, dict) else ""
             now = stored_time or datetime.now().strftime("%H:%M")
             session = (stored or {}).get("session") if isinstance(stored, dict) else None
             extra = f" (session {session} today)" if action == "in" and session and session > 1 else ""
-            host.show_feedback(f"Punched {'in' if action == 'in' else 'out'} at {now}{extra}.", "success", 4000)
+            say(f"Punched {'in' if action == 'in' else 'out'} at {now}{extra}.", "success", 4000)
 
 
 class VfxHomeTab(HomeTab):
