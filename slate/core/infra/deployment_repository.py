@@ -23,6 +23,20 @@ logger = logging.getLogger(__name__)
 
 STATUSES = ("Pending", "Success", "Failed")
 OPTIONAL = ("version", "notes", "completed_at", "completed_by")
+PACKAGE_MAX = 120
+VERSION_MAX = 60
+
+
+def _check_lengths(package: str, version: str, machines) -> None:
+    """A 400-character package name went in without complaint."""
+    from slate.core.domain.hardware import NAME_MAX
+    if len(package or "") > PACKAGE_MAX:
+        raise DeploymentError("Keep the package to %d characters." % PACKAGE_MAX)
+    if len((version or "").strip()) > VERSION_MAX:
+        raise DeploymentError("Keep the version to %d characters." % VERSION_MAX)
+    long = [m for m in machines if len(m) > NAME_MAX]
+    if long:
+        raise DeploymentError("A machine name is at most %d characters: %s" % (NAME_MAX, long[0][:40]))
 
 
 class DeploymentError(ValueError):
@@ -92,6 +106,14 @@ class DeploymentRepository:
             "SELECT machine_name FROM hardware_inventory ORDER BY LOWER(machine_name)", fetch="all") or []
         return [dict(r)["machine_name"] for r in rows]
 
+    def retired_machines(self) -> dict:
+        """{lower-case name: status} of machines at the end of their life (Retired, Lost, Disposed)."""
+        from slate.core.domain import hardware as hw
+        rows = self.db.execute_query("SELECT machine_name, status FROM hardware_inventory",
+                                     fetch="all") or []
+        return {str(dict(r)["machine_name"]).lower(): hw.normalise_status(dict(r)["status"])
+                for r in rows if hw.is_end_of_life(dict(r)["status"])}
+
     def record(self, package: str, machines: Iterable[str], by: str, version: str = "",
                notes: str = "") -> List[int]:
         """One Pending record per machine. Returns the new ids."""
@@ -99,6 +121,7 @@ class DeploymentRepository:
         machines = [m for m in machines if m]
         if not package or not machines:
             raise DeploymentError("Give both the package and at least one machine.")
+        _check_lengths(package, version, machines)
         by = (by or "").strip() or "unknown"
         extra = [c for c in ("version", "notes") if c in self.columns()]
         values_extra = {"version": (version or "").strip() or None, "notes": (notes or "").strip() or None}
@@ -118,6 +141,7 @@ class DeploymentRepository:
         package, machine = (package or "").strip(), (machine or "").strip()
         if not package or not machine:
             raise DeploymentError("Give both the package and the machine.")
+        _check_lengths(package, version, [machine])
         sets = {"package_name": package, "target_machine": machine}
         if "version" in self.columns():
             sets["version"] = (version or "").strip() or None
@@ -145,13 +169,30 @@ class DeploymentRepository:
             row = self.db.execute_query("SELECT notes FROM it_deployments WHERE id = %s",
                                         (int(dep_id),), fetch="one")
             existing = str((dict(row).get("notes") if row else "") or "").strip()
-            stamp = datetime.now().strftime("%d %b %Y")
-            line = "%s (%s, %s): %s" % (status, by or "unknown", stamp, note.strip())
+            # Worded like the rest of the screen: the person's name, the studio's date.
+            from slate.core.domain import people
+            from slate.core.domain.dates import format_date
+            line = "%s (%s, %s): %s" % (status, people.display_name(by) or by or "unknown",
+                                        format_date(datetime.now().date()), note.strip())
             sets["notes"] = (existing + chr(10) + line) if existing else line
         names = sorted(sets)
         result = self.db.execute_update(
             "UPDATE it_deployments SET %s WHERE id = %%s" % ", ".join("%s = %%s" % n for n in names),
             tuple(sets[n] for n in names) + (int(dep_id),))
+        if not getattr(result, "changed", bool(result)):
+            raise DeploymentError(getattr(result, "error", "") or "That record is no longer there.")
+        return result
+
+    def restore(self, record: dict):
+        """Put an outcome back as it was (Undo after Mark success / failed)."""
+        sets = {"status": normalise_status(record.get("status"))}
+        for column in ("completed_at", "completed_by", "notes"):
+            if column in self.columns():
+                sets[column] = record.get(column)
+        names = sorted(sets)
+        result = self.db.execute_update(
+            "UPDATE it_deployments SET %s WHERE id = %%s" % ", ".join("%s = %%s" % n for n in names),
+            tuple(sets[n] for n in names) + (int(record["id"]),))
         if not getattr(result, "changed", bool(result)):
             raise DeploymentError(getattr(result, "error", "") or "That record is no longer there.")
         return result
