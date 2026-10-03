@@ -66,7 +66,7 @@ def test_dirty_discard_and_save(make_tab):
     assert cfg.settings["global_settings"]["dry_run_enabled"] is True
     assert "last_project_dir" not in cfg.settings
     assert "max_concurrent_operations" in cfg.settings["global_settings"]
-    assert not tab.has_unsaved_changes() and tab.last_message.startswith("Settings saved")
+    assert not tab.has_unsaved_changes() and tab.last_message == "Saved your preferences."
 
 
 def test_reset_to_defaults(make_tab):
@@ -158,25 +158,11 @@ def test_project_report_choices():
     assert st.slug("Tom & Jerry's Show") == "Tom_Jerry_s_Show"
 
 
-def test_backup_runs_on_a_worker(make_tab, qtbot, monkeypatch, tmp_path):
-    from PySide6.QtWidgets import QInputDialog
-    tab = make_tab()
-    project = tmp_path / "proj"
-    project.mkdir()
-    tab.config_manager.settings["last_project_dir"] = str(project)
-    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("proj_backup", True))
-    import threading
-    seen = {}
-
-    def fake_backup(dirs, name):
-        seen["thread"] = threading.current_thread() is threading.main_thread()
-        return True, "ok", tmp_path / "proj_backup.zip"
-    monkeypatch.setattr(tab.backup_manager, "create_backup", fake_backup)
-    shown = []
-    monkeypatch.setattr(st.SettingsTab, "_show_backup_done", lambda self, p: shown.append(p))
-    tab.create_backup()
-    qtbot.waitUntil(lambda: bool(shown), timeout=5000)
-    assert seen["thread"] is False and str(shown[0]).endswith("proj_backup.zip")
+def test_back_up_a_project_is_gone(make_tab):
+    """SYS2-042: the card copied whole projects to C: with no size check or Cancel; removed."""
+    tab = make_tab(["Admin"])
+    assert "Back up a project" not in [c.title() for c in tab.maint_cards]
+    assert not hasattr(tab, "create_backup") and not hasattr(tab, "backup_manager")
 
 
 def test_policy_limits_and_recount(make_tab, monkeypatch):
@@ -264,9 +250,135 @@ def test_studio_policy_edits_are_tracked_and_saved_by_the_bar(make_tab, qtbot, m
     tab.discard_changes()
     assert not tab.has_unsaved_changes()
     saved = []
-    monkeypatch.setattr(type(editor), "save", lambda self: saved.append(1) or (self._mark_clean() or True))
+    monkeypatch.setattr(type(editor), "save",
+                        lambda self, quiet=False: saved.append(quiet) or (self._mark_clean() or True))
     editor.accrual.setValue(editor.accrual.value() + 0.25)
-    assert tab.save_all() and saved == [1] and not tab.has_unsaved_changes()
+    assert tab.save_all() and saved == [True] and not tab.has_unsaved_changes()
+    # One message, naming what was saved (SYS2-044).
+    assert tab.last_message == "Saved the studio policy."
+
+
+# ------------------------------------------------------------- round 2
+def test_clearing_the_server_root_is_refused(make_tab, monkeypatch):
+    """SYS2-043 / SYS2-049."""
+    from slate.core.infra.global_config import GlobalConfig
+    tab = make_tab(["Admin"])
+    tab._snapshot["server_root"] = "Z:/Slate_Central"
+    warned = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warned.append(a[2]))
+    tab.server_root_input.setText("")
+    assert tab.save_all() is False and "needs the studio folder" in warned[0]
+    assert tab.has_unsaved_changes()
+    tab.server_root_input.setText("Z:/Slate_Central")
+    tab.dry_run_default_cb.setChecked(not tab.dry_run_default_cb.isChecked())
+    monkeypatch.setattr(GlobalConfig, "set", lambda *a, **k: None)
+    assert tab.save_all() and "next time" not in tab.last_message
+
+
+def test_forgotten_punch_out_before_the_day_is_refused(qtbot, monkeypatch):
+    """SYS2-045."""
+    from PySide6.QtCore import QTime
+    from slate.gui.tabs.studio_settings_cards import StudioPolicyEditor
+    editor = StudioPolicyEditor()
+    qtbot.addWidget(editor)
+    editor.late_cutoff.setTime(QTime(10, 45))
+    editor.auto_logout.setTime(QTime(9, 0))
+    assert "before the day starts" in editor.lbl_forgotten.text()
+    warned = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warned.append(a[2]))
+    assert editor.save() is False and "09:00" in warned[0]
+    editor.auto_logout.setTime(QTime(19, 30))
+    assert editor.lbl_forgotten.text().startswith("a forgotten day counts 8 h 45 min")
+
+
+def test_one_working_week(qtbot, mock_db, monkeypatch):
+    """SYS2-046: no 'Working days' on the money card; the migration carries them over."""
+    from slate.gui.tabs.studio_settings_cards import StudioMoneyEditor
+    from slate.core.infra.studio_settings import StudioSettings
+    from slate.core.infra.migrations import system_settings
+    StudioSettings.invalidate()
+    store = StudioSettings()
+    store.set("working_hours", {"start": "10:00", "end": "19:00", "days": [0, 1, 2, 3, 4]})
+    assert system_settings.one_working_week(mock_db) is not False
+    StudioSettings.invalidate()
+    assert StudioSettings().get("attendance_policy")["weekly_offs"] == [5, 6]
+    assert StudioSettings().get("working_hours")["days"] == [0, 1, 2, 3, 4]    # old value kept
+    assert "kept" in system_settings.one_working_week(mock_db)
+    editor = StudioMoneyEditor()
+    qtbot.addWidget(editor)
+    assert not hasattr(editor, "work_days")
+    editor.load()
+    assert "days" not in editor.values()["working_hours"]      # the policy's week is the one week
+
+
+def test_money_card_by_ability(make_tab, qtbot):
+    """SYS2-047: IT edits the hours, not the rates; a producer sees the card for the rates."""
+    from slate.gui.tabs.studio_settings_cards import StudioMoneyEditor
+    editor = StudioMoneyEditor()
+    qtbot.addWidget(editor)
+    assert editor.may_edit(["it"])
+    assert editor.can_hours and not editor.can_money
+    editor.set_editable(True)
+    assert editor.day_start.isEnabled() and not editor.gst.isEnabled()
+    assert not make_tab(["IT"]).card_money.isHidden()
+    assert make_tab(["Artist"]).card_money.isHidden()
+
+
+def test_money_and_number_display(qtbot, monkeypatch):
+    """SYS2-050 / SYS2-051 / SYS2-059."""
+    from PySide6.QtCore import QTime
+    from slate.gui.tabs import studio_settings_cards as cards
+    editor = cards.StudioMoneyEditor()
+    qtbot.addWidget(editor)
+    editor.rates["INR"].setValue(150000)
+    assert editor.rates["INR"].text().endswith("1,50,000")
+    editor.day_start.setTime(QTime(19, 0))
+    editor.day_end.setTime(QTime(9, 0))
+    warned = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warned.append(a[2]))
+    assert editor.save() is False
+    assert "Working hours:" in warned[0] and "working_hours" not in warned[0]
+    assert "border" in editor.day_start.styleSheet()
+    policy = cards.StudioPolicyEditor()
+    qtbot.addWidget(policy)
+    policy.comp_half.setValue(12)
+    assert policy.comp_half.text() == "12 hours" and policy.comp_weekly.suffix() == " days"
+    assert cards.number_text(0.25) == "0.25" and cards.number_text(2.0) == "2"
+
+
+def test_read_only_policy_is_a_summary(qtbot):
+    """SYS2-052."""
+    from slate.gui.tabs.studio_settings_cards import StudioPolicyEditor
+    editor = StudioPolicyEditor()
+    qtbot.addWidget(editor)
+    editor.set_editable(False)
+    editor.lbl_summary.setText(editor.summary_text())
+    assert editor.form_box.isHidden() and not editor.lbl_summary.isHidden()
+    assert "Late after:" in editor.lbl_summary.text() and "Only HR" in editor.lbl_who.text()
+
+
+def test_artist_preferences_follow_their_tabs(make_tab):
+    """SYS2-053."""
+    tab = make_tab(["Artist"])
+    tab.apply_access(["Artist"], ["Dashboard", "Stock Browser"])
+    assert all(row.isHidden() for row in tab.ingest_rows)
+    assert tab.btn_templates.isHidden() and tab.btn_report.isHidden()
+    tab.apply_access(["Admin"], ["ALL"])
+    assert not any(row.isHidden() for row in tab.ingest_rows) and not tab.btn_report.isHidden()
+
+
+def test_layout_details(make_tab):
+    """SYS2-054/055/057/060."""
+    tab = make_tab(["Admin"])
+    assert tab.db_port_input.maximumWidth() == 90
+    assert tab.project_root_input.cursorPosition() == 0
+    assert tab.btn_logs.title() == "Open my log folder"
+    assert str(st.Gate.SIZE_MD) in tab.runtime_db_label.styleSheet()
+    tab.ui_scale_sb.setValue(0.0)
+    tab.ui_scale_sb.stepBy(1)
+    assert tab.ui_scale_sb.value() == 0.75
+    tab.ui_scale_sb.stepBy(-1)
+    assert tab.ui_scale_sb.value() == 0.0
 
 
 @pytest.fixture(autouse=True)

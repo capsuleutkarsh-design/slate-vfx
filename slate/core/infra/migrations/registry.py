@@ -131,6 +131,10 @@ IT = (
 
 # ---- system (Settings, Data Center, Audit logs, Live Ops) ----
 SYSTEM = (
+    # The studio's week is the policy's weekly offs; working days saved on
+    # the money card are carried over. See system_settings.py.
+    step("system_one_working_week",
+         "slate.core.infra.migrations.system_settings:one_working_week", once=True),
 )
 
 # ---- dashboard (VFX Dashboard, versions, deliveries) ----

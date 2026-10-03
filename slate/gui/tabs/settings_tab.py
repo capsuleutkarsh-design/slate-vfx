@@ -2,16 +2,23 @@
 Settings: your own preferences, and - for the people allowed to change them -
 the studio's settings.
 
-One Save for the page: every preference and path on it is saved together, a
-bar says when something is unsaved, Discard puts the saved values back and
-Reset to defaults restores Slate's own. The studio policy and the studio
-currency/rates cards keep their own Save, because they are saved to the
-studio database for everybody.
+One Save for the page: every preference and path on it, and the studio cards,
+are saved together, a bar says when something is unsaved, Discard puts the
+saved values back and Reset to defaults restores Slate's own. One message
+says what was saved.
 
-Who sees what: everybody has the personal preferences, the read-only studio
-policy, the runtime status and the maintenance actions that only touch their
-own machine. Server root, database connection, studio logo, the studio
-money card and updates need the studio_settings ability (admin, developer, IT).
+Who sees what: everybody has the preferences for the tools they can open, the
+studio policy (as a summary unless they may change it), the runtime status
+and the maintenance actions that only touch their own machine. Server root,
+database connection, studio logo and updates need the studio_settings
+ability (admin, developer, IT); the money card is for studio_settings and
+approve_bid holders.
+
+'Back up a project' is gone: it copied a whole project to this PC's system
+drive, zipped and encrypted it with this PC's key, with no size check, no
+Cancel and no Restore. Project folders live on the studio's file server and
+belong to its backup; Slate's own data is backed up by the Slate Server
+(verified pg_dump backups).
 """
 
 import logging
@@ -26,14 +33,13 @@ from PySide6.QtWidgets import (
     QScrollArea, QApplication, QDoubleSpinBox, QComboBox
 )
 from PySide6.QtCore import Signal, Qt, QUrl, QThread
-from PySide6.QtGui import QPixmap, QDesktopServices, QIntValidator
+from PySide6.QtGui import QPixmap, QDesktopServices, QIntValidator, QFontMetrics
 
 from ...core.worker_threads import ReportWorker
 
 from ...core.infra.database_manager import database_manager
 from ...core.infra.config_manager import ConfigManager
 from ...utils.error_handler import error_handler
-from ...utils.backup_recovery import BackupManager
 from ...core.infra.theme_manager import ThemeManager
 from ...core.infra.global_config import GlobalConfig
 from ...core.updater.update_checker import UpdateChecker
@@ -80,6 +86,24 @@ def snap_ui_scale(value: float) -> float:
     if value <= 0:
         return 0.0
     return round(max(UI_SCALE_MIN, min(UI_SCALE_MAX, value)), 2)
+
+
+class ScaleSpinBox(QDoubleSpinBox):
+    """
+    UI scale: Auto (0) or 0.75-1.50. The arrows step from Auto straight to
+    0.75 and back - they used to walk through 0.05 ... 0.70, values Slate
+    ignores.
+    """
+
+    def stepBy(self, steps):
+        value = round(self.value(), 2)
+        if steps > 0 and value < UI_SCALE_MIN:
+            self.setValue(UI_SCALE_MIN)
+            return
+        if steps < 0 and value <= UI_SCALE_MIN:
+            self.setValue(0.0)
+            return
+        super().stepBy(steps)
 
 
 def slug(text: str) -> str:
@@ -204,7 +228,6 @@ class SettingsTab(QWidget):
         self.config_manager = config_manager or ConfigManager()
         self.settings = self.config_manager.settings
         self.global_settings = self.settings.get("global_settings", self.config_manager.default_global_settings)
-        self.backup_manager = BackupManager()
         self.update_checker = None
         self.sidecar_engine = None
         self.report_worker = None
@@ -213,8 +236,12 @@ class SettingsTab(QWidget):
         self._dirty = False
         self._roles = roles
         self._gated = False
+        self._saving = False
+        self._recounted = False
         self.can_studio = False
         self.can_system = False
+        self.can_money = False
+        self.allowed_tabs = None        # None: not known yet, every preference is shown
         self.init_ui()
         if roles is not None:
             self.apply_access(roles)
@@ -305,14 +332,24 @@ class SettingsTab(QWidget):
             logging.info(message)
 
     # ---------------------------------------------------------------- UI
-    def _row(self, layout, label_text, desc_text, control):
-        row = QHBoxLayout()
+    def _heading(self, label_text, desc_text):
+        """A row's bold title and grey description - the same on every row."""
         v = QVBoxLayout()
         l = QLabel(label_text); l.setStyleSheet(f"font-size: {T.SIZE_MD}px; font-weight: {T.WEIGHT_SEMIBOLD}; color: {Gate.TEXT}; border:none;")
-        d = QLabel(desc_text); d.setStyleSheet(f"font-size: 11px; color: {C.TEXT_TERTIARY}; border:none;")
-        d.setWordWrap(True)
-        v.addWidget(l); v.addWidget(d)
-        row.addLayout(v, 1)
+        v.addWidget(l)
+        if desc_text:
+            d = QLabel(desc_text); d.setStyleSheet(f"font-size: 11px; color: {C.TEXT_TERTIARY}; border:none;")
+            d.setWordWrap(True)
+            v.addWidget(d)
+        return v
+
+    def _row(self, layout, label_text, desc_text, control):
+        """One preference: title and description left, the control right. Returns the row."""
+        box = QWidget()
+        outer = QVBoxLayout(box)
+        outer.setContentsMargins(0, 0, 0, 0)
+        row = QHBoxLayout()
+        row.addLayout(self._heading(label_text, desc_text), 1)
         # Every right-hand control sits in a box of one width, so the column
         # lines up (they were 110, 130 px and a toggle).
         holder = QWidget()
@@ -322,18 +359,32 @@ class SettingsTab(QWidget):
         hl.addStretch(1)
         hl.addWidget(control)
         row.addWidget(holder)
-        layout.addLayout(row)
-        layout.addWidget(self.create_divider())
-        return holder
+        outer.addLayout(row)
+        outer.addWidget(self.create_divider())
+        layout.addWidget(box)
+        return box
 
-    def _path_row(self, layout, title, field, buttons):
-        layout.addWidget(QLabel(title))
+    def _path_row(self, layout, title, desc, field, buttons):
+        """A path: the same title and description as the other rows, the field under them."""
+        box = QWidget()
+        outer = QVBoxLayout(box)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addLayout(self._heading(title, desc))
         row = QHBoxLayout()
         row.addWidget(field, 1)
         for button in buttons:
             row.addWidget(button)
-        layout.addLayout(row)
-        layout.addWidget(self.create_divider())
+        outer.addLayout(row)
+        outer.addWidget(self.create_divider())
+        layout.addWidget(box)
+        field.textChanged.connect(lambda text, f=field: f.setToolTip(text))
+        return box
+
+    @staticmethod
+    def _show_start(field):
+        """A long path shows its beginning (it was scrolled to its middle)."""
+        field.setCursorPosition(0)
+        field.setToolTip(field.text())
 
     def init_ui(self):
         root_layout = QVBoxLayout(self)
@@ -379,9 +430,11 @@ class SettingsTab(QWidget):
 
         self.dry_run_default_cb = PyToggle()
         self.dry_run_default_cb.setChecked(self.global_settings.get("dry_run_enabled", False))
-        self._row(lay, "Start Build & Ingest in dry run",
-                  "Build & Ingest starts with Dry run ticked: it shows what it would do and writes nothing",
-                  self.dry_run_default_cb)
+        # Rows for one tool: shown only to people who can open it.
+        self.ingest_rows = [self._row(
+            lay, "Start Build & Ingest in dry run",
+            "Build & Ingest starts with Dry run ticked: it shows what it would do and writes nothing",
+            self.dry_run_default_cb)]
 
         self.theme_combo = QComboBox()
         self.theme_combo.addItems(ThemeManager.get_available_themes())
@@ -390,7 +443,7 @@ class SettingsTab(QWidget):
         self._row(lay, "Theme", "Dark or Light. Takes full effect the next time Slate starts.",
                   self.theme_combo)
 
-        self.ui_scale_sb = QDoubleSpinBox()
+        self.ui_scale_sb = ScaleSpinBox()
         self.ui_scale_sb.setDecimals(2)
         # 0 is Auto; the engine applies nothing below 0.75 (snapped on edit).
         self.ui_scale_sb.setRange(0.0, UI_SCALE_MAX)
@@ -399,13 +452,13 @@ class SettingsTab(QWidget):
         self.ui_scale_sb.setFixedWidth(CONTROL_WIDTH)
         self.ui_scale_sb.setValue(snap_ui_scale(self.global_settings.get("ui_scale_override", 0.0)))
         self.ui_scale_sb.editingFinished.connect(self._snap_scale)
-        self._row(lay, "UI scale",
-                  f"Auto, or {UI_SCALE_MIN:.2f}-{UI_SCALE_MAX:.2f}. 0.90-1.10 fine-tunes text that overlaps.",
-                  self.ui_scale_sb)
+        scale_row = self._row(lay, "UI scale",
+                              f"Auto, or {UI_SCALE_MIN:.2f}-{UI_SCALE_MAX:.2f}. 0.90-1.10 fine-tunes text that overlaps.",
+                              self.ui_scale_sb)
         self.lbl_scale_applied = QLabel("")
         self.lbl_scale_applied.setStyleSheet(f"font-size: 11px; color: {Gate.TEXT_DIM};")
         self.lbl_scale_applied.setAlignment(Qt.AlignmentFlag.AlignRight)
-        lay.insertWidget(lay.count() - 1, self.lbl_scale_applied)
+        scale_row.layout().insertWidget(1, self.lbl_scale_applied)
         self._show_applied_scale()
 
         from ...core.dcc_launcher import NUKE_MODES, get_nuke_mode
@@ -420,18 +473,20 @@ class SettingsTab(QWidget):
 
         self.project_root_input = QLineEdit(str(self.config_manager.settings.get("last_project_dir", "")))
         self.project_root_input.setPlaceholderText("Project root folder")
-        self._path_row(lay, "Project root", self.project_root_input, [
-            make_button("Browse…", "secondary",
-                        on_click=lambda: self._browse_directory(self.project_root_input, "Select project root")),
-            make_button("Clear", "ghost", on_click=self.project_root_input.clear)])
+        self.ingest_rows.append(self._path_row(
+            lay, "Project root", "The project folder Build & Ingest opens with", self.project_root_input, [
+                make_button("Browse…", "secondary",
+                            on_click=lambda: self._browse_directory(self.project_root_input, "Select project root")),
+                make_button("Clear", "ghost", on_click=self.project_root_input.clear)]))
 
         self.excel_tracking_input = QLineEdit(str(self.config_manager.settings.get("last_excel_file", "")))
         self.excel_tracking_input.setPlaceholderText("Excel tracking file (.xlsx)")
-        self._path_row(lay, "Excel tracking file", self.excel_tracking_input, [
-            make_button("Browse…", "secondary",
-                        on_click=lambda: self._browse_file(self.excel_tracking_input, "Select Excel file",
-                                                           "Excel Files (*.xlsx *.xls)")),
-            make_button("Clear", "ghost", on_click=self.excel_tracking_input.clear)])
+        self.ingest_rows.append(self._path_row(
+            lay, "Excel tracking file", "The shot list Build & Ingest reads", self.excel_tracking_input, [
+                make_button("Browse…", "secondary",
+                            on_click=lambda: self._browse_file(self.excel_tracking_input, "Select Excel file",
+                                                               "Excel Files (*.xlsx *.xls)")),
+                make_button("Clear", "ghost", on_click=self.excel_tracking_input.clear)]))
         main_layout.addWidget(card_config)
 
         # 2. STUDIO POLICY - everybody reads it, HR and admins change it.
@@ -441,6 +496,7 @@ class SettingsTab(QWidget):
         card_policy.layout().setSpacing(10)
         self.studio_policy_editor = StudioPolicyEditor()
         self.studio_policy_editor.saved.connect(self._on_policy_saved)
+        self.card_policy = card_policy
         # Saved with the page's Save bar, like every other field here.
         self.studio_policy_editor.btn_save.hide()
         self.studio_policy_editor.changed.connect(self._mark_dirty)
@@ -463,13 +519,14 @@ class SettingsTab(QWidget):
 
         self.server_root_input = QLineEdit(str(GlobalConfig.get("SERVER_ROOT", "") or ""))
         self.server_root_input.setPlaceholderText("Slate_Central server root")
-        self._path_row(pl, "Server root (this workstation)", self.server_root_input, [
+        self._path_row(pl, "Server root (this workstation)", "The studio folder Slate works from",
+                       self.server_root_input, [
             make_button("Browse…", "secondary",
                         on_click=lambda: self._browse_directory(self.server_root_input, "Select Slate_Central root"))])
 
         self.brand_logo_input = QLineEdit(str(self.global_settings.get("branding_logo_path", "")))
         self.brand_logo_input.setPlaceholderText("Optional: studio logo image (.png, .jpg, .svg)")
-        self._path_row(pl, "Studio logo (optional)", self.brand_logo_input, [
+        self._path_row(pl, "Studio logo (optional)", "Shown in the header", self.brand_logo_input, [
             make_button("Browse…", "secondary",
                         on_click=lambda: self._browse_file(
                             self.brand_logo_input, "Select studio logo",
@@ -480,13 +537,14 @@ class SettingsTab(QWidget):
         db_grid.setHorizontalSpacing(10)
         db_grid.setVerticalSpacing(8)
         db_grid.setColumnStretch(1, 1)
-        db_grid.setColumnStretch(3, 1)
         self.db_host_input = QLineEdit(str(GlobalConfig.get("db_host", "") or ""))
         self.db_host_input.setPlaceholderText("Host name or IP address")
         # A plain field with a number check, like its neighbours - it was a
         # spin box with arrows.
         self.db_port_input = QLineEdit(str(GlobalConfig.get("db_port", 5440) or 5440))
         self.db_port_input.setValidator(QIntValidator(1, 65535, self))
+        # Five digits: it stretched as wide as the host name.
+        self.db_port_input.setFixedWidth(90)
         self.db_name_input = QLineEdit(str(GlobalConfig.get("db_name", "") or ""))
         self.db_name_input.setPlaceholderText("Database name")
         self.db_user_input = QLineEdit(str(GlobalConfig.get("db_user", "") or ""))
@@ -522,7 +580,8 @@ class SettingsTab(QWidget):
         for label in (self.runtime_db_label, self.runtime_server_label,
                       self.runtime_exr_label, self.runtime_sync_label):
             label.setWordWrap(True)
-            label.setStyleSheet(f"color: {C.TEXT_PRIMARY}; font-size: {T.SIZE_SM}px;")
+            # Body size, like the rest of the page (it was the smallest text on it).
+            label.setStyleSheet(f"color: {C.TEXT_PRIMARY}; font-size: {Gate.SIZE_MD}px;")
             card_runtime.layout().addWidget(label)
         refresh_row = QHBoxLayout()
         refresh_row.addStretch(1)
@@ -536,9 +595,7 @@ class SettingsTab(QWidget):
         grid = QGridLayout(); grid.setSpacing(15)
         self.btn_report = ActionCard("info", "Project report", "Save a PDF summary of a project's history",
                                      self.generate_project_summary_report)
-        self.btn_backup = ActionCard("package", "Back up a project", "Zip the current project folder",
-                                     self.create_backup)
-        self.btn_logs = ActionCard("alert", "Open my log folder",
+        self.btn_logs = ActionCard("folder", "Open my log folder",
                                    "Slate's log files on this computer, for IT", self.show_error_report)
         self.btn_templates = ActionCard("refresh", "Reload templates",
                                         "Read the folder templates again in the open tabs",
@@ -548,7 +605,7 @@ class SettingsTab(QWidget):
         self.btn_audit = ActionCard("shield", "Studio logs", "Admin Panel > Audit Logs: every workstation's logs",
                                     self.open_audit_logs)
         self.maint_grid = grid
-        self.maint_cards = [self.btn_report, self.btn_backup, self.btn_logs, self.btn_templates,
+        self.maint_cards = [self.btn_report, self.btn_logs, self.btn_templates,
                             self.btn_update, self.btn_audit]
         card_maint.layout().addLayout(grid)
         main_layout.addWidget(card_maint)
@@ -560,6 +617,9 @@ class SettingsTab(QWidget):
         # Until the person is known (a widget shown on its own in a test) the
         # studio parts stay hidden; apply_access shows them to the right people.
         self._apply_visibility()
+        for field in (self.project_root_input, self.excel_tracking_input, self.server_root_input,
+                      self.brand_logo_input):
+            self._show_start(field)
         self._snapshot = self.current_values()
         for signal in (self.restore_paths_cb.toggled, self.dry_run_default_cb.toggled,
                        self.theme_combo.currentTextChanged, self.ui_scale_sb.valueChanged,
@@ -574,27 +634,49 @@ class SettingsTab(QWidget):
     # --------------------------------------------------------------- access
     def showEvent(self, event):
         super().showEvent(event)
-        if not self._gated:
-            roles = _roles_of_window(self)
-            if roles is not None:
-                self.apply_access(roles)
+        # Roles may have come with the constructor; the tabs a person can
+        # open are only known from the window.
+        if not self._gated or self.allowed_tabs is None:
+            roles = self._roles if self._gated else _roles_of_window(self)
+            tabs = getattr(self.window(), "allowed_tabs", None)
+            if roles is not None and (not self._gated or tabs is not None):
+                self.apply_access(roles, tabs)
 
-    def apply_access(self, roles):
-        """Studio cards only for studio_settings; the Audit Logs link only for manage_system."""
+    def apply_access(self, roles, allowed_tabs=None):
+        """
+        Studio cards only for studio_settings (the money card also for
+        approve_bid); the Audit Logs link only for manage_system; the Build &
+        Ingest preferences and Reload templates only for people who can open
+        Build & Ingest, and Project report for the production roles.
+        """
         from ...core.domain import access
         self._gated = True
         self._roles = list(roles or [])
         self.can_studio = access.can(self._roles, "studio_settings")
         self.can_system = access.can(self._roles, "manage_system")
+        self.can_money = self.can_studio or access.can(self._roles, "approve_bid")
+        if allowed_tabs is not None:
+            self.allowed_tabs = list(allowed_tabs)
         self._apply_visibility()
 
+    def can_open(self, tab_key) -> bool:
+        tabs = self.allowed_tabs
+        return tabs is None or "ALL" in tabs or tab_key in tabs
+
     def _apply_visibility(self):
-        self.card_money.setVisible(self.can_studio)
+        from ...core.domain import access
+        self.card_money.setVisible(self.can_money)
         self.card_paths.setVisible(self.can_studio)
+        ingest = self.can_open("Folder Creator")
+        for row in self.ingest_rows:
+            row.setVisible(ingest)
+        reports = self.allowed_tabs is None or access.can(self._roles or [], "dashboard_view_all")
         # The maintenance cards are laid out again so a hidden one leaves no gap.
         shown = [c for c in self.maint_cards
                  if not ((c is self.btn_update and not self.can_studio)
-                         or (c is self.btn_audit and not self.can_system))]
+                         or (c is self.btn_audit and not self.can_system)
+                         or (c is self.btn_templates and not ingest)
+                         or (c is self.btn_report and not reports))]
         for card in self.maint_cards:
             self.maint_grid.removeWidget(card)
             card.setVisible(card in shown)
@@ -709,17 +791,27 @@ class SettingsTab(QWidget):
 
     # ---------------------------------------------------------------- save
     def save_all(self) -> bool:
-        """Save every preference and path on the page; one confirmation."""
+        """Save every preference and path on the page; one message says what was saved."""
         self._snap_scale()
         values = self.current_values()
         if self.can_studio and not self._check_studio_fields(values):
             return False
+        prefs_changed = values != self._snapshot
         # The studio policy and money cards save to the studio database first;
         # a refusal there stops the save with the reason and keeps the edits.
-        for editor in self.dirty_editors():
-            if not editor.save():
-                self._update_dirty()
-                return False
+        # They save quietly: one toast for the page, not a box per card.
+        saved_parts = []
+        self._recounted = False
+        self._saving = True
+        try:
+            for editor in self.dirty_editors():
+                if not editor.save(quiet=True):
+                    self._update_dirty()
+                    return False
+                saved_parts.append("the studio policy" if editor is self.studio_policy_editor
+                                   else "the studio currency, rates and hours")
+        finally:
+            self._saving = False
         try:
             self.global_settings["restore_last_paths"] = values["restore_last_paths"]
             self.global_settings["dry_run_enabled"] = values["dry_run_enabled"]
@@ -742,14 +834,20 @@ class SettingsTab(QWidget):
             QMessageBox.critical(self, "Settings not saved", f"Your settings were not saved:\n{e}")
             return False
 
-        notes = ["Settings saved. Your preferences apply now."]
-        restart = False
-        if values["theme"] != self._snapshot.get("theme"):
-            restart = bool(ThemeManager.set_theme(values["theme"])) or restart
-        if self.can_studio:
-            restart = self._save_studio_fields(values) or restart
-        if restart:
-            notes.append("The theme, server and database changes finish the next time Slate starts.")
+        if prefs_changed or not saved_parts:
+            saved_parts.append("your preferences")
+        notes = ["Saved " + " and ".join(saved_parts) + "."]
+        # Only what really waits for a restart is named (it listed theme,
+        # server and database whatever had changed).
+        later = []
+        if values["theme"] != self._snapshot.get("theme") and ThemeManager.set_theme(values["theme"]):
+            later.append("the theme")
+        if self.can_studio and self._save_studio_fields(values):
+            later.append("the server and database changes")
+        if later:
+            notes.append(" and ".join(later).capitalize() + " finish the next time Slate starts.")
+        if self._recounted:
+            notes.append("Attendance has been recounted.")
         self._snapshot = self.current_values()
         self._update_dirty()
         self.global_settings_updated.emit(dict(self.global_settings))
@@ -778,6 +876,13 @@ class SettingsTab(QWidget):
             QMessageBox.warning(self, "Studio database", "The port must be a number from 1 to 65535.")
             return False
         root = values["server_root"]
+        if not root and self._snapshot.get("server_root"):
+            # Clearing it was 'saved' while the old root was kept.
+            QMessageBox.warning(self, "Server root",
+                                "Slate needs the studio folder. Choose the server root rather than "
+                                "leaving it empty.")
+            self.server_root_input.setFocus()
+            return False
         if root and root != self._snapshot.get("server_root") and not Path(root).is_dir():
             # A warning, not a refusal: a share can be down for a moment.
             if QMessageBox.question(
@@ -852,9 +957,13 @@ class SettingsTab(QWidget):
             status = {}
         server_root_value = str(GlobalConfig.get("SERVER_ROOT", "") or "").strip()
         server_ok = bool(server_root_value and Path(server_root_value).is_dir())
-        lines = runtime_lines(status, server_root_value, server_ok, bool(GlobalConfig.exr_loading_enabled()))
+        # The long path elided in its middle, whole in the tooltip (it wrapped awkwardly).
+        shown_root = QFontMetrics(self.runtime_server_label.font()).elidedText(
+            server_root_value, Qt.TextElideMode.ElideMiddle, 520)
+        lines = runtime_lines(status, shown_root, server_ok, bool(GlobalConfig.exr_loading_enabled()))
         self.runtime_db_label.setText(lines["database"])
         self.runtime_server_label.setText(lines["folder"])
+        self.runtime_server_label.setToolTip(server_root_value)
         self.runtime_exr_label.setText(lines["exr"])
         self.runtime_sync_label.setText(lines["sync"])
 
@@ -876,12 +985,14 @@ class SettingsTab(QWidget):
         selected = QFileDialog.getExistingDirectory(self, title, start_dir)
         if selected:
             target_input.setText(selected)
+            self._show_start(target_input)
 
     def _browse_file(self, target_input: QLineEdit, title: str, file_filter: str):
         start_file = target_input.text().strip() or str(Path.home())
         selected, _ = QFileDialog.getOpenFileName(self, title, start_file, file_filter)
         if selected:
             target_input.setText(selected)
+            self._show_start(target_input)
 
     # -------------------------------------------------------- studio policy
     def save_studio_policy(self):
@@ -899,7 +1010,10 @@ class SettingsTab(QWidget):
             if callable(method):
                 try:
                     method()
-                    self._toast("Studio policy saved. Attendance has been recounted.")
+                    # Part of the page's one message when saved from the page.
+                    self._recounted = True
+                    if not self._saving:
+                        self._toast("Studio policy saved. Attendance has been recounted.")
                 except Exception as exc:
                     logging.warning("Attendance refresh after the policy save failed: %s", exc)
                 break
@@ -1055,53 +1169,6 @@ class SettingsTab(QWidget):
                 self.report_worker.start()
         except Exception as e:
             QMessageBox.critical(self, "Project report", f"The report could not be made:\n{e}")
-
-    def create_backup(self):
-        """Zip the current project (or another folder) on a worker, then say where it went."""
-        current = str(self.config_manager.settings.get("last_project_dir", "") or "").strip()
-        directory = current if current and Path(current).is_dir() else ""
-        if directory:
-            answer = QMessageBox.question(
-                self, "Back up a project", f"Back up the current project?\n\n{directory}",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Yes)
-            if answer == QMessageBox.StandardButton.Cancel:
-                return None
-            if answer == QMessageBox.StandardButton.No:
-                directory = ""
-        if not directory:
-            directory = QFileDialog.getExistingDirectory(self, "Folder to back up")
-            if not directory:
-                return None
-        suggested = f"{slug(Path(directory).name)}_{datetime.now().strftime('%Y%m%d')}"
-        name, ok = QInputDialog.getText(self, "Back up a project", "Name of the backup:", text=suggested)
-        if not ok or not name.strip():
-            return None
-
-        self.btn_backup.setEnabled(False)
-        self.btn_backup.update_content("package", "Backing up…", f"Zipping {Path(directory).name}")
-        manager = self.backup_manager
-        label = name.strip()
-
-        def finished(result, error):
-            self.btn_backup.setEnabled(True)
-            self.btn_backup.update_content("package", "Back up a project", "Zip the current project folder")
-            success, msg, path = result if result else (False, error or "unknown error", None)
-            self.last_backup = (success, msg, path)
-            if not success:
-                QMessageBox.critical(self, "Back up a project", f"The backup was not made:\n{msg}")
-                return
-            self._show_backup_done(path)
-
-        return self._run_job(lambda: manager.create_backup([Path(directory)], label), finished)
-
-    def _show_backup_done(self, path):
-        box = QMessageBox(QMessageBox.Icon.Information, "Back up a project",
-                          f"Backup saved:\n{path}", QMessageBox.StandardButton.Ok, self)
-        open_btn = box.addButton("Open folder", QMessageBox.ButtonRole.ActionRole)
-        box.exec()
-        if box.clickedButton() is open_btn:
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(path).parent)))
 
     def show_error_report(self):
         log_dir = error_handler.log_directory
