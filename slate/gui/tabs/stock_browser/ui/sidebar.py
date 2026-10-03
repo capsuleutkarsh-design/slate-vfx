@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 
 from ..widgets import PyToggle
-from ....core.controls import make_button
+from ....core.controls import make_button, style_button
 from ....core.icons import icon as draw_icon
 from slate.core.infra.gate import Gate
 
@@ -130,6 +130,7 @@ class StockSidebar(QWidget):
             self.lbl_fast = QLabel("Fast mode")
             self.lbl_fast_hint = QLabel("Skips review proxies - quicker")
             self.lbl_fast_hint.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: 11px;")
+            self.lbl_fast_hint.setWordWrap(True)
             text_col.addWidget(self.lbl_fast)
             text_col.addWidget(self.lbl_fast_hint)
             self.toggle_fast = PyToggle()
@@ -159,6 +160,10 @@ class StockSidebar(QWidget):
             ipa_layout.setSpacing(6)
             self.lbl_ingest_status = QLabel("")
             self.lbl_ingest_status.setWordWrap(True)
+            # Its whole sentence, also on a short laptop screen: the category
+            # list gives way instead.
+            self.lbl_ingest_status.setSizePolicy(QSizePolicy.Policy.Preferred,
+                                                 QSizePolicy.Policy.Minimum)
             self.lbl_ingest_status.setStyleSheet(f"color: {Gate.TEXT_2};")
             ipa_layout.addWidget(self.lbl_ingest_status)
             self.progress_bar_ingest = QProgressBar()
@@ -390,6 +395,9 @@ class StockSidebar(QWidget):
         restore = self.current_category == REMOVED
         noun = "Restore" if restore else "Delete"
         self.btn_delete_selected.setText(f"{noun} ({self._selection})" if self._selection > 1 else noun)
+        if self.btn_delete_selected.property("kind") != ("secondary" if restore else "danger"):
+            # Bringing back is not destructive: not in the danger red.
+            style_button(self.btn_delete_selected, "secondary" if restore else "danger")
         self.btn_delete_selected.setIcon(draw_icon("undo" if restore else "trash", Gate.TEXT, 16))
         self.btn_delete_selected.setEnabled(self._selection > 0 and not running)
 

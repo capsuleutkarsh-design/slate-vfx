@@ -273,12 +273,14 @@ class StockBrowserTab(
         away; the Filters button brings it back.
         """
         width = max(1, int(width))
-        # A 1366 laptop keeps its categories, Favourites and Studio picks in
-        # view (MED2-035); only narrower windows fold the sidebar away.
-        if width < 1360:
+        # Laptops down to a 1280 window (the tab is ~100 px narrower) keep their
+        # categories, Favourites and Studio picks in view (MED2-035); only
+        # narrower ones fold the sidebar away.
+        if width < 1150:
             sidebar = 0
         else:
-            sidebar = int(min(280, max(200, width * 0.16)))
+            # 230 at least: Export and Import side by side keep their words.
+            sidebar = int(min(280, max(230, width * 0.16)))
         inspector = int(min(420, max(280, width * 0.24)))
         gallery = max(380, width - sidebar - inspector)
         return [sidebar, gallery, inspector]

@@ -445,7 +445,20 @@ def test_cards_fill_the_row(qtbot, library, tmp_path):
     cell = g.asset_view.gridSize().width()
     width = g.asset_view.viewport().width()
     # Whole columns fill the row: what is left over is less than the margin kept back.
-    assert 0 <= width - (width // cell) * cell <= 4 + (width // cell)               # MED-046
+    keep = g.asset_view.spacing() * 2 + 4          # the first column's inset and a margin
+    assert 0 <= width - (width // cell) * cell <= keep + (width // cell)            # MED-046
+    # ...and the view really lays out that many in a row: no empty column-wide
+    # band at the right (MED2-008).
+    for w in (900, 1115, 1240):
+        g.asset_view.resize(w, 600)
+        qtbot.wait(20)
+        g._fit_cards()
+        g.asset_view.doItemsLayout()
+        cell = g.asset_view.gridSize().width()
+        top = g.asset_view.visualRect(tab.proxy_model.index(0, 0)).top()
+        in_row = sum(1 for r in range(tab.proxy_model.rowCount())
+                     if g.asset_view.visualRect(tab.proxy_model.index(r, 0)).top() == top)
+        assert g.asset_view.viewport().width() - in_row * cell < cell, (w, in_row, cell)
 
 
 def test_media_pills_keep_their_words(qtbot, library):
@@ -466,7 +479,8 @@ def test_the_sidebar_reads_cleanly(qtbot, library):
 def test_side_panels_follow_the_window(qtbot, library):
     tab = _tab(qtbot, library, load=False)
     sizes = tab.proportional_sizes(1280)
-    assert sizes[0] == 0 and sizes[1] >= 0.6 * 1280 - 1                            # MED-061
+    assert sizes[0] >= 200 and sizes[1] >= 0.55 * 1280                              # MED-061, MED2-035
+    assert tab.proportional_sizes(1100)[0] == 0
     wide = tab.proportional_sizes(1920)
     assert wide[0] > 0 and wide[1] > wide[2]
 
@@ -649,7 +663,7 @@ def test_cards_are_fitted_again_when_the_viewport_settles(qtbot, library, tmp_pa
     qtbot.waitUntil(lambda: g.asset_view.viewport().width() == g._fitted_width, timeout=3000)
     cell = g.asset_view.gridSize().width()
     width = g.asset_view.viewport().width()
-    assert width - (width // cell) * cell <= 4 + (width // cell)
+    assert width - (width // cell) * cell <= g.asset_view.spacing() * 2 + 4 + (width // cell)
 
 
 def test_the_inspector_never_scrolls_sideways(qtbot, library):
@@ -790,7 +804,8 @@ def test_clearing_filters_empties_the_search_box_properly(qtbot, library, tmp_pa
 
 def test_a_laptop_keeps_the_sidebar(qtbot, library):
     tab = _tab(qtbot, library, load=False)
-    assert tab.proportional_sizes(1366)[0] >= 200                                    # MED2-035
+    assert tab.proportional_sizes(1300)[0] >= 200          # a 1366 window   # MED2-035
+    assert tab.proportional_sizes(1184)[0] >= 200          # a 1280 window
 
 
 def test_a_failed_pick_is_not_called_a_success(qtbot, library, tmp_path, monkeypatch):

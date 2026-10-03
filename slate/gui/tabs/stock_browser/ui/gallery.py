@@ -783,9 +783,11 @@ class StockGallery(QWidget):
     def _fit_cards(self):
         delegate = self.delegate
         spacing = self.asset_view.spacing()
-        # A little is kept back so the last column never wraps by a pixel.
+        # QListView starts the first column one spacing in, so that and a
+        # little more are kept back: without it the last column wrapped when
+        # the cells rounded up, leaving a whole column's band empty (MED2-008).
         self._fitted_width = self.asset_view.viewport().width()
-        viewport = max(1, self._fitted_width - 4)
+        viewport = max(1, self._fitted_width - spacing * 2 - 4)
         minimum_cell = self._zoom + delegate.padding * 2 + 4 + spacing
         columns = max(1, viewport // minimum_cell)
         cell = viewport // columns
