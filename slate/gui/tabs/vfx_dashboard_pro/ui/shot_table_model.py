@@ -132,19 +132,31 @@ def field_label(path: str) -> str:
         _, dept, leaf = path.split(".", 2)
         name = next((d.name for d in load_departments() if d.key == dept), dept.title())
         leaf_name = {"bid_days": "bid", "artist": "artist", "status": "status",
-                     "target": "target", "eta": "ETA", "wip_date": "WIP date"}.get(leaf, leaf)
+                     "target": "target", "eta": "ETA", "wip_date": "WIP date",
+                     "actual_days": "actual days"}.get(leaf, leaf.replace("_", " "))
         return f"{name} {leaf_name}"
     return _FIELD_NAMES.get(path, path.replace("_", " "))
 
 
 def display_value(path: str, value) -> str:
-    if value in (None, ""):
+    """A stored value as the grid shows it: 'High' not 1, '30 Sep 2026', '96', 'Yes'."""
+    if value in (None, "") or value == []:
         return "(empty)"
     if path == "priority":
         return shot_status.priority_label(value)
-    if path.endswith("target") or path == "target":
+    if path.endswith("target") or path == "target" or path.endswith("_date") or path.endswith(".eta"):
         from slate.core.domain.dates import format_date
-        return format_date(value)
+        return format_date(value) or str(value)
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    if isinstance(value, (list, tuple)):
+        return ", ".join(str(v).replace("/", " / ") for v in value)
+    try:
+        number = float(value)
+        if path in ("edit_frames", "frames") or path.endswith("_days"):
+            return str(int(number)) if number.is_integer() else f"{number:g}"
+    except (TypeError, ValueError):
+        pass
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
     return str(value)
@@ -560,7 +572,8 @@ class ShotTableModel(QAbstractTableModel):
                 lines.insert(0, str(text))
         if self.cell_modified(shot, col_key):
             before = self._baseline_cell(shot, col_key)
-            lines.append(f"Not saved yet. Was: {before if before not in (None, '') else '(empty)'}")
+            path = self._SIMPLE_FIELDS.get(col_key, col_key)
+            lines.append(f"Not saved yet. Was: {display_value(path, before)}")
         return "\n".join(lines) if lines else None
 
     def _my_departments(self, shot) -> List[str]:
