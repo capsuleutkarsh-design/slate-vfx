@@ -121,8 +121,8 @@ def length_text(asset, compact=False) -> str:
     if not duration:
         return "" if compact else DASH
     if compact:
-        whole = int(round(float(duration)))
-        return f"{whole // 60}:{whole % 60:02d}"
+        # m:ss, or h:mm:ss past an hour - never '65:00' (MED2-031).
+        return timecode(duration, 0)
     return timecode(duration, meta.get("fps") or 0)
 
 
@@ -201,6 +201,30 @@ def badge_labels(asset) -> dict:
 
 def can_preview(asset) -> bool:
     return asset_kind(asset) in ("SEQ", "MOV", "IMG")
+
+
+def preview_source(asset):
+    """
+    (file to play, AdvancedPlayer.load options) for an asset - one answer for
+    the inspector and Quick Look.
+
+    Movies and sequences play their proxy when there is one, with the
+    original as the sound source (MED2-003) and a sequence's first frame
+    number (MED2-015). A still is one frame: it always shows the original,
+    so an EXR keeps its colourspace and view controls instead of an 8-bit
+    JPG (MED2-004).
+    """
+    path = asset_path(asset)
+    proxy = asset.get("proxy_path")
+    if not proxy or asset_kind(asset) not in ("MOV", "SEQ"):
+        return path, {}
+    from slate.core.domain.proxy_manager import ProxyManager
+    if not ProxyManager.exists(proxy):
+        return path, {}
+    options = {"audio_source": path}
+    if asset.get("is_sequence"):
+        options["first_frame"] = int(asset.get("frame_first") or 0) or None
+    return proxy, options
 
 
 # ------------------------------------------------------------ thumbnails

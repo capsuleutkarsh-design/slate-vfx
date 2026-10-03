@@ -35,7 +35,7 @@ from ....core.controls import make_button
 from ....core.icons import icon as draw_icon
 from ....stock_model import (
     DASH, KIND_NAMES, asset_kind, asset_path, display_name, length_text, resolution_text,
-    size_text, added_text, can_preview,
+    size_text, added_text, can_preview, preview_source,
 )
 from slate.core.infra.gate import Gate
 
@@ -120,7 +120,24 @@ class StockInspectorPanel(QWidget):
         self.player.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.player.next_requested.connect(self.next_requested.emit)
         self.player.prev_requested.connect(self.prev_requested.emit)
-        layout.addWidget(self.player, 3)
+        self.player.set_context("asset", "Enter in the gallery, Space for Quick Look")
+        layout.addWidget(self.player, 1)
+
+        # "Play when selected" belongs with the transport, above the facts,
+        # not below the fold (MED2-024).
+        self.chk_autoplay = QCheckBox("Play when selected")
+        self.chk_autoplay.setToolTip("Start playing a clip as soon as it is selected. "
+                                     "Off: the first frame shows, Enter plays.")
+        try:
+            self.chk_autoplay.setChecked(self._settings.value("autoplay", False, type=bool))
+        except Exception:
+            self.chk_autoplay.setChecked(False)
+        self.chk_autoplay.toggled.connect(lambda on: self._settings.setValue("autoplay", bool(on)))
+        autoplay_row = QHBoxLayout()
+        autoplay_row.setContentsMargins(12, 4, 12, 0)
+        autoplay_row.addStretch()
+        autoplay_row.addWidget(self.chk_autoplay)
+        layout.addLayout(autoplay_row)
 
         # What to do when there is no picture: a missing file, camera raw.
         self.notice_row = QWidget()
@@ -158,20 +175,31 @@ class StockInspectorPanel(QWidget):
         action_row = QHBoxLayout()
         action_row.setSpacing(6)
         self.btn_favorite = make_button("Favourite", "secondary", icon="star",
-                                        tooltip="Keep it in your Favorites (Ctrl+D)")
+                                        tooltip="Keep it in your favourites (Ctrl+D)")
         self.btn_favorite.setCheckable(True)
         self.btn_favorite.clicked.connect(self._favorite_clicked)
         self.btn_pick = make_button("Studio pick", "secondary", icon="sparkle",
                                     tooltip="Show it in Studio picks for everybody")
         self.btn_pick.setCheckable(True)
         self.btn_pick.clicked.connect(self._pick_clicked)
-        self.btn_tags = make_button("Edit tags…", "secondary", icon="tag")
+        self.btn_tags = make_button("Edit tags…", "secondary", icon="tag",
+                                    tooltip="Add or remove this asset's tags")
         self.btn_tags.clicked.connect(lambda: self.current_asset and
                                       self.tags_edit_requested.emit(self.current_asset))
         for b in (self.btn_favorite, self.btn_pick, self.btn_tags):
             action_row.addWidget(b)
         action_row.addStretch()
         meta_layout.addLayout(action_row)
+
+        # Tags right under the name: what people check first (MED2-024).
+        caption = QLabel("Tags")
+        caption.setProperty("role", "caption")
+        meta_layout.addWidget(caption)
+        self.lbl_tags = QLabel(DASH)
+        self.lbl_tags.setWordWrap(True)
+        self.lbl_tags.setProperty("state", "none")
+        self.lbl_tags.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        meta_layout.addWidget(self.lbl_tags)
 
         self.facts = QWidget()
         self.facts.setObjectName("StockFacts")
@@ -215,26 +243,9 @@ class StockInspectorPanel(QWidget):
         path_row.addStretch()
         meta_layout.addLayout(path_row)
 
-        caption = QLabel("Tags")
-        caption.setProperty("role", "caption")
-        meta_layout.addWidget(caption)
-        self.lbl_tags = QLabel(DASH)
-        self.lbl_tags.setWordWrap(True)
-        self.lbl_tags.setProperty("state", "none")
-        self.lbl_tags.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        meta_layout.addWidget(self.lbl_tags)
 
-        self.chk_autoplay = QCheckBox("Play when selected")
-        self.chk_autoplay.setToolTip("Start playing a clip as soon as it is selected. "
-                                     "Off: the first frame shows, Enter plays.")
-        try:
-            self.chk_autoplay.setChecked(self._settings.value("autoplay", False, type=bool))
-        except Exception:
-            self.chk_autoplay.setChecked(False)
-        self.chk_autoplay.toggled.connect(lambda on: self._settings.setValue("autoplay", bool(on)))
-        meta_layout.addWidget(self.chk_autoplay)
         meta_layout.addStretch()
-        layout.addWidget(scroll, 2)
+        layout.addWidget(scroll, 1)
 
         # Captions and values keep one font; only the colour says the state.
         self.meta_group.setStyleSheet(Gate.sheet("""
@@ -357,7 +368,9 @@ class StockInspectorPanel(QWidget):
             from slate.core.domain.stock_search import real_tags
             tags = real_tags(tags)
         visual = asset.get('visual_tags') or []
-        text = " · ".join(list(tags) + [v for v in visual if v not in tags])
+        # One word once, whatever its case ('warm' and 'Warm', MED2-037).
+        seen = {t.lower() for t in tags}
+        text = " · ".join(list(tags) + [v for v in visual if v.lower() not in seen])
         self._set(self.lbl_tags, text or DASH)
 
         for button in (self.btn_favorite, self.btn_copy_path, self.btn_reveal):
@@ -370,22 +383,16 @@ class StockInspectorPanel(QWidget):
 
     def set_favorite(self, on: bool):
         self.btn_favorite.setChecked(bool(on))
-        self.btn_favorite.setText("Favourite" if not on else "In favourites")
-        if self.width() < 400:
-            self.btn_favorite.setText("")
-            self.btn_favorite.setToolTip(self._favorite_label())
         self.btn_favorite.setIcon(draw_icon("star-filled" if on else "star",
                                             Gate.WARN if on else Gate.TEXT, 16))
+        self._fit_action_row()
 
     def set_pick(self, on: bool):
         self.btn_pick.setChecked(bool(on))
-        self.btn_pick.setText("Studio pick" if not on else "Picked")
-        if self.width() < 400:
-            self.btn_pick.setText("")
+        self._fit_action_row()
 
     def _show_preview(self, asset, autoplay):
         path = asset_path(asset)
-        proxy = asset.get('proxy_path')
         kind = asset_kind(asset)
         self.notice_row.hide()
         if not path:
@@ -409,11 +416,9 @@ class StockInspectorPanel(QWidget):
             self.btn_copy_missing.hide()
             self.notice_row.show()
             return
-        from slate.core.domain.proxy_manager import ProxyManager
-        target = proxy if (proxy and ProxyManager.exists(proxy)) else path
+        target, options = preview_source(asset)
         self.player._pending_autoplay = bool(autoplay)
-        # The original carries the sound; a proxy is made without it.
-        self.player.load(target, audio_source=path)
+        self.player.load(target, **options)
 
     # ------------------------------------------------------------- actions
     def toggle_play(self):
@@ -454,19 +459,30 @@ class StockInspectorPanel(QWidget):
         self._fit_action_row()
 
     def _fit_action_row(self):
-        """Narrow panel: the three action buttons keep their icons and tooltips only."""
-        narrow = self.width() < 400
-        for button, label in ((self.btn_favorite, self._favorite_label()),
-                              (self.btn_pick, "Picked" if self.btn_pick.isChecked() else "Studio pick"),
-                              (self.btn_tags, "Edit tags…")):
-            button.setText("" if narrow else label)
-            if narrow:
-                button.setToolTip(label)
+        """
+        The action buttons keep their words while they fit; when they do not,
+        Edit tags goes to an icon first, and only then the others (MED2-023).
+        The descriptive tooltips stay as they are.
+        """
+        labels = ((self.btn_favorite, self._favorite_label()),
+                  (self.btn_pick, "Picked" if self.btn_pick.isChecked() else "Studio pick"),
+                  (self.btn_tags, "Edit tags…"))
+        room = self.width() - 28 - 12          # the facts' margins, the row's spacing
+        shown = [b for b, _ in labels if not b.isHidden()]
+        for icon_only in ((), (self.btn_tags,), tuple(b for b, _ in labels)):
+            for button, label in labels:
+                button.setText("" if button in icon_only else label)
+            if sum(b.sizeHint().width() for b in shown) <= room:
+                break
 
     def _favorite_label(self):
         return "In favourites" if self.btn_favorite.isChecked() else "Favourite"
 
     def set_compact_mode(self, compact: bool):
-        """Reduce vertical pressure for narrow inspector widths."""
-        self.player.setMinimumHeight(200 if compact else 240)
-        self.player.setMaximumHeight(400 if compact else 600)
+        """
+        The player takes at most 45% of the panel's height, so the facts, the
+        path and the tags are in view on a full-HD screen (MED2-024).
+        """
+        low = 200 if compact else 240
+        self.player.setMinimumHeight(low)
+        self.player.setMaximumHeight(max(low, min(600, int(self.height() * 0.45))))

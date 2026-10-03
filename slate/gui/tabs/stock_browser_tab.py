@@ -16,7 +16,7 @@ from PySide6.QtCore import Qt, Signal, QTimer
 from ...core.domain.asset_api import create_asset_api
 from ...core.infra.design_tokens import ColorTokens as C
 from ...core.infra.stock_repository import REMOVED
-from ..stock_model import StockModel, asset_path, can_preview
+from ..stock_model import StockModel, asset_path, can_preview, preview_source
 from .stock_browser.widgets import AssetSortFilterProxyModel
 from ..components.qt_safety import safe_single_shot
 
@@ -376,8 +376,9 @@ class StockBrowserTab(
             return
         from ..widgets.quick_look import QuickLookDialog
         self.inspector.player.stop_media()
+        target, options = preview_source(asset)
         dialog = QuickLookDialog(self, asset_name=asset.get("name") or "Preview",
-                                 asset_path=self._preview_path(asset),
+                                 asset_path=target, load_options=options,
                                  navigator=self._quick_look_step)
         self._quick_look = dialog
         dialog.exec()
@@ -386,20 +387,15 @@ class StockBrowserTab(
         self.inspector.current_asset = None
         self.on_selection_changed()
 
-    def _preview_path(self, asset):
-        proxy = asset.get("proxy_path")
-        from ...core.domain.proxy_manager import ProxyManager
-        return proxy if proxy and ProxyManager.exists(proxy) else asset_path(asset)
-
     def _quick_look_step(self, step):
-        """Move the selection and hand Quick Look what to show next (name, path) or None."""
+        """Move the selection and hand Quick Look what to show next (name, path, options) or None."""
         row = self.gallery.current_index().row()
         count = self.proxy_model.rowCount()
         for candidate in range(row + step, count if step > 0 else -1, step):
             asset = self.proxy_model.index(candidate, 0).data(Qt.ItemDataRole.UserRole)
             if asset and can_preview(asset) and not asset.get('_missing'):
                 self.gallery.select_row(candidate)
-                return asset.get("name") or "", self._preview_path(asset)
+                return (asset.get("name") or "",) + preview_source(asset)
         return None
 
     def _on_card_star(self, proxy_index):

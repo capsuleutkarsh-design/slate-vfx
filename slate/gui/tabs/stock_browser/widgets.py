@@ -150,7 +150,7 @@ class AssetSortFilterProxyModel(QSortFilterProxyModel):
 class AssetKeys:
     """The gallery keys, shared by the grid and the table (MED-033, MED-056, MED-117)."""
 
-    PLAYER_KEYS = (Qt.Key.Key_J, Qt.Key.Key_K, Qt.Key.Key_L, Qt.Key.Key_F,
+    PLAYER_KEYS = (Qt.Key.Key_J, Qt.Key.Key_K, Qt.Key.Key_L, Qt.Key.Key_F, Qt.Key.Key_M,
                    Qt.Key.Key_Home, Qt.Key.Key_End, Qt.Key.Key_Comma, Qt.Key.Key_Period)
 
     @staticmethod
@@ -188,7 +188,7 @@ class DraggableListView(QListView):
     delete_requested = Signal()       # Delete
     favorite_requested = Signal()     # Ctrl+D
     copy_requested = Signal()         # Ctrl+C
-    player_key = Signal(object)       # J K L F Home End , . for the inspector's player
+    player_key = Signal(object)       # J K L M F Home End , . for the inspector player
     zoom_step = Signal(int)           # Ctrl + wheel
 
     def __init__(self, parent=None):
