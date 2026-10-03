@@ -53,7 +53,7 @@ class DashboardView(QWidget):
                 troubles.append(
                     "The database '%s' here has no tables, but another database "
                     "on this machine has %s of data in it: %s. That is probably "
-                    "the studio's. Point Settings > Database Root Path at it and "
+                    "the studio's. Point Settings > Database folder at it and "
                     "restart."
                     % (facts.get("database") or "?", populated[0]["data"],
                        populated[0]["path"]))
@@ -72,7 +72,7 @@ class DashboardView(QWidget):
         if pool.get("agrees") is False:
             troubles.append(
                 "The pool publishes '%s' but clients ask for '%s', so anything "
-                "using the pooler port is refused. Restart Pool rewrites it."
+                "using the pooler port is refused. Restart pool rewrites it."
                 % (pool.get("publishes"), pool.get("expects")))
 
         if troubles:
@@ -93,7 +93,7 @@ class DashboardView(QWidget):
         title_layout.setSpacing(4)
         lbl_title = QLabel("Slate Server")
         lbl_title.setStyleSheet(f"font-size: 28px; font-weight: {T.WEIGHT_BOLD}; color: {C.TEXT_PRIMARY};")
-        lbl_subtitle = QLabel("Database engine and master node")
+        lbl_subtitle = QLabel("The studio database")
         lbl_subtitle.setStyleSheet(f"font-size: 14px; color: {C.TEXT_SECONDARY};")
         
         title_layout.addWidget(lbl_title)
@@ -136,7 +136,7 @@ class DashboardView(QWidget):
 
         self.toggle_power = ToggleSwitch()
         
-        self.btn_api_dashboard = QPushButton("Open Web Dashboard")
+        self.btn_api_dashboard = QPushButton("Open web dashboard")
         self.btn_api_dashboard.setStyleSheet(f"""
             QPushButton {{
                 background-color: {C.ACCENT_PRIMARY};
@@ -159,13 +159,17 @@ class DashboardView(QWidget):
         power_row.addWidget(self.toggle_power)
         power_row.addStretch()
 
-        self.btn_restart_pool = QPushButton("Restart Pool")
-        self.btn_restart_pool.setToolTip(
-            "Rewrites the pool configuration and restarts it. Use this when the "
-            "pool publishes a different database name from the one clients ask "
-            "for - a pooler left running from an older install keeps its old "
-            "config and refuses every connection.")
-        self.btn_restart_pool.setStyleSheet(self.btn_api_dashboard.styleSheet())
+        # Secondary: a repair, not the page's main action.
+        self.btn_restart_pool = QPushButton("Restart pool")
+        self.btn_restart_pool.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent; color: {C.TEXT_PRIMARY};
+                font-weight: {T.WEIGHT_SEMI}; padding: 6px 16px; border-radius: 4px;
+                border: 1px solid {C.BORDER_DEFAULT};
+            }}
+            QPushButton:hover {{ border-color: {C.ACCENT_PRIMARY}; }}
+            QPushButton:disabled {{ color: {C.TEXT_SECONDARY}; }}
+        """)
         button_row.addWidget(self.btn_restart_pool)
         button_row.addWidget(self.btn_api_dashboard)
         button_row.addStretch()

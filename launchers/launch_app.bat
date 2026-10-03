@@ -8,7 +8,11 @@ if not exist "%PORTABLE_PYTHON%" set "PORTABLE_PYTHON=%~dp0..\..\python_portable
 if not exist "%PORTABLE_PYTHON%" set "PORTABLE_PYTHON=%~dp0..\..\python_portable\python.exe"
 
 if not exist "%PORTABLE_PYTHON%" (
-    echo [ERROR] Portable Python not found at %PORTABLE_PYTHON%
+    echo [ERROR] Python was not found. Slate looked in:
+    echo   %~dp0..\runtime\python\python.exe
+    echo   %~dp0..\..\python_portable\Scripts\python.exe
+    echo   %~dp0..\..\python_portable\python.exe
+    echo Run setup.bat first.
     pause
     exit /b 1
 )

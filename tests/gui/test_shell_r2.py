@@ -145,7 +145,7 @@ def test_figure_rows_fill_and_greeting_of_a_service_account():
     assert greeting("System Admin", datetime(2026, 1, 1, 9), whole_name=True) == "Good morning, System Admin"
 
 
-def test_service_accounts_get_no_punch_panel(qtbot):
+def test_service_accounts_get_no_punch_panel(qtbot, mock_db):
     tab = HomeTab(user_data={"username": "admin", "display_name": "System Admin", "is_service": True,
                              "roles": ["Developer"]}, mode="ops")
     qtbot.addWidget(tab)
@@ -251,3 +251,26 @@ def test_a_toast_keeps_both_undo_and_details(qtbot):
     toast = raw_toast(parent, "Could not save.", "error", action=("Undo", lambda: None), details="why")
     names = [b.text() for b in toast.findChildren(QPushButton) if b.objectName() == "toastAction"]
     assert names == ["Undo", "Details"]
+
+
+# ------------------------------------------------------------------ server console
+
+def test_server_buttons_only_while_running_and_plain_counts(qtbot):
+    import types
+    from slate_server.gui import app_window
+    from slate_server.gui.views.dashboard_view import DashboardView
+    from slate_server.gui.views.operations_view import age, every
+    view = DashboardView()
+    qtbot.addWidget(view)
+    fake = types.SimpleNamespace(dashboard=view, api_server=None,
+                                 dashboard_url=lambda: "http://localhost:8000/admin")
+    app_window.UTServerWindow._set_running_controls(fake, False)
+    assert not view.btn_restart_pool.isEnabled() and not view.btn_api_dashboard.isEnabled()
+    assert view.btn_restart_pool.toolTip() == "Start the server first"
+    app_window.UTServerWindow._set_running_controls(fake, True)
+    assert view.btn_restart_pool.isEnabled() and not view.btn_api_dashboard.isEnabled()  # no API yet
+    fake.api_server = object()
+    app_window.UTServerWindow._set_running_controls(fake, True)
+    assert view.btn_api_dashboard.isEnabled()
+    assert (every(1), every(7), age(0), age(1), age(30)) == ("Every day", "Every 7 days", "today",
+                                                             "1 day", "30 days")

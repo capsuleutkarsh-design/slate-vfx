@@ -145,8 +145,8 @@ def test_the_operations_screen_shows_a_job_that_never_ran(app, qtbot):
         view.set_jobs(MaintenanceLog(Path(tmp) / "m.json").summary())
 
     assert view.table_jobs.rowCount() == 4
-    states = {view.table_jobs.item(r, 3).text() for r in range(4)}
-    assert states == {"never run"}
+    states = {view.table_jobs.item(r, 2).text() for r in range(4)}
+    assert states == {"Never run"}           # last run and state in one column
 
 
 # ----------------------------------------------------------------- the session

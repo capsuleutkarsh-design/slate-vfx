@@ -54,7 +54,7 @@ class PortInUse(Exception):
             "program that holds it. Workstations that reach the server through "
             "the pool are not affected by the database port; those that connect "
             "directly pick the new port up from the server's announcement on "
-            "the network, or can be told it under Reconfigure Server / DB."
+            "the network, or can be told it under Reconfigure server / database (on the sign-in window)."
             % (self.port, held))
 
 

@@ -9,13 +9,17 @@ if not exist "%PORTABLE_PYTHON%" set "PORTABLE_PYTHON=%~dp0..\python_portable\Sc
 if not exist "%PORTABLE_PYTHON%" set "PORTABLE_PYTHON=%~dp0..\python_portable\python.exe"
 
 if not exist "%PORTABLE_PYTHON%" (
-    echo [ERROR] Portable Python not found at %PORTABLE_PYTHON%
+    echo [ERROR] Python was not found. Slate looked in:
+    echo   %~dp0runtime\python\python.exe
+    echo   %~dp0..\python_portable\Scripts\python.exe
+    echo   %~dp0..\python_portable\python.exe
+    echo Run setup.bat first.
     pause
     exit /b 1
 )
 
 echo [INFO] Using Portable Python Environment...
-echo [INFO] Launching Slate Studio...
+echo [INFO] Starting Slate VFX...
 
 REM EXR and OpenImageIO are settings now (enable_exr_loading / enable_oiio,
 REM on by default); SLATE_ENABLE_EXR_LOADING / SLATE_ENABLE_OIIO still override.
@@ -24,6 +28,6 @@ REM on by default); SLATE_ENABLE_EXR_LOADING / SLATE_ENABLE_OIIO still override.
 
 if %ERRORLEVEL% NEQ 0 (
     echo.
-    echo [CRASH] Slate Studio exited with error code %ERRORLEVEL%
+    echo [CRASH] Slate VFX exited with error code %ERRORLEVEL%
     pause
 )
