@@ -766,6 +766,8 @@ class ScheduleTimeline(QWidget):
             self.zoom_cb.addItem(name, name)
         self.zoom_cb.setCurrentIndex(self.zoom_cb.findData(DS.ZOOM_WEEK))
         self.zoom_cb.setToolTip("Zoom (or Ctrl + mouse wheel over the chart)")
+        self.zoom_cb.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.zoom_cb.setMinimumContentsLength(5)
         # activated, not currentIndexChanged: choosing Week again after Fit
         # applies it; the box follows Fit and the wheel through zoom_changed.
         self.zoom_cb.activated.connect(lambda *_: self.gantt.set_zoom(self.zoom_cb.currentData()))
@@ -820,7 +822,8 @@ class ScheduleTimeline(QWidget):
         if self.split.orientation() != wanted:
             self.split.setOrientation(wanted)
             total = self.height() if narrow else self.width()
-            self.split.setSizes([int(total * 0.75), total - int(total * 0.75)])
+            side = min(110, total // 4) if narrow else 260      # a few problems, not half the chart
+            self.split.setSizes([total - side, side])
             self.problems.parentWidget().layout().setContentsMargins(
                 0 if narrow else Gate.SPACE_2, Gate.SPACE_2 if narrow else 0, 0, 0)
 

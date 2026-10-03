@@ -272,7 +272,7 @@ class BidEditorDialog(QDialog):
         self.table.setHorizontalHeaderLabels(LINE_HEADERS)
         style_table(self.table, {"Description": "stretch", "Shot": ("interactive", 100),
                                  "Reel": ("interactive", 70),
-                                 "Department": ("interactive", 140), "Complexity": ("interactive", 120),
+                                 "Department": ("interactive", 150), "Complexity": ("interactive", 135),
                                  "Shots": ("fixed", 70), "Days / shot": ("fixed", 90),
                                  "Day rate": ("fixed", 120), "Artist days": "numeric", "Cost": "numeric",
                                  "Notes": ("interactive", 130)},

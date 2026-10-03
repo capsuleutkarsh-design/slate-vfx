@@ -82,6 +82,8 @@ def _check_bidding_settings(value):
 try:
     from .studio_settings import register_key
     register_key("bidding", {}, _check_bidding_settings)
+    # The studio's name at the top of a bid PDF (Bidding settings).
+    register_key("studio_name", "", lambda v: " ".join(str(v or "").split())[:120])
 except Exception as exc:                    # pragma: no cover - settings module missing
     logger.debug("Bidding settings check not registered: %s", exc)
 
