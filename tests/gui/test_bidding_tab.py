@@ -199,8 +199,9 @@ def test_PRD_100_PRD_113_PRD_114_PRD_115_the_new_bid_editor(qtbot, app, seeded):
     assert "description" in dialog.problems.text()
     dialog.table.cellWidget(0, 0).setText("SH010 comp")
     assert dialog.save_button.isEnabled()
-    dialog.table.cellWidget(0, 4).setValue(40)               # shots
-    dialog.table.cellWidget(0, 5).setValue(2.5)              # days per shot
+    from slate.gui.tabs.bid_editor_dialog import L_SHOTS, L_PER_SHOT
+    dialog.table.cellWidget(0, L_SHOTS).setValue(40)
+    dialog.table.cellWidget(0, L_PER_SHOT).setValue(2.5)
     totals = dialog.totals()
     assert totals.days == Decimal("100.00") and totals.cost == Decimal("800000.00")
     assert dialog.total_labels["cost"][1].text() == "₹8,00,000.00"
@@ -239,10 +240,13 @@ def test_PRD_079_PRD_081_a_won_bid_opens_read_only_with_new_revision(qtbot, app,
     qtbot.addWidget(dialog)
     assert dialog.read_only and dialog.save_button is None
     assert dialog.revise_button.text() == "Create new revision"
-    assert not dialog.margin_input.isEnabled() and dialog.project_cb is None
+    # PRD2-048: read-only fields, not disabled grey boxes; no line tools.
+    assert dialog.margin_input.isReadOnly() and dialog.project_cb is None
+    assert dialog.table.cellWidget(0, 0) is None and not dialog.add_line_button.isVisibleTo(dialog)
     assert "was won" in dialog.banner.text()
     dialog._revise()
-    assert repo.get(seeded["won"]).status == DB.SUPERSEDED
+    # PRD2-038: the won revision stays Won until the new one is decided.
+    assert repo.get(seeded["won"]).status == DB.WON
     assert repo.get(dialog.revision_id).revision == 2
 
 
@@ -311,7 +315,8 @@ def test_PRD_116_bidding_settings_save_for_the_studio(qtbot, app, seeded):
     qtbot.addWidget(bad)
     bad.margin_input.setValue(90)
     bad.max_margin_input.setValue(60)
-    assert not bad.save() and "between 0% and 60%" in bad.error.text()
+    # PRD2-074: the default follows the maximum as you type.
+    assert bad.margin_input.value() == 60
 
 
 def test_compare_dialog(qtbot, app, seeded):
@@ -350,4 +355,6 @@ def test_NEW_production_1_buttons_follow_the_decision_rule(qtbot, app, seeded):
     select_keys(tab.grid, [seeded["won"]])
     assert not tab.revise_button.isEnabled() and not tab.archive_button.isEnabled()
     select_keys(tab.grid, [seeded["draft"]])
-    assert tab.revise_button.isEnabled() and tab.archive_button.isEnabled()
+    # PRD2-072: a draft is edited in place, not revised.
+    assert not tab.revise_button.isEnabled() and "Edit" in tab.revise_button.toolTip()
+    assert tab.archive_button.isEnabled()

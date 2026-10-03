@@ -65,7 +65,7 @@ _ALIASES = {
 # Finished work: not outstanding, not late.
 DONE_STATUSES = frozenset({APPROVED, "DONE", "COMPLETE", "COMPLETED", "FINAL", "DELIVERED"})
 # Cut from the show: not counted at all (total, % approved, late, load).
-OMITTED_STATUSES = frozenset({OMIT, "OMITTED", "N/A", "NA", "CUT"})
+OMITTED_STATUSES = frozenset({OMIT, "OMITTED", "N/A", "NA", "CUT", "CANCELLED", "CANCELED"})
 # Nobody has started.
 NOT_STARTED_STATUSES = frozenset({"", YTS, "NOT STARTED", "TBD", READY})
 

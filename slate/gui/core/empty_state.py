@@ -118,6 +118,17 @@ class EmptyState(QWidget):
         self._on_clear = None
         self._clear_button.clicked.connect(self._clear_clicked)
 
+    def resizeEvent(self, event):
+        """
+        Over a short table (a 1280x720 window) there was no room for the mark:
+        it was squeezed into a clipped arc that read as a busy spinner. It is
+        left out until there is room for it again.
+        """
+        super().resizeEvent(event)
+        if self._mark is not None:
+            extra = (34 + Gate.SPACE_3) if self._mark.isHidden() else 0
+            self._mark.setVisible(event.size().height() >= self.minimumSizeHint().height() + extra)
+
     # --------------------------------------------------------------- factory
     @classmethod
     def over(cls, view, title, body="", primary=None, secondary=None, glyph="info"):

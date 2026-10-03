@@ -501,9 +501,10 @@ class TableToolbar(QWidget):
 
     def __init__(self, table: QTableWidget, placeholder: str = "Search…",
                  columns: Iterable[int] = None, on_refresh: Callable = None,
-                 parent=None):
+                 parent=None, noun: str = ""):
         super().__init__(parent)
         from slate.core.infra.gate import Gate
+        self.noun = noun            # "210 milestones" rather than a bare "210"
         from slate.gui.core.controls import make_button
         self.table = table
         row = QHBoxLayout(self)
@@ -553,9 +554,10 @@ class TableToolbar(QWidget):
         return combo
 
     def _show_count(self, visible: int, total: int):
+        noun = f" {self.noun}" if self.noun else ""
         if total and visible != total:
-            self.count_label.setText(f"{visible} of {total}")
+            self.count_label.setText(f"{visible} of {total}{noun}")
         elif total:
-            self.count_label.setText(f"{total}")
+            self.count_label.setText(f"{total}{noun}")
         else:
             self.count_label.setText("")

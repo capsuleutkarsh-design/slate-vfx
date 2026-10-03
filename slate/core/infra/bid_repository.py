@@ -32,6 +32,7 @@ from decimal import Decimal
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from slate.core.domain import bidding as DB
+from slate.core.domain import shot_status
 
 from .db_results import DatabaseUnavailableError, DatabaseWriteError
 
@@ -48,9 +49,14 @@ def _check_bidding_settings(value):
     if "multipliers" in out:
         table = {}
         for name, days in dict(out["multipliers"] or {}).items():
-            name = " ".join(str(name).split()).title()
+            # Kept as typed ('CG-heavy VFX' stayed 'Cg-Heavy Vfx'); 'hard' next
+            # to 'Hard' is one complexity twice, and is refused.
+            name = " ".join(str(name).split())
             if not name:
                 continue
+            if any(known.casefold() == name.casefold() for known in table):
+                raise ValueError(f"'{name}' is listed twice - complexities differ by more than "
+                                 "capital letters.")
             number = float(days)
             if number <= 0:
                 raise ValueError(f"'{name}' needs more than zero days per shot.")
@@ -76,6 +82,8 @@ def _check_bidding_settings(value):
 try:
     from .studio_settings import register_key
     register_key("bidding", {}, _check_bidding_settings)
+    # The studio's name at the top of a bid PDF (Bidding settings).
+    register_key("studio_name", "", lambda v: " ".join(str(v or "").split())[:120])
 except Exception as exc:                    # pragma: no cover - settings module missing
     logger.debug("Bidding settings check not registered: %s", exc)
 
@@ -116,6 +124,9 @@ class Bid:
     archived_by: str = ""
     line_count: int = 0
     has_lines: bool = False
+    # The highest revision of its bid that is not archived. A won bid that is
+    # being revised stays Won (and counted) until the new revision is decided.
+    newest_revision: int = 0
 
     @classmethod
     def from_row(cls, row) -> "Bid":
@@ -165,11 +176,41 @@ class Bid:
     def editable(self) -> bool:
         return DB.is_editable(self.status) and not self.archived
 
+    @property
+    def latest(self) -> bool:
+        """No newer revision is being worked on."""
+        return self.newest_revision <= self.revision
+
     def as_dict(self) -> dict:
         """The shape bidding.pipeline() reads."""
         return {"id": self.id, "status": self.status, "archived_at": self.archived_at,
-                "project_code": self.project_code, "estimated_budget": self.estimated_budget,
+                "project_code": self.project_code, "project_name": self.project_name,
+                "bid_group": self.bid_group, "estimated_budget": self.estimated_budget,
                 "currency": self.currency, "created_at": self.created_at}
+
+    def stored_totals(self) -> DB.BidTotals:
+        """The figures as they were saved, for a bid that can no longer be priced again."""
+        taxable = self.estimated_budget
+        discount = DB.dec(self.discount)
+        price = DB.money(taxable / (1 - discount / 100)) if 0 < discount < 100 else taxable
+        return DB.BidTotals(days=self.estimated_days, cost=self.estimated_cost,
+                            margin_percent=DB.dec(self.margin),
+                            margin_amount=price - self.estimated_cost, price=price,
+                            discount_percent=discount, discount_amount=price - taxable,
+                            taxable=taxable, tax_percent=DB.dec(self.tax),
+                            tax_amount=self.tax_amount, total=self.total_amount,
+                            shots=self.shot_count)
+
+    def totals(self, lines) -> Tuple[DB.BidTotals, bool]:
+        """
+        (figures, priced): the lines priced again, or - for an old bid saved
+        with a margin that is no longer allowed (100%) - the stored figures
+        and False, rather than an error or a row of dashes.
+        """
+        try:
+            return DB.price_bid(lines, self.margin, self.discount, self.tax), True
+        except DB.BidError:
+            return self.stored_totals(), False
 
     @property
     def title(self) -> str:
@@ -211,10 +252,34 @@ class BidRepository:
         """
         if bid is None or bid.status not in DB.DECIDED:
             return ""
-        refusal = DB.decision_refusal(bid.status, can_approve=self.can_approve(),
-                                      superuser=self._superuser(), creator=bid.created_by,
-                                      me=by or self.username)
-        return f"{bid.title} is {DB.status_label(bid.status).lower()}: {refusal}" if refusal else ""
+        word = DB.status_label(bid.status).lower()
+        if not self.can_approve() and not self._superuser():
+            return (f"{bid.title} is {word}: revising or archiving it changes a decision, which "
+                    "needs the 'Approve bids' ability.")
+        me = by or self.username
+        if not self._superuser() and bid.created_by and me and bid.created_by.casefold() == me.casefold():
+            return (f"{bid.title} is {word}: you made this bid, so somebody else has to change "
+                    "its decision.")
+        return ""
+
+    def decision_refusal(self, bid, status: str) -> str:
+        """Why this person may not mark this bid Won/Lost (to grey the button), or ''."""
+        if bid is None:
+            return ""
+        return DB.decision_refusal(status, can_approve=self.can_approve(), superuser=self._superuser(),
+                                   creator=bid.created_by, me=self.username)
+
+    def can_write(self) -> bool:
+        """Make and change bids (bid_write); Won and Lost need approve_bid on top."""
+        if self.roles is None:
+            return True
+        from slate.core.domain import access
+        return access.can(self.roles, "bid_write")
+
+    def _may_write(self) -> None:
+        if not self.can_write():
+            raise PermissionError("You can look at bids but not change them - that needs the "
+                                  "'Edit bids' ability on your role.")
 
     def can_create_shots(self) -> bool:
         """Creating shots writes to the dashboard, so it needs dashboard_write."""
@@ -245,11 +310,16 @@ class BidRepository:
             r = dict(r)
             counts[r["bid_id"]] = int(r["n"])
         bids = []
+        newest: Dict[object, int] = {}
         for row in rows:
             bid = Bid.from_row(row)
             bid.line_count = counts.get(bid.id, 0)
             bid.has_lines = bid.line_count > 0
             bids.append(bid)
+            if not bid.archived:
+                newest[bid.bid_group] = max(newest.get(bid.bid_group, 0), bid.revision)
+        for bid in bids:
+            bid.newest_revision = newest.get(bid.bid_group, bid.revision)
         if not include_archived:
             bids = [b for b in bids if not b.archived]
         if not all_revisions:
@@ -267,6 +337,10 @@ class BidRepository:
                                   (bid.id,), fetch="one")
         bid.line_count = int(dict(n or {}).get("n") or 0)
         bid.has_lines = bid.line_count > 0
+        top = self.db.execute_query(
+            "SELECT MAX(revision) AS n FROM prod_bidding WHERE (bid_group = %s OR id = %s) "
+            "AND archived_at IS NULL", (int(bid.bid_group), int(bid.bid_group)), fetch="one")
+        bid.newest_revision = int(dict(top or {}).get("n") or bid.revision)
         return bid
 
     def lines(self, bid_id) -> List[DB.BidLine]:
@@ -310,7 +384,7 @@ class BidRepository:
         """Shots to prefill a bid with: omitted/cancelled ones left out (and counted)."""
         shots, skipped = [], 0
         for reel, shot, status in self.tracker_shots(project_code):
-            if status.strip().upper() in DB.OMITTED_SHOT_STATUSES:
+            if shot_status.is_omitted(status):
                 skipped += 1
                 continue
             shots.append((reel, shot))
@@ -375,6 +449,7 @@ class BidRepository:
                revision_of: Optional[Bid] = None) -> int:
         """A new draft with its lines, in one transaction. Returns its id."""
         from .transaction import atomic
+        self._may_write()
         by = by or self.username
         totals = self._priced(bid, lines)
         if not bid.project_name:
@@ -383,7 +458,10 @@ class BidRepository:
         now = self._now()
         values.update(status=DB.DRAFT, created_by=by or None, created_at=now,
                       updated_by=by or None, updated_at=now,
-                      revision=(revision_of.revision + 1) if revision_of else 1)
+                      revision=self._next_revision(revision_of.bid_group) if revision_of else 1)
+        # A won or lost bid stays as it is - Won, counted, tracked - until the
+        # new revision is itself decided (set_status supersedes it then).
+        supersede = revision_of is not None and revision_of.status not in DB.DECIDED
         columns = list(values)
         with atomic(self.db) as tx:
             result = tx.write(
@@ -394,15 +472,22 @@ class BidRepository:
             group = revision_of.bid_group if revision_of else new_id
             tx.write("UPDATE prod_bidding SET bid_group = %s WHERE id = %s", (group, new_id))
             self._write_lines(tx, new_id, lines)
-            if revision_of is not None:
+            if supersede:
                 tx.write("UPDATE prod_bidding SET status = %s, updated_by = %s, updated_at = %s "
                          "WHERE id = %s", (DB.SUPERSEDED, by or None, now, revision_of.id))
         self._log(bid.project_code, new_id, by, "CREATE", "bid", "",
                   f"v{values['revision']} {values['estimated_budget']} {bid.currency}")
-        if revision_of is not None:
+        if supersede:
             self._log(bid.project_code, revision_of.id, by, "UPDATE", "status",
                       revision_of.status, DB.SUPERSEDED)
         return new_id
+
+    def _next_revision(self, group) -> int:
+        """One above every revision of the bid, archived ones included."""
+        row = self.db.execute_query("SELECT MAX(revision) AS n FROM prod_bidding "
+                                    "WHERE bid_group = %s OR id = %s", (int(group), int(group)),
+                                    fetch="one")
+        return int(dict(row or {}).get("n") or 0) + 1
 
     def update(self, bid: Bid, lines: Sequence[DB.BidLine], by: str = "") -> None:
         """
@@ -411,6 +496,7 @@ class BidRepository:
         never changes here (Duplicate to project makes a new draft instead).
         """
         from .transaction import atomic
+        self._may_write()
         by = by or self.username
         current = self.get(bid.id)
         if current is None:
@@ -449,11 +535,15 @@ class BidRepository:
         becomes Superseded and stays, read-only. Only the latest revision can be
         revised.
         """
+        self._may_write()
         current = self.get(bid_id)
         if current is None:
             raise DB.BidError("That bid no longer exists.")
-        if current.status == DB.SUPERSEDED:
-            raise DB.BidError(f"{current.title} already has a newer revision.")
+        if current.archived:
+            raise DB.BidError(f"{current.title} is archived - restore it first.")
+        if current.status == DB.SUPERSEDED or not current.latest:
+            raise DB.BidError(f"{current.title} already has a newer revision "
+                              f"(v{max(current.newest_revision, current.revision + 1)}).")
         refusal = self.decided_refusal(current, by)
         if refusal:
             raise PermissionError(refusal)
@@ -463,6 +553,7 @@ class BidRepository:
 
     def duplicate_to_project(self, bid_id, project_code: str, by: str = "") -> int:
         """A new draft (revision 1) for another project, with the same lines."""
+        self._may_write()
         current = self.get(bid_id)
         if current is None:
             raise DB.BidError("That bid no longer exists.")
@@ -489,6 +580,9 @@ class BidRepository:
                 raise DB.BidError(f"{bid.title} is archived - restore it first.")
             if bid.status == status:
                 continue
+            if not bid.latest:
+                raise DB.BidError(f"{bid.title} has a newer revision (v{bid.newest_revision}) - "
+                                  "decide that one.")
             if not DB.can_change(bid.status, status):
                 raise DB.BidError(f"{bid.title} cannot go from {DB.status_label(bid.status)} to "
                                   f"{DB.status_label(status)}.")
@@ -498,8 +592,21 @@ class BidRepository:
                                               creator=bid.created_by, me=by)
                 if refusal:
                     raise PermissionError(f"{bid.title}: {refusal}")
+            else:
+                self._may_write()
         now = self._now()
+        superseded = []
+        if status in DB.DECIDED:
+            # The decision on a new revision replaces the one on the revision
+            # it was made from, which kept counting until now.
+            for bid in bids:
+                if bid.status != status:
+                    superseded += [r for r in self.revisions(bid.bid_group or bid.id)
+                                   if r.revision < bid.revision and r.status in DB.DECIDED]
         with atomic(self.db) as tx:
+            for old in superseded:
+                tx.write("UPDATE prod_bidding SET status = %s, updated_by = %s, updated_at = %s "
+                         "WHERE id = %s", (DB.SUPERSEDED, by or None, now, old.id))
             for bid in bids:
                 previous[bid.id] = bid.status
                 if bid.status == status:
@@ -520,11 +627,52 @@ class BidRepository:
         for bid in bids:
             if bid.status != status:
                 self._log(bid.project_code, bid.id, by, "UPDATE", "status", bid.status, status)
+        for old in superseded:
+            self._log(old.project_code, old.id, by, "UPDATE", "status", old.status, DB.SUPERSEDED)
         return previous
+
+    def undo_status(self, before: Sequence[Bid], status: str, by: str = "") -> List[str]:
+        """
+        Undo set_status: every bid in `before` (snapshots taken just before the
+        change - the bids and their other revisions) goes back to its status,
+        sent and decision stamps. Only bids still as the change left them are
+        touched (status, or Superseded for a revision the decision replaced);
+        one somebody has changed since is left alone. Undoing a decision is a
+        decision: the same rights apply. Returns the titles left alone.
+        """
+        from .transaction import atomic
+        by = by or self.username
+        status = DB.normalise_status(status)
+        back, skipped = [], []
+        for snap in before:
+            current = self.get(snap.id)
+            if current is None or current.status == snap.status:
+                continue
+            if current.status not in (status, DB.SUPERSEDED):
+                skipped.append(current.title)
+                continue
+            if snap.status in DB.DECIDED or current.status in DB.DECIDED:
+                refusal = DB.decision_refusal(snap.status, can_approve=self.can_approve(),
+                                              superuser=self._superuser(),
+                                              creator=current.created_by, me=by)
+                if refusal:
+                    raise PermissionError(f"{current.title}: {refusal}")
+            back.append((snap, current))
+        now = self._now()
+        with atomic(self.db) as tx:
+            for snap, _current in back:
+                tx.write("UPDATE prod_bidding SET status = %s, sent_at = %s, decided_by = %s, "
+                         "decided_at = %s, updated_by = %s, updated_at = %s WHERE id = %s",
+                         (snap.status, snap.sent_at, snap.decided_by or None, snap.decided_at,
+                          by or None, now, snap.id), expect_rows=True)
+        for snap, current in back:
+            self._log(snap.project_code, snap.id, by, "UNDO", "status", current.status, snap.status)
+        return skipped
 
     def archive(self, ids: Sequence[int], by: str = "") -> int:
         """Hide bids (kept, restorable, out of the pipeline). All or nothing."""
         from .transaction import atomic
+        self._may_write()
         by = by or self.username
         now = self._now()
         bids = [b for b in (self.get(i) for i in ids) if b is not None]
@@ -542,6 +690,7 @@ class BidRepository:
 
     def restore(self, ids: Sequence[int], by: str = "") -> int:
         from .transaction import atomic
+        self._may_write()
         by = by or self.username
         bids = [b for b in (self.get(i) for i in ids) if b is not None]
         for bid in bids:
@@ -567,7 +716,14 @@ class BidRepository:
         bid = self.get(bid_id)
         if bid is None:
             return
-        if bid.status != DB.DRAFT or len(self.revisions(bid.bid_group or bid.id)) > 1:
+        # Reopening a sent or won bid makes it a Draft again; what it went
+        # through is in its stamps and its status history.
+        decided_before = self.db.execute_query(
+            "SELECT COUNT(*) AS n FROM change_history WHERE entity_type = 'bid' AND entity_id = %s "
+            "AND field_changed = 'status'", (str(bid.id),), fetch="one")
+        if (bid.status != DB.DRAFT or bid.sent_at or bid.decided_at
+                or int(dict(decided_before or {}).get("n") or 0)
+                or len(self.revisions(bid.bid_group or bid.id)) > 1):
             raise DB.BidError(f"{bid.title} has history (it was sent, decided or revised) - "
                               "archive it instead.")
         with atomic(self.db) as tx:
@@ -582,7 +738,8 @@ class BidRepository:
         actual = "t.actual_days" if _column_exists(self.db, "tracking_tasks", "actual_days") \
             else "NULL AS actual_days"
         rows = self.db.execute_query(
-            "SELECT t.department, t.status, t.bid_days, %s, s.shot_name, s.reel "
+            "SELECT t.department, t.status, t.bid_days, %s, s.shot_name, s.reel, "
+            "s.status AS shot_status "
             "FROM tracking_tasks t JOIN tracking_shots s ON s.id = t.shot_id "
             "WHERE s.project_code = %%s" % actual, (project_code,), fetch="all")
         if rows is None:
@@ -615,17 +772,33 @@ class BidRepository:
         out = {"created": [], "existing": [], "group_lines": group_lines, "error": ""}
         if not wanted:
             return out
+        # The shot registry knows a shot by its reel and its name. A bid line
+        # without a reel names the shot of that name in whatever reel it is in
+        # (as tracking reads it) - it used to register a reel-less duplicate.
+        reels: Dict[str, set] = {}
+        for row in self.db.get_tracking_shots(bid.project_code) or []:
+            reels.setdefault(str(row.get("shot_name") or "").strip().lower(), set()).add(
+                str(row.get("reel_episode") or row.get("reel") or "").strip())
+        entries, refused = [], []
+        for reel, shot in wanted:
+            found = reels.get(shot.strip().lower(), set())
+            if not reel.strip() and found and "" not in found:
+                if len(found) > 1:
+                    refused.append((shot, f"{shot} is in reels {', '.join(sorted(found))} - give "
+                                          "its line a reel"))
+                    continue
+                reel = next(iter(found))
+            entries.append({"reel": reel, "shot": shot})
         from slate.core.domain.shot_registry import register_ingested_shots
-        result = register_ingested_shots(
-            bid.project_code, [{"reel": reel, "shot": shot} for (reel, shot) in wanted],
-            project_name=bid.project_name, db=self.db)
+        result = register_ingested_shots(bid.project_code, entries,
+                                         project_name=bid.project_name, db=self.db)
         if getattr(result, "error", ""):
             out["error"] = result.error
             return out
         created = set(result.created)
         out["created"] = list(result.created)
         out["existing"] = list(result.already_present)
-        out["refused"] = list(getattr(result, "refused", []) or [])
+        out["refused"] = refused + list(getattr(result, "refused", []) or [])
         if created:
             ids = {}
             for row in self.db.get_tracking_shots(bid.project_code) or []:

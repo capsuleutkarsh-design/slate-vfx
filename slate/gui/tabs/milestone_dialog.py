@@ -66,8 +66,9 @@ class MilestoneDialog(QDialog):
     def __init__(self, parent=None, *, repo=None, milestones: Sequence[DS.Milestone] = (),
                  projects: Sequence[Tuple[str, str]] = (), milestone: DS.Milestone = None,
                  default_project: str = "", username: str = "", calendar: DS.WorkCalendar = None,
-                 away: Sequence[DS.Away] = (), people_picker=None):
+                 away: Sequence[DS.Away] = (), people_picker=None, read_only: bool = False):
         super().__init__(parent)
+        self.read_only = read_only
         self.repo = repo
         self.username = username
         self.editing = milestone
@@ -78,7 +79,7 @@ class MilestoneDialog(QDialog):
         self.saved_id: Optional[int] = None
         self._start_before_dependency: Optional[QDate] = None
 
-        title = "Edit milestone" if milestone else "Add milestone"
+        title = "Milestone" if read_only else ("Edit milestone" if milestone else "Add milestone")
         self.setWindowTitle(title)
         self.setMinimumWidth(520)
         outer = QVBoxLayout(self)
@@ -141,6 +142,8 @@ class MilestoneDialog(QDialog):
         if milestone and milestone.status and milestone.status not in DS.STATUSES:
             self.status_cb.addItem(milestone.status, milestone.status)
         form.addRow("Status", self.status_cb)
+        self.status_hint = _hint("warn")
+        form.addRow("", self.status_hint)
 
         if people_picker is None:
             from slate.gui.components.person_picker import PersonPicker
@@ -166,6 +169,7 @@ class MilestoneDialog(QDialog):
         self.effort_input.setSingleStep(0.5)
         self.effort_input.setSuffix(" days")
         self.effort_input.setSpecialValueText("Not set")
+        self.effort_input.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
         self.effort_input.setToolTip("Artist days of work - used to spot people booked "
                                      "for more than a day's work per day.")
         form.addRow("Effort", self.effort_input)
@@ -188,6 +192,14 @@ class MilestoneDialog(QDialog):
         self.buttons.accepted.connect(self._save)
         self.buttons.rejected.connect(self.reject)
         outer.addWidget(self.buttons)
+        if read_only:
+            # Somebody without 'Edit the schedule' can still open a milestone
+            # to read who added it, its effort and its old dates.
+            for w in (self.proj_cb, self.ms_input, self.dep_cb, self.start_input, self.end_input,
+                      self.status_cb, self.owner_picker, self.dept_cb, self.effort_input):
+                w.setEnabled(False)
+            self.save_button.hide()
+            cancel.setText("Close")
 
         # Fill in, then wire, so nothing fires half way through.
         if milestone:
@@ -208,7 +220,9 @@ class MilestoneDialog(QDialog):
             self.owner_picker.person_changed.connect(lambda *_: self._revalidate())
         except AttributeError:
             pass
-        self._dependency_changed()
+        # Opening a milestone never moves it: a stored start that is before its
+        # dependency's end is shown as a problem, not silently re-planned.
+        self._dependency_changed(move=False)
         self._revalidate()
         self.ms_input.setFocus()
 
@@ -302,15 +316,15 @@ class MilestoneDialog(QDialog):
         value = self.dep_cb.currentData()
         return int(value) if value not in (None, "") else None
 
-    def _dependency_changed(self, *_):
+    def _dependency_changed(self, *_, move: bool = True):
         """
-        Nothing can start before what it waits on has finished: the start
-        moves to the working day after, and says so. Clearing the dependency
-        puts back the start that was there before.
+        Nothing can start before what it waits on has finished: picking a
+        dependency moves the start to the working day after its end, and says
+        so. Clearing the dependency puts back the start that was there before.
+        move=False (the dialog opening) only shows the hint.
         """
         parent = self.by_id.get(self.dependency_id()) if self.dependency_id() else None
         if parent is None:
-            self.start_input.setMinimumDate(QDate(1900, 1, 1))
             if self._start_before_dependency is not None:
                 self.start_input.setDate(self._start_before_dependency)
                 self._start_before_dependency = None
@@ -318,17 +332,16 @@ class MilestoneDialog(QDialog):
             self._revalidate()
             return
         if parent.end is None:
-            self.start_input.setMinimumDate(QDate(1900, 1, 1))
             _set_hint(self.dep_hint, f"\"{parent.name}\" has no end date yet, so it cannot "
                                      "hold this milestone back.")
             self._revalidate()
             return
-        earliest = self.calendar.add_working_days(parent.end, 1)
-        if self._start_before_dependency is None:
-            self._start_before_dependency = self.start_input.date()
-        self.start_input.setMinimumDate(to_qdate(parent.end).addDays(1))
-        if from_qdate(self.start_input.date()) <= parent.end:
-            self.start_input.setDate(to_qdate(earliest))
+        # No setMinimumDate: the date box clamped the start to the calendar day
+        # after the dependency (a weekly off) before the working day was set.
+        if move and from_qdate(self.start_input.date()) <= parent.end:
+            if self._start_before_dependency is None:
+                self._start_before_dependency = self.start_input.date()
+            self.start_input.setDate(to_qdate(self.calendar.add_working_days(parent.end, 1)))
         _set_hint(self.dep_hint, f"Starts after \"{parent.name}\" ends ({format_date(parent.end)}).")
         self._revalidate()
 
@@ -365,8 +378,13 @@ class MilestoneDialog(QDialog):
 
         _set_hint(self.no_projects, "" if self.proj_cb.count() else
                   "There are no active projects. Create one on the VFX Dashboard first.")
-        _set_hint(self.name_hint, by_field.get("name", "") if self.ms_input.text().strip()
-                  or "name" not in by_field else "")
+        # An empty name says it is needed, quietly, rather than leaving only a
+        # tooltip on a disabled button.
+        empty = not self.ms_input.text().strip()
+        _set_hint(self.name_hint, "Required." if empty else by_field.get("name", ""))
+        self.name_hint.setStyleSheet(f"color: {Gate.TEXT_DIM if empty else Gate.BAD}; "
+                                     f"font-size: {Gate.SIZE_SM}px;")
+        _set_hint(self.status_hint, self._completion_warning(m))
         start_notes = [by_field.get("start", "")]
         why = self.calendar.why_not_working(m.start)
         if why:
@@ -402,10 +420,22 @@ class MilestoneDialog(QDialog):
         else:
             self.save_button.setToolTip("")
 
+    def _completion_warning(self, m: DS.Milestone) -> str:
+        """The Change status question, for Completed set here."""
+        if m.status != DS.COMPLETED or (self.editing and self.editing.status == DS.COMPLETED):
+            return ""
+        return DS.completion_warning(m, self.by_id)
+
     # ------------------------------------------------------------ saving
     def _save(self):
         """Save through the repository; the dialog stays open if it is refused."""
         m = self.milestone()
+        warning = self._completion_warning(m)
+        if warning:
+            from slate.gui.components.feedback import confirm
+            if not confirm(self, "Mark completed", warning, yes_label="Mark completed anyway",
+                           informative="Complete it anyway?"):
+                return
         if self.repo is None:
             self.accept()
             return

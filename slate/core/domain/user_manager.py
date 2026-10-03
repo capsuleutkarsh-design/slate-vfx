@@ -39,6 +39,7 @@ class UserManager:
         self._ensure_default_roles()
         self._upgrade_role_abilities()
         self._upgrade_producer_dashboard()
+        self._upgrade_bid_write()
         self._ensure_essential_accounts()
 
     def _get_db(self):
@@ -312,6 +313,39 @@ class UserManager:
                               ("2026-10-producer-dashboard", datetime.now().isoformat(timespec="seconds")))
         except Exception as exc:
             logging.warning("Could not give producer roles the Dashboard tab: %s", exc)
+
+    def _upgrade_bid_write(self):
+        """
+        Once per database: every role with the Bidding tab gets "Edit bids"
+        (can:bid_write). Bidding used to let anyone who opened it make and
+        change bids; now that needs the ability, so nobody loses it. Only adds.
+        """
+        from slate.core.domain.permissions_catalog import ability_key, abilities_in, has_all
+        try:
+            db = self._get_db()
+            db.execute_update(
+                "CREATE TABLE IF NOT EXISTS ut_role_upgrades ("
+                "name TEXT PRIMARY KEY, applied_at TEXT)")
+            done = {str(r["name"]) for r in
+                    (db.execute_query("SELECT name FROM ut_role_upgrades", fetch="all") or [])}
+            if "2026-10-bid-write" in done:
+                return
+            for row in db.execute_query("SELECT role_name, permissions FROM ut_roles", fetch="all") or []:
+                try:
+                    perms = list(json.loads(row["permissions"] or "[]"))
+                except Exception:
+                    continue
+                if has_all(perms) or "Bidding" not in perms or "bid_write" in abilities_in(perms):
+                    continue
+                db.execute_update("UPDATE ut_roles SET permissions=%s WHERE role_name=%s",
+                                  (json.dumps(perms + [ability_key("bid_write")]), row["role_name"]))
+                logging.info("Role %s upgraded: bid_write", row["role_name"])
+            from datetime import datetime
+            db.execute_update("INSERT INTO ut_role_upgrades (name, applied_at) VALUES (%s, %s)",
+                              ("2026-10-bid-write", datetime.now().isoformat(timespec="seconds")))
+            self._forget_cached_abilities()
+        except Exception as exc:
+            logging.warning("Could not give Bidding roles the Edit bids ability: %s", exc)
 
     @classmethod
     def upgraded_permissions(cls, role, perms):

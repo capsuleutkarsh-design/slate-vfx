@@ -38,10 +38,10 @@ from slate.core.domain import scheduling as DS
 from slate.core.domain.dates import format_date
 from slate.core.infra.gate import Gate
 from slate.gui.core.offline_notice import on_database_error
-from slate.gui.core.controls import make_button, page_title, style_button
+from slate.gui.core.controls import make_button, page_title, read_only_chip, style_button
 from slate.gui.core.empty_state import EmptyState
 from slate.gui.core.stat_card import StatStrip
-from slate.gui.core.table_style import dim_cell, set_cell_status, style_table
+from slate.gui.core.table_style import KeepColourDelegate, dim_cell, set_cell_status, style_table
 from slate.gui.core.data_display import SORT_ROLE, date_item, select_row_by_id
 from slate.gui.components.table_tools import (
     KEY_ROLE, KeepSelection, TableToolbar, make_item, select_keys, selected_keys, setup_table,
@@ -64,6 +64,15 @@ HEADERS = ["ID", "Project", "Milestone", "Depends on", "Start", "End", "Status",
 OVERDUE = "__overdue__"
 
 VIEW_TABLE, VIEW_TIMELINE, VIEW_PEOPLE = 0, 1, 2
+
+
+def _left_alone(names) -> str:
+    """' "Comp" was changed by somebody since and was left as it is.' for an Undo."""
+    if not names:
+        return ""
+    shown = ", ".join(f"\"{n}\"" for n in names[:3]) + (" …" if len(names) > 3 else "")
+    return (f" {shown} {'was' if len(names) == 1 else 'were'} changed by somebody since "
+            f"and {'was' if len(names) == 1 else 'were'} left as {'it is' if len(names) == 1 else 'they are'}.")
 
 
 class StatusDialog(QDialog):
@@ -179,12 +188,8 @@ class ProdSchedulingTab(QWidget):
         for button in self.write_buttons:
             controls.addWidget(button)
             button.setVisible(self.can_write)
-        self.read_only_badge = QLabel("Read-only")
-        self.read_only_badge.setToolTip("You can look at the schedule. Changing it needs the "
-                                        "'Edit the schedule' ability on your role.")
-        self.read_only_badge.setStyleSheet(
-            f"color: {Gate.TEXT_2}; background: {Gate.RAISED}; border: 1px solid {Gate.LINE}; "
-            f"border-radius: {Gate.RADIUS_SM}px; padding: 3px 8px;")
+        self.read_only_badge = read_only_chip("You can look at the schedule. Changing it needs the "
+                                              "'Edit the schedule' ability on your role.")
         self.read_only_badge.setVisible(not self.can_write)
         controls.addWidget(self.read_only_badge)
         controls.addStretch()
@@ -224,7 +229,7 @@ class ProdSchedulingTab(QWidget):
 
         self.toolbar = TableToolbar(self.grid, placeholder="Search milestone, project, owner or dependency…",
                                     columns=(C_PROJECT, C_NAME, C_DEPENDS, C_STATUS, C_OWNER, C_DEPT),
-                                    on_refresh=self.load_data)
+                                    on_refresh=self.load_data, noun="milestones")
         self.project_filter = self.toolbar.add_filter("Project", [("All projects", "")], column=C_PROJECT)
         self.status_filter = self.toolbar.add_filter(
             "Status", [("All statuses", "")] + [(s, s) for s in DS.STATUSES]
@@ -253,7 +258,7 @@ class ProdSchedulingTab(QWidget):
         self.stack.addWidget(table_page)
 
         from slate.gui.tabs.schedule_timeline import ScheduleTimeline
-        self.timeline = ScheduleTimeline(self)
+        self.timeline = ScheduleTimeline(self, editable=self.can_write)
         self.timeline.gantt.activated.connect(self._timeline_activated)
         self.timeline.gantt.selected.connect(self._timeline_selected)
         self.timeline.gantt.dragged.connect(self._timeline_dragged)
@@ -299,6 +304,8 @@ class ProdSchedulingTab(QWidget):
             "Owner": ("interactive", 150),
             "Department": "contents",
         }, multi_select=True)
+        # A selected row keeps its status and overdue colours.
+        table.setItemDelegate(KeepColourDelegate(table))
 
     # ------------------------------------------------------------------ filters
     def _milestone_of_row(self, row):
@@ -542,15 +549,27 @@ class ProdSchedulingTab(QWidget):
             toast(self, f"The people view could not read the dashboard work: {exc}", "error")
             tasks, away, resolve = [], [], (lambda n: n)
         items, skipped = DS.task_items(tasks, self.calendar, resolve)
+        # The Owner filter is somebody's lane; the Status filter speaks
+        # milestone statuses, which dashboard work does not have, so it hides it.
+        owner = self.owner_filter.currentData()
+        if owner:
+            items = [i for i in items if i.person.casefold() == str(owner).casefold()]
+        notes = []
+        if self.status_filter.currentData() and items:
+            notes.append("Dashboard work is hidden while the Status filter is on "
+                         "(it has no milestone status).")
+            items = []
         items += DS.milestone_items(shown)
         people = {i.person for i in items}
         plan = DS.people_plan(items, [a for a in away if a.person in people], self.calendar)
         plan.skipped_tasks = skipped
         names = self._display_names(set(plan.people))
-        tones = {m.id: (DS.OVERDUE_TONE if DS.is_overdue(m) else DS.status_tone(m.status))
-                 for m in shown}
-        self.people.gantt.show_people(plan, self.calendar, names=names, milestone_tone=tones)
-        self.people.set_people_problems(plan, names)
+        # The status colour, and overdue as a red outline - as on the Timeline.
+        tones = {m.id: DS.status_tone(m.status) for m in shown}
+        overdue = {m.id for m in shown if DS.is_overdue(m)}
+        self.people.gantt.show_people(plan, self.calendar, names=names, milestone_tone=tones,
+                                      overdue_ids=overdue)
+        self.people.set_people_problems(plan, names, notes)
         self.people_plan = plan
 
     def _selected_ids(self):
@@ -599,7 +618,7 @@ class ProdSchedulingTab(QWidget):
         except Exception:
             return []
 
-    def _dialog(self, milestone=None):
+    def _dialog(self, milestone=None, read_only=False):
         from slate.gui.tabs.milestone_dialog import MilestoneDialog
         projects = self._projects()
         if projects is None:
@@ -612,7 +631,8 @@ class ProdSchedulingTab(QWidget):
         return MilestoneDialog(self, repo=self.repo, milestones=self.all_milestones,
                                projects=projects, milestone=milestone,
                                default_project=self.project_filter.currentData() or "",
-                               username=self.username, calendar=self.calendar, away=self._away())
+                               username=self.username, calendar=self.calendar, away=self._away(),
+                               read_only=read_only)
 
     @on_database_error
     def add_milestone(self, *_):
@@ -630,10 +650,16 @@ class ProdSchedulingTab(QWidget):
     @on_database_error
     def edit_milestone(self, *_):
         ids = self._selected_ids()
-        if len(ids) != 1 or not self.can_write:
+        if len(ids) != 1:
             return
         m = self.by_id.get(ids[0])
         if m is None:
+            return
+        if not self.can_write:
+            # Read-only: the milestone opens to be read, with a Close button.
+            dialog = self._dialog(m, read_only=True)
+            if dialog is not None:
+                dialog.exec()
             return
         dialog = self._dialog(m)
         if dialog is None or dialog.exec() != QDialog.DialogCode.Accepted:
@@ -663,7 +689,7 @@ class ProdSchedulingTab(QWidget):
                       + ("). It is kept and will no longer depend on anything." if len(waiting) == 1
                          else "). They are kept and will no longer depend on anything."))
         if not confirm(self, "Delete milestones",
-                       f"Delete {DS.plural(len(doomed), 'milestone')}: {names}? This cannot be undone.",
+                       f"Delete {DS.plural(len(doomed), 'milestone')}: {names}?",
                        yes_label=f"Delete {DS.plural(len(doomed), 'milestone')}",
                        destructive=True, informative=detail):
             return
@@ -676,8 +702,25 @@ class ProdSchedulingTab(QWidget):
             warn(self, "Delete milestones", f"Nothing was deleted: {exc}")
             return
         self.load_data()
+        links = [(w.id, w.depends_on_id) for w in waiting]
+
+        def undo():
+            try:
+                self.repo.restore_deleted(doomed, links, by=self.username)
+            except DatabaseUnavailableError:
+                raise
+            except Exception as exc:
+                logger.exception("Delete not undone")
+                warn(self, "Undo delete", f"The milestones could not be put back: {exc}")
+                self.load_data()
+                return
+            self.load_data()
+            select_keys(self.grid, [m.id for m in doomed])
+            toast(self, f"{DS.plural(len(doomed), 'milestone')} put back.", "info")
+
         toast(self, f"Deleted {DS.plural(count, 'milestone')}"
-              + (f"; {DS.plural(len(waiting), 'dependent')} detached." if waiting else "."), "success")
+              + (f"; {DS.plural(len(waiting), 'dependent')} detached." if waiting else "."), "success",
+              action=("Undo", undo))
 
     @on_database_error
     def update_status(self, *_):
@@ -712,13 +755,15 @@ class ProdSchedulingTab(QWidget):
 
         def undo():
             try:
-                self.repo.restore_statuses(previous, by=self.username)
+                kept = self.repo.restore_statuses(previous, by=self.username, expected=new_status)
             except DatabaseUnavailableError:
                 raise
             except Exception as exc:
                 warn(self, "Undo status change", f"The statuses could not be put back: {exc}")
+                self.load_data()
+                return
             self.load_data()
-            toast(self, "Status change undone.", "info")
+            toast(self, "Status change undone." + _left_alone(kept), "info")
 
         if changed:
             toast(self, f"{DS.plural(changed, 'milestone')} set to {new_status}.", "success",
@@ -755,13 +800,15 @@ class ProdSchedulingTab(QWidget):
 
         def undo():
             try:
-                self.repo.apply_dates(plan.undo_changes(), by=self.username, action="UNDO SHIFT")
+                kept = self.repo.undo_shift(plan, by=self.username)
             except DatabaseUnavailableError:
                 raise
             except Exception as exc:
                 warn(self, "Undo shift", f"The dates could not be put back: {exc}")
+                self.load_data()
+                return
             self.load_data()
-            toast(self, "Shift undone.", "info")
+            toast(self, "Shift undone." + _left_alone(kept), "info")
 
         toast(self, plan.message(root.name if root else ""), "success", action=("Undo", undo))
 

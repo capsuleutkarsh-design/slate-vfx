@@ -57,6 +57,8 @@ class CompareDialog(QDialog):
         self.table.setHorizontalHeaderLabels(["Change", "Line", "Before", "After", "Cost change"])
         style_table(self.table, {"Change": "contents", "Line": "stretch", "Before": ("interactive", 200),
                                  "After": ("interactive", 200), "Cost change": "numeric"}, sortable=False)
+        # The line's cost is at the end of each description: wrap, never cut it.
+        self.table.setWordWrap(True)
         layout.addWidget(self.table, 1)
         self.summary = QLabel("")
         self.summary.setWordWrap(True)
@@ -101,14 +103,15 @@ class CompareDialog(QDialog):
             self.table.setItem(r, 2, make_item(self._describe(c.before, code)))
             self.table.setItem(r, 3, make_item(self._describe(c.after, code)))
             delta = c.cost_delta
-            self.table.setItem(r, 4, make_item(("+" if delta > 0 else "") + format_money(delta, code),
-                                               sort_value=delta))
+            self.table.setItem(r, 4, make_item(DB.signed_money(delta, code), sort_value=delta))
+        self.table.resizeRowsToContents()
         price_delta = b.estimated_budget - a.estimated_budget
         same_currency = a.currency == b.currency
+        word = DB.WORDS["taxable"].lower()
         text = (f"v{a.revision} {format_money(a.estimated_budget, a.currency)} → "
-                f"v{b.revision} {format_money(b.estimated_budget, b.currency)}")
+                f"v{b.revision} {format_money(b.estimated_budget, b.currency)} {word}")
         if same_currency:
-            text += f"  ({'+' if price_delta > 0 else ''}{format_money(price_delta, code)} price)"
+            text += f"  ({DB.signed_money(price_delta, code)})"
         if not self.changes:
             text += ". The lines are the same."
         self.summary.setText(text)

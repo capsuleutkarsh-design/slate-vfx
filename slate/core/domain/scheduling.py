@@ -21,7 +21,8 @@ Milestone records, so it can be tested on its own:
     timeline maths                date <-> x, ruler ticks, rows, arrows
     people_plan(...)              who is on what, leave, over-allocation
 
-Imports nothing beyond the standard library and the shared date helper.
+Imports nothing beyond the standard library, the shared date helper and
+the dashboard's status words (shot_status).
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
+from . import shot_status
 from .dates import format_date, format_range, parse_date
 
 
@@ -192,9 +194,13 @@ class Milestone:
 
 
 def is_overdue(m: Milestone, today: Optional[date] = None) -> bool:
-    """Open and its end date has passed. A row whose dates do not read is never overdue."""
+    """
+    Open and its end date has passed. A row whose dates do not read is never
+    overdue, and neither is one of an archived project - that is not work
+    anybody is late on.
+    """
     today = today or date.today()
-    return m.is_open and m.end is not None and m.end < today
+    return m.is_open and not m.archived and m.end is not None and m.end < today
 
 
 def days_late(m: Milestone, today: Optional[date] = None) -> int:
@@ -453,6 +459,7 @@ class ShiftPlan:
     delta: int
     unit: str = WORKING_DAYS
     mode: str = PUSH
+    root_to: Optional[Tuple[date, date]] = None     # exact new dates (a dragged bar)
     moves: List[Move] = field(default_factory=list)
     skipped: List[Tuple[int, str, str]] = field(default_factory=list)      # id, name, reason
     conflicts: List[Tuple[int, str, str]] = field(default_factory=list)    # id, name, what
@@ -481,10 +488,15 @@ class ShiftPlan:
         if not moved:
             text = "Nothing would move" if preview else "Nothing moved"
         else:
-            root_moved = any(m.id == self.root_id for m in moved)
+            root_move = next((m for m in moved if m.id == self.root_id), None)
+            root_moved = root_move is not None
             dependents = len(moved) - (1 if root_moved else 0)
             followers = plural(dependents, "dependent milestone")
-            if self.mode == SAME:
+            if root_moved and self.root_to is not None:
+                text = _dragged_text(root_move, root_name, verb)
+                if dependents:
+                    text += f"; {followers} {'move' if preview else 'moved'} to follow it"
+            elif self.mode == SAME:
                 if root_moved:
                     text = f"{verb} \"{root_name or moved[0].name}\""
                     if dependents:
@@ -503,6 +515,26 @@ class ShiftPlan:
             more = f" and {len(self.skipped) - 5} more" if len(self.skipped) > 5 else ""
             text += f". {'Staying' if preview else 'Not moved'}: {reasons}{more}"
         return text + "."
+
+
+def _dragged_text(move: Move, name: str, verb: str) -> str:
+    """
+    A bar dragged or stretched on the timeline, in calendar days (what the
+    hand did): 'Moves "Comp" to 2 Oct – 24 Oct 2026 (7 days later)', or
+    'Moves the end of "Comp" to 14 Oct 2026 (3 days earlier)' when only one
+    edge moved.
+    """
+    name = name or move.name
+    if move.new_start == move.old_start:
+        what, old, new = "the end of ", move.old_end, move.new_end
+    elif move.new_end == move.old_end:
+        what, old, new = "the start of ", move.old_start, move.new_start
+    else:
+        what, old, new = "", move.old_start, move.new_start
+    days = (new - old).days
+    where = format_date(new) if what else format_range(move.new_start, move.new_end)
+    return (f"{verb} {what}\"{name}\" to {where} "
+            f"({plural(abs(days), 'day')} {'later' if days > 0 else 'earlier'})")
 
 
 def _children_map(milestones: Iterable[Milestone]) -> Dict[int, List[Milestone]]:
@@ -540,7 +572,7 @@ def plan_shift(milestones: Sequence[Milestone], root_id: int, delta: int, *,
     waits on) are reported, not silently written.
     """
     calendar = calendar or WorkCalendar()
-    plan = ShiftPlan(root_id=root_id, delta=int(delta), unit=unit, mode=mode)
+    plan = ShiftPlan(root_id=root_id, delta=int(delta), unit=unit, mode=mode, root_to=root_to)
     by_id = index(milestones)
     root = by_id.get(root_id)
     if root is None:
@@ -652,13 +684,16 @@ def summary(milestones: Iterable[Milestone], today: Optional[date] = None) -> Sc
     Hold and blank row. A blank status is work not started: Scheduled.
 
     'Projects' is projects with open milestones in what is shown (the studio's
-    active-project count belongs on the dashboard).
+    active-project count belongs on the dashboard). Milestones of archived
+    projects count in the total only.
     """
     today = today or date.today()
     out = ScheduleSummary()
     projects = set()
     for m in milestones:
         out.total += 1
+        if m.archived:
+            continue           # shown on request, but not the studio's work any more
         status = normalise_status(m.status)
         if status == COMPLETED:
             out.completed += 1
@@ -734,7 +769,9 @@ def ruler_ticks(first: date, last: date, zoom: str) -> List[Tuple[date, str, boo
     cursor = first
     while cursor <= last:
         if zoom == ZOOM_DAY:
-            ticks.append((cursor, f"{cursor.strftime('%a')[:2]} {cursor.day}", cursor.weekday() == 0))
+            # The day number only: 'We 26' is wider than a 30 px day and ran
+            # into its neighbours. The weekday is in each day's tooltip.
+            ticks.append((cursor, str(cursor.day), cursor.weekday() == 0))
         elif zoom == ZOOM_WEEK:
             if cursor.weekday() == 0:
                 ticks.append((cursor, f"{cursor.day} {cursor.strftime('%b')}", cursor.day <= 7))
@@ -840,10 +877,6 @@ class PeoplePlan:
     skipped_tasks: int = 0           # dashboard work with no target date or no bid days
 
 
-DONE_TASK_STATUSES = {"APPROVED", "DONE", "COMPLETE", "COMPLETED", "FINAL", "OMIT", "OMITTED",
-                      "CANCELLED", "CANCELED"}
-
-
 def task_items(tasks: Iterable[dict], calendar: WorkCalendar,
                resolve=lambda name: name) -> Tuple[List[WorkItem], int]:
     """
@@ -857,7 +890,8 @@ def task_items(tasks: Iterable[dict], calendar: WorkCalendar,
         artist = str(t.get("artist") or t.get("artist_name") or "").strip()
         if not artist:
             continue
-        if str(t.get("status") or "").strip().upper() in DONE_TASK_STATUSES:
+        # The dashboard's own words for finished and cut work (shot_status).
+        if shot_status.is_done(t.get("status")) or shot_status.is_omitted(t.get("status")):
             continue
         end = parse_date(t.get("target_date") or t.get("target"))
         days = _decimal(t.get("bid_days")) or Decimal(0)
