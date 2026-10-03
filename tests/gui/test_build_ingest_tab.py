@@ -525,3 +525,166 @@ def test_preflight_counts_unchanged_shots_by_destination(qtbot, tmp_path):
     # ING2-033: nothing to copy - the headline says so and the one button closes.
     assert "all 1 shot(s) are already in P" in dialog.headline.text()
     assert dialog.go_btn.text() == "Close"
+
+
+# ------------------------------------------------------------------ round 2 (ING2-0xx)
+def _survey_of(tmp_path, folders):
+    from slate.core.domain.ingest_survey import survey_drive
+    drive = tmp_path / "rd"
+    for rel in folders:
+        (drive / rel).mkdir(parents=True, exist_ok=True)
+        for frame in (1001, 1002):
+            (drive / rel / f"p.{frame}.exr").write_bytes(b"x")
+    return survey_drive(drive), drive
+
+
+def test_preflight_marks_clashing_rows_in_their_own_spelling(qtbot, tmp_path):
+    """ING2-024 / ING2-025: both rows red, original spelling, sortable without losing the shot."""
+    survey, _ = _survey_of(tmp_path, ["REEL_01/SH_0110", "REEL_01/SH_0120"])
+    dialog = ipd.IngestPreflightDialog(survey, project_code="P", project_path=tmp_path / "P")
+    qtbot.addWidget(dialog)
+    dialog.table.sortItems(dialog.COL_SHOT, Qt.SortOrder.DescendingOrder)
+    row = next(r for r in range(dialog.table.rowCount())
+               if dialog.table.item(r, dialog.COL_SHOT).text() == "SH_0110")
+    dialog.table.item(row, dialog.COL_SHOT).setText("SH_0120")
+    assert [s.name for s in survey.shots] == ["SH_0120", "SH_0120"]
+    assert "REEL_01/SH_0120" in dialog.error_label.text()
+    marks = {dialog.table.item(r, dialog.COL_SHOT).data(Qt.ItemDataRole.UserRole + 99)
+             for r in range(dialog.table.rowCount())}
+    assert marks == {"bad"} and not dialog.go_btn.isEnabled()
+    dialog.attention_cb.setChecked(True)
+    assert not any(dialog.table.isRowHidden(r) for r in range(dialog.table.rowCount()))
+
+
+def test_preflight_lists_client_material_and_loose_files(qtbot, tmp_path):
+    """ING2-014 / ING2-032: a row for the material; loose files can become a shot."""
+    from slate.core.domain.ingest_survey import survey_drive
+    _survey, drive = _survey_of(tmp_path, ["REEL_01/SH_010"])
+    (drive / "notes").mkdir()
+    (drive / "notes/list.pdf").write_bytes(b"p")
+    (drive / "ref.jpg").write_bytes(b"j")
+    survey = survey_drive(drive)
+    dialog = ipd.IngestPreflightDialog(survey, project_code="P", project_path=tmp_path / "P",
+                                       client_folder="00_Incoming")
+    qtbot.addWidget(dialog)
+    assert dialog.table.rowCount() == 2                     # the shot and the client material
+    assert any("00_Incoming/&lt;date&gt;_docs" in n for n in dialog.notes())
+    assert dialog.loose_cb.isVisibleTo(dialog)
+    dialog.loose_cb.setChecked(True)
+    assert dialog.table.rowCount() == 3 and any(s.is_root for s in survey.shots)
+
+
+def test_preflight_dry_run_can_go_for_real_and_says_twice_delivered(qtbot, tmp_path):
+    """ING2-046 / ING2-043."""
+    survey, _ = _survey_of(tmp_path, ["REEL_01/SH_050_ScanA", "REEL_01/SH_050_ScanB"])
+    dialog = ipd.IngestPreflightDialog(survey, project_code="P", project_path=tmp_path / "P", dry_run=True)
+    qtbot.addWidget(dialog)
+    assert dialog.real_btn.isVisibleTo(dialog) and dialog.real_btn.text() == "Copy 4 file(s) for real"
+    assert any(n.startswith("SH_050 arrives 2 times (ScanA, ScanB)") for n in dialog.notes())
+    dialog._accept_for_real()
+    assert dialog.dry_run is False
+
+
+def test_template_dialog_round_two(qtbot):
+    """ING2-007 / ING2-006 / ING2-016 / ING2-036."""
+    dialog = CustomTemplateDialog(None, None)
+    qtbot.addWidget(dialog)
+    assert dialog.error_label.isVisibleTo(dialog) and "Enter a name" in dialog.error_label.text()
+    assert not dialog.rename_btn.isEnabled() and not dialog.remove_btn.isEnabled()
+    dialog.name_input.setText("Client X")
+    dialog.client_input.setText("00_Incoming")
+    version = dialog.sections["scan_version_folders"]
+    dialog.tree_widget.setCurrentItem(version.child(0))
+    assert dialog.remove_btn.isEnabled()
+    dialog.remove_selected()
+    data = dialog.get_template_data()
+    assert data["scan_version_folders"] == [] and data["client_folder"] == "00_Incoming"
+    assert data["description"] == ""
+    assert fct.FolderCreatorTab._version_folders(data) == []
+    assert fct.FolderCreatorTab._version_folders({"base_folders": []}) == ["Denoise"]
+
+
+def test_stitch_dialog_refuses_an_emptied_name(qtbot):
+    """ING2-040."""
+    from slate.core.domain.stitch_detect import StitchGroup
+    from slate.gui.dialogs.stitch_confirm_dialog import StitchConfirmDialog
+    dialog = StitchConfirmDialog([StitchGroup("SH010", ["SH010_A", "SH010_B"], "R1")])
+    qtbot.addWidget(dialog)
+    dialog._rows[0][2].setText("")
+    assert not dialog.confirm_btn.isEnabled() and "Enter the shot" in dialog.error_label.text()
+
+
+def test_tab_round_two_bits(tab, tmp_path, sync):
+    """ING2-042 / ING2-011 / ING2-012 / ING2-045 / ING2-031 / ING2-022."""
+    assert not tab.save_log_btn.isEnabled()
+    for n in range(200):
+        tab.log_message(f"[INFO] line {n}")
+    bar = tab.log_text.verticalScrollBar()
+    assert tab.save_log_btn.isEnabled() and bar.value() == bar.maximum()
+    assert tab.template_combo.itemText(0).endswith("(built-in)")
+    projects, drive = _fill(tab, tmp_path)
+    tab.start_creation_process()
+    assert "Last run DEMO_PRJ," in tab.last_run_label.text()
+    tab._set_phase("run")
+    assert not tab.last_run_label.isVisibleTo(tab)
+    tab._set_phase("idle")
+    assert tab._settings()["last_project_code"] == "DEMO_PRJ"
+    (projects / "My-Show").mkdir()
+    assert fct.find_project_folder(str(projects), "MYSHOW") == projects / "My-Show"
+
+
+def test_the_screen_keeps_the_lock_fresh(tab, tmp_path):
+    """ING2-017: a timer touches the lock while the run is on screen, paused or not."""
+    projects, _ = _fill(tab, tmp_path)
+    assert tab._take_lock(projects / "DEMO_PRJ")
+    assert tab._lock_timer.isActive()
+    touched = []
+    tab._ingest_lock.touch = lambda: touched.append(1)
+    tab._lock_timer.timeout.emit()
+    assert touched
+    tab._release_ingest_lock()
+    assert not tab._lock_timer.isActive()
+
+
+def test_a_person_can_clear_their_own_lock(tab, tmp_path, monkeypatch):
+    """ING2-018: the coordinator whose own Slate crashed does not need an admin."""
+    from slate.core.domain.ingest_lock import IngestLock
+    projects, _ = _fill(tab, tmp_path)
+    IngestLock(projects / "DEMO_PRJ", holder=tab._holder()).acquire()
+    monkeypatch.setattr("slate.gui.components.feedback.confirm", lambda *a, **k: True)
+    assert tab._take_lock(projects / "DEMO_PRJ")
+    tab._release_ingest_lock()
+
+
+def test_stitch_answers_are_remembered(tab, tmp_path, monkeypatch):
+    """ING2-015: the second run of a drive does not ask again."""
+    from slate.core.domain.ingest_survey import survey_drive
+    from slate.gui.dialogs import stitch_confirm_dialog as scd
+    drive = tmp_path / "sd"
+    for part in ("SH_0990_A", "SH_0990_B"):
+        (drive / "REEL_01" / part).mkdir(parents=True)
+        (drive / "REEL_01" / part / f"{part}.1001.exr").write_bytes(b"x")
+    survey = survey_drive(drive)
+    project = tmp_path / "PRJ"
+    asked = []
+    monkeypatch.setattr(scd.StitchConfirmDialog, "exec", lambda self: asked.append(1) or 1)
+    mapping, decisions = tab._confirm_stitch_shots(survey, project, "01_Frm Client")
+    tab._save_stitch_decisions(project, "01_Frm Client", decisions)
+    again, more = tab._confirm_stitch_shots(survey, project, "01_Frm Client")
+    assert len(asked) == 1 and again == mapping and more == {}
+
+
+def test_a_stopped_run_offers_to_finish(tab, tmp_path, sync, monkeypatch):
+    """ING2-003: the button says what it does after a stop."""
+    _fill(tab, tmp_path)
+    real = structure.FolderCreationWorker._transfer
+
+    def stop_soon(worker, *a, **k):
+        status = real(worker, *a, **k)
+        worker.stop()
+        return status
+
+    monkeypatch.setattr(structure.FolderCreationWorker, "_transfer", stop_soon)
+    tab.start_creation_process()
+    tab.check_destination_status()
+    assert tab.retry_btn.isEnabled() and tab.retry_btn.text().startswith("Finish the stopped run")

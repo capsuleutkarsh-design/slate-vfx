@@ -11,7 +11,11 @@ Here the categories are explicit sections, every folder keeps its full path
   description that is saved.
 * Folders are added and renamed in place (Enter / F2 / double-click) and can
   be dragged within the tree.
-* A template with no per-shot folders says what Slate will add instead.
+* A template with no per-shot folders says what Slate will add instead; an
+  empty 'Inside each scan version' means no folders there (it is saved empty).
+* Where client deliveries go (documents, LUTs, the ingest reports) is a field
+  of the template, the one rule the ingest uses (ingest_survey.client_folder_for).
+* Templates are the studio's: saved for every workstation.
 """
 
 from typing import Dict, Iterable, List, Optional
@@ -22,6 +26,7 @@ from PySide6.QtWidgets import (
     QLabel, QLineEdit, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
 )
 
+from ...core.domain.ingest_survey import CLIENT_FOLDER
 from ...core.domain.naming import folder_path_problem, name_problem
 from slate.core.infra.gate import Gate
 from slate.gui.core.controls import form_layout, make_button
@@ -29,13 +34,13 @@ from slate.gui.core.controls import form_layout, make_button
 # (template key, what the person sees). The order is the order on screen.
 SECTIONS = (
     ("base_folders", "Project folders"),
-    ("production_subfolders", "Production (inside 04_Production)"),
-    ("outsource_subfolders", "Outsource (inside 04_Production)"),
+    ("production_subfolders", "Production sub-folders (inside 04_Production)"),
+    ("outsource_subfolders", "Production > outsource sub-folders (also inside 04_Production)"),
     ("shot_folders", "Per shot"),
     ("scan_version_folders", "Inside each scan version"),
 )
 
-DEFAULT_SHOT_FOLDERS = ("01_Scan", "07_Comp", "08_Output")
+from ...core.workers.structure import DEFAULT_SHOT_FOLDERS, DEFAULT_VERSION_FOLDERS
 
 _SECTION_ROLE = Qt.ItemDataRole.UserRole + 1
 
@@ -69,7 +74,17 @@ class CustomTemplateDialog(QDialog):
         self.description_input = QLineEdit()
         self.description_input.setPlaceholderText("What this template is for (optional)")
         form.addRow("Description", self.description_input)
+        self.client_input = QLineEdit()
+        self.client_input.setPlaceholderText(CLIENT_FOLDER)
+        self.client_input.setToolTip("The project folder client deliveries go in: documents, LUTs, references "
+                                     "and the ingest reports. Empty means " + CLIENT_FOLDER + ".")
+        self.client_input.textChanged.connect(self._validate)
+        form.addRow("Client deliveries go in", self.client_input)
         layout.addLayout(form)
+        shared = QLabel("Templates are shared with the studio: every workstation builds projects the same way.")
+        shared.setStyleSheet(f"color: {Gate.TEXT_DIM};")
+        shared.setWordWrap(True)
+        layout.addWidget(shared)
 
         self.tree_widget = QTreeWidget()
         self.tree_widget.setHeaderHidden(True)
@@ -94,6 +109,7 @@ class CustomTemplateDialog(QDialog):
             item.setExpanded(True)
             self.sections[key] = item
         self.tree_widget.itemChanged.connect(lambda *_: self._validate())
+        self.tree_widget.currentItemChanged.connect(lambda *_: self._sync_buttons())
 
         self.shot_note = QLabel(
             "No folders under 'Per shot': every shot gets " + ", ".join(DEFAULT_SHOT_FOLDERS) + ".")
@@ -132,6 +148,11 @@ class CustomTemplateDialog(QDialog):
 
         if template:
             self.load_template(template)
+        else:
+            # The folder every scan version has had; a person can remove it.
+            for folder in DEFAULT_VERSION_FOLDERS:
+                self._add_path(self.sections["scan_version_folders"], folder)
+        self._sync_buttons()
         self._validate()
 
     # ------------------------------------------------------------ the tree
@@ -139,8 +160,12 @@ class CustomTemplateDialog(QDialog):
         source = template.get("structure") if isinstance(template.get("structure"), dict) else template
         self.name_input.setText(str(template.get("name", "")))
         self.description_input.setText(str(template.get("description", "")))
+        self.client_input.setText(str(source.get("client_folder") or template.get("client_folder") or ""))
         for key, _label in SECTIONS:
-            for path in source.get(key, []) or []:
+            paths = source.get(key, [])
+            if key == "scan_version_folders" and paths is None:
+                paths = DEFAULT_VERSION_FOLDERS      # a template from before the list existed
+            for path in paths or []:
                 self._add_path(self.sections[key], str(path))
         self._validate()
 
@@ -207,6 +232,12 @@ class CustomTemplateDialog(QDialog):
         if current is not None and not self._is_section(current):
             self.tree_widget.editItem(current, 0)
 
+    def _sync_buttons(self):
+        """Rename and Remove act on a folder: off until one is selected."""
+        folder = self._selected() is not None and not self._is_section(self._selected())
+        self.rename_btn.setEnabled(folder)
+        self.remove_btn.setEnabled(folder)
+
     def remove_selected(self):
         current = self._selected()
         if current is None or self._is_section(current):
@@ -248,12 +279,20 @@ class CustomTemplateDialog(QDialog):
                 if problem:
                     out.append(problem)
                     break
+        client = self.client_input.text().strip()
+        if client:
+            problem = folder_path_problem(client, "The client deliveries folder")
+            if problem:
+                out.append(problem)
         return out
 
     def _validate(self, *_):
         problems = self.problems()
         self.error_label.setText("\n".join(problems[:3]))
-        self.error_label.setVisible(bool(problems) and bool(self.name_input.text().strip()))
+        # An empty name is a hint, not an error: why Save is off, said in plain view.
+        named = bool(self.name_input.text().strip())
+        self.error_label.setStyleSheet(f"color: {Gate.BAD if named else Gate.TEXT_DIM};")
+        self.error_label.setVisible(bool(problems))
         self.ok_btn.setEnabled(not problems)
         self.ok_btn.setToolTip(problems[0] if problems else "")
         self.shot_note.setVisible(not self._paths(self.sections["shot_folders"]))
@@ -273,10 +312,11 @@ class CustomTemplateDialog(QDialog):
         """The template, with every folder as its full path."""
         data = {
             "name": self.name_input.text().strip(),
-            "description": self.description_input.text().strip() or "Custom template",
+            "description": self.description_input.text().strip(),
         }
+        if self.client_input.text().strip():
+            data["client_folder"] = self.client_input.text().strip()
         for key, _label in SECTIONS:
+            # Saved as they are - an empty 'Inside each scan version' means none.
             data[key] = self._paths(self.sections[key])
-        if not data["scan_version_folders"]:
-            data.pop("scan_version_folders")
         return data
