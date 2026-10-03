@@ -37,6 +37,7 @@ from .attendance_metrics import calculate_hours as compute_hours
 from slate.core.domain import attendance_rules as rules
 from slate.core.domain import leave_policy as lp
 from slate.core.domain import people
+from slate.core.domain.people import plural
 # At module level: setup_ui asks can(...) for the Holidays button, and the
 # import used to live inside is_admin() only - so opening the tab as anyone
 # died with "name 'can' is not defined" before a single widget was drawn.
@@ -91,11 +92,6 @@ def legend_entries() -> list:
             seen.add(label)
             out.append((colour, label))
     return out
-
-
-def plural(count, one, many=None) -> str:
-    """'1 day', '3 days'."""
-    return "%s %s" % (count, one if count == 1 else (many or one + "s"))
 
 
 def streak_text(days: int) -> str:
