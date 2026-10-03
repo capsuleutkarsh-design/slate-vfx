@@ -60,6 +60,8 @@ SWP_NOZORDER = 0x0004
 SWP_FRAMECHANGED = 0x0020
 
 OLIVE_EXE = "olive-editor.exe"
+# Said to the person: no developer script, no setting that is not there (MED2-048).
+OLIVE_MISSING = "Olive is not installed on this machine - ask IT to install it."
 EMBED_ATTEMPTS = 20          # x 500 ms
 
 
@@ -195,7 +197,8 @@ class SyncResultDialog(QDialog):
 
     SHOW = 20
 
-    def __init__(self, result, folder: Path, project_name: str, olive_open: bool, parent=None):
+    def __init__(self, result, folder: Path, project_name: str, olive_open: bool, parent=None,
+                 olive_installed: bool = True):
         super().__init__(parent)
         self.setWindowTitle("Lineup written")
         self.setMinimumWidth(520)
@@ -220,14 +223,16 @@ class SyncResultDialog(QDialog):
             box = QPlainTextEdit(text)
             box.setReadOnly(True)
             box.setMaximumHeight(90)
+            box.setFont(self.font())          # the dialog's font, not a code font
             layout.addWidget(box)
             if more:
                 self.btn_all = make_button("Show all", "ghost",
                                            on_click=lambda: box.setPlainText(", ".join(result.skipped)))
                 layout.addWidget(self.btn_all, 0, Qt.AlignmentFlag.AlignLeft)
-        next_step = ("Olive still shows the previous version until it is reloaded."
-                     if olive_open else "Launch Olive to open the combined timeline.")
-        layout.addWidget(QLabel(next_step))
+        if olive_open:
+            layout.addWidget(QLabel("Olive still shows the previous version until it is reloaded."))
+        elif olive_installed:
+            layout.addWidget(QLabel("Launch Olive to open the combined timeline."))
         row = QHBoxLayout()
         self.btn_open = make_button("Open folder", "secondary", icon="folder",
                                     on_click=lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.folder))))
@@ -243,7 +248,7 @@ class SyncResultDialog(QDialog):
 
 
 INCLUDE, REEL, SHOT, FRAMES, FPS, LAYERS, VERSION = range(7)
-HEADERS = ("", "Reel", "Shot", "Frames", "FPS", "Layers", "Scan")
+HEADERS = ("", "Reel", "Shot", "Frames", "FPS", "Layers", "Scan version")
 ROW_ROLE = Qt.ItemDataRole.UserRole + 10
 
 
@@ -372,7 +377,7 @@ class LineupEditorMode(QWidget):
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self._apply_filter)
         self.btn_all = make_button("Tick all", "ghost", on_click=lambda: self._tick_all(True))
-        self.btn_none = make_button("Tick none", "ghost", on_click=lambda: self._tick_all(False))
+        self.btn_none = make_button("Untick all", "ghost", on_click=lambda: self._tick_all(False))
         filters.addWidget(self.combo_reel)
         filters.addWidget(self.search, 1)
         filters.addWidget(self.btn_all)
@@ -387,7 +392,7 @@ class LineupEditorMode(QWidget):
         # elides (NEW-media-5: at 1280 every row read "SEQ01...").
         style_table(self.table, {0: ("fixed", 34), "Reel": "contents", "Shot": "contents",
                                  "Frames": "contents", "FPS": "contents", "Layers": "stretch",
-                                 "Scan": "contents"}, sortable=False)
+                                 "Scan version": "contents"}, sortable=False)
         self.table.horizontalHeader().setMinimumSectionSize(40)
         self.table.itemChanged.connect(self._on_item_changed)
         self.table.currentCellChanged.connect(lambda row, *_: self._preview_row(row))
@@ -439,8 +444,7 @@ class LineupEditorMode(QWidget):
         written = bool(self.output_path and Path(self.output_path).exists())
         if not self._olive_path:
             self.btn_launch.setEnabled(False)
-            self.btn_launch.setToolTip("Olive is not installed on this machine. Ask IT to run "
-                                       "setup.bat, or set its location (olive_path) in Settings.")
+            self.btn_launch.setToolTip(OLIVE_MISSING)
         else:
             self.btn_launch.setEnabled(written and not self.olive_running())
             self.btn_launch.setToolTip("Open the combined timeline in Olive" if written else
@@ -450,6 +454,9 @@ class LineupEditorMode(QWidget):
     def set_project_context(self, project_name: str = "", project_path: Path = None):
         self.project_name = (project_name or "").strip()
         self.project_path = project_path
+        # Another project: the last one's timeline is not this one's (MED2-040).
+        self.output_path = None
+        self.last_result = None
 
     def set_project_source(self, project_root=None, folder_resolver=None):
         self.project_root = project_root
@@ -506,8 +513,11 @@ class LineupEditorMode(QWidget):
         self._scan_job = None
         self.table.setEnabled(True)
         if error is not None:
-            self._set_status("The shot folders could not be read.")
             self._fill([])
+            # After the fill, which says "no shots loaded": a share that cannot
+            # be read is not an empty project (MED2-045).
+            self._set_status("The shot folders could not be read - check that the project "
+                             "share is reachable, then Refresh from Dashboard.")
             return
         self._fill(rows or [])
 
@@ -572,7 +582,7 @@ class LineupEditorMode(QWidget):
             text = (f"{plural(len(self.lineup), 'shot')} across "
                     f"{plural(len({e.reel for e in self.lineup}), 'reel')}")
             if missing:
-                text += f" · {missing} without scans"
+                text += f" · {plural(missing, 'shot')} without a scan"
             if odd:
                 text += f" · {plural(len(odd), 'shot')} not at {rate:g} fps"
             self._set_status(f"{text} ({self._infer_project_name()})")
@@ -647,6 +657,8 @@ class LineupEditorMode(QWidget):
         except OSError:
             pass
         self.sync_time_label.setText("Not synced yet")
+        self.output_path = None
+        self.last_result = None
 
     def sync_lineup(self):
         """Write the ticked shots: one timeline per reel and one with every reel."""
@@ -677,7 +689,8 @@ class LineupEditorMode(QWidget):
         self._read_last_sync()
         self._update_actions()
         olive_open = self.olive_running()
-        SyncResultDialog(result, folder, project_name, olive_open, self).exec()
+        SyncResultDialog(result, folder, project_name, olive_open, self,
+                         olive_installed=bool(self._olive_path)).exec()
         if olive_open and self._ask_reload():
             self.reload_olive()
         return result
@@ -801,8 +814,7 @@ class LineupEditorMode(QWidget):
         """Open the combined timeline in Olive, embedded in this tab."""
         from ...components.feedback import confirm, show_error, warn
         if not self._olive_path:
-            warn(self, "Launch Olive", "Olive is not installed on this machine.",
-                 "Ask IT to run setup.bat, or set its location (olive_path) in Settings.")
+            warn(self, "Launch Olive", OLIVE_MISSING)
             return
         if not (self.output_path and Path(self.output_path).exists()):
             if not confirm(self, "Launch Olive", "There is no timeline to open yet.",

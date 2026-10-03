@@ -12,6 +12,7 @@ compared against the plate it was built from in the same session.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -22,6 +23,8 @@ from slate.core.domain.shot_media import (
 
 
 logger = logging.getLogger(__name__)
+
+_VERSION = re.compile(r"(?<![A-Za-z0-9])([vV]\d{2,4})(?![0-9])")
 
 # The plate first, then the departments that most often get reviewed against
 # it. Anything not named here follows in registry order.
@@ -39,7 +42,18 @@ class ReviewOption:
 
     @property
     def version(self) -> str:
-        return self.clip.scan_version or ""
+        """
+        The scan's version, or the one a render carries in its name or
+        folder ('SEQ010_SH020_comp_v002.mov' -> 'v002'): renders showed a dash
+        (MED2-062).
+        """
+        if self.clip.scan_version:
+            return self.clip.scan_version
+        for part in (self.clip.path.name, self.clip.path.parent.name):
+            found = _VERSION.findall(part)
+            if found:
+                return found[-1].lower()
+        return ""
 
     @property
     def frames(self) -> str:

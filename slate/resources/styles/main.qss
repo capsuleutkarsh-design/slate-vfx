@@ -727,6 +727,25 @@ QCheckBox::indicator:checked:disabled {
 QRadioButton::indicator:checked:disabled {
     image: url(@ICONS/radio-dot-off.svg);
 }
+/* Tick boxes inside tables and lists look like the check boxes above: an
+   unticked one was a dark square on the dark table, a ticked one a bare tick
+   (MED2-061). */
+QAbstractItemView::indicator {
+    width: 16px;
+    height: 16px;
+    border: 1px solid @TEXT_DIM;
+    border-radius: @RADIUS_SM;
+    background-color: @INPUT;
+}
+QAbstractItemView::indicator:checked {
+    background-color: @ACCENT;
+    border-color: @ACCENT;
+    image: url(@ICONS/check.svg);
+}
+QAbstractItemView::indicator:disabled {
+    border-color: @LINE;
+    background-color: @PANEL;
+}
 
 /* --- TOOLTIPS --- */
 QToolTip {

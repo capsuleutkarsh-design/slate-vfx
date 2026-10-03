@@ -172,9 +172,9 @@ class TestEditOrder:
         entry = build_lineup_shot(shot, tmp_path)
         assert not entry.length_known and entry.get_frame_count() == 100        # MED-089
         assert "unknown" in entry.frames_text()
-        late = _shot(tmp_path, "SH020")
-        late.fps = 25.0
-        other = build_lineup_shot(late, tmp_path)
+        # The rate is the plate's own (MED2-041); a 25 fps one stands out.
+        other = build_lineup_shot(_shot(tmp_path, "SH020"), tmp_path)
+        other.fps = 25.0
         assert fps_mismatches([entry, entry, other]) == ["SH020"]
 
     def test_lineups_go_into_the_project(self, tmp_path):

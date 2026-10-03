@@ -21,7 +21,7 @@ import logging
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal, QRectF, QThread
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtGui import QBrush, QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QComboBox, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget,
 )
@@ -92,12 +92,23 @@ class LineupStrip(QWidget):
         self.current = index
         self.update()
 
+    def _lengths(self):
+        """
+        Each shot's share of the strip. A shot whose length is not known gets
+        the typical length of the others, not the 100-frame placeholder that
+        made it the widest block of all (MED2-046).
+        """
+        known = sorted(e.get_frame_count() for e in self.entries if e.length_known)
+        nominal = known[len(known) // 2] if known else 24
+        return [e.get_frame_count() if e.length_known else nominal for e in self.entries]
+
     def _blocks(self):
-        total = sum(e.get_frame_count() for e in self.entries) or 1
+        lengths = self._lengths()
+        total = sum(lengths) or 1
         width = max(1.0, self.width() - 2.0)
         x = 1.0
         for index, entry in enumerate(self.entries):
-            w = width * entry.get_frame_count() / total
+            w = width * lengths[index] / total
             yield index, entry, QRectF(x, 2, max(2.0, w - 1), self.height() - 4)
             x += w
 
@@ -120,6 +131,10 @@ class LineupStrip(QWidget):
             painter.setBrush(base)
             painter.setPen(QPen(QColor(Gate.LINE_SOFT), 1))
             painter.drawRoundedRect(rect, 2, 2)
+            if not entry.length_known:
+                # Hatched: this length is a guess.
+                painter.setBrush(QBrush(QColor(Gate.TEXT_DIM), Qt.BrushStyle.BDiagPattern))
+                painter.drawRoundedRect(rect, 2, 2)
             if rect.width() > 30:
                 painter.setPen(QColor(Gate.TEXT_ON_ACCENT if index == self.current else Gate.TEXT_2))
                 text = strip_label(painter.fontMetrics(), entry.name, int(rect.width()) - 6)
@@ -135,7 +150,9 @@ class LineupStrip(QWidget):
         index = self.block_at(event.position().x())
         if 0 <= index < len(self.entries):
             entry = self.entries[index]
-            self.setToolTip(f"{entry.reel} {entry.name} - {entry.frames_text()} frames")
+            length = (f"{entry.frames_text()} frames" if entry.length_known
+                      else "length unknown")
+            self.setToolTip(f"{entry.reel} {entry.name} - {length}")
 
 
 class _ProxyJob(QThread):
@@ -166,7 +183,8 @@ class LineupPreview(QWidget):
         self.folder_resolver = None
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        # Clear of the splitter, like the rest of the page (MED2-051).
+        layout.setContentsMargins(10, 0, 0, 0)
         layout.setSpacing(6)
 
         self.strip = LineupStrip()
@@ -177,6 +195,7 @@ class LineupPreview(QWidget):
         self.player.setMinimumHeight(220)
         self.player.prev_requested.connect(lambda: self.step(-1))
         self.player.next_requested.connect(lambda: self.step(1))
+        self.player.set_context("shot")
         self.player.media_finished.connect(self._on_finished)
         self.player.playing_changed.connect(self._on_playing)
         layout.addWidget(self.player, 1)
@@ -191,7 +210,9 @@ class LineupPreview(QWidget):
         self.combo_layer = QComboBox()
         self.combo_layer.setToolTip("Which department to watch. The plate stands in for a "
                                     "department that has not rendered this shot yet.")
-        self.combo_layer.currentIndexChanged.connect(lambda _i: self.show_shot(self.index))
+        # During Play lineup the new layer goes on playing (MED2-044).
+        self.combo_layer.currentIndexChanged.connect(
+            lambda _i: self.show_shot(self.index, autoplay=self.continuous))
         row.addWidget(self.combo_layer)
         self.btn_play_all = make_button("Play lineup", "primary", icon="play",
                                         tooltip="Play every shot in order, from this one")
@@ -214,6 +235,13 @@ class LineupPreview(QWidget):
 
     # ------------------------------------------------------------ content
     def set_lineup(self, entries, layout=None):
+        """
+        A new lineup. The shot being watched stays, at its new place, when it
+        is still in it - ticking another shot threw the player back to the
+        first one (MED2-043); otherwise the nearest one is shown.
+        """
+        watching = self.entries[self.index] if 0 <= self.index < len(self.entries) else None
+        was_index, was_layer = self.index, self.layer()
         self.entries = list(entries or [])
         self.strip.set_entries(self.entries)
         self.combo_layer.blockSignals(True)
@@ -221,10 +249,18 @@ class LineupPreview(QWidget):
         from slate.core.domain.olive_lineup import layout_for
         for label, key in (layout or layout_for(self.entries)):
             self.combo_layer.addItem(label, key)
+        self.combo_layer.setCurrentIndex(max(0, self.combo_layer.findData(was_layer)))
         self.combo_layer.blockSignals(False)
         self.index = -1
-        if self.entries:
-            self.show_shot(0)
+        if watching in self.entries and self.layer() == was_layer:
+            keep = self.entries.index(watching)
+            self.index = keep
+            self.strip.set_current(keep)
+            self.lbl_shot.setText(f"{watching.reel}  {watching.name}  ·  {keep + 1} of "
+                                  f"{len(self.entries)}")
+        elif self.entries:
+            self.show_shot(self.entries.index(watching) if watching in self.entries
+                           else min(max(was_index, 0), len(self.entries) - 1))
         else:
             self.player.stop_media()
             self.player.screen.set_text("No shots with a scan to show yet.")
@@ -262,7 +298,13 @@ class LineupPreview(QWidget):
         self._seen_playing = False
         self.player.btn_loop.setChecked(not self.continuous)
         self.player._pending_autoplay = bool(autoplay)
-        self.player.load(str(path))
+        options = {}
+        if kind == "proxy" and clip.is_sequence:
+            # The plate's own frame numbers, not 1 / 24 (MED2-047).
+            from slate.core.domain.proxy_builder import first_frame_file
+            options = {"audio_source": str(first_frame_file(clip)),
+                       "first_frame": clip.first_frame or None}
+        self.player.load(str(path), **options)
         self.shot_changed.emit(index)
 
     def step(self, direction):
