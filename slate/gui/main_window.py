@@ -763,10 +763,13 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
                         att = CentralAttendance()
                         # automatic: signing in starts the day once; it never
                         # opens a second session or trips "already punched in".
-                        att.log_action(self.username, 'in', automatic=True)
+                        stored = att.log_action(self.username, 'in', automatic=True)
                         logging.info(f"Attendance Success: {self.username}")
-                        if not self.is_closing():
-                            self.signal.emit(f"Attendance logged for {self.username}.", "success", 3000)
+                        # Said only when a punch was written: signing in again,
+                        # after a punch-out or as a service account logs nothing.
+                        if stored and not self.is_closing():
+                            self.signal.emit("Punched in at %s." % str(stored.get("time") or "")[:5],
+                                             "success", 3000)
                         return
                     except Exception as e:
                         last_error = e

@@ -48,6 +48,8 @@ WATCHED = {
     "prod_bidding": "id",
     "prod_bid_lines": "bid_id",
     "notifications": "user_id",
+    # Attendance follows punches instead of re-reading the month every 30 s.
+    "attendance_log": "user_id",
 }
 
 _PG_FEED = """

@@ -112,9 +112,9 @@ class MainWindowBuilderMixin:
         """
         from ...core.domain.access import can
         roles = list(getattr(self, "user_roles", None) or [])
-        text = "Punch in and out, and see your month"
+        text = "Punch in and out and see your month"
         if can(roles, "view_team_attendance"):
-            text += ", the studio's attendance and timesheets"
+            text = "Punch in and out, see your month - and the studio's attendance and timesheets"
         elif can(roles, "approve_leave"):
             text += ", and your team's attendance"
         if self._is_sqlite_fallback_mode():

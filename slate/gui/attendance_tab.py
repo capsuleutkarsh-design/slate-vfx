@@ -26,9 +26,9 @@ from datetime import date, datetime, timedelta
 from PySide6.QtCore import Qt, QTime, QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QFrame, QGridLayout,
-    QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSizePolicy, QSpinBox,
-    QSplitter, QTableWidget, QTableWidgetItem, QTimeEdit, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QGridLayout, QHeaderView,
+    QHBoxLayout, QLabel, QLineEdit, QMessageBox, QSizePolicy, QSpinBox,
+    QTableWidget, QTableWidgetItem, QTimeEdit, QVBoxLayout, QWidget,
 )
 
 from ..core.infra.app_context import AppContext
@@ -94,6 +94,41 @@ def legend_entries() -> list:
     return out
 
 
+def legend_tone(label: str) -> str:
+    """The state's own colour, to ring its legend swatch (the cell tints are faint in Dark)."""
+    return {
+        "Present": Gate.OK, "Late": Gate.WARN, "Short day": Gate.WARN, "Working now": Gate.ACCENT,
+        "Auto punch-out": Gate.INFO, "Missing punch": Gate.BAD, "On leave": Gate.IDLE,
+        "Absent": Gate.BAD, "Holiday / weekly off": Gate.TEXT_DIM,
+    }.get(label, Gate.LINE)
+
+
+class DayHeader(QHeaderView):
+    """
+    The team grid's day header, with today and the days off marked.
+
+    The themed header stylesheet draws every section the same and ignores
+    item colours, so today's column and the holidays looked like any other
+    day. marks: {section: "today" | "off"}.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(Qt.Orientation.Horizontal, parent)
+        self.marks = {}
+
+    def paintSection(self, painter, rect, index):
+        painter.save()
+        super().paintSection(painter, rect, index)
+        painter.restore()
+        mark = self.marks.get(index)
+        if mark == "off":
+            shade = QColor(Gate.GROUND)
+            shade.setAlpha(140)
+            painter.fillRect(rect, shade)
+        elif mark == "today":
+            painter.fillRect(rect.x(), rect.bottom() - 2, rect.width(), 3, QColor(Gate.ACCENT))
+
+
 def streak_text(days: int) -> str:
     if days <= 0:
         return ""
@@ -126,53 +161,85 @@ class EditPunchDialog(QDialog):
     out time earlier than the in time is refused unless the shift really
     ended the next day. A reason is required and kept with the day, with who
     made the change and what it said before.
+
+    A day of two sessions (punched out for a break and back in) shows every
+    session, and sessions can be added or removed. It used to open as the
+    first in and the last out, and saving it - even just to add a reason -
+    turned the break into worked hours.
     """
 
     def __init__(self, name, day, t_in="", t_out="", overnight=False, has_record=False,
-                 parent=None):
+                 parent=None, sessions=None, auto_cutoff="", leave=None):
         super().__init__(parent, Qt.WindowType.WindowCloseButtonHint)
         self.setWindowTitle("Edit punch")
         self.setMinimumWidth(380)
         self.cleared = False
+        self.leave = leave
         self.setObjectName("editPunch")
         self.setStyleSheet(f"QDialog#editPunch {{ background: {Gate.GROUND}; }}")
 
         root = QVBoxLayout(self)
         root.setContentsMargins(Gate.SPACE_4, Gate.SPACE_4, Gate.SPACE_4, Gate.SPACE_4)
         root.setSpacing(Gate.SPACE_3)
-        heading = QLabel("<b>%s</b><br>%s" % (name, format_date(day, weekday=True)))
+        heading_text = "<b>%s</b><br>%s" % (name, format_date(day, weekday=True))
+        if leave:
+            heading_text += "<br>Approved leave: %s%s" % (
+                leave.get("type") or "Leave", " (%s)" % leave["half"] if leave.get("half") else "")
+        heading = QLabel(heading_text)
         heading.setTextFormat(Qt.TextFormat.RichText)
         root.addWidget(heading)
 
         from slate.gui.core.controls import form_layout
-        form = form_layout()
-        self.e_in = QTimeEdit()
-        self.e_in.setDisplayFormat("HH:mm")
+        self._grid = QGridLayout()
+        self._grid.setHorizontalSpacing(Gate.SPACE_2)
+        self._grid.setVerticalSpacing(Gate.SPACE_2)
+        self._rows = []        # [(label, in edit, out edit, remove button)]
+        root.addLayout(self._grid)
+
         self.no_in = QCheckBox("No in time")
-        self.e_out = QTimeEdit()
-        self.e_out.setDisplayFormat("HH:mm")
         self.no_out = QCheckBox("No out time")
-        for edit, box, value in ((self.e_in, self.no_in, t_in), (self.e_out, self.no_out, t_out)):
-            parsed = rules.parse_time(value)
-            edit.setTime(QTime(parsed.hour, parsed.minute) if parsed else QTime(10, 0))
-            box.setChecked(not parsed)
-            edit.setEnabled(bool(parsed))
-            box.toggled.connect(lambda checked, e=edit: e.setEnabled(not checked))
-        row_in = QHBoxLayout()
-        row_in.addWidget(self.e_in, 1)
-        row_in.addWidget(self.no_in)
-        row_out = QHBoxLayout()
-        row_out.addWidget(self.e_out, 1)
-        row_out.addWidget(self.no_out)
-        form.addRow("In", row_in)
-        form.addRow("Out", row_out)
+        self.btn_add = make_button("Add session", "secondary", on_click=lambda: self._add_row())
+        self.btn_add.setToolTip("Another in and out the same day (out for a break and back).")
+        ticks = QHBoxLayout()
+        ticks.addWidget(self.no_in)
+        ticks.addWidget(self.no_out)
+        ticks.addStretch(1)
+        ticks.addWidget(self.btn_add)
+        root.addLayout(ticks)
+
+        typed = [(a, b) for a, b in (sessions or []) if a or b]
+        if len(typed) < 2:
+            typed = [(t_in, t_out)]
+        if not has_record and not (t_in or t_out):
+            # A missing day is added with both times ready: it opened with
+            # both 'No ... time' ticked and HR had to untick them first.
+            start = QTime(10, 0)
+            typed = [("10:00", start.addSecs(int(lp.standard_day_hours() * 3600)).toString("HH:mm"))]
+        for a, b in typed:
+            self._add_row(a, b)
+        if len(self._rows) == 1:
+            self.no_in.setChecked(not rules.parse_time(typed[0][0]))
+            self.no_out.setChecked(not rules.parse_time(typed[0][1]))
+        self.no_in.toggled.connect(lambda *_: self._sync_rows())
+        self.no_out.toggled.connect(lambda *_: self._sync_rows())
+
+        form = form_layout()
         self.overnight = QCheckBox("Ends next day (overnight shift)")
         self.overnight.setChecked(bool(overnight))
         form.addRow("", self.overnight)
         self.reason = QLineEdit()
-        self.reason.setPlaceholderText("Forgot to punch out, machine was down...")
+        self.reason.setPlaceholderText("Forgot to punch out, machine was down…")
         form.addRow("Reason", self.reason)
         root.addLayout(form)
+
+        if auto_cutoff:
+            # The cell's clock icon was the only clue, and saving the day
+            # unchanged turned the cutoff into a 'corrected' real time.
+            note = QLabel("Out was set by the automatic punch-out at %s - enter the real "
+                          "time if it is known." % rules.hhmm(auto_cutoff))
+            note.setWordWrap(True)
+            note.setStyleSheet(f"color: {Gate.WARN}; font-size: 12.5px;")
+            root.addWidget(note)
 
         self.error = QLabel("")
         self.error.setWordWrap(True)
@@ -190,15 +257,70 @@ class EditPunchDialog(QDialog):
         self.btn_save = make_button("Save", "primary", on_click=self._save)
         buttons.addWidget(self.btn_save)
         root.addLayout(buttons)
+        self._sync_rows()
+
+    # ----------------------------------------------------------- sessions
+    def _add_row(self, t_in="", t_out=""):
+        if not t_in and not t_out and self._rows:
+            # A new session starts an hour after the last one ends.
+            last = self._rows[-1][2].time()
+            t_in = last.addSecs(3600).toString("HH:mm")
+            t_out = last.addSecs(2 * 3600).toString("HH:mm")
+        label = QLabel("")
+        e_in, e_out = QTimeEdit(), QTimeEdit()
+        for edit, value in ((e_in, t_in), (e_out, t_out)):
+            edit.setDisplayFormat("HH:mm")
+            parsed = rules.parse_time(value)
+            edit.setTime(QTime(parsed.hour, parsed.minute) if parsed else QTime(10, 0))
+        remove = make_button("Remove", "ghost")
+        remove.setToolTip("Remove this session")
+        row = (label, e_in, e_out, remove)
+        remove.clicked.connect(lambda *_: self._remove_row(row))
+        self._rows.append(row)
+        if len(self._rows) > 1:
+            # Only a one-session day can be an in or an out on its own.
+            self.no_in.setChecked(False)
+            self.no_out.setChecked(False)
+        self._sync_rows()
+
+    def _remove_row(self, row):
+        if len(self._rows) > 1 and row in self._rows:
+            self._rows.remove(row)
+            for widget in row:
+                self._grid.removeWidget(widget)
+                widget.deleteLater()
+            self._sync_rows()
+
+    def _sync_rows(self):
+        single = len(self._rows) == 1
+        for i, (label, e_in, e_out, remove) in enumerate(self._rows):
+            label.setText("In - out" if single else "Session %d" % (i + 1))
+            self._grid.addWidget(label, i, 0)
+            self._grid.addWidget(e_in, i, 1)
+            self._grid.addWidget(e_out, i, 2)
+            self._grid.addWidget(remove, i, 3)
+            remove.setVisible(not single)
+            e_in.setEnabled(not (single and self.no_in.isChecked()))
+            e_out.setEnabled(not (single and self.no_out.isChecked()))
+        self.no_in.setVisible(single)
+        self.no_out.setVisible(single)
+        self.e_in = self._rows[0][1]
+        self.e_out = self._rows[-1][2]
 
     def _fail(self, text):
         self.error.setText(text)
         self.error.show()
 
     def values(self) -> dict:
+        sessions = [(e_in.time().toString("HH:mm"), e_out.time().toString("HH:mm"))
+                    for _, e_in, e_out, _ in self._rows]
+        if len(sessions) == 1:
+            sessions = [("" if self.no_in.isChecked() else sessions[0][0],
+                         "" if self.no_out.isChecked() else sessions[0][1])]
         return {
-            "in": "" if self.no_in.isChecked() else self.e_in.time().toString("HH:mm"),
-            "out": "" if self.no_out.isChecked() else self.e_out.time().toString("HH:mm"),
+            "in": sessions[0][0],
+            "out": sessions[-1][1],
+            "sessions": sessions,
             "overnight": self.overnight.isChecked(),
             "reason": self.reason.text().strip(),
         }
@@ -206,11 +328,11 @@ class EditPunchDialog(QDialog):
     def problem(self) -> str:
         """Why the values cannot be saved, or ''."""
         v = self.values()
-        if not v["in"] and not v["out"]:
-            return "Enter an in time, an out time or both. To remove the day, use Clear day."
-        if v["in"] and v["out"] and v["out"] <= v["in"] and not v["overnight"]:
-            return ("The out time is before the in time. Tick 'Ends next day' if the "
-                    "shift really ran past midnight.")
+        why = rules.sessions_problem(v["sessions"], v["overnight"])
+        if why:
+            if why.startswith("Enter an in time"):
+                why += " To remove the day, use Clear day."
+            return why
         if not v["reason"]:
             return "Say why the day is being corrected - it is kept with the record."
         return ""
@@ -219,6 +341,13 @@ class EditPunchDialog(QDialog):
         why = self.problem()
         if why:
             self._fail(why)
+            return
+        if self.leave and QMessageBox.question(
+                self, "Edit punch",
+                "This is a day of approved leave (%s). Add punches anyway?\n\n"
+                "The leave stays charged until HR revoke it." % (self.leave.get("type") or "Leave"),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
+        ) != QMessageBox.StandardButton.Yes:
             return
         self.accept()
 
@@ -245,7 +374,7 @@ class AttendanceTab(QWidget):
     """
 
     TEAM_STATS = ["Days", "Late", "Absent", "Missing", "Hours", "WFH"]
-    PERSONAL_COLUMNS = ["Date", "In", "Out", "Hours", "Status", "OT"]
+    PERSONAL_COLUMNS = ["Date", "In", "Out", "Hours", "OT", "Status"]
     SETTINGS = ("UTStudio", "Slate")
 
     def __init__(self, user_data, attendance=None, user_manager=None, app_context=None, sync_enabled=True):
@@ -285,19 +414,32 @@ class AttendanceTab(QWidget):
 
         self.setup_ui()
         self.refresh_personal_view()
-
-        # Personal auto-refresh so running hours update live without reopening.
-        self.personal_refresh_timer = QTimer(self)
-        self.personal_refresh_timer.timeout.connect(self.refresh_personal_view)
-        self.personal_refresh_timer.start(60000)  # 60 seconds
-
         if self.has_team_view() and self.sync_enabled:
             self.refresh_team_view()
-            # AUTO-REFRESH: Poll for changes every 30 seconds
-            self.auto_refresh_timer = QTimer(self)
-            self.auto_refresh_timer.timeout.connect(self.auto_refresh_team_view)
-            self.auto_refresh_timer.start(30000)  # 30 seconds
-            self._last_refresh_time = 0
+
+        # Today's running hours, every minute while the page is on screen:
+        # one person's day, not the month, the streak and every user.
+        self.personal_refresh_timer = QTimer(self)
+        self.personal_refresh_timer.timeout.connect(self._tick_today)
+        self.personal_refresh_timer.start(60000)
+        # Everything else when somebody's attendance, leave or the holidays
+        # change (the change feed), and only while the page is shown. It used
+        # to re-read the studio's month every 30 s on whatever tab HR was on.
+        from slate.gui.components.auto_refresh import AutoRefresh
+        self._auto_refresh = AutoRefresh(
+            self, self._refresh_all, seconds=60,
+            topics=("attendance_log", "leave_requests", "holiday_calendar"))
+
+    def _tick_today(self):
+        if self.isVisible():
+            self._refresh_today(datetime.now())
+
+    def _refresh_all(self):
+        self._holiday_cache = {}
+        self._my_record = None
+        self.refresh_personal_view()
+        if self.has_team_view() and self.sync_enabled:
+            self.refresh_team_view()
 
     # ------------------------------------------------------------ who sees
     def is_admin(self):
@@ -317,16 +459,32 @@ class AttendanceTab(QWidget):
     def has_team_view(self):
         return self.is_admin() or self.is_team_lead()
 
-    def team_scope(self):
-        """None: everybody. A set of usernames (lower-case): only those."""
+    def team_scope(self, users=None):
+        """
+        None: everybody. A set of usernames (lower-case): only those - the
+        people under this person, all the way down: a supervisor whose
+        artists report to a lead saw only the lead.
+        """
         if self.is_admin():
             return None
-        try:
-            from slate.core.infra.leave_repository import LeaveRepository
-            return LeaveRepository().reports_to(self.username)
-        except Exception as exc:
-            logging.warning("Could not read who reports to %s: %s", self.username, exc)
-            return set()
+        if users is None:
+            try:
+                users = self.user_manager.get_all_users() or {}
+            except Exception as exc:
+                logging.warning("Could not read who reports to %s: %s", self.username, exc)
+                return set()
+        under = {}
+        for uid, rec in users.items():
+            boss = str((rec or {}).get("reports_to") or "").strip().lower()
+            under.setdefault(boss, set()).add(str(uid).lower())
+        me = str(self.username).lower()
+        team, todo = set(), [me]
+        while todo:
+            for uid in under.get(todo.pop(), ()):
+                if uid != me and uid not in team:      # a loop in the records ends here
+                    team.add(uid)
+                    todo.append(uid)
+        return team
 
     def _notify(self, message: str, level: str = "info", details: str = ""):
         """Use host feedback API when available, fallback to dialogs."""
@@ -428,7 +586,7 @@ class AttendanceTab(QWidget):
         status_row = QVBoxLayout()
         status_row.setContentsMargins(42, 0, 0, 0)
         status_row.setSpacing(2)
-        self.lbl_status = QLabel("Checking...")
+        self.lbl_status = QLabel("Checking\u2026")
         self.lbl_status.setObjectName("attStatus")
         self.lbl_status.setProperty("tone", "idle")
         self.lbl_status.setStyleSheet(
@@ -488,8 +646,47 @@ class AttendanceTab(QWidget):
         pc_layout.addWidget(self.center_box, 1)
         pc_layout.addWidget(right_box)
         layout.addWidget(self.personal_card)
+        # An account that is not a person (admin) has no day to punch.
+        me = people.person(self.username)
+        self.is_service = bool(me is not None and me.is_service)
+        team_page = self.has_team_view() and self.sync_enabled
+        self.personal_card.setVisible(not (self.is_service and team_page))
 
-        # 2. MONTH PICKER + LEGEND --------------------------------------
+        # 2. LEGEND -------------------------------------------------------
+        legend_row = QHBoxLayout()
+        legend_row.setContentsMargins(5, 0, 5, 0)
+        legend_row.addStretch(1)
+        legend_frame = QFrame()
+        legend_frame.setObjectName("CompactLegend")
+        legend_frame.setMinimumHeight(30)
+        lf_layout = QHBoxLayout(legend_frame)
+        lf_layout.setContentsMargins(12, 0, 12, 0)
+        lf_layout.setSpacing(14)
+        for colour, text in legend_entries():
+            item = QWidget()
+            item.setStyleSheet("background: transparent;")
+            il = QHBoxLayout(item)
+            il.setContentsMargins(0, 0, 0, 0)
+            il.setSpacing(5)
+            swatch = QLabel()
+            swatch.setFixedSize(12, 12)
+            # The cell's tint, ringed in the state's own colour: in Dark the
+            # tints alone were five near-black squares.
+            swatch.setStyleSheet(f"background: {colour}; border: 2px solid {legend_tone(text)}; "
+                                 "border-radius: 3px;")
+            lbl = QLabel(text)
+            lbl.setStyleSheet(f"color: {Gate.TEXT_2}; font-size: 11px; background: transparent;")
+            il.addWidget(swatch)
+            il.addWidget(lbl)
+            lf_layout.addWidget(item)
+        legend_row.addWidget(legend_frame)
+        layout.addLayout(legend_row)
+
+        # 3. MY MONTH ----------------------------------------------------
+        personal_page = QWidget()
+        pp = QVBoxLayout(personal_page)
+        pp.setContentsMargins(0, 8, 0, 0)
+        pp.setSpacing(8)
         mid_row = QHBoxLayout()
         mid_row.setContentsMargins(5, 0, 5, 0)
         mid_row.setSpacing(8)
@@ -506,53 +703,42 @@ class AttendanceTab(QWidget):
         mid_row.addWidget(self.my_month)
         mid_row.addWidget(self.my_year)
         mid_row.addStretch(1)
-
-        legend_frame = QFrame()
-        legend_frame.setObjectName("CompactLegend")
-        legend_frame.setMinimumHeight(30)
-        lf_layout = QHBoxLayout(legend_frame)
-        lf_layout.setContentsMargins(12, 0, 12, 0)
-        lf_layout.setSpacing(14)
-        for colour, text in legend_entries():
-            item = QWidget()
-            item.setStyleSheet("background: transparent;")
-            il = QHBoxLayout(item)
-            il.setContentsMargins(0, 0, 0, 0)
-            il.setSpacing(5)
-            swatch = QLabel()
-            swatch.setFixedSize(12, 12)
-            swatch.setStyleSheet(f"background: {colour}; border: 1px solid {Gate.LINE}; border-radius: 3px;")
-            lbl = QLabel(text)
-            lbl.setStyleSheet(f"color: {Gate.TEXT_2}; font-size: 11px; background: transparent;")
-            il.addWidget(swatch)
-            il.addWidget(lbl)
-            lf_layout.addWidget(item)
-        mid_row.addWidget(legend_frame)
-        layout.addLayout(mid_row)
-
-        # 3. TABLES ------------------------------------------------------
-        self.splitter = QSplitter(Qt.Orientation.Vertical)
-        self.splitter.setHandleWidth(4)
+        pp.addLayout(mid_row)
         self.my_table = QTableWidget()
         self.setup_table(self.my_table)
-        self.splitter.addWidget(self.my_table)
+        pp.addWidget(self.my_table, 1)
 
+        # 4. THE TEAM ----------------------------------------------------
+        # 'My month' and the team grid are two tabs for anybody with a team:
+        # stacked, at 1280x720 each showed one and a half rows and the
+        # splitter had to be dragged on every machine. The tab is remembered.
         self.team_table = None
-        if self.has_team_view() and self.sync_enabled:
-            self.splitter.addWidget(self._build_team_section())
-        elif self.has_team_view() and not self.sync_enabled:
-            sync_notice = QLabel(
-                "Local mode: the team's attendance is not available.\n"
-                "It comes back when Slate is connected to the studio database.")
-            sync_notice.setWordWrap(True)
-            sync_notice.setStyleSheet(
-                f"color: {Gate.WARN}; background: {Gate.WARN_SURFACE}; border: 1px solid {Gate.LINE}; "
-                "border-radius: 8px; padding: 10px; font-weight: 600;")
-            layout.addWidget(sync_notice)
-
-        layout.addWidget(self.splitter, 1)
-        self._restore_split()
-        self.splitter.splitterMoved.connect(lambda *_: self._save_split())
+        self.pages = None
+        if team_page:
+            from PySide6.QtWidgets import QTabWidget
+            self.pages = QTabWidget()
+            self.pages.setDocumentMode(True)
+            if self.is_service:
+                personal_page.setParent(self)        # kept, never shown
+                personal_page.hide()
+            else:
+                self.pages.addTab(personal_page, "My month")
+            self.pages.addTab(self._build_team_section(),
+                              "Team overview" if self.is_admin() else "My team")
+            self.pages.setCurrentIndex(self._stored_page())
+            self.pages.currentChanged.connect(self._save_page)
+            layout.addWidget(self.pages, 1)
+        else:
+            layout.addWidget(personal_page, 1)
+            if self.has_team_view():
+                sync_notice = QLabel(
+                    "Local mode: the team's attendance is not available.\n"
+                    "It comes back when Slate is connected to the studio database.")
+                sync_notice.setWordWrap(True)
+                sync_notice.setStyleSheet(
+                    f"color: {Gate.WARN}; background: {Gate.WARN_SURFACE}; border: 1px solid {Gate.LINE}; "
+                    "border-radius: 8px; padding: 10px; font-weight: 600;")
+                layout.addWidget(sync_notice)
 
     def _build_team_section(self):
         admin_widget = QWidget()
@@ -617,8 +803,14 @@ class AttendanceTab(QWidget):
         filters.setContentsMargins(5, 0, 5, 0)
         filters.setSpacing(8)
         self.team_search = QLineEdit()
-        self.team_search.setPlaceholderText("Search people...")
-        self.team_search.textChanged.connect(lambda *_: self.refresh_team_view())
+        self.team_search.setPlaceholderText("Search people\u2026")
+        # Typing filters the people already read, a moment after the last
+        # key: every keystroke re-read all users and the whole month.
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(300)
+        self._search_timer.timeout.connect(lambda: self.refresh_team_view(reload=False))
+        self.team_search.textChanged.connect(lambda *_: self._search_timer.start())
         self.filter_department = QComboBox()
         self.filter_manager = QComboBox()
         self.filter_location = QComboBox()
@@ -626,9 +818,11 @@ class AttendanceTab(QWidget):
                                 (self.filter_manager, "All managers"),
                                 (self.filter_location, "All locations")):
             combo.addItem(everyone, "")
-            combo.currentIndexChanged.connect(lambda *_: self.refresh_team_view())
+            combo.currentIndexChanged.connect(lambda *_: self.refresh_team_view(reload=False))
         self.show_system = QCheckBox("Show system accounts")
-        self.show_system.toggled.connect(lambda *_: self.refresh_team_view())
+        self.show_system.toggled.connect(lambda *_: self.refresh_team_view(reload=False))
+        # A team lead's grid is their own people: no system accounts to show.
+        self.show_system.setVisible(self.is_admin())
         filters.addWidget(self.team_search, 1)
         filters.addWidget(self.filter_department)
         filters.addWidget(self.filter_manager)
@@ -637,7 +831,15 @@ class AttendanceTab(QWidget):
         aw_layout.addLayout(filters)
 
         self.team_table = QTableWidget()
+        # Today and the days off marked in the header itself: the themed
+        # header stylesheet ignored the item colours that tried to.
+        self.team_table.setHorizontalHeader(DayHeader(self.team_table))
         self.team_table.cellDoubleClicked.connect(self.on_cell_double_click)
+        # The names down the side get a heading like every other column.
+        self.team_corner = QLabel("Person", self.team_table)
+        self.team_corner.setStyleSheet(
+            f"color: {Gate.TEXT_2}; font-weight: 600; font-size: {Gate.SIZE_SM}px; "
+            f"padding-left: {Gate.CELL_PADDING}px; background: transparent;")
         aw_layout.addWidget(self.team_table, 1)
 
         from slate.gui.core.empty_state import EmptyState
@@ -666,24 +868,22 @@ class AttendanceTab(QWidget):
         except Exception:
             pass
 
-    def _restore_split(self):
-        if self.splitter.count() < 2:
-            return
+    def _stored_page(self) -> int:
+        """The tab last used; the team for a first visit (that is HR's work area)."""
         try:
             from PySide6.QtCore import QSettings
-            stored = QSettings(*self.SETTINGS).value("attendance/split")
-            sizes = [int(x) for x in (stored or [])]
+            stored = int(QSettings(*self.SETTINGS).value("attendance/page", -1))
         except Exception:
-            sizes = []
-        # Most of the height to the team grid: that is HR's work area.
-        self.splitter.setSizes(sizes if len(sizes) == 2 and all(sizes) else [250, 750])
+            stored = -1
+        last = self.pages.count() - 1
+        return stored if 0 <= stored <= last else last
 
-    def _save_split(self):
+    def _save_page(self, index):
         try:
             from PySide6.QtCore import QSettings
-            QSettings(*self.SETTINGS).setValue("attendance/split", self.splitter.sizes())
+            QSettings(*self.SETTINGS).setValue("attendance/page", int(index))
         except Exception as exc:
-            logging.debug("Attendance split not saved: %s", exc)
+            logging.debug("Attendance tab not remembered: %s", exc)
 
     def setup_table(self, table):
         # The shared table style (it had its own: grey upper-case headers on a
@@ -731,25 +931,22 @@ class AttendanceTab(QWidget):
                 self._location_cache[key] = ""
         return self._location_cache[key]
 
-    def _expected_from(self, username, record) -> date:
+    def _expected(self, username, record=None) -> tuple:
         """
-        The first day somebody was expected in: their joining date. Nobody is
-        'absent' before they joined, and an account that is not a person
-        (admin, tester) is never absent.
+        (first, last) day somebody was expected in (rules.expected_window):
+        nobody is 'absent' before they joined or after they left, and an
+        account that is not a person (admin, tester) never is.
         """
         person = people.person(username)
-        if person is not None and person.is_service:
-            return date.max
-        joined = (record or {}).get("joined_on")
-        if not joined and not record:
-            try:
-                joined = (self.user_manager.get_all_users() or {}).get(username, {}).get("joined_on")
-            except Exception:
-                joined = None
-        try:
-            return date.fromisoformat(str(joined)[:10]) if joined else date.min
-        except ValueError:
-            return date.min
+        if record is None:
+            record = getattr(self, "_my_record", None)
+            if record is None:
+                try:
+                    record = (self.user_manager.get_all_users() or {}).get(username, {})
+                except Exception:
+                    record = {}
+                self._my_record = record
+        return rules.expected_window(record, bool(person is not None and person.is_service))
 
     def _is_non_working(self, day) -> bool:
         """A day nobody was expected in: a weekly off or a public holiday."""
@@ -803,46 +1000,26 @@ class AttendanceTab(QWidget):
         self.lbl_streak.setText(streak_text(streak))
         self.lbl_streak.setVisible(bool(streak))
 
-        present = late = wfh = 0
-        hours_total = 0.0
-        for day_key, entry in user_log.items():
-            day = date(year, month, int(day_key))
-            if not rules.sessions_of(entry):
-                continue
-            present += 1
-            if entry.get("wfh"):
-                wfh += 1
-            if rules.is_late(day, rules.sessions_of(entry)[0][0], holidays):
-                late += 1
-            hours_total += rules.day_hours(entry, now, open_counts=(day == today))
-
-        self.lbl_monthly_present_value.setText(f"{present}")
-        self.lbl_monthly_late_value.setText(f"{late}")
-        self.lbl_monthly_hours_value.setText(f"{hours_total:.1f}")
-        self.lbl_monthly_wfh_value.setText(f"{wfh}")
-
         self.my_table.clear()
         self.my_table.setColumnCount(len(self.PERSONAL_COLUMNS))
         self.my_table.setHorizontalHeaderLabels(self.PERSONAL_COLUMNS)
-        # Status takes the room (it was cut to 'LATE / WFH | ...' while an
-        # overtime column took a thousand pixels).
+        # Status takes the room, last - OT sat a thousand pixels from the
+        # Hours it qualifies when Status stretched between them.
         style_table(self.my_table, {
             "Date": "contents", "In": "contents", "Out": "contents",
-            "Hours": "numeric", "Status": "stretch", "OT": "contents",
+            "Hours": "numeric", "OT": "contents", "Status": "stretch",
         })
         self.my_table.setRowCount(days_in_month)
         styles = state_styles()
         standard = lp.standard_day_hours()
-        expected_from = self._expected_from(self.username, {})
+        expected = self._expected(self.username)
 
-        for i in range(1, days_in_month + 1):
-            day = date(year, month, i)
-            entry = user_log.get(f"{i:02d}", {})
-            day_leave = leave.get(day)
-            state = rules.day_state(entry, day, today, holidays, day_leave)
-            if state == rules.ABSENT and day < expected_from:
-                state = rules.NONE
-            hours = rules.day_hours(entry, now, open_counts=(day == today))
+        # The hero's figures and the table come from one count, the one the
+        # team grid and the export use, so 'Late 1' is a late day you can find.
+        summary = rules.month_summary(user_log, year, month, holidays, leave, expected, now, today)
+        for i, d in enumerate(summary["days"], 1):
+            day, entry, state, hours = d["day"], d["entry"], d["state"], d["hours"]
+            day_leave, was_late = d["leave"], d["late"]
             sessions = rules.sessions_of(entry)
             parts = [styles[state][1] if state not in (rules.HOLIDAY, rules.WEEKLY_OFF) else ""]
             if state == rules.HOLIDAY:
@@ -851,6 +1028,8 @@ class AttendanceTab(QWidget):
                 parts = ["Weekly off"]
             elif state == rules.WORKED_OFF:
                 parts = ["Worked on a %s" % ("holiday" if day in holidays else "weekly off")]
+            if was_late and state != rules.LATE:
+                parts.append("late")
             if day_leave and state != rules.LEAVE:
                 parts.append("on approved leave (%s)" % day_leave["type"])
             elif state == rules.LEAVE:
@@ -863,7 +1042,7 @@ class AttendanceTab(QWidget):
             if entry.get("edited_by"):
                 parts.append("corrected by %s" % people.display_name(entry["edited_by"]))
             ot = ""
-            if hours > standard and not rules.sessions_of(entry)[-1][1] is None:
+            if hours > standard and sessions and sessions[-1][1] is not None:
                 ot = "+%.1f h" % (hours - standard)
             out_text = entry.get("out", "")
             if entry.get("overnight") and out_text:
@@ -873,22 +1052,27 @@ class AttendanceTab(QWidget):
                 entry.get("in", ""),
                 out_text,
                 ("%.1f" % hours) if hours else "",
-                " / ".join(p for p in parts if p),
                 ot,
+                " / ".join(p for p in parts if p),
             ]
             colour = QColor(styles[state][0])
             for c, txt in enumerate(cells):
                 it = QTableWidgetItem(txt)
                 it.setBackground(colour)
-                if c == 3:
+                if c in (3, 4):
                     it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 if day == today:
                     font = it.font()
                     font.setBold(True)
                     it.setFont(font)
-                if c == 4:
-                    it.setToolTip(self._day_tooltip(entry, day, state, day_leave))
+                if c == 5:
+                    it.setToolTip(self._day_tooltip(entry, day, state, day_leave, late=was_late))
                 self.my_table.setItem(i - 1, c, it)
+
+        self.lbl_monthly_present_value.setText(f"{summary['present']}")
+        self.lbl_monthly_late_value.setText(f"{summary['late']}")
+        self.lbl_monthly_hours_value.setText(f"{summary['hours']:.1f}")
+        self.lbl_monthly_wfh_value.setText(f"{summary['wfh']}")
 
     def _refresh_today(self, now):
         try:
@@ -923,10 +1107,13 @@ class AttendanceTab(QWidget):
         self.btn_punch_out.setToolTip(
             "" if kind == "working" else "Punch in first.")
 
-        # The WFH box shows today's record, not whatever was last clicked.
-        self.chk_wfh_box.blockSignals(True)
-        self.chk_wfh_box.setChecked(bool(state.get("wfh")))
-        self.chk_wfh_box.blockSignals(False)
+        # The WFH box shows today's record once there is one. Before the
+        # punch-in it is the person's choice for it, kept - the refresh used
+        # to clear it while the note still promised working from home.
+        if kind in ("working", "done"):
+            self.chk_wfh_box.blockSignals(True)
+            self.chk_wfh_box.setChecked(bool(state.get("wfh")))
+            self.chk_wfh_box.blockSignals(False)
 
     def _on_wfh_toggled(self, checked):
         state = getattr(self, "_today", {}) or {}
@@ -950,9 +1137,22 @@ class AttendanceTab(QWidget):
     def manual_punch(self, action):
         """Punch in or out, and say what was stored."""
         if action == "out":
+            # No time in the question: the punch is stored at the database
+            # server's time, which the workstation's clock may not match.
             if QMessageBox.question(
-                    self, "Punch out",
-                    "Punch out for the day at %s?" % datetime.now().strftime("%H:%M"),
+                    self, "Punch out", "Punch out now?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
+            ) != QMessageBox.StandardButton.Yes:
+                return
+        else:
+            today = date.today()
+            on_leave = self._leave(today, today, [self.username]).get(
+                self.username.lower(), {}).get(today)
+            # A half day is meant to be worked for the other half.
+            if on_leave and not on_leave.get("half") and QMessageBox.question(
+                    self, "Punch in",
+                    "You are on approved leave today (%s). Punch in anyway?\n\n"
+                    "Ask HR to cancel the leave if you are working." % on_leave.get("type", "Leave"),
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
             ) != QMessageBox.StandardButton.Yes:
                 return
@@ -982,7 +1182,7 @@ class AttendanceTab(QWidget):
             self.lbl_punch_note.setText("The punch was not saved.")
             self._notify("The punch was not saved.", "error", details=f"Failed to punch: {e}")
 
-    def _day_tooltip(self, entry, day, state, leave=None, location=None) -> str:
+    def _day_tooltip(self, entry, day, state, leave=None, location=None, late=False) -> str:
         lines = [format_date(day, weekday=True)]
         label = state_styles()[state][1]
         if state == rules.HOLIDAY:
@@ -991,6 +1191,8 @@ class AttendanceTab(QWidget):
             label = "Weekly off"
         if label:
             lines.append(label)
+        if late and state != rules.LATE:
+            lines.append("Arrived late")
         sessions = rules.sessions_of(entry)
         for n, (start, end) in enumerate(sessions, 1):
             prefix = "Session %d: " % n if len(sessions) > 1 else ""
@@ -1023,15 +1225,16 @@ class AttendanceTab(QWidget):
     def team_month(self):
         return self.spin_year.value(), self.combo_month.currentIndex() + 1
 
-    def team_people(self, year, month) -> list:
+    def team_people(self, year, month, users=None) -> list:
         """
         The people the grid shows, sorted by name: everybody for HR, the
-        viewer's reports for a supervisor; leavers only for months they were
+        viewer's people for a supervisor; leavers only for months they were
         here; system accounts only when asked; the search and filters applied.
         """
-        users = self.user_manager.get_all_users() or {}
+        if users is None:
+            users = self.user_manager.get_all_users() or {}
         month_start = f"{year:04d}-{month:02d}-01"
-        scope = self.team_scope()
+        scope = self.team_scope(users)
 
         def still_here(record):
             if record.get('active', True):
@@ -1090,22 +1293,25 @@ class AttendanceTab(QWidget):
         refill(self.filter_manager, [r.get("reports_to") for _, r in chosen],
                label=lambda v: people.display_name(v))
         refill(self.filter_location, [r.get("location") for _, r in chosen])
+        # A filter with one choice filters nothing (a lead saw only themselves).
+        self.filter_manager.setVisible(self.filter_manager.count() > 2)
 
     @on_database_error
-    def refresh_team_view(self):
+    def refresh_team_view(self, reload=True):
         """
         The month grid. Keeps the selected people and the scroll position
-        across the refresh (it runs every 30 s): HR used to lose their place
-        twice a minute.
+        across the refresh: HR used to lose their place twice a minute.
+        reload=False: only the search or a filter changed - the people, the
+        month and the leave already read are used again.
         """
         if self.team_table is None:
             return
         from slate.gui.components.table_tools import KeepSelection
         with KeepSelection(self.team_table):
-            self._fill_team_view()
+            self._fill_team_view(reload)
         self.team_empty.refresh()
 
-    def _fill_team_view(self):
+    def _fill_team_view(self, reload=True):
         from slate.gui.components.table_tools import KEY_ROLE
         from slate.gui.core.icons import icon
         year, month = self.team_month()
@@ -1114,15 +1320,20 @@ class AttendanceTab(QWidget):
         today = now_dt.date()
         first, last = date(year, month, 1), date(year, month, days)
 
-        self.lbl_last_refresh.setText("Updated %s" % now_dt.strftime("%H:%M"))
-
-        chosen = self.team_people(year, month)
+        cached = getattr(self, "_team_read", None)
+        if reload or not cached or cached[0] != (year, month):
+            self.lbl_last_refresh.setText("Updated %s" % now_dt.strftime("%H:%M"))
+            cached = ((year, month), self.user_manager.get_all_users() or {},
+                      self.attendance.get_full_month_data(year, month),
+                      self._leave(first, last))
+            self._team_read = cached
+        _, users, data, leave = cached
+        chosen = self.team_people(year, month, users)
         self._team_users = dict(chosen)
         user_ids = [uid for uid, _ in chosen]
         self._team_row_user_ids = list(user_ids)
-        data = self.attendance.get_full_month_data(year, month)
         self._team_data = data
-        leave = self._leave(first, last, user_ids)
+        self._team_leave = leave
         styles = state_styles()
 
         stats_cols = list(self.TEAM_STATS)
@@ -1144,15 +1355,23 @@ class AttendanceTab(QWidget):
         from PySide6.QtGui import QFontMetrics
         metrics = QFontMetrics(header.font())
 
-        # Days nobody is expected in, shaded in the header too.
+        # Days nobody is expected in, and today, marked in the header.
         studio_holidays = self._holidays(year, "All")
+        marks = {}
         for i in range(1, days + 1):
             d = date(year, month, i)
-            head = self.team_table.horizontalHeaderItem(len(stats_cols) + i - 1)
-            if head is not None and not lp.is_working_day(d, studio_holidays):
-                head.setForeground(QColor(Gate.TEXT_DIM))
-                head.setToolTip("Weekly off" if lp.is_weekly_off(d) else
-                                "Holiday: %s" % (self._holiday_name(d, "All") or "public holiday"))
+            col = len(stats_cols) + i - 1
+            head = self.team_table.horizontalHeaderItem(col)
+            if d == today:
+                marks[col] = "today"
+                if head is not None:
+                    head.setToolTip("Today")
+            elif not lp.is_working_day(d, studio_holidays):
+                marks[col] = "off"
+                if head is not None:
+                    head.setToolTip("Weekly off" if lp.is_weekly_off(d) else
+                                    "Holiday: %s" % (self._holiday_name(d, "All") or "public holiday"))
+        self.team_table.horizontalHeader().marks = marks
 
         for r, uid in enumerate(user_ids):
             rec = self._team_users[uid] or {}
@@ -1168,30 +1387,13 @@ class AttendanceTab(QWidget):
             location = rec.get("location") or ""
             holidays = self._holidays(year, location)
             person_leave = leave.get(uid.lower(), {})
-            expected_from = self._expected_from(uid, rec)
-            present = late = absent = missing = wfh = 0
-            hours_sum = 0.0
-
-            for d in range(1, days + 1):
-                day = date(year, month, d)
+            summary = rules.month_summary(user_log, year, month, holidays, person_leave,
+                                          self._expected(uid, rec), now_dt, today)
+            for d, cell in enumerate(summary["days"], 1):
+                day, entry, state = cell["day"], cell["entry"], cell["state"]
+                day_leave = cell["leave"]
                 col = len(stats_cols) + d - 1
-                entry = user_log.get(f"{d:02d}", {})
-                day_leave = person_leave.get(day)
-                state = rules.day_state(entry, day, today, holidays, day_leave)
-                if state == rules.ABSENT and day < expected_from:
-                    state = rules.NONE
                 sessions = rules.sessions_of(entry)
-                if sessions:
-                    present += 1
-                    if entry.get("wfh"):
-                        wfh += 1
-                    if state == rules.LATE:
-                        late += 1
-                    hours_sum += rules.day_hours(entry, now_dt, open_counts=(day == today))
-                if state in (rules.MISSING_OUT, rules.MISSING_IN):
-                    missing += 1
-                if state == rules.ABSENT:
-                    absent += 1
 
                 text = ""
                 if state == rules.MISSING_IN:
@@ -1223,7 +1425,8 @@ class AttendanceTab(QWidget):
                     item.setIcon(icon("edit", Gate.TEXT_DIM, 12))
                 elif entry.get("auto_logout"):
                     item.setIcon(icon("clock", Gate.TEXT_DIM, 12))
-                item.setToolTip(self._day_tooltip(entry, day, state, day_leave, location))
+                item.setToolTip(self._day_tooltip(entry, day, state, day_leave, location,
+                                                  late=cell["late"]))
                 self.team_table.setItem(r, col, item)
 
             def stat(value, kind=None, text=None):
@@ -1237,40 +1440,25 @@ class AttendanceTab(QWidget):
                     it.setForeground(QColor(colour))
                 return it
 
-            first_item = stat(present, "ok")
+            first_item = stat(summary["present"], "ok")
             first_item.setData(KEY_ROLE, uid)          # the row is this person, whatever order
             self.team_table.setItem(r, 0, first_item)
-            self.team_table.setItem(r, 1, stat(late, "warn"))
-            self.team_table.setItem(r, 2, stat(absent, "bad"))
-            self.team_table.setItem(r, 3, stat(missing, "bad"))
-            self.team_table.setItem(r, 4, stat(hours_sum, None, "%.1f" % hours_sum))
-            self.team_table.setItem(r, 5, stat(wfh, "accent"))
+            self.team_table.setItem(r, 1, stat(summary["late"], "warn"))
+            self.team_table.setItem(r, 2, stat(summary["absent"], "bad"))
+            self.team_table.setItem(r, 3, stat(summary["missing"], "bad"))
+            self.team_table.setItem(r, 4, stat(summary["hours"], None, "%.1f" % summary["hours"]))
+            self.team_table.setItem(r, 5, stat(summary["wfh"], "accent"))
 
         # Wide enough for "10:00" beside the corrected / auto punch-out icon:
         # at 64 px those days - the ones HR check - read "10...".
         self.team_table.horizontalHeader().setDefaultSectionSize(76)
         for c in range(len(stats_cols)):
             self.team_table.setColumnWidth(c, 62)
-        # Today's column, easy to find.
-        if year == today.year and month == today.month:
-            head = self.team_table.horizontalHeaderItem(len(stats_cols) + today.day - 1)
-            if head is not None:
-                head.setForeground(QColor(Gate.ACCENT))
-
-    @on_database_error
-    def auto_refresh_team_view(self):
-        """Auto-refresh Team Overview from Database."""
-        if not self.has_team_view() or self.team_table is None:
-            return
-        # Not while a dialog (Edit punch, an export) is open over the grid:
-        # rows must not move under somebody working on one.
-        from PySide6.QtWidgets import QApplication
-        if QApplication.activeModalWidget() is not None:
-            return
-        try:
-            self.refresh_team_view()
-        except Exception as e:
-            logging.exception(f"Auto-refresh failed: {e}")
+        hh = self.team_table.horizontalHeader()
+        frame = self.team_table.frameWidth()
+        self.team_corner.setGeometry(frame, frame, header.width(),
+                                     max(hh.height(), hh.sizeHint().height()))
+        self.team_corner.raise_()
 
     def on_cell_double_click(self, row, col):
         """HR correcting a day. Supervisors see their team read-only."""
@@ -1292,16 +1480,20 @@ class AttendanceTab(QWidget):
         uid = self._team_row_user_ids[row]
         rec = self._team_users.get(uid) or {}
         entry = self._team_data.get(uid.lower(), {}).get(f"{day_idx:02d}", {})
-        sessions = rules.sessions_of(entry)
-        t_in = rules.hhmm(sessions[0][0]) if sessions else ""
+        sessions = [(rules.hhmm(a), rules.hhmm(b)) for a, b in rules.sessions_of(entry)]
+        t_in = sessions[0][0] if sessions else ""
         self.show_edit_dialog(uid, rec.get('display_name') or uid, year, month, day_idx,
                               t_in, entry.get("out", ""), overnight=entry.get("overnight", False),
-                              has_record=bool(entry))
+                              has_record=bool(entry), sessions=sessions,
+                              auto_cutoff=(entry.get("cutoff") or entry.get("out", ""))
+                              if entry.get("auto_logout") else "",
+                              leave=getattr(self, "_team_leave", {}).get(uid.lower(), {}).get(target))
 
     def show_edit_dialog(self, uid, name, year, month, day, t_in, t_out, overnight=False,
-                         has_record=False):
+                         has_record=False, sessions=None, auto_cutoff="", leave=None):
         target = date(year, month, day)
-        dialog = EditPunchDialog(name, target, t_in, t_out, overnight, has_record, self)
+        dialog = EditPunchDialog(name, target, t_in, t_out, overnight, has_record, self,
+                                 sessions=sessions, auto_cutoff=auto_cutoff, leave=leave)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return None
         values = dialog.values()
@@ -1310,7 +1502,8 @@ class AttendanceTab(QWidget):
         else:
             ok, msg = self.attendance.update_record(
                 uid, year, month, day, values["in"], values["out"],
-                editor=self.username, reason=values["reason"], overnight=values["overnight"])
+                editor=self.username, reason=values["reason"], overnight=values["overnight"],
+                sessions=values["sessions"])
         if ok:
             self.refresh_team_view()
             self._notify("%s's %s %s." % (name, format_date(target),
@@ -1359,9 +1552,12 @@ class AttendanceTab(QWidget):
             known_ids = []
         dialog = BiometricImportDialog(self.attendance, known_ids, parent=self)
         if dialog.exec() and dialog.result_summary:
-            written = dialog.result_summary.get("written", 0)
-            self._notify("Imported %s of attendance from the machine." % plural(written, "day"),
-                         "success" if written else "info")
+            result = dialog.result_summary
+            written = result.get("written", 0)
+            text = "Imported %s of attendance from the machine" % plural(written, "day")
+            if result.get("unchanged"):
+                text += "; %s already correct" % plural(result["unchanged"], "day")
+            self._notify(text + ".", "success" if written else "info")
         self.refresh_team_view()
 
     # ---------------------------------------------------------------- export
@@ -1385,18 +1581,20 @@ class AttendanceTab(QWidget):
         for uid, rec in chosen:
             location = rec.get("location") or ""
             rows.append({"username": uid, "name": rec.get("display_name") or uid,
-                         "holidays": self._holidays(year, location)})
+                         "holidays": self._holidays(year, location),
+                         "expected": self._expected(uid, rec)})
         data = self.attendance.get_full_month_data(year, month)
         leave = self._leave(first, last, [u for u, _ in chosen])
 
         self._cleanup_export_worker()
         self._export_worker = ExcelExportWorker(path, year, month, rows, data, leave,
-                                                now=datetime.now())
+                                                now=datetime.now(),
+                                                studio_holidays=self._holidays(year, "All"))
         self._export_worker.finished_export.connect(self._on_export_finished)
         self._export_worker.finished.connect(self._on_export_worker_done)
         self._export_worker.finished.connect(self._export_worker.deleteLater)
         self._export_worker.start()
-        self.status_bar_msg("Exporting attendance...")
+        self.status_bar_msg("Exporting attendance\u2026")
 
     def _on_export_finished(self, success, message):
         if self.sender() is not self._export_worker and self.sender() is not None:
@@ -1446,7 +1644,5 @@ class AttendanceTab(QWidget):
     def closeEvent(self, event):
         if hasattr(self, "personal_refresh_timer") and self.personal_refresh_timer.isActive():
             self.personal_refresh_timer.stop()
-        if hasattr(self, "auto_refresh_timer") and self.auto_refresh_timer.isActive():
-            self.auto_refresh_timer.stop()
         self._cleanup_export_worker(timeout_ms=2000)
         super().closeEvent(event)
