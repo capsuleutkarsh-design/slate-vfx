@@ -255,15 +255,15 @@ class DashboardProjectMixin:
                 pass
         self.update_unsaved_indicator()
         count = len(saved)
-        backed_up = self._mirror_shots_to_excel(saved)
-        self.update_backup_indicator()
-        if backed_up or not self._excel_allowed():
-            self._notify(f"Saved {count} shot{'s' if count != 1 else ''}.", "success")
-        else:
-            self._notify(
-                f"Saved {count} shot{'s' if count != 1 else ''} to the database, but the Excel "
-                "backup did not update.", "warning",
-                details=getattr(self.sync_service, "last_backup_error", "") or "")
+        self._notify(f"Saved {count} shot{'s' if count != 1 else ''}.", "success")
+
+        def backed_up(ok):
+            # The backup is written after the save, in the background; only a
+            # failure needs saying.
+            if not ok:
+                self._notify("The Excel backup did not update.", "warning",
+                             details=getattr(self.sync_service, "last_backup_error", "") or "")
+        self._mirror_shots_to_excel(saved, on_done=backed_up)
         self._board_dirty = True
         if self._board_visible():
             self.update_kanban()
@@ -383,18 +383,15 @@ class DashboardProjectMixin:
 
     # ------------------------------------------------------------ auto-publish
     def output_folder_name(self, shot=None) -> str:
-        """The name of the project's output folder for a shot ('08_Deliver' on new projects)."""
-        import os
+        """
+        The name of the project's output folder ('08_Deliver' on new projects),
+        from the folder template - never by listing the share before a question.
+        """
         if self.current_project is None:
             return "the output folder"
-        try:
-            path = self.project_manager.get_folder_path(
-                self.current_project.code, "output",
-                getattr(shot, "reel_episode", "") or "", getattr(shot, "shot_name", "") or "")
-        except Exception:
-            path = ""
-        name = os.path.basename(str(path or "").rstrip("/\\"))
-        return name or "the output folder"
+        template = (getattr(self.current_project, "folder_template", {}) or {}).get("output", "")
+        name = str(template).replace("\\", "/").rstrip("/").split("/")[-1]
+        return name if name and "{" not in name else "the output folder"
 
     def _offer_auto_publish(self, shots):
         """Approved just now: offer to copy the comp renders to the shot's output folder."""

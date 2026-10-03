@@ -11,7 +11,6 @@ How saving works (FIX_PLAN, "Dashboard save model"):
       department's status, which is saved at once, with an Undo.
 """
 
-import glob
 import logging
 import os
 import shutil
@@ -82,29 +81,71 @@ class AutoPublishWorker(QThread):
             if not final_path:
                 self.finished_signal.emit(False, f"{name}: the project has no Output folder set up.")
                 return
+            source = self._version_folder(comp_output)
             dest_exr = Path(final_path) / "EXR"
             dest_mov = Path(final_path) / "MOV"
-            dest_exr.mkdir(parents=True, exist_ok=True)
-            dest_mov.mkdir(parents=True, exist_ok=True)
             copied, failed = 0, []
-            for file_path in comp_output.rglob("*.*"):
-                if not file_path.is_file():
+            # One version only (the shot's current one, else the newest), its
+            # images and movies only, sub-folders kept: v001 and v002 frames of
+            # the same name used to overwrite each other in one flat folder,
+            # with Nuke backups and Thumbs.db copied along.
+            for file_path in sorted(source.rglob("*")):
+                if not file_path.is_file() or file_path.suffix.lower() not in self.MEDIA:
                     continue
-                target_dir = dest_mov if file_path.suffix.lower() in ('.mov', '.mp4') else dest_exr
+                movie = file_path.suffix.lower() in (".mov", ".mp4")
+                target = (dest_mov if movie else dest_exr) / file_path.relative_to(source)
                 try:
-                    shutil.copy2(str(file_path), str(target_dir / file_path.name))
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(str(file_path), str(target))
                     copied += 1
                 except OSError as exc:
                     failed.append(f"{file_path.name} ({exc.strerror or exc})")
+            if not copied and not failed:
+                self.finished_signal.emit(False, f"{name}: no images or movies in {source}.")
+                return
             if failed:
                 self.finished_signal.emit(
                     False, f"{name}: copied {copied} file(s); {len(failed)} could not be copied: "
                            + ", ".join(failed[:3]) + ("…" if len(failed) > 3 else ""))
             else:
                 self.finished_signal.emit(
-                    True, f"{name}: copied {copied} file(s) to {Path(final_path).name or 'the output folder'}.")
+                    True, f"{name}: copied {copied} file(s) of {source.name} to "
+                          f"{Path(final_path).name or 'the output folder'}.")
         except Exception as e:
             self.finished_signal.emit(False, f"{name}: {e}")
+
+    MEDIA = {".exr", ".dpx", ".tif", ".tiff", ".png", ".jpg", ".jpeg", ".mov", ".mp4"}
+
+    def _version_folder(self, comp_output: Path) -> Path:
+        """Comp/Output/<the shot's version>, else the highest-numbered version folder, else Output itself."""
+        import re
+        current = str(getattr(self.shot, "curr_version", "") or "").strip()
+        if current and (comp_output / current).is_dir():
+            return comp_output / current
+        versions = [d for d in comp_output.iterdir() if d.is_dir() and re.search(r"v\d+", d.name, re.I)]
+        if versions:
+            return max(versions, key=lambda d: int(re.search(r"v(\d+)", d.name, re.I).group(1)))
+        return comp_output
+
+
+class ExcelMirrorWorker(QThread):
+    """Writes the Excel backup off the UI thread: a passbook open in Excel used to freeze every Save."""
+
+    done = Signal(bool, object)       # ok, the file's new mtime (or None)
+
+    def __init__(self, service, shots, project, handler, force):
+        super().__init__()
+        self.args = (service, shots, project, handler, force)
+
+    def run(self):
+        service, shots, project, handler, force = self.args
+        try:
+            ok, mtime = service.mirror_shots_to_excel(shots=shots, current_project=project,
+                                                      data_handler=handler, force=force)
+        except Exception as exc:                       # never lose the answer
+            service.last_backup_error = str(exc)
+            ok, mtime = False, None
+        self.done.emit(bool(ok), mtime)
 
 
 class ClickableLabel(QLabel):
@@ -525,8 +566,11 @@ class DashboardWidget(
             label.setText("Backup failing")
             label.setToolTip(f"The Excel backup could not be written: {error}")
         elif last is not None:
+            from datetime import date
+            from slate.core.domain.dates import format_datetime
             colour = Gate.OK
-            label.setText(f"Backup saved {last.strftime('%H:%M')}")
+            when = last.strftime('%H:%M') if last.date() == date.today() else format_datetime(last)
+            label.setText(f"Backup saved {when}")
             label.setToolTip("When the project's Excel backup was last written.")
         else:
             colour = Gate.TEXT_DIM
@@ -1119,7 +1163,9 @@ class DashboardWidget(
     # Quick Look
     # ------------------------------------------------------------------
     def _find_shot_media_path(self, shot) -> str:
-        """The best media file (MOV, MP4, EXR, thumbnail) for Quick Look playback."""
+        """The newest movie for Quick Look, from the shot's output and comp folders (3 levels deep)."""
+        # ponytail: bounded walk on the UI thread (3 levels, movies only); a worker with a spinner
+        # if studios keep deeper trees.
         fallback = getattr(shot, "_display_thumb", "") or ""
         if not self.current_project:
             return fallback
@@ -1127,12 +1173,16 @@ class DashboardWidget(
             for key in ("output", "comp"):
                 folder = self.project_manager.get_folder_path(
                     self.current_project.code, key, shot.reel_episode, shot.shot_name)
-                if folder and os.path.exists(folder):
-                    movies = glob.glob(os.path.join(folder, "**", "*.mov"), recursive=True) + \
-                        glob.glob(os.path.join(folder, "**", "*.mp4"), recursive=True)
-                    if movies:
-                        movies.sort(key=os.path.getmtime, reverse=True)
-                        return movies[0]
+                if not folder or not os.path.isdir(folder):
+                    continue
+                movies = []
+                top = folder.rstrip("/\\").count(os.sep)
+                for root, dirs, files in os.walk(folder):
+                    if root.count(os.sep) - top >= 3:
+                        dirs[:] = []
+                    movies += [os.path.join(root, f) for f in files if f.lower().endswith((".mov", ".mp4"))]
+                if movies:
+                    return max(movies, key=os.path.getmtime)
         except Exception as e:
             logging.debug(f"Quick look path search error: {e}")
         return fallback
@@ -1863,13 +1913,43 @@ class DashboardWidget(
             self.layout_manager.restore_layout()
         self.table.sync_columns()
 
-    def _mirror_shots_to_excel(self, shots, force: bool = False):
-        success, last_mtime = self.sync_service.mirror_shots_to_excel(
-            shots=shots, current_project=self.current_project,
-            data_handler=self.data_handler, force=force)
-        if last_mtime is not None:
-            self.last_excel_mtime = last_mtime
-        return success
+    def _mirror_shots_to_excel(self, shots, force: bool = False, on_done=None):
+        """
+        Write these shots to the Excel backup in the background, one write at a
+        time (a second save waits for the first). on_done(ok) is called on the
+        UI thread when it is written - or not.
+        """
+        import copy
+        queue = getattr(self, "_mirror_queue", None)
+        if queue is None:
+            queue = self._mirror_queue = []
+        # Copies: the grid can go on changing the shots while the file is written.
+        queue.append(([copy.deepcopy(s) for s in shots], self.current_project, self.data_handler,
+                      force, on_done))
+        if getattr(self, "_mirror_worker", None) is None:
+            self._next_mirror()
+        return True
+
+    def _next_mirror(self):
+        if not self._mirror_queue:
+            self._mirror_worker = None
+            return
+        shots, project, handler, force, on_done = self._mirror_queue.pop(0)
+        worker = ExcelMirrorWorker(self.sync_service, shots, project, handler, force)
+
+        def finished(ok, mtime, cb=on_done):
+            if mtime is not None:
+                self.last_excel_mtime = mtime
+            self.update_backup_indicator()
+            worker.wait(5000)            # run() returns right after emitting
+            worker.deleteLater()
+            if cb is not None:
+                cb(ok)
+            self._next_mirror()
+
+        worker.done.connect(finished)
+        self._mirror_worker = worker
+        worker.start()
 
     def run_debug(self):
         """Developer check: how the project's columns map to the backup sheet."""
@@ -1903,6 +1983,8 @@ class DashboardWidget(
         running = [w for w in getattr(self, "publish_workers", []) if w.isRunning()]
         if running:
             return f"The VFX Dashboard is still copying renders for {len(running)} shot(s) to their output folder."
+        if getattr(self, "_mirror_worker", None) is not None:
+            return "The VFX Dashboard is still writing the Excel backup."
         return None
 
     def cleanup_resources(self):
@@ -1925,6 +2007,9 @@ class DashboardWidget(
         self._cleanup_avatar_upload_worker(timeout_ms=1500)
         for worker in list(getattr(self, "publish_workers", [])):
             worker.wait(3000)
+        mirror = getattr(self, "_mirror_worker", None)
+        if mirror is not None:
+            mirror.wait(10000)
         if self.file_lock:
             self.file_lock.release()
             self.file_lock = None

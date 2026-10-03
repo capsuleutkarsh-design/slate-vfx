@@ -115,6 +115,11 @@ def _extend_mapping_with_departments(mapping: Dict[str, str]) -> Dict[str, str]:
         used.add(next_index)
         return get_column_letter(next_index)
 
+    # Shot fields the backup must hold for a restore to keep the schedule.
+    for field in ("target", "in_os", "edit_status", "description", "prev_version"):
+        if field not in mapping:
+            mapping[field] = claim()
+
     for dept in load_departments():
         key = dept.key
         # A department counts as mapped if it already has an artist or status
@@ -124,6 +129,7 @@ def _extend_mapping_with_departments(mapping: Dict[str, str]) -> Dict[str, str]:
             "status": [f"{key}_status", f"{key}_required", f"{key}_comp"],
             "bid": [f"{key}_bid", f"{key}_mandays"],
             "eta": [f"{key}_eta", f"{key}_target"],
+            "actual": [f"{key}_actual"],
         }
         for field, names in aliases.items():
             if any(name in mapping for name in names):
@@ -231,6 +237,13 @@ class ProjectManager:
         if not project.column_mapping:
             project.column_mapping = default_column_mapping()
             changed = True
+        else:
+            # Columns added since the mapping was made (targets, actual days)
+            # go after the last one in use; nothing already mapped moves.
+            extended = _extend_mapping_with_departments(project.column_mapping)
+            if extended != project.column_mapping:
+                project.column_mapping = extended
+                changed = True
 
         if changed:
             try:

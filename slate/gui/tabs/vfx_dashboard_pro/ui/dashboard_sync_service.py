@@ -84,4 +84,6 @@ class DashboardSyncService:
             return False, None
         except Exception as exc:
             logging.exception("Excel mirror save failed: %s", exc)
+            # Said, not swallowed: the indicator turns to "Backup failing".
+            self.last_backup_error = str(exc) or type(exc).__name__
             return False, None

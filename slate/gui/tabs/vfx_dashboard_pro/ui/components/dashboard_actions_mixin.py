@@ -183,22 +183,19 @@ class DashboardActionsMixin:
             self._notify("Nothing to export - no shots loaded.", "warning")
             return
 
-        try:
-            # force=True so this runs even when automatic mirroring is off. The
-            # mirror creates the passbook when the project has none yet, as a
-            # save does - export used to refuse ("No Excel file is set").
-            if self._mirror_shots_to_excel(self.all_shots, force=True):
-                self._notify(
-                    f"Exported {len(self.all_shots)} shot(s) to the Excel backup.",
-                    "success",
-                )
+        # force=True so this runs even when automatic mirroring is off. The
+        # mirror creates the passbook when the project has none yet, as a
+        # save does. It is written in the background.
+        count = len(self.all_shots)
+
+        def done(ok):
+            if ok:
+                self._notify(f"Exported {count} shot(s) to the Excel backup.", "success")
             else:
-                reason = getattr(self.sync_service, "last_backup_error", "") or ""
-                self._notify("The Excel backup could not be written.", "error", details=reason)
-        except Exception as exc:
-            logging.exception("Excel export failed: %s", exc)
-            self._notify("The Excel backup could not be written.", "error", details=str(exc))
-        self.update_backup_indicator()
+                self._notify("The Excel backup could not be written.", "error",
+                             details=getattr(self.sync_service, "last_backup_error", "") or "")
+        self._notify("Writing the Excel backup…", "info", 2000)
+        self._mirror_shots_to_excel(self.all_shots, force=True, on_done=done)
 
     def edit_project_click(self):
             if not self.current_project:

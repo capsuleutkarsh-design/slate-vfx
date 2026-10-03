@@ -595,15 +595,18 @@ class TestVerifierRound:
         opened = []
         monkeypatch.setattr(dbd.DeliveryBatchesDialog, "exec", lambda self: opened.append(self) or 0)
         artist.open_delivery_batches_dialog()
-        dialog = opened[0]
+        # DSH2-035: an artist, who sees only their own shots, does not get the
+        # project's packages at all; the store still refuses them a create.
+        assert opened == []
+        dialog = dbd.DeliveryBatchesDialog(PROJECT, roles=artist.access_roles)
         qtbot.addWidget(dialog)
-        assert dialog.store.roles == artist.access_roles
         assert not dialog.create_btn.isVisibleTo(dialog)
         with pytest.raises(PermissionError):
             dialog.store.create_delivery(PROJECT, "DEL", [1])
         sup = _open(_widget(qtbot))
         sup.open_delivery_batches_dialog()
-        assert opened[1].create_btn.isVisibleTo(opened[1])
+        assert opened[0].store.roles == sup.access_roles
+        assert opened[0].create_btn.isVisibleTo(opened[0])
 
     def test_long_project_names_end_in_an_ellipsis(self, qtbot):
         """DSH-055."""

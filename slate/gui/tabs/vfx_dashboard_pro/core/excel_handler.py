@@ -18,6 +18,10 @@ class ExcelHandler:
         self.worksheet = None
         self._data_loaded = False
         self._row_map = None
+        # Cells a write could not fill (part of a merged block), and rows a read
+        # could not make sense of - said, never silently zeroed or aborted.
+        self.skipped_cells = []
+        self.read_problems = []
     
     def mapped_department_keys(self) -> set:
         """
@@ -229,13 +233,31 @@ class ExcelHandler:
             return False
         if isinstance(field_names, str):
             field_names = [field_names]
+        from openpyxl.cell.cell import MergedCell
+        from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
+        if isinstance(value, str):
+            # Pasted mail text carries control characters openpyxl refuses,
+            # and one of them used to make every backup fail.
+            value = ILLEGAL_CHARACTERS_RE.sub("", value)
         wrote = False
         for field_name in field_names:
             col_idx = self._get_col_idx(field_name)
             if col_idx >= 0:
-                self.worksheet.cell(row=row_idx, column=col_idx + 1, value=value if value is not None else "")
+                cell = self.worksheet.cell(row=row_idx, column=col_idx + 1)
+                if isinstance(cell, MergedCell):
+                    # Part of a merged block in the studio's sheet: skip it
+                    # (and say so) rather than abort the whole backup.
+                    self.skipped_cells.append(cell.coordinate)
+                    continue
+                cell.value = value if value is not None else ""
                 wrote = True
         return wrote
+
+    @staticmethod
+    def _as_date(value):
+        """A real date for a date column (so Excel sorts and filters it), else the text as it is."""
+        from slate.core.domain.dates import parse_date
+        return parse_date(value) or (value or "")
 
     @staticmethod
     def _shareable_thumbnail(path) -> bool:
@@ -254,21 +276,20 @@ class ExcelHandler:
         return str(getattr(latest, "text", "") or "")
 
     def _write_department(self, row_idx: int, dept_name: str, dept: DepartmentInfo):
-        if dept_name == "comp":
-            self._write_mapped_field(row_idx, ["comp_artist"], dept.artist)
-            self._write_mapped_field(row_idx, ["comp_status"], dept.status)
-            self._write_mapped_field(row_idx, ["comp_bid", "comp_mandays"], dept.bid_days)
-            self._write_mapped_field(row_idx, ["comp_eta", "comp_target"], dept.target or dept.eta)
-            return
-
+        statuses = [f"{dept_name}_status"] if dept_name == "comp" else \
+            [f"{dept_name}_status", f"{dept_name}_required", f"{dept_name}_comp"]
         self._write_mapped_field(row_idx, [f"{dept_name}_artist"], dept.artist)
-        self._write_mapped_field(
-            row_idx,
-            [f"{dept_name}_status", f"{dept_name}_required", f"{dept_name}_comp"],
-            dept.status,
-        )
+        self._write_mapped_field(row_idx, statuses, dept.status)
         self._write_mapped_field(row_idx, [f"{dept_name}_bid", f"{dept_name}_mandays"], dept.bid_days)
-        self._write_mapped_field(row_idx, [f"{dept_name}_eta", f"{dept_name}_target"], dept.target or dept.eta)
+        # An ETA column holds the ETA and a target column the target; a sheet
+        # with only one of them gets whichever the department has.
+        has_eta = self._get_col_idx(f"{dept_name}_eta") >= 0
+        has_target = self._get_col_idx(f"{dept_name}_target") >= 0
+        self._write_mapped_field(row_idx, f"{dept_name}_eta",
+                                 self._as_date(dept.eta or ("" if has_target else dept.target)))
+        self._write_mapped_field(row_idx, f"{dept_name}_target",
+                                 self._as_date(dept.target or ("" if has_eta else dept.eta)))
+        self._write_mapped_field(row_idx, f"{dept_name}_actual", dept.actual_days)
 
     def _write_shot_to_row(self, row_idx: int, shot: Shot):
         # Core shot-level fields
@@ -277,7 +298,7 @@ class ExcelHandler:
         self._write_mapped_field(row_idx, "overall_status", shot.status)
         self._write_mapped_field(row_idx, "frames", shot.edit_frames)
         self._write_mapped_field(row_idx, "sow", shot.sow)
-        self._write_mapped_field(row_idx, "target", shot.target)
+        self._write_mapped_field(row_idx, "target", self._as_date(shot.target))
         self._write_mapped_field(row_idx, ["assigned_artist", "artist_all"], shot.assigned_artist)
         self._write_mapped_field(row_idx, "version", shot.curr_version)
         self._write_mapped_field(row_idx, "latest_version", shot.curr_version)
@@ -289,22 +310,20 @@ class ExcelHandler:
         # machine's own cache (those reached the backup sheet).
         if self._shareable_thumbnail(shot.thumbnail_path):
             self._write_mapped_field(row_idx, "thumbnail", shot.thumbnail_path)
-        self._write_mapped_field(row_idx, "wip_date", shot.wip_date)
-        self._write_mapped_field(row_idx, "shot_done_date", shot.shot_done_date)
-        self._write_mapped_field(row_idx, "submission_date", shot.submission_date)
-        self._write_mapped_field(row_idx, "exr_date", shot.exr_submission)
-        self._write_mapped_field(row_idx, "mov_date", shot.mov_submission)
-        self._write_mapped_field(row_idx, "priority", shot.priority)
+        self._write_mapped_field(row_idx, "wip_date", self._as_date(shot.wip_date))
+        self._write_mapped_field(row_idx, "shot_done_date", self._as_date(shot.shot_done_date))
+        self._write_mapped_field(row_idx, "submission_date", self._as_date(shot.submission_date))
+        self._write_mapped_field(row_idx, "exr_date", self._as_date(shot.exr_submission))
+        self._write_mapped_field(row_idx, "mov_date", self._as_date(shot.mov_submission))
+        from slate.core.domain import shot_status
+        self._write_mapped_field(row_idx, "priority", shot_status.priority_label(shot.priority))
         self._write_mapped_field(row_idx, "shot_type", shot.shot_type)
         self._write_mapped_field(row_idx, "description", shot.description)
         self._write_mapped_field(row_idx, ["notes", "shot_comment"], shot.notes)
 
-        # Feedback / comments
-        self._write_mapped_field(
-            row_idx,
-            "internal_comment",
-            shot.notes or self._latest_feedback_text(shot.feedback_internal),
-        )
+        # Feedback: the latest of each here; every note is in FEEDBACK_LOG.
+        self._write_mapped_field(row_idx, "internal_comment",
+                                 self._latest_feedback_text(shot.feedback_internal))
         self._write_mapped_field(row_idx, "client_feedback", self._latest_feedback_text(shot.feedback_client))
         self._write_mapped_field(row_idx, "director_feedback", self._latest_feedback_text(shot.feedback_director))
         latest_any = (
@@ -344,23 +363,42 @@ class ExcelHandler:
         return shots
     
     def _parse_row(self, row, row_idx: int) -> Optional[Shot]:
+        from datetime import date as _date
+        from slate.core.domain import shot_status
+
         def get_val(field_name: str, default=""):
             idx = self._get_col_idx(field_name)
             if idx < 0 or idx >= len(row):
                 return default
             val = row[idx]
+            if isinstance(val, (datetime, _date)):
+                # A date cell: the date, as ISO - not '2026-09-30 00:00:00'.
+                return (val.date() if isinstance(val, datetime) else val).isoformat()
             return str(val) if val is not None else default
-        
+
         def get_float(field_name: str, default=0.0):
             idx = self._get_col_idx(field_name)
             if idx < 0 or idx >= len(row):
                 return default
-            try:
-                val = row[idx]
-                return float(val) if val is not None else default
-            except (TypeError, ValueError):
+            val = row[idx]
+            if val is None or str(val).strip() == "":
                 return default
-        
+            try:
+                return float(val)
+            except (TypeError, ValueError):
+                self.read_problems.append(f"row {row_idx}: {field_name} '{val}' is not a number")
+                return default
+
+        def get_priority():
+            idx = self._get_col_idx("priority")
+            val = row[idx] if 0 <= idx < len(row) else None
+            if val is None or str(val).strip() == "":
+                return 3
+            number = shot_status.priority_value(str(val).split(".")[0] if isinstance(val, float) else val)
+            if number is None:
+                self.read_problems.append(f"row {row_idx}: priority '{val}' is not one the studio uses")
+                return 3
+            return number
         shot_name = get_val("shot_name")
         if not shot_name:
             return None
@@ -398,19 +436,21 @@ class ExcelHandler:
             if not mapped:
                 continue
 
+            actual = get_float(f"{key}_actual", None)
             departments[key] = DepartmentInfo(
-                artist=artist, status=status, bid_days=bid, eta=eta,
+                artist=artist, status=status, bid_days=bid, eta=eta, actual_days=actual,
             )
 
         shot = Shot(
             shot_name=shot_name,
             reel_episode=get_val("reel"),
-            status=get_val("overall_status", "WIP"),
+            status=get_val("overall_status", ""),
             edit_frames=get_float("frames"),
             sow=get_val("sow"),
             assigned_artist=get_val("assigned_artist"),
             curr_version=get_val("version") or get_val("latest_version"),
             prev_version=get_val("prev_version"),
+            description=get_val("description"),
             target=get_val("target"),
             scan_status=get_val("scan_status"),
             edit_status=get_val("edit_status"),
@@ -423,7 +463,7 @@ class ExcelHandler:
             mov_submission=get_val("mov_date"),
             
             departments=departments,
-            priority=int(get_float("priority", 3.0)),
+            priority=get_priority(),
             shot_type=get_val("shot_type")
         )
         
@@ -443,80 +483,102 @@ class ExcelHandler:
         shot._row_idx = row_idx
         return shot
     
+    @staticmethod
+    def _keyed(shots):
+        """Shots by (reel, name) and, for rows written before the reel was kept, by name."""
+        by_key, by_name = {}, {}
+        for shot in shots:
+            by_key[(str(shot.reel_episode or "").casefold(), shot.shot_name.casefold())] = shot
+            by_name.setdefault(shot.shot_name.casefold(), shot)
+        return by_key, by_name
+
+    @staticmethod
+    def _find(by_key, by_name, name, reel):
+        name = str(name or "").casefold()
+        reel = str(reel or "").casefold()
+        if reel:
+            return by_key.get((reel, name))
+        return by_name.get(name)
+
     def _load_ut_data(self, shots: List[Shot]):
         if not self.workbook or "Slate_DATA" not in self.workbook.sheetnames:
             return
-        
         ws = self.workbook["Slate_DATA"]
-        shot_map = {s.shot_name: s for s in shots}
-        
+        by_key, by_name = self._keyed(shots)
         for row in ws.iter_rows(min_row=2, values_only=True):
             if not row or not row[0]:
                 continue
-            shot_id = str(row[0])
-            if shot_id in shot_map:
-                shot = shot_map[shot_id]
-                # Only overwrite if not already set from main sheet
-                if not shot.shot_type:
-                    shot.shot_type = str(row[1]) if len(row) > 1 and row[1] else ""
-                if shot.priority == 3: # Default is 3
-                    shot.priority = int(row[2]) if len(row) > 2 and row[2] else 3
-                shot.is_hero = bool(row[3]) if len(row) > 3 else False
-                shot.similar_to = str(row[4]).split(",") if len(row) > 4 and row[4] else []
-    
+            shot = self._find(by_key, by_name, row[0], row[7] if len(row) > 7 else "")
+            if shot is None:
+                continue
+            # Only overwrite if not already set from main sheet
+            if not shot.shot_type:
+                shot.shot_type = str(row[1]) if len(row) > 1 and row[1] else ""
+            if shot.priority == 3 and len(row) > 2 and row[2] not in (None, ""):
+                from slate.core.domain import shot_status
+                value = shot_status.priority_value(row[2])
+                shot.priority = 3 if value is None else value
+            shot.is_hero = bool(row[3]) if len(row) > 3 else False
+            shot.similar_to = str(row[4]).split(",") if len(row) > 4 and row[4] else []
+
     def _load_artist_log(self, shots: List[Shot]):
         if not self.workbook or "ARTIST_LOG" not in self.workbook.sheetnames:
             return
-        
         ws = self.workbook["ARTIST_LOG"]
-        shot_map = {s.shot_name: s for s in shots}
-        
+        by_key, by_name = self._keyed(shots)
         for row in ws.iter_rows(min_row=2, values_only=True):
             if not row or not row[0]:
                 continue
-            shot_id = str(row[0])
-            if shot_id in shot_map:
-                entry = ArtistLogEntry(
-                    shot_id=shot_id,
-                    artist=str(row[1]) if len(row) > 1 and row[1] else "",
-                    department=str(row[2]) if len(row) > 2 and row[2] else "",
-                    start_date=str(row[3]) if len(row) > 3 and row[3] else None,
-                    end_date=str(row[4]) if len(row) > 4 and row[4] else None,
-                    notes=str(row[5]) if len(row) > 5 and row[5] else ""
-                )
-                shot_map[shot_id].artist_history.append(entry)
-    
+            shot = self._find(by_key, by_name, row[0], row[6] if len(row) > 6 else "")
+            if shot is None:
+                continue
+            shot.artist_history.append(ArtistLogEntry(
+                shot_id=str(row[0]),
+                artist=str(row[1]) if len(row) > 1 and row[1] else "",
+                department=str(row[2]) if len(row) > 2 and row[2] else "",
+                start_date=str(row[3]) if len(row) > 3 and row[3] else None,
+                end_date=str(row[4]) if len(row) > 4 and row[4] else None,
+                notes=str(row[5]) if len(row) > 5 and row[5] else ""))
+
     def _load_feedback_log(self, shots: List[Shot]):
         if not self.workbook or "FEEDBACK_LOG" not in self.workbook.sheetnames:
             return
-        
         ws = self.workbook["FEEDBACK_LOG"]
-        shot_map = {s.shot_name: s for s in shots}
-        
+        by_key, by_name = self._keyed(shots)
+        logged = set()
         for row in ws.iter_rows(min_row=2, values_only=True):
             if not row or not row[0]:
                 continue
-            shot_id = str(row[0])
-            if shot_id in shot_map:
-                entry = FeedbackEntry(
-                    date=str(row[1]) if len(row) > 1 and row[1] else "",
-                    source=str(row[2]) if len(row) > 2 and row[2] else "",
-                    text=str(row[3]) if len(row) > 3 and row[3] else "",
-                    logged_by=str(row[4]) if len(row) > 4 and row[4] else ""
-                )
-                source = entry.source.lower()
-                if "client" in source:
-                    shot_map[shot_id].feedback_client.append(entry)
-                elif "director" in source:
-                    shot_map[shot_id].feedback_director.append(entry)
-                else:
-                    shot_map[shot_id].feedback_internal.append(entry)
-    
+            shot = self._find(by_key, by_name, row[0], row[5] if len(row) > 5 else "")
+            if shot is None:
+                continue
+            if id(shot) not in logged:
+                # The log holds the whole history; the main row only its latest line.
+                shot.feedback_client, shot.feedback_director, shot.feedback_internal = [], [], []
+                logged.add(id(shot))
+            entry = FeedbackEntry(
+                date=str(row[1]) if len(row) > 1 and row[1] else "",
+                source=str(row[2]) if len(row) > 2 and row[2] else "",
+                text=str(row[3]) if len(row) > 3 and row[3] else "",
+                logged_by=str(row[4]) if len(row) > 4 and row[4] else "")
+            source = entry.source.lower()
+            if "client" in source:
+                shot.feedback_client.append(entry)
+            elif "director" in source:
+                shot.feedback_director.append(entry)
+            else:
+                shot.feedback_internal.append(entry)
+
     def write_shots(self, shots: List[Shot]):
         if not self.load(data_only=False):
             return False
 
         self._build_row_map()
+        self.skipped_cells = []
+        self._label_new_columns()
+        from slate.gui.tabs.vfx_dashboard_pro.ui.shot_table_model import natural_key
+        # New rows go on in reel and shot order, not in the order they were saved.
+        shots = sorted(shots, key=lambda s: (natural_key(s.reel_episode), natural_key(s.shot_name)))
         for shot in shots:
             row_idx = self._resolve_row_idx(shot)
             if row_idx <= 0:
@@ -536,7 +598,12 @@ class ExcelHandler:
             self._write_shot_to_row(row_idx, shot)
         
         self._write_ut_data(shots)
-        
+        self._write_feedback_log(shots)
+        self._present()
+        if self.skipped_cells:
+            logging.warning("Passbook %s: %d merged cell(s) were left as they are: %s",
+                            self.filepath, len(self.skipped_cells), ", ".join(self.skipped_cells[:10]))
+
         try:
             if self.workbook:
                 import time
@@ -557,87 +624,101 @@ class ExcelHandler:
             logging.exception(f"Error saving: {e}")
             return False
 
-    def update_shot_field(self, shot_name: str, field: str, value, current_version: int = 0) -> bool:
-        """
-        Excel-mode compatibility with SQLiteHandler.update_shot_field API.
-        current_version is ignored for Excel mode.
-        """
-        if not self.load(data_only=False):
-            return False
-
-        row_idx = self._find_row_idx_by_shot_name(shot_name)
-        if row_idx <= 0:
-            return False
-
-        field_aliases = {
-            "status": ["overall_status", "internal_status"],
-            "assigned_artist": ["assigned_artist", "artist_all", "comp_artist"],
-            "artist": ["assigned_artist", "artist_all", "comp_artist"],
-            "curr_version": ["version", "latest_version"],
-            "version": ["version", "latest_version"],
-            "notes": ["notes", "shot_comment", "internal_comment"],
-            "internal_comment": ["internal_comment", "shot_comment"],
-            "client_feedback": ["client_feedback"],
-            "director_feedback": ["director_feedback"],
-            "target": ["target"],
-            "scan_status": ["scan_status"],
-            "edit_status": ["edit_status"],
-            "in_os": ["in_os"],
-        }
-
-        target_fields = field_aliases.get(field, [field])
-        if not self._write_mapped_field(row_idx, target_fields, value):
-            return False
-
-        try:
-            if self.workbook:
-                import time
-                retries = 3
-                for attempt in range(retries):
-                    try:
-                        self.workbook.save(self.filepath)
-                        return True
-                    except Exception as e:
-                        if attempt < retries - 1:
-                            logging.warning(f"File locked, retrying update save ({attempt+1}/{retries}): {self.filepath}")
-                            time.sleep(1.0)
-                        else:
-                            raise e
-            return False
-        except Exception as e:
-            logging.exception(f"Error saving field update for {shot_name}: {e}")
-            return False
-    
     def _write_ut_data(self, shots: List[Shot]):
         if not self.workbook:
             return
-            
         if "Slate_DATA" not in self.workbook.sheetnames:
-            self.workbook.create_sheet("Slate_DATA")
-            ws = self.workbook["Slate_DATA"]
-            ws.append(["SHOT_ID", "TYPE", "PRIORITY", "IS_HERO", "SIMILAR_TO", "CREATED", "UPDATED"])
-        
+            ws = self.workbook.create_sheet("Slate_DATA")
+            ws.append(["SHOT_ID", "TYPE", "PRIORITY", "IS_HERO", "SIMILAR_TO", "CREATED", "UPDATED", "REEL"])
         ws = self.workbook["Slate_DATA"]
+        if ws.cell(row=1, column=8).value in (None, ""):
+            ws.cell(row=1, column=8, value="REEL")
+        # The software's own sheet: out of the way of the people reading the passbook.
+        ws.sheet_state = "hidden"
         existing = {}
         for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
             if row and row[0]:
-                existing[str(row[0])] = row_idx
-        
+                reel = str(row[7] if len(row) > 7 and row[7] else "").casefold()
+                existing[(reel, str(row[0]).casefold())] = row_idx
+
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
-        
         for shot in shots:
             similar_str = ",".join(shot.similar_to) if shot.similar_to else ""
-            
-            if shot.shot_name in existing:
-                row_idx = existing[shot.shot_name]
+            reel = str(shot.reel_episode or "")
+            # A shot in two reels has two rows; an old row with no reel is claimed.
+            row_idx = existing.get((reel.casefold(), shot.shot_name.casefold())) \
+                or existing.pop(("", shot.shot_name.casefold()), None)
+            if row_idx:
                 ws.cell(row=row_idx, column=2, value=shot.shot_type)
                 ws.cell(row=row_idx, column=3, value=shot.priority)
                 ws.cell(row=row_idx, column=4, value=shot.is_hero)
                 ws.cell(row=row_idx, column=5, value=similar_str)
                 ws.cell(row=row_idx, column=7, value=now)
+                ws.cell(row=row_idx, column=8, value=reel)
             else:
-                ws.append([shot.shot_name, shot.shot_type, shot.priority, shot.is_hero, similar_str, now, now])
-    
+                ws.append([shot.shot_name, shot.shot_type, shot.priority, shot.is_hero, similar_str, now, now,
+                           reel])
+                existing[(reel.casefold(), shot.shot_name.casefold())] = ws.max_row
+
+    def _write_feedback_log(self, shots: List[Shot]):
+        """Every feedback note of these shots (date, source, text, who, reel) - not only the latest."""
+        if not self.workbook:
+            return
+        from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
+        if "FEEDBACK_LOG" not in self.workbook.sheetnames:
+            ws = self.workbook.create_sheet("FEEDBACK_LOG")
+            ws.append(["SHOT_ID", "DATE", "SOURCE", "TEXT", "LOGGED_BY", "REEL"])
+        ws = self.workbook["FEEDBACK_LOG"]
+        mine = {(str(s.reel_episode or "").casefold(), s.shot_name.casefold()) for s in shots}
+        names = {k[1] for k in mine}
+        kept = []
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if not row or not row[0]:
+                continue
+            reel = str(row[5] if len(row) > 5 and row[5] else "").casefold()
+            name = str(row[0]).casefold()
+            if (reel, name) in mine or (not reel and name in names):
+                continue
+            kept.append(list(row))
+        if ws.max_row > 1:
+            ws.delete_rows(2, ws.max_row - 1)
+        for row in kept:
+            ws.append(row)
+        clean = lambda v: ILLEGAL_CHARACTERS_RE.sub("", str(v or ""))
+        for shot in shots:
+            for entries, source in ((shot.feedback_client, "Client"), (shot.feedback_director, "Director"),
+                                    (shot.feedback_internal, "Internal")):
+                for e in entries:
+                    ws.append([shot.shot_name, clean(e.date), clean(e.source or source), clean(e.text),
+                               clean(e.logged_by), str(shot.reel_episode or "")])
+
+    def _label_new_columns(self):
+        """A mapped column with no heading (added to the mapping later) gets one."""
+        if not self.worksheet or not self.project_config:
+            return
+        header_row = int(getattr(self.project_config, "header_row", 2) or 2)
+        from openpyxl.cell.cell import MergedCell
+        for field_name in (self.project_config.column_mapping or {}):
+            col = self._get_col_idx(field_name)
+            if col < 0:
+                continue
+            cell = self.worksheet.cell(row=header_row, column=col + 1)
+            if not isinstance(cell, MergedCell) and cell.value in (None, ""):
+                cell.value = self._header_label(field_name)
+
+    def _present(self):
+        """Headings stay on screen and can filter - only set when the sheet has none of its own."""
+        if not self.worksheet or not self.project_config:
+            return
+        from openpyxl.utils import get_column_letter
+        header_row = int(getattr(self.project_config, "header_row", 2) or 2)
+        data_start = int(getattr(self.project_config, "data_start_row", 3) or 3)
+        if self.worksheet.freeze_panes is None:
+            self.worksheet.freeze_panes = f"A{data_start}"
+        if not self.worksheet.auto_filter.ref and self.worksheet.max_column:
+            self.worksheet.auto_filter.ref = (
+                f"A{header_row}:{get_column_letter(self.worksheet.max_column)}{max(self.worksheet.max_row, data_start)}")
+
     def create_backup(self):
         if not os.path.exists(self.filepath):
             return None
