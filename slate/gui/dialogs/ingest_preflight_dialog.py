@@ -164,6 +164,7 @@ class IngestPreflightDialog(QDialog):
         self.table.setToolTip("Double-click a shot name to change it before anything is copied. "
                               "Click a column title to sort.")
         self.table.itemChanged.connect(self._name_edited)
+        self.table.horizontalHeader().setSortIndicator(self.COL_REEL, Qt.SortOrder.AscendingOrder)
         layout.addWidget(self.table, 1)
 
         self.notes_label = QLabel()
@@ -393,9 +394,10 @@ class IngestPreflightDialog(QDialog):
     def _twice_notes(self) -> List[str]:
         """A shot delivered twice (ScanA, ScanB / v02, v03) becomes two scan versions - said before the run."""
         survey = self.survey
+        clashing = {id(s) for members in survey.name_clashes(self.stitch_mapping).values() for s in members}
         by_shot: Dict = {}
         for shot in survey.active_shots():
-            if survey.stitched_name(shot, self.stitch_mapping) or not shot.files:
+            if survey.stitched_name(shot, self.stitch_mapping) or not shot.files or id(shot) in clashing:
                 continue
             by_shot.setdefault((shot.reel, shot.name), []).append(shot)
         twice = [(name, members) for (_reel, name), members in by_shot.items() if len(members) > 1]

@@ -72,14 +72,16 @@ class TestWhatTheAnswerMeans:
 
         assert dialog.mapping()[("ReelA", "SH010_A")] == "EP01_SH010"
 
-    def test_a_blank_name_falls_back_to_the_suggestion(self, qapp_stitch, qtbot):
+    def test_a_blank_name_is_refused_not_replaced(self, qapp_stitch, qtbot):
+        """ING2-040: an emptied name is flagged, never silently the suggestion again."""
         dialog = StitchConfirmDialog(_groups())
         qtbot.addWidget(dialog)
 
         _, _, name_edit = dialog._rows[0]
         name_edit.setText("   ")
 
-        assert dialog.mapping()[("ReelA", "SH010_A")] == "SH010"
+        assert not dialog.confirm_btn.isEnabled()
+        assert ("ReelA", "SH010_A") not in dialog.mapping()
 
 
 class TestWhatIsShown:
