@@ -129,6 +129,10 @@ _DEFAULTS = {
     "schedule_write": [
         "admin", "developer", "production head", "production coordinator", "producer",
     ],
+    # May make and change bids. Without it Bidding is read-only.
+    "bid_write": [
+        "admin", "developer", "production head", "production coordinator", "producer",
+    ],
     # May mark a bid Won or Lost. Nobody approves their own bid except
     # Admin and Developer (the Bidding tab enforces that part).
     "approve_bid": [

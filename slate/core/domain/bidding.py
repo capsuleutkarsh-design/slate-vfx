@@ -38,6 +38,8 @@ from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
+from . import shot_status
+
 logger = logging.getLogger(__name__)
 
 
@@ -94,8 +96,13 @@ def multipliers() -> dict:
                 number = float(value)
             except (TypeError, ValueError):
                 continue
-            if number > 0:
-                merged[str(name).strip().title()] = number
+            name = " ".join(str(name).split())
+            if number > 0 and name:
+                # Names stay as the studio typed them ('CG-heavy VFX'); 'hard'
+                # is the same complexity as 'Hard', so it replaces it.
+                for known in [k for k in merged if k.casefold() == name.casefold()]:
+                    del merged[known]
+                merged[name] = number
     return merged or dict(DEFAULT_MULTIPLIERS)
 
 
@@ -106,9 +113,9 @@ def complexities() -> List[str]:
 
 def days_per_shot(complexity: str) -> float:
     """How many artist days one shot of this complexity is bid at."""
-    table = multipliers()
-    return float(table.get(str(complexity).strip().title(),
-                           table.get("Medium", DEFAULT_MULTIPLIERS["Medium"])))
+    table = {name.casefold(): days for name, days in multipliers().items()}
+    return float(table.get(" ".join(str(complexity).split()).casefold(),
+                           table.get("medium", DEFAULT_MULTIPLIERS["Medium"])))
 
 
 def day_rate() -> float:
@@ -215,6 +222,14 @@ def fmt_days(value) -> str:
     return f"{text} {'day' if number == 1 else 'days'}"
 
 
+def signed_money(value, code: str) -> str:
+    """'+₹9,000.00' / '−₹9,000.00': one helper, one minus sign (U+2212) everywhere."""
+    from .money import format_money
+    number = dec(value)
+    sign = "+" if number > 0 else ("\u2212" if number < 0 else "")
+    return sign + format_money(abs(number), code)
+
+
 def fmt_percent(value) -> str:
     """'20%', '12.5%', '12.25%' - a whole number without decimals."""
     number = dec(value).quantize(CENT, rounding=ROUND_HALF_UP)
@@ -223,11 +238,13 @@ def fmt_percent(value) -> str:
 
 
 # What things are called, the same in the editor, the table and the export.
+# Price is before the discount, Subtotal after it (what is taxed - the stored
+# estimated_budget); the table and the export once called the second "Price".
 WORDS = {
     "shots": "Shots", "complexity": "Complexity", "day_rate": "Day rate", "margin": "Margin",
     "days": "Artist days", "cost": "Cost", "price": "Price", "discount": "Discount",
-    "tax": "Tax", "total": "Total", "client": "Client", "project": "Project",
-    "revision": "Rev", "status": "Status",
+    "taxable": "Subtotal", "tax": "Tax", "total": "Total", "client": "Client",
+    "project": "Project", "revision": "Rev", "status": "Status",
 }
 
 
@@ -413,6 +430,22 @@ def price_bid(lines: Iterable[BidLine], margin, discount=0, tax=0) -> BidTotals:
     return out
 
 
+def below_cost_warning(totals: Optional[BidTotals], code: str) -> str:
+    """A discount bigger than the margin prices the job under its cost: the sentence, or ''."""
+    if totals is None or totals.taxable >= totals.cost:
+        return ""
+    from .money import format_money
+    effective = (totals.taxable - totals.cost) * HUNDRED / totals.taxable if totals.taxable else -HUNDRED
+    return (f"The discount is bigger than the margin: this prices the job "
+            f"{format_money(totals.cost - totals.taxable, code)} below its cost "
+            f"(margin after discount {signed_percent(effective)}).")
+
+
+def signed_percent(value) -> str:
+    number = dec(value)
+    return ("\u2212" if number < 0 else "") + fmt_percent(abs(number))
+
+
 def check_bid(project_code: str, lines: Sequence[BidLine], margin, discount=0, tax=0,
               max_margin: Optional[float] = None) -> List[str]:
     """Every reason the bid cannot be saved yet, in the order a person fixes them."""
@@ -473,17 +506,26 @@ def pipeline(bids: Iterable[dict]) -> Pipeline:
     out = Pipeline()
     newest_open: Dict[str, dict] = {}
     won = []
+    bids = [b for b in bids if not b.get("archived_at")
+            and normalise_status(b.get("status")) != SUPERSEDED]
+
+    def group(bid):
+        return bid.get("bid_group") or bid.get("id")
+
+    # A draft revision of won work (a change order) is not more open money:
+    # the won revision keeps counting until the new one is decided.
+    won_groups = {group(b) for b in bids if normalise_status(b.get("status")) == WON}
     for bid in bids:
-        if bid.get("archived_at"):
-            continue
         status = normalise_status(bid.get("status"))
-        if status == SUPERSEDED:
-            continue
         out.bids += 1
         if status == WON:
             won.append(bid)
-        elif status in (DRAFT, SENT):
-            key = str(bid.get("project_code") or "").casefold()
+        elif status in (DRAFT, SENT) and group(bid) not in won_groups:
+            # Bids from before project codes have only a name (or nothing):
+            # they are separate jobs, not one.
+            code = str(bid.get("project_code") or "").strip().casefold()
+            name = str(bid.get("project_name") or "").strip().casefold()
+            key = code or (f"name:{name}" if name else f"bid:{group(bid)}")
             current = newest_open.get(key)
             if current is None or _newer(bid, current):
                 newest_open[key] = bid
@@ -551,10 +593,6 @@ def compare(before: Sequence[BidLine], after: Sequence[BidLine]) -> List[LineCha
 
 # ------------------------------------------------------------------ tracking
 
-DONE_TASK_STATUSES = {"APPROVED", "DONE", "COMPLETE", "COMPLETED", "FINAL"}
-OMITTED_SHOT_STATUSES = {"OMIT", "OMITTED", "CANCELLED", "CANCELED"}
-
-
 @dataclass
 class DepartmentTrack:
     department: str
@@ -588,7 +626,7 @@ class DepartmentTrack:
 
     @property
     def burn_percent(self) -> Optional[Decimal]:
-        """Done days as a share of bid days (None when nothing was bid)."""
+        """Delivered days as a share of bid days (None when nothing was bid)."""
         if self.bid_days <= 0:
             return None
         return (self.done_days * HUNDRED / self.bid_days).quantize(Decimal("0.1"),
@@ -624,7 +662,8 @@ def track(lines: Sequence[BidLine], tasks: Iterable[dict],
     A won bid against what the dashboard holds for its project, per department:
 
         bid days       from the bid's lines
-        planned days   bid_days on the dashboard's tasks (what was planned)
+        planned days   bid_days on the dashboard's tasks (what was planned);
+                       tasks of omitted shots are left out
         done days      bid_days of tasks in a done status (what was delivered)
         actual days    actual_days on tasks, where somebody recorded them
 
@@ -649,6 +688,9 @@ def track(lines: Sequence[BidLine], tasks: Iterable[dict],
         e.rate = money(e.bid_cost / e.bid_days) if e.bid_days else dec(default_rate)
     out = Tracking()
     for task in tasks:
+        # Done and omitted are the dashboard's own words (shot_status).
+        if shot_status.is_omitted(task.get("shot_status")):
+            continue
         dept = str(task.get("department") or "").strip().lower()
         days = dec(task.get("bid_days"))
         actual = task.get("actual_days")
@@ -658,7 +700,7 @@ def track(lines: Sequence[BidLine], tasks: Iterable[dict],
         if e.rate <= 0:
             e.rate = dec(default_rate)
         e.planned_days += days
-        if str(task.get("status") or "").strip().upper() in DONE_TASK_STATUSES:
+        if shot_status.is_done(task.get("status")):
             e.done_days += days
         if actual not in (None, ""):
             out.actual_recorded = True
@@ -683,7 +725,7 @@ def track(lines: Sequence[BidLine], tasks: Iterable[dict],
             bid_shots.setdefault(shot_key(line.reel, line.shot_name), line.shot_name.strip())
     tracker = OrderedDict()
     for reel, shot, status in tracker_shots:
-        if str(status or "").strip().upper() in OMITTED_SHOT_STATUSES:
+        if shot_status.is_omitted(status):
             continue
         tracker.setdefault(shot_key(reel, shot), str(shot))
     names_on_tracker = {k[1] for k in tracker}

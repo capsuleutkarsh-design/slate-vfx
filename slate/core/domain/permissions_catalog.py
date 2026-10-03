@@ -99,6 +99,8 @@ ABILITIES = (
             "See all shots of a project on the dashboard, not only their own."),
     Ability("schedule_write", "Edit the schedule",
             "Add, change and shift milestones on Scheduling."),
+    Ability("bid_write", "Edit bids",
+            "Make bids, change drafts, revise, send and archive them on Bidding."),
     Ability("approve_bid", "Approve bids",
             "Mark a bid Won or Lost."),
     Ability("delete_project", "Archive or delete projects",
@@ -190,7 +192,7 @@ STUDIO_ROLES = {
                        + [ability_key(a) for a in (
                            "dashboard_write", "artist_own_status", "approve_leave",
                            "view_team_attendance", "ingest_stock", "force_save", "excel_sync",
-                           "dashboard_view_all", "schedule_write", "approve_bid",
+                           "dashboard_view_all", "schedule_write", "bid_write", "approve_bid",
                            "view_licences")],
     "Production Coordinator": ["Dashboard", "Shot Review", "Scheduling", "Stock Browser",
                                "Folder Creator", "Rename Tool", "Settings"]

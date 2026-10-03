@@ -103,11 +103,29 @@ class ScheduleRepository:
             return ""
 
     # ---------------------------------------------------------------- writes
-    def _check(self, milestone: DS.Milestone, others=None) -> None:
+    def _check(self, milestone: DS.Milestone, others=None, keep_project: str = "") -> None:
         problems = DS.check_milestone(milestone, others if others is not None
                                       else self.list(include_archived=True))
         if problems:
             raise problems[0]
+        self._check_project(milestone.project_code, keep_project)
+
+    def _check_project(self, code: str, keep: str = "") -> None:
+        """
+        The project must exist and be active - the dialog only offers those,
+        but an import or a script is checked here too. A milestone of an
+        archived project may still be edited as long as it stays there (keep).
+        """
+        if keep and code.casefold() == keep.casefold():
+            return
+        row = self.db.execute_query("SELECT active FROM tracking_projects WHERE code = %s",
+                                    (code,), fetch="one")
+        if not row:
+            raise DS.ScheduleError(f"There is no project {code}.", "project")
+        active = str(dict(row).get("active")).strip().lower()
+        if active in ("0", "false", "f", "no"):
+            raise DS.ScheduleError(f"{code} is archived: milestones go on active projects.",
+                                   "project")
 
     @staticmethod
     def _now():
@@ -174,7 +192,7 @@ class ScheduleRepository:
             raise DS.ScheduleError("That milestone no longer exists - somebody deleted it.")
         milestone.name = " ".join(milestone.name.split())
         milestone.status = DS.normalise_status(milestone.status) or current.status
-        self._check(milestone)
+        self._check(milestone, keep_project=current.project_code)
         sets, params, changed = [], [], []
         for attr, column in self._EDITABLE:
             old, new = getattr(current, attr), getattr(milestone, attr)
@@ -234,6 +252,42 @@ class ScheduleRepository:
             self._log(m.project_code, m.id, by, "DELETE", "milestone", m.name, "")
         return int(getattr(result, "rows", 0) or 0)
 
+    def restore_deleted(self, milestones: Sequence[DS.Milestone],
+                        links: Sequence[Tuple[int, int]] = (), by: str = "") -> int:
+        """
+        Undo a delete: the milestones come back with their ids and every field,
+        and what was detached from them (links: [(dependent id, its old
+        dependency)]) waits on them again - unless somebody has given it
+        another dependency since. One transaction.
+        """
+        self._may_write()
+        from .transaction import atomic
+        restored = {m.id for m in milestones}
+        with atomic(self.db) as tx:
+            for m in milestones:
+                tx.write(
+                    "INSERT INTO prod_scheduling (id, project_code, milestone, start_date, end_date, "
+                    "status, owner, department, effort_days, completed_on, legacy_dates, created_by, "
+                    "created_at, updated_by, updated_at) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (m.id, m.project_code, m.name, self._stored(m.start), self._stored(m.end),
+                     m.status or None, m.owner or None, m.department or None,
+                     self._stored(m.effort_days), self._stored(m.completed_on),
+                     m.legacy_dates or None, m.created_by or None, m.created_at,
+                     by or None, self._now()))
+            # Dependencies after every row is back: they may point at each other.
+            for m in milestones:
+                if m.depends_on_id:
+                    tx.write("UPDATE prod_scheduling SET depends_on_id = %s WHERE id = %s",
+                             (m.depends_on_id, m.id))
+            for child_id, parent_id in links:
+                if parent_id in restored:
+                    tx.write("UPDATE prod_scheduling SET depends_on_id = %s "
+                             "WHERE id = %s AND depends_on_id IS NULL", (parent_id, child_id))
+        for m in milestones:
+            self._log(m.project_code, m.id, by, "RESTORE", "milestone", "", m.name)
+        return len(milestones)
+
     def set_status(self, ids: Sequence[int], status: str, by: str = ""
                    ) -> Dict[int, Tuple[str, Optional[date]]]:
         """
@@ -267,11 +321,28 @@ class ScheduleRepository:
                 self._log(current[mid].project_code, mid, by, "UPDATE", "status", old, status)
         return previous
 
-    def restore_statuses(self, previous: Dict[int, Tuple[str, Optional[date]]], by: str = "") -> None:
-        """Undo set_status: put every milestone back as it was, in one transaction."""
+    def restore_statuses(self, previous: Dict[int, Tuple[str, Optional[date]]], by: str = "",
+                         expected: Optional[str] = None) -> List[str]:
+        """
+        Undo set_status: put the milestones back as they were, in one
+        transaction. With expected (the status the change set), a milestone
+        somebody has given another status since is left alone - Undo does not
+        revert a colleague's change. Returns the names left alone.
+        """
         self._may_write()
         from .transaction import atomic
         current = {m.id: m for m in self.list(include_archived=True)}
+        skipped = []
+        if expected is not None:
+            expected = DS.normalise_status(expected)
+            keep = {}
+            for mid, before in previous.items():
+                m = current.get(int(mid))
+                if m is not None and m.status != expected:
+                    skipped.append(m.name)
+                else:
+                    keep[mid] = before
+            previous = keep
         now = self._now()
         with atomic(self.db) as tx:
             for mid, (status, completed_on) in previous.items():
@@ -283,6 +354,7 @@ class ScheduleRepository:
             m = current.get(int(mid))
             if m is not None and m.status != status:
                 self._log(m.project_code, mid, by, "UPDATE", "status", m.status, status)
+        return skipped
 
     def apply_dates(self, changes: Sequence[Tuple[int, date, date]], by: str = "",
                     action: str = "SHIFT") -> int:
@@ -314,6 +386,23 @@ class ScheduleRepository:
                       f"{self._shown(start)} - {self._shown(end)}")
         return len(changes)
 
+    def undo_shift(self, plan: DS.ShiftPlan, by: str = "") -> List[str]:
+        """
+        Put a shift back - only the milestones still where it left them, so
+        an Undo a minute later does not revert what a colleague moved since.
+        Returns the names left alone.
+        """
+        current = {m.id: m for m in self.list(include_archived=True)}
+        back, skipped = [], []
+        for move in plan.moved:
+            m = current.get(move.id)
+            if m is None or (m.start, m.end) != (move.new_start, move.new_end):
+                skipped.append(move.name)
+            else:
+                back.append((move.id, move.old_start, move.old_end))
+        self.apply_dates(back, by=by, action="UNDO SHIFT")
+        return skipped
+
     def _log(self, project, milestone_id, by, action, field, old, new) -> None:
         if not by:
             return              # the change history refuses an unnamed author anyway
@@ -329,9 +418,11 @@ class ScheduleRepository:
     def calendar(self, first: Optional[date] = None, last: Optional[date] = None) -> DS.WorkCalendar:
         """
         The studio's working days: weekly offs from the attendance policy and
-        the holiday calendar. A holiday that belongs to one office only is
-        shown with its location.
+        the studio-wide holidays. A holiday of one office only is left out:
+        the other offices work that day, so a shift must not skip it.
         """
+        # ponytail: projects carry no office, so office holidays are not used at
+        # all; give tracking_projects a location to apply them per project.
         from slate.core.domain import leave_policy as lp
         try:
             offs = lp.policy().get("weekly_offs", [6])
@@ -352,7 +443,7 @@ class ScheduleRepository:
             name = str(r.get("name") or "Holiday").strip()
             where = str(r.get("location") or "").strip()
             if where and where.lower() != "all":
-                name += f" ({where})"
+                continue
             holidays[day] = f"{holidays[day]}, {name}" if day in holidays else name
         return DS.WorkCalendar(offs, holidays)
 

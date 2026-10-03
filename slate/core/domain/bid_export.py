@@ -7,13 +7,14 @@ clients. Amounts go out as plain numbers with their currency beside them in
 the list (so a spreadsheet can add them up), and formatted in the bid's own
 currency in the document (₹ with Indian grouping for rupee bids).
 
-    rows = bid_list_rows(bids)               -> (headers, rows) for export_rows
+    rows = bid_list_rows(bids, names)        -> (headers, rows) for export_rows
+    rows = tracking_rows(bid, tracking)      -> the tracking table, the same way
     html = bid_document_html(bid, lines, totals, studio="UT Studios")
 """
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from html import escape
 from typing import Iterable, List, Sequence, Tuple
 
@@ -22,18 +23,61 @@ from .dates import format_date, parse_date
 from .money import format_money
 
 LIST_HEADERS = ["Project", "Project name", "Client", "Rev", "Status", "Currency", "Shots",
-                "Artist days", "Cost", "Price", "Tax", "Total", "Created", "Created by"]
+                "Artist days", "Cost", DB.WORDS["taxable"], "Tax", "Total", "Created", "Created by",
+                "Username"]
+
+# How long a client may take the bid up, printed on the PDF.
+# ponytail: a fixed 30 days; make it a bidding setting when a studio asks.
+VALID_DAYS = 30
 
 
-def bid_list_rows(bids: Iterable) -> Tuple[List[str], List[list]]:
-    """The bid list as a table of plain values (numbers stay numbers)."""
+def bid_list_rows(bids: Iterable, names=None) -> Tuple[List[str], List[list]]:
+    """
+    The bid list as a table of plain values (numbers stay numbers). Created by
+    is the person's name, as the table shows it (names: username -> name),
+    with the username in a column of its own.
+    """
+    names = names or {}
     rows = []
     for b in bids:
         rows.append([b.project_code, b.project_name, b.client_name, b.revision,
                      DB.status_label(b.status), b.currency, b.shot_count, b.estimated_days,
                      b.estimated_cost, b.estimated_budget, b.tax_amount, b.total_amount,
-                     parse_date(b.created_at), b.created_by])
+                     parse_date(b.created_at), names.get(b.created_by, b.created_by), b.created_by])
     return list(LIST_HEADERS), rows
+
+
+TRACKING_HEADERS = ["Department", "Bid days", "Planned days", "Delivered days", "Actual days",
+                    "Delivered %", "Remaining days", "Plan vs bid (days)", "Bid cost", "Planned cost",
+                    "Currency"]
+
+
+def department_name(key: str) -> str:
+    """'Prep / Paint' for 'prep': what a person (and a client) reads."""
+    if not key or key == DB.UNASSIGNED:
+        return "No department"
+    try:
+        from .departments import get_department
+        dept = get_department(key)
+        if dept is not None:
+            return dept.name or dept.label or key
+    except Exception:
+        pass
+    return key
+
+
+def tracking_rows(bid, tracking: DB.Tracking) -> Tuple[List[str], List[list]]:
+    """The tracking table as plain numbers with a currency column, and a total row."""
+    rows = []
+    for d in tracking.departments:
+        rows.append([department_name(d.department), d.bid_days, d.planned_days, d.done_days,
+                     d.actual_days if tracking.actual_recorded else None, d.burn_percent,
+                     d.remaining_days, d.variance_days, d.bid_cost, d.planned_cost, bid.currency])
+    rows.append(["Total", tracking.bid_days, tracking.planned_days, tracking.done_days,
+                 tracking.actual_days if tracking.actual_recorded else None, None,
+                 tracking.bid_days - tracking.done_days, tracking.planned_days - tracking.bid_days,
+                 tracking.bid_cost, tracking.planned_cost, bid.currency])
+    return list(TRACKING_HEADERS), rows
 
 
 def bid_document_html(bid, lines: Sequence[DB.BidLine], totals: DB.BidTotals, *,
@@ -50,10 +94,12 @@ def bid_document_html(bid, lines: Sequence[DB.BidLine], totals: DB.BidTotals, *,
     def m(value):
         return escape(format_money(value, code))
 
+    title = studio or f"Bid {bid.project_code} v{bid.revision}"
     head = f"""
-    <h1 style="margin-bottom:2px">{escape(studio or 'Bid')}</h1>
+    <h1 style="margin-bottom:2px">{escape(title)}</h1>
     <p style="color:#555;margin-top:0">Bid {escape(bid.project_code)} v{bid.revision}
-       &middot; {escape(format_date(today))}</p>
+       &middot; {escape(format_date(today))}
+       &middot; valid until {escape(format_date(today + timedelta(days=VALID_DAYS)))}</p>
     <table cellspacing="0" cellpadding="3">
       <tr><td><b>Project</b></td><td>{escape(bid.project_code)}
           {('&ndash; ' + escape(bid.project_name)) if bid.project_name and bid.project_name != bid.project_code else ''}</td></tr>
@@ -73,7 +119,7 @@ def bid_document_html(bid, lines: Sequence[DB.BidLine], totals: DB.BidTotals, *,
         if line.shot_name and line.label and line.shot_name not in line.label:
             name = f"{line.label} ({line.shot_name})"
         body.append(
-            f"<tr><td>{escape(name)}</td><td>{escape(line.department)}</td>"
+            f"<tr><td>{escape(name)}</td><td>{escape(department_name(line.department))}</td>"
             f"<td align='right'>{line.shot_count}</td>"
             f"<td align='right'>{escape(DB.fmt_days(line.days_per_shot))}</td>"
             f"<td align='right'>{escape(DB.fmt_days(line.days))}</td>"

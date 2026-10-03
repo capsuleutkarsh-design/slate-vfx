@@ -330,6 +330,25 @@ def page_title(text: str, subtitle: str = "") -> QWidget:
     return holder
 
 
+def read_only_chip(tooltip: str = "") -> QWidget:
+    """
+    'Read-only' with a lock, as a chip: no border, nothing to press. It sat
+    in a button row looking like one more button.
+    """
+    from PySide6.QtWidgets import QToolButton
+    from slate.gui.core.icons import icon
+    chip = QToolButton()
+    chip.setText("Read-only")
+    chip.setIcon(icon("lock", Gate.TEXT_2, 14))
+    chip.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+    chip.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+    chip.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    chip.setToolTip(tooltip)
+    chip.setStyleSheet(f"QToolButton {{ color: {Gate.TEXT_2}; background: {Gate.tint(Gate.TEXT_DIM, 0.16)}; "
+                       f"border: none; border-radius: 11px; padding: 3px 10px; }}")
+    return chip
+
+
 def form_layout(parent=None) -> QFormLayout:
     """
     A form: labels right-aligned and vertically centred on their fields.

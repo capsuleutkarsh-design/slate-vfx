@@ -39,10 +39,10 @@ from slate.core.domain import bidding as DB
 from slate.core.domain import money
 from slate.core.infra.gate import Gate
 from slate.gui.core.offline_notice import on_database_error
-from slate.gui.core.controls import make_button, page_title
+from slate.gui.core.controls import make_button, page_title, read_only_chip
 from slate.gui.core.empty_state import EmptyState
 from slate.gui.core.stat_card import StatStrip
-from slate.gui.core.table_style import dim_cell, set_cell_status, style_table
+from slate.gui.core.table_style import KeepColourDelegate, dim_cell, set_cell_status, style_table
 from slate.gui.core.data_display import date_item, money_item
 from slate.gui.components.table_tools import (
     KEY_ROLE, KeepSelection, TableToolbar, make_item, select_keys, selected_keys, setup_table,
@@ -60,8 +60,10 @@ logger = logging.getLogger(__name__)
 
 (C_ID, C_PROJECT, C_CLIENT, C_REV, C_LINES, C_SHOTS, C_DAYS, C_COST, C_PRICE, C_TOTAL,
  C_STATUS, C_CURRENCY, C_CREATED, C_BY) = range(14)
+# C_PRICE holds the stored price after discount: the Subtotal, as the editor
+# and the PDF call it (Price is the figure before the discount).
 HEADERS = ["ID", DB.WORDS["project"], DB.WORDS["client"], DB.WORDS["revision"], "Lines",
-           DB.WORDS["shots"], DB.WORDS["days"], DB.WORDS["cost"], DB.WORDS["price"],
+           DB.WORDS["shots"], DB.WORDS["days"], DB.WORDS["cost"], DB.WORDS["taxable"],
            DB.WORDS["total"], DB.WORDS["status"], "Currency", "Created", "Created by"]
 
 
@@ -123,7 +125,12 @@ class ProdBiddingTab(QWidget):
         from slate.core.domain import access
         self.can_approve = access.can(self.user_roles, "approve_bid")
         self.is_superuser = access.is_superuser(self.user_roles)
-        self.can_change_settings = self.can_approve or access.can(self.user_roles, "studio_settings")
+        # Without 'Edit bids' the tab is read-only, like Scheduling without its ability.
+        self.can_write = access.can(self.user_roles, "bid_write")
+        # Margins and complexities are the approvers'; the studio-wide day
+        # rates and GST belong to studio_settings (Settings > Studio Currency).
+        self.can_edit_rates = self.is_superuser or access.can(self.user_roles, "studio_settings")
+        self.can_change_settings = self.can_approve or self.can_edit_rates
         if repo is None:
             from slate.core.infra.bid_repository import BidRepository
             repo = BidRepository(roles=self.user_roles, username=self.username)
@@ -137,8 +144,8 @@ class ProdBiddingTab(QWidget):
 
     # ------------------------------------------------------------------ layout
     def build_ui(self, main_layout):
-        main_layout.addWidget(page_title("Bids", "What each job is priced at, its revisions, and how "
-                                                 "won work is tracking"))
+        main_layout.addWidget(page_title("Bidding", "What each job is priced at, its revisions, and "
+                                                    "how won work is tracking"))
 
         strip = StatStrip(compact=True)
         self.lbl_total = strip.add("Bids", "0", tone="accent",
@@ -160,7 +167,8 @@ class ProdBiddingTab(QWidget):
         self.lost_button = make_button("Lost", icon="x-circle", on_click=lambda: self.update_status(DB.LOST))
         self.archive_button = make_button("Archive…", icon="archive", on_click=self.archive_bids)
         self.restore_button = make_button("Restore", icon="undo", on_click=self.restore_bids)
-        self.more_button = make_button("More", "ghost", icon="more")
+        self.more_button = make_button("More", "secondary", icon="chevron-down",
+                                       tooltip="Reopen, compare, duplicate, export, create shots, settings")
         self.more_menu = QMenu(self.more_button)
         self.more_button.setMenu(self.more_menu)
         self.more_menu.aboutToShow.connect(self._fill_more_menu)
@@ -176,6 +184,12 @@ class ProdBiddingTab(QWidget):
         controls.addWidget(self.archive_button)
         controls.addWidget(self.restore_button)
         controls.addWidget(self.more_button)
+        for w in (self.new_button, self.revise_button, self.sent_button, self.archive_button):
+            w.setVisible(self.can_write)
+        self.read_only_badge = read_only_chip("You can look at bids. Making or changing them needs "
+                                              "the 'Edit bids' ability on your role.")
+        self.read_only_badge.setVisible(not self.can_write)
+        controls.insertWidget(0, self.read_only_badge)
         controls.addStretch()
         self.revisions_box = QCheckBox("All revisions")
         self.revisions_box.setToolTip("Show superseded revisions too, not only the latest")
@@ -196,7 +210,8 @@ class ProdBiddingTab(QWidget):
         self.grid.itemSelectionChanged.connect(self._selection_changed)
 
         self.toolbar = TableToolbar(self.grid, placeholder="Search project, client or person…",
-                                    columns=(C_PROJECT, C_CLIENT, C_STATUS, C_BY), on_refresh=self.load_data)
+                                    columns=(C_PROJECT, C_CLIENT, C_STATUS, C_BY), on_refresh=self.load_data,
+                                    noun="bids")
         self.project_filter = self.toolbar.add_filter("Project", [("All projects", "")], column=C_PROJECT)
         self.status_filter = self.toolbar.add_filter(
             "Status", [("All statuses", "")] + [(DB.status_label(s), DB.status_label(s))
@@ -240,7 +255,7 @@ class ProdBiddingTab(QWidget):
         self.empty = EmptyState.over(
             self.grid, "No bids yet",
             "Create a bid for a project to see its price and the pipeline here.",
-            primary=("New bid", self.add_bid), glyph="money")
+            primary=("New bid", self.add_bid) if self.can_write else None, glyph="money")
         self._sync_buttons()
         # First read only now that the table is in the layout.
         self.load_data()
@@ -248,19 +263,21 @@ class ProdBiddingTab(QWidget):
     def style_table(self, table: QTableWidget):
         """The project takes the spare width; counts and money right-aligned to their content."""
         style_table(table, {
-            DB.WORDS["project"]: ("interactive", 170),
-            DB.WORDS["client"]: "stretch",
+            DB.WORDS["project"]: "stretch",
+            DB.WORDS["client"]: ("interactive", 160),
             DB.WORDS["revision"]: "contents",
             "Lines": "numeric",
             DB.WORDS["shots"]: "numeric",
             DB.WORDS["days"]: "numeric",
             DB.WORDS["cost"]: "numeric",
-            DB.WORDS["price"]: "numeric",
+            DB.WORDS["taxable"]: "numeric",
             DB.WORDS["total"]: "numeric",
             DB.WORDS["status"]: "contents",
             "Created": "contents",
             "Created by": ("interactive", 140),
         })
+        # A selected row keeps its status colour.
+        table.setItemDelegate(KeepColourDelegate(table))
 
     # ------------------------------------------------------------------ data
     @on_database_error
@@ -328,12 +345,14 @@ class ProdBiddingTab(QWidget):
         shown = self.visible_bids()
         p = DB.pipeline(b.as_dict() for b in shown)
         self.lbl_total.set_value(len(shown))
-        self.lbl_value.set_value(money.format_totals(p.open_totals, compact=True))
+        # Nothing open / nothing won is a dash, not '₹0' while filtering dollars.
+        self.lbl_value.set_value(money.format_totals(p.open_totals, compact=True)
+                                 if p.open_count else "—")
         self.lbl_value.setToolTip(f"{p.open_count} open "
                                   + ("bid" if p.open_count == 1 else "bids")
                                   + f" (the newest per project): {money.format_totals(p.open_totals)}")
         self.lbl_approved.set_value(money.format_totals(p.won_totals, compact=True)
-                                    if p.won_count else "0")
+                                    if p.won_count else "—")
         self.lbl_approved.setToolTip(f"{p.won_count} won: {money.format_totals(p.won_totals)}")
 
     def visible_bids(self):
@@ -385,6 +404,9 @@ class ProdBiddingTab(QWidget):
                                  f"{money.format_money(b.tax_amount, b.currency)}")
             self.grid.setItem(r, C_TOTAL, total)
             status_text = DB.status_label(b.status) + (" (archived)" if b.archived else "")
+            if b.status in DB.DECIDED and not b.latest:
+                # Won work being revised: still won and counted until v2 is decided.
+                status_text += f" – v{b.newest_revision} in progress"
             status = make_item(status_text)
             set_cell_status(status, "idle" if b.archived else DB.status_tone(b.status), background=False)
             if b.decided_by:
@@ -453,23 +475,34 @@ class ProdBiddingTab(QWidget):
         one = len(chosen) == 1
         live = [b for b in chosen if not b.archived]
         self.edit_button.setEnabled(one)
-        self.edit_button.setText("Edit…" if not one or chosen[0].editable else "Open…")
+        self.edit_button.setText("Edit…" if not one or (chosen[0].editable and self.can_write) else "Open…")
         # Revising or archiving a won/lost bid takes the decision away, so it
         # needs what deciding needs (approve_bid, never your own bid).
         refusals = {b.id: self.repo.decided_refusal(b, self.username) for b in chosen}
-        self.revise_button.setEnabled(one and not chosen[0].archived and chosen[0].status != DB.SUPERSEDED
-                                      and not refusals[chosen[0].id])
-        self.revise_button.setToolTip(refusals[chosen[0].id] if one and refusals[chosen[0].id] else
-                                      "Copy the bid into a new draft revision; this one is kept")
+        revise_why = ""
+        if one:
+            b = chosen[0]
+            revise_why = (refusals[b.id]
+                          or ("A draft is changed in place - use Edit." if b.status == DB.DRAFT else "")
+                          or ("Archived - restore it first." if b.archived else "")
+                          or (f"v{b.newest_revision} is the newest revision." if not b.latest else "")
+                          or ("A newer revision exists." if b.status == DB.SUPERSEDED else ""))
+        self.revise_button.setEnabled(one and not revise_why)
+        self.revise_button.setToolTip(revise_why or "Copy the bid into a new draft revision; this one is kept")
         self.sent_button.setEnabled(bool(live) and all(DB.can_change(b.status, DB.SENT) for b in live))
-        self.won_button.setEnabled(bool(live) and all(DB.can_change(b.status, DB.WON) for b in live))
-        self.lost_button.setEnabled(bool(live) and all(DB.can_change(b.status, DB.LOST) for b in live))
+        # Won and Lost say why not (your own bid) instead of asking and then refusing.
+        for button, status in ((self.won_button, DB.WON), (self.lost_button, DB.LOST)):
+            why = next((self.repo.decision_refusal(b, status) for b in live
+                        if self.repo.decision_refusal(b, status)), "")
+            button.setEnabled(bool(live) and not why and all(DB.can_change(b.status, status) and b.latest
+                                                            for b in live))
+            button.setToolTip(why)
         self.archive_button.setEnabled(bool(live) and not any(refusals[b.id] for b in live))
         blocked = next((refusals[b.id] for b in live if refusals[b.id]), "")
         self.archive_button.setToolTip(blocked)
-        self.archive_button.setVisible(not chosen or bool(live))
+        self.archive_button.setVisible(self.can_write and (not chosen or bool(live)))
         archived = [b for b in chosen if b.archived]
-        self.restore_button.setVisible(bool(archived))
+        self.restore_button.setVisible(self.can_write and bool(archived))
         self.restore_button.setEnabled(bool(archived) and not any(refusals[b.id] for b in archived))
 
     def _fill_more_menu(self):
@@ -479,11 +512,14 @@ class ProdBiddingTab(QWidget):
         one = chosen[0] if len(chosen) == 1 else None
         reopen = menu.addAction("Reopen as draft", lambda: self.update_status(DB.DRAFT))
         reopen.setEnabled(bool(chosen) and all(DB.can_change(b.status, DB.DRAFT) and not b.archived
-                                                for b in chosen))
+                                                and b.latest for b in chosen)
+                          and (self.can_write or self.can_approve))
         menu.addSeparator()
         compare = menu.addAction("Compare revisions…", self.compare_revisions)
-        compare.setEnabled(one is not None and (one.revision > 1 or one.status == DB.SUPERSEDED))
-        menu.addAction("Duplicate to project…", self.duplicate_bid).setEnabled(one is not None)
+        compare.setEnabled(one is not None and (one.revision > 1 or one.status == DB.SUPERSEDED
+                                                or not one.latest))
+        menu.addAction("Duplicate to project…", self.duplicate_bid).setEnabled(
+            one is not None and self.can_write)
         menu.addAction("Export bid as PDF…", self.export_pdf).setEnabled(one is not None)
         menu.addAction("Export list…", self.export_list).setEnabled(self.grid.rowCount() > 0)
         shots = menu.addAction("Create shots on the dashboard…", self.create_shots)
@@ -544,16 +580,18 @@ class ProdBiddingTab(QWidget):
         from slate.gui.tabs.bid_editor_dialog import BidEditorDialog
         from slate.gui.components.screen_fit import fit_to_screen
         dialog = BidEditorDialog(self, repo=self.repo, bid=bid, lines=self.repo.lines(bid.id),
-                                 username=self.username)
+                                 username=self.username, read_only=not self.can_write)
         fit_to_screen(dialog, 1180, 760)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         self.load_data()
         from slate.gui.components.feedback import toast
         if dialog.revision_id is not None:
+            # As from the toolbar's New revision: the new draft opens to be changed.
             select_keys(self.grid, [dialog.revision_id])
             toast(self, f"{bid.project_code} v{bid.revision + 1} is a new draft; "
                         f"v{bid.revision} is kept as it was.", "success")
+            self.edit_bid()
         else:
             select_keys(self.grid, [bid.id])
             toast(self, f"Saved {bid.title}.", "success")
@@ -596,6 +634,9 @@ class ProdBiddingTab(QWidget):
             if not confirm(self, f"Mark as {word}", question,
                            yes_label=("Change decision" if decided else f"Mark {word}")):
                 return
+        # Every revision of these bids as it is now, for Undo (a decision
+        # also supersedes the revision it replaces).
+        before = {r.id: r for b in chosen for r in self.repo.revisions(b.bid_group or b.id)}
         try:
             previous = self.repo.set_status([b.id for b in chosen], new_status, by=self.username)
         except DatabaseUnavailableError:
@@ -611,8 +652,25 @@ class ProdBiddingTab(QWidget):
             return
         changed = sum(1 for old in previous.values() if old != DB.normalise_status(new_status))
         self.load_data()
-        toast(self, f"{changed} bid{'s' if changed != 1 else ''} marked {word}." if changed
-              else f"Nothing changed - already {word}.", "success" if changed else "info")
+        if not changed:
+            toast(self, f"Nothing changed - already {word}.", "info")
+            return
+
+        def undo():
+            try:
+                kept = self.repo.undo_status(list(before.values()), new_status, by=self.username)
+            except DatabaseUnavailableError:
+                raise
+            except Exception as exc:
+                warn(self, f"Undo {word}", f"The bids could not be put back: {exc}")
+                self.load_data()
+                return
+            self.load_data()
+            toast(self, f"Marked {word} undone." + (f" {', '.join(kept[:3])} changed since and "
+                                                     "were left as they are." if kept else ""), "info")
+
+        toast(self, f"{changed} bid{'s' if changed != 1 else ''} marked {word}.", "success",
+              action=("Undo", undo))
 
     @on_database_error
     def archive_bids(self, *_):
@@ -735,8 +793,12 @@ class ProdBiddingTab(QWidget):
         if len(chosen) != 1:
             return None
         bid = self.repo.get(chosen[0].id)
+        if bid is None:
+            self.load_data()
+            return None
         lines = self.repo.lines(bid.id)
-        totals = DB.price_bid(lines, bid.margin, bid.discount, bid.tax)
+        # An old bid saved with a margin no longer allowed prints as it was saved.
+        totals, _priced = bid.totals(lines)
         return export_bid_pdf(self, bid, lines, totals, path=path)
 
     def export_list(self, *_, path=None):
@@ -751,7 +813,7 @@ class ProdBiddingTab(QWidget):
                                                   "CSV (*.csv);;Excel workbook (*.xlsx)")
             if not path:
                 return None
-        headers, rows = bid_list_rows(self.visible_bids())
+        headers, rows = bid_list_rows(self.visible_bids(), names=self._names)
         try:
             count = export_rows(path, headers, rows)
         except OSError as exc:
@@ -802,6 +864,6 @@ class ProdBiddingTab(QWidget):
     def open_settings(self, *_):
         from slate.gui.tabs.bid_settings_dialog import BiddingSettingsDialog
         from slate.gui.components.feedback import toast
-        dialog = BiddingSettingsDialog(self, username=self.username)
+        dialog = BiddingSettingsDialog(self, username=self.username, can_edit_rates=self.can_edit_rates)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             toast(self, "Bidding settings saved for the studio.", "success")

@@ -143,6 +143,14 @@
     "production coordinator",
     "producer"
   ],
+  "_bid_write": "Makes and changes bids on Bidding (Won and Lost need approve_bid).",
+  "bid_write": [
+    "admin",
+    "developer",
+    "production head",
+    "production coordinator",
+    "producer"
+  ],
   "_approve_bid": "Marks a bid Won or Lost. Nobody approves their own bid except Admin and Developer.",
   "approve_bid": [
     "admin",

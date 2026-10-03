@@ -32,8 +32,13 @@ logger = logging.getLogger(__name__)
 
 
 class BiddingSettingsDialog(QDialog):
-    def __init__(self, parent=None, *, username: str = "", store=None):
+    def __init__(self, parent=None, *, username: str = "", store=None, can_edit_rates: bool = True):
         super().__init__(parent)
+        # Day rates, GST and the studio name are studio-wide (the Settings
+        # tab's Studio Currency card keeps the same keys): studio_settings
+        # holders change them; an approver sees them read-only.
+        self.can_edit_rates = can_edit_rates
+        from slate.gui.tabs.bid_editor_dialog import _money_spin
         from slate.core.infra.studio_settings import StudioSettings
         import slate.core.infra.bid_repository  # noqa: F401 - registers the 'bidding' check
         self.store = store or StudioSettings()
@@ -52,11 +57,13 @@ class BiddingSettingsDialog(QDialog):
         figures = dict(self.store.get("bidding") or {})
         form = form_layout()
         self.rate_inputs = {}
+        self.studio_input = QLineEdit(str(self.store.get("studio_name") or ""))
+        self.studio_input.setMaxLength(120)
+        self.studio_input.setPlaceholderText("Printed at the top of bid PDFs")
+        form.addRow("Studio name", self.studio_input)
         for code, cur in money.CURRENCIES.items():
-            spin = QDoubleSpinBox()
-            spin.setRange(0, 100_000_000)
-            spin.setDecimals(2)
-            spin.setGroupSeparatorShown(False)
+            spin = _money_spin()
+            spin.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             spin.setPrefix(cur.symbol + " ")
             spin.setSpecialValueText("Not set")
             spin.setValue(float(DB.dec(rates.get(code))))
@@ -71,7 +78,11 @@ class BiddingSettingsDialog(QDialog):
         self.max_margin_input.setRange(1, 95)
         self.max_margin_input.setSuffix(" %")
         self.max_margin_input.setValue(float(figures.get("max_margin_percent", DB.DEFAULT_MAX_MARGIN_PERCENT)))
-        form.addRow("Highest margin allowed", self.max_margin_input)
+        self.max_margin_input.setToolTip("The highest margin a bid may have")
+        form.addRow("Max margin", self.max_margin_input)
+        # The default can never be above the maximum - checked as you type.
+        self.margin_input.setMaximum(self.max_margin_input.value())
+        self.max_margin_input.valueChanged.connect(self.margin_input.setMaximum)
         tax_row = QHBoxLayout()
         self.tax_label_input = QLineEdit(str(figures.get("tax_label") or "GST"))
         self.tax_label_input.setMaxLength(20)
@@ -84,6 +95,15 @@ class BiddingSettingsDialog(QDialog):
         tax_row.addWidget(self.gst_input, 1)
         form.addRow("Tax on rupee bids", tax_row)
         layout.addLayout(form)
+        if not can_edit_rates:
+            for w in [self.studio_input, self.gst_input, *self.rate_inputs.values()]:
+                w.setReadOnly(True)
+            self.gst_input.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
+            note = QLabel("Day rates, the rupee tax and the studio name are changed by somebody "
+                          "with Studio settings.")
+            note.setWordWrap(True)
+            note.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: {Gate.SIZE_SM}px;")
+            layout.addWidget(note)
 
         layout.addWidget(QLabel("Days per shot, by complexity"))
         self.table = QTableWidget(0, 2)
@@ -146,9 +166,12 @@ class BiddingSettingsDialog(QDialog):
                        margin_percent=round(self.margin_input.value(), 2),
                        max_margin_percent=round(self.max_margin_input.value(), 2),
                        tax_label=self.tax_label_input.text().strip() or "GST")
+        if not self.can_edit_rates:
+            return {"bidding": figures}
         rates = {code: round(spin.value(), 2) for code, spin in self.rate_inputs.items()
                  if spin.value() > 0}
-        return {"bidding": figures, "day_rates": rates, "gst_rate": round(self.gst_input.value(), 2)}
+        return {"bidding": figures, "day_rates": rates, "gst_rate": round(self.gst_input.value(), 2),
+                "studio_name": self.studio_input.text().strip()}
 
     def save(self) -> bool:
         values = self.values()
@@ -161,7 +184,11 @@ class BiddingSettingsDialog(QDialog):
             self._fail("Can't reach the studio database, so nothing was saved.")
             return False
         if not result:
-            self._fail(getattr(result, "error", "") or "The settings were not saved.")
+            # set_many names the setting ('bidding: The default margin ...'); the
+            # person needs only the sentence.
+            error = str(getattr(result, "error", "") or "The settings were not saved.")
+            key, _sep, sentence = error.partition(": ")
+            self._fail(sentence if key in values and sentence else error)
             return False
         DB.set_overrides(values["bidding"])
         self.accept()

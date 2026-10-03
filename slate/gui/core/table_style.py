@@ -36,7 +36,8 @@ Unlisted columns are "interactive". If nothing stretches, the last column does.
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
-    QAbstractItemView, QHeaderView, QStyledItemDelegate, QTableView, QTableWidgetItem,
+    QAbstractItemView, QHeaderView, QStyle, QStyledItemDelegate, QStyleOptionViewItem, QTableView,
+    QTableWidgetItem,
 )
 
 from slate.core.infra.gate import Gate
@@ -52,6 +53,23 @@ class _AlignDelegate(QStyledItemDelegate):
     def initStyleOption(self, option, index):
         super().initStyleOption(option, index)
         option.displayAlignment = self._alignment
+
+
+class KeepColourDelegate(QStyledItemDelegate):
+    """
+    A selected row keeps the colour of a coloured cell (a status, an overdue
+    date): main.qss paints selected text in the plain text colour, so the
+    status disappeared exactly on the row being looked at. Set it on a table
+    whose cells carry set_cell_status colours.
+    """
+
+    def paint(self, painter, option, index):
+        if (option.state & QStyle.StateFlag.State_Selected
+                and index.data(Qt.ItemDataRole.ForegroundRole) is not None):
+            painter.fillRect(option.rect, QColor(Gate.SELECTION))
+            option = QStyleOptionViewItem(option)
+            option.state &= ~QStyle.StateFlag.State_Selected
+        super().paint(painter, option, index)
 
 
 def _header_labels(table):

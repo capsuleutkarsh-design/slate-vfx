@@ -90,6 +90,8 @@ class ShiftDatesDialog(QDialog):
                                    "After": "contents", "Note": "stretch"},
                     sortable=False)
         self.preview.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        # The Note says what would break; it wraps rather than being cut.
+        self.preview.setWordWrap(True)
         outer.addWidget(self.preview, 1)
 
         self.summary = QLabel("")
@@ -137,7 +139,9 @@ class ShiftDatesDialog(QDialog):
             rows.append((m.name, format_range(m.old_start, m.old_end),
                          format_range(m.new_start, m.new_end), note, "bad" if note else ""))
         for mid, name, why in plan.skipped:
-            rows.append((name, "", "not moved", why, "idle"))
+            m = self.by_id.get(mid)
+            now = format_range(m.start, m.end) if m and m.has_dates else ""
+            rows.append((name, now, "stays", why, "idle"))
         for mid, text in conflicts.items():
             m = self.by_id.get(mid)
             rows.append((m.name if m else f"#{mid}", format_range(m.start, m.end) if m else "",
@@ -151,13 +155,15 @@ class ShiftDatesDialog(QDialog):
             if tone:
                 set_cell_status(note_item, tone, background=tone == "bad")
             self.preview.setItem(r, 3, note_item)
+        self.preview.resizeRowsToContents()
 
         has_conflicts = bool(plan.conflicts)
         self.anyway_box.setVisible(has_conflicts)
         text = plan.message(self.root.name, preview=True)
         if has_conflicts:
+            one = len(plan.conflicts) == 1
             text += (f" {DS.plural(len(plan.conflicts), 'milestone')} would start before "
-                     "what it waits on has ended.")
+                     f"what {'it waits' if one else 'they wait'} on has ended.")
         self.summary.setText(text)
         self.summary.setStyleSheet(f"color: {Gate.BAD if has_conflicts else Gate.TEXT_2};")
         self.apply_button.setEnabled(bool(plan.moved) and (not has_conflicts

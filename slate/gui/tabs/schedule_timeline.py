@@ -11,7 +11,7 @@ on a calendar:
                the end of one bar to the start of the next, red when the
                order is broken; weekly offs and studio holidays shaded (hover
                a holiday for its name); a line for today. Drag a bar to move
-               it, drag its right edge to change its end - both go through
+               it, drag an edge to change its start or end - both go through
                the same shift preview as the Shift dates button, so what
                depends on it is shown before anything is saved. Double-click
                opens the milestone.
@@ -33,12 +33,12 @@ from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import (
-    QBrush, QColor, QFont, QFontMetrics, QImage, QPainter, QPainterPath, QPen, QPolygonF,
+    QBrush, QColor, QCursor, QFont, QFontMetrics, QImage, QPainter, QPainterPath, QPen, QPolygonF,
 )
 from PySide6.QtWidgets import (
     QComboBox, QFrame, QGraphicsItem, QGraphicsPathItem, QGraphicsRectItem, QGraphicsScene,
     QGraphicsSimpleTextItem, QGraphicsView, QGridLayout, QHBoxLayout, QLabel, QListWidget,
-    QListWidgetItem, QSplitter, QVBoxLayout, QWidget,
+    QListWidgetItem, QSplitter, QStyle, QToolTip, QVBoxLayout, QWidget,
 )
 
 from slate.core.domain import scheduling as DS
@@ -60,6 +60,15 @@ def _colour(value: str, alpha: Optional[float] = None) -> QColor:
     return Gate.qcolor(value, alpha) if alpha is not None else QColor(value)
 
 
+def _text_on(fill: QColor) -> QColor:
+    """Dark or white label text, whichever reads better on this fill (WCAG luminance)."""
+    def linear(channel: float) -> float:
+        return channel / 12.92 if channel <= 0.03928 else ((channel + 0.055) / 1.055) ** 2.4
+    lum = (0.2126 * linear(fill.redF()) + 0.7152 * linear(fill.greenF())
+           + 0.0722 * linear(fill.blueF()))
+    return _colour(Gate.palette("Light")["TEXT"] if lum > 0.179 else Gate.TEXT_ON_BAD)
+
+
 # ------------------------------------------------------------------ bars
 
 class _Bar(QGraphicsRectItem):
@@ -69,7 +78,7 @@ class _Bar(QGraphicsRectItem):
 
     def __init__(self, gantt: "GanttView", key, rect: QRectF, fill: str, text: str,
                  tooltip: str, *, outline: str = "", faded: float = 1.0, strike: bool = False,
-                 draggable: bool = False, selected: bool = False, dim_text: bool = False):
+                 draggable: bool = False, selected: bool = False):
         super().__init__(rect)
         self.gantt = gantt
         self.key = key
@@ -79,8 +88,9 @@ class _Bar(QGraphicsRectItem):
         self.strike = strike
         self.draggable = draggable
         self.is_selected = selected
-        self.dim_text = dim_text
-        self.setOpacity(faded)
+        # Finished work is faded by its fill only: fading the whole item left
+        # white text on a pale bar, unreadable in Light.
+        self.faded = faded
         self.setToolTip(tooltip)
         self.setAcceptHoverEvents(True)
         self.setZValue(5)
@@ -91,7 +101,9 @@ class _Bar(QGraphicsRectItem):
     def paint(self, painter: QPainter, option, widget=None):
         rect = self.rect()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.setBrush(QBrush(_colour(self.fill, 0.88)))
+        fill = _colour(Gate.mix(Gate.GROUND, self.fill, 0.88 * self.faded))
+        text_colour = _text_on(fill)
+        painter.setBrush(QBrush(fill))
         if self.is_selected:
             painter.setPen(QPen(_colour(Gate.TEXT), 2))
         elif self.outline:
@@ -100,7 +112,7 @@ class _Bar(QGraphicsRectItem):
             painter.setPen(Qt.PenStyle.NoPen)
         painter.drawRoundedRect(rect, 4, 4)
         if self.strike:
-            painter.setPen(QPen(_colour(Gate.TEXT_ON_BAD), 1))
+            painter.setPen(QPen(text_colour, 1))
             painter.drawLine(QPointF(rect.left() + 3, rect.center().y()),
                              QPointF(rect.right() - 3, rect.center().y()))
         if rect.width() > 24 and self.text:
@@ -109,25 +121,31 @@ class _Bar(QGraphicsRectItem):
             painter.setFont(font)
             metrics = QFontMetrics(font)
             text = metrics.elidedText(self.text, Qt.TextElideMode.ElideRight, int(rect.width() - 10))
-            painter.setPen(_colour(Gate.TEXT_ON_BAD if not self.dim_text else Gate.TEXT))
+            painter.setPen(text_colour)
             painter.drawText(rect.adjusted(6, 0, -4, 0),
                              int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft), text)
 
     # -- dragging
-    def _near_edge(self, pos) -> bool:
-        return self.rect().right() - pos.x() <= self.EDGE
+    def _grip(self, pos) -> str:
+        """'end' or 'start' near an edge (a bar too narrow for both has only its end), else 'move'."""
+        rect = self.rect()
+        if rect.right() - pos.x() <= self.EDGE:
+            return "end"
+        if pos.x() - rect.left() <= self.EDGE and rect.width() > 3 * self.EDGE:
+            return "start"
+        return "move"
 
     def hoverMoveEvent(self, event):
         if self.draggable:
-            self.setCursor(Qt.CursorShape.SizeHorCursor if self._near_edge(event.pos())
-                           else Qt.CursorShape.OpenHandCursor)
+            self.setCursor(Qt.CursorShape.OpenHandCursor if self._grip(event.pos()) == "move"
+                           else Qt.CursorShape.SizeHorCursor)
         super().hoverMoveEvent(event)
 
     def mousePressEvent(self, event):
         self.gantt._bar_clicked(self.key)
         if self.draggable and event.button() == Qt.MouseButton.LeftButton:
             self._press = event.scenePos()
-            self._mode = "resize" if self._near_edge(event.pos()) else "move"
+            self._mode = self._grip(event.pos())
             self._origin = QRectF(self.rect())
             event.accept()
             return
@@ -141,6 +159,8 @@ class _Bar(QGraphicsRectItem):
         rect = QRectF(self._origin)
         if self._mode == "move":
             rect.translate(days * ppd, 0)
+        elif self._mode == "start":
+            rect.setLeft(min(rect.right() - ppd, self._origin.left() + days * ppd))
         else:
             rect.setRight(max(rect.left() + ppd, self._origin.right() + days * ppd))
         self.setRect(rect)
@@ -204,6 +224,7 @@ class GanttView(QWidget):
     activated = Signal(int)                 # milestone id double-clicked
     selected = Signal(int)                  # milestone id clicked
     dragged = Signal(int, object, object)   # milestone id, new start, new end
+    zoom_changed = Signal(str)              # after Fit / Ctrl + wheel too
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -219,6 +240,7 @@ class GanttView(QWidget):
         self.arrow_count = 0
         self.shade_count = 0
         self.today_line = None
+        self.lane_y: Dict[str, float] = {}  # People: where each person's lane starts
 
         self.ruler_scene, self.label_scene, self.body_scene = (QGraphicsScene(self) for _ in range(3))
         self.ruler = _View(self.ruler_scene, self)
@@ -232,10 +254,16 @@ class GanttView(QWidget):
         self.body.horizontalScrollBar().valueChanged.connect(self.ruler.horizontalScrollBar().setValue)
         self.body.verticalScrollBar().valueChanged.connect(self.labels.verticalScrollBar().setValue)
 
-        self.corner = QLabel("")
+        # The top-left corner holds the zoom controls (ScheduleTimeline puts
+        # them there): a row of their own above the chart cost ~40 px of it.
+        self.corner = QFrame()
+        self.corner.setObjectName("ganttCorner")
         self.corner.setFixedSize(LABEL_W, RULER_H)
-        self.corner.setStyleSheet(f"color: {Gate.TEXT_2}; font-weight: 600; padding-left: 8px; "
-                                  f"background: {Gate.PANEL}; border-bottom: 1px solid {Gate.LINE};")
+        self.corner.setStyleSheet(f"#ganttCorner {{ background: {Gate.PANEL}; "
+                                  f"border-bottom: 1px solid {Gate.LINE}; }}")
+        self.corner_layout = QHBoxLayout(self.corner)
+        self.corner_layout.setContentsMargins(6, 0, 6, 0)
+        self.corner_layout.setSpacing(4)
         grid = QGridLayout(self)
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(0)
@@ -249,11 +277,13 @@ class GanttView(QWidget):
         if zoom in DS.ZOOMS:
             self.zoom = zoom
             self._redraw(DS.ZOOMS[zoom])
+            self.zoom_changed.emit(self.zoom)
 
     def zoom_by(self, factor: float) -> None:
         ppd = min(max(self.scale.px_per_day * factor, 1.0), 60.0)
         self.zoom = DS.ZOOM_DAY if ppd >= 20 else (DS.ZOOM_WEEK if ppd >= 6 else DS.ZOOM_MONTH)
         self._redraw(ppd)
+        self.zoom_changed.emit(self.zoom)
 
     def fit(self) -> None:
         days = max((getattr(self, "content_last", self.last) - self.first).days + 1, 1)
@@ -261,6 +291,7 @@ class GanttView(QWidget):
         ppd = min(max(width / days, 1.0), 60.0)
         self.zoom = DS.ZOOM_DAY if ppd >= 20 else (DS.ZOOM_WEEK if ppd >= 6 else DS.ZOOM_MONTH)
         self._redraw(ppd)
+        self.zoom_changed.emit(self.zoom)
 
     def scroll_to(self, day: date) -> None:
         x = self.scale.x(day) - self.body.viewport().width() / 3
@@ -291,16 +322,18 @@ class GanttView(QWidget):
         delta = timedelta(days=days)
         if mode == "move":
             self.dragged.emit(key, m.start + delta, m.end + delta)
+        elif mode == "start":
+            self.dragged.emit(key, min(m.start + delta, m.end), m.end)
         else:
             self.dragged.emit(key, m.start, max(m.end + delta, m.start))
 
     def _show_drag_hint(self, key, mode, days):
         info = (self._drag_info or {}).get(key)
         if info is None or not days:
-            self.corner.setText(self._corner_text)
+            QToolTip.hideText()
             return
-        what = "Move" if mode == "move" else "End"
-        self.corner.setText(f"{what} {'+' if days > 0 else ''}{days} d")
+        what = {"move": "Move", "start": "Start"}.get(mode, "End")
+        QToolTip.showText(QCursor.pos(), f"{what} {'+' if days > 0 else ''}{days} d")
 
     def _header_clicked(self, key):
         if isinstance(key, str) and key.startswith("project:"):
@@ -327,32 +360,38 @@ class GanttView(QWidget):
         for scene in (self.ruler_scene, self.label_scene, self.body_scene):
             scene.clear()
         self._bars = {}
+        self.lane_y = {}
         self.bar_count = self.arrow_count = self.shade_count = 0
-        self._corner_text = corner
-        self.corner.setText(corner)
+        self.corner.setToolTip(corner)
 
     def _draw_ruler(self, width: float, today: date):
         scene = self.ruler_scene
-        scene.addRect(QRectF(0, 0, width, RULER_H), QPen(Qt.PenStyle.NoPen),
+        scene.addRect(QRectF(0, 0, width + self._scroll_extent(), RULER_H), QPen(Qt.PenStyle.NoPen),
                       QBrush(_colour(Gate.PANEL)))
         line_pen = QPen(_colour(Gate.LINE), 1)
         for start, end, label in DS.month_bands(self.first, self.last):
             x = self.scale.x(start)
             scene.addLine(x, 0, x, RULER_H, line_pen)
             text = QGraphicsSimpleTextItem(label)
+            # A band narrower than its name (the first, part month) has none,
+            # rather than 'Jul 2Aug 2026'.
+            if text.boundingRect().width() + 8 > self.scale.x_end(end) - x:
+                continue
             text.setBrush(QBrush(_colour(Gate.TEXT_2)))
             text.setPos(x + 4, 2)
             scene.addItem(text)
         for day, label, major in DS.ruler_ticks(self.first, self.last, self.zoom):
             x = self.scale.x(day)
             scene.addLine(x, RULER_H - (14 if major else 9), x, RULER_H, line_pen)
-            if self.zoom != DS.ZOOM_MONTH or self.scale.px_per_day * 28 > 60:
+            # Month zoom: the band above already names every month.
+            if self.zoom != DS.ZOOM_MONTH:
                 text = QGraphicsSimpleTextItem(label)
                 font = text.font()
                 font.setPixelSize(Gate.SIZE_XS)
                 text.setFont(font)
                 text.setBrush(QBrush(_colour(Gate.TEXT if major else Gate.TEXT_DIM)))
                 text.setPos(x + 3, RULER_H - 22)
+                text.setToolTip(format_date(day, weekday=True))
                 scene.addItem(text)
         scene.addLine(0, RULER_H - 1, width, RULER_H - 1, line_pen)
         if self.first <= today <= self.last:
@@ -370,7 +409,10 @@ class GanttView(QWidget):
         while cursor <= self.last:
             if not calendar.is_working(cursor):
                 holiday = cursor in calendar.holidays
-                colour = Gate.tint(Gate.WARN, 0.14) if holiday else Gate.overlay(0.045)
+                # A weekly off reads about as strongly on either ground: a
+                # white wash vanished on Dark and a black one was heavy on Light.
+                colour = (Gate.tint(Gate.WARN, 0.14) if holiday
+                          else Gate.mix(Gate.GROUND, Gate.TEXT_DIM, 0.16 if Gate.IS_DARK else 0.08))
                 rect = scene.addRect(QRectF(self.scale.x(cursor), 0, ppd, height),
                                      QPen(Qt.PenStyle.NoPen), QBrush(QColor(_rgba(colour))))
                 rect.setZValue(0)
@@ -388,7 +430,7 @@ class GanttView(QWidget):
         if self.first <= today <= self.last:
             x = self.scale.x(today) + ppd / 2
             self.today_line = scene.addLine(x, 0, x, height, QPen(_colour(Gate.ACCENT), 2))
-            self.today_line.setZValue(8)
+            self.today_line.setZValue(3.5)          # under the bars, not through their labels
             self.today_line.setToolTip(f"Today, {format_date(today)}")
 
     def _row_band(self, y: float, h: float, width: float, *, header: bool, label: str,
@@ -430,10 +472,20 @@ class GanttView(QWidget):
                                        QPen(_colour(Gate.LINE_SOFT or Gate.LINE), 1))
         line.setZValue(1)
 
+    def _scroll_extent(self) -> int:
+        return self.body.style().pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent)
+
     def _finish(self, width: float, height: float):
+        """
+        The ruler and the labels have no scroll bars, the body has both: their
+        scenes are longer by a scroll bar so all three scroll the same distance
+        and the last names and dates stay in line with the bars.
+        """
         height = max(height, 1)
-        self.label_scene.setSceneRect(QRectF(0, 0, LABEL_W, height))
+        extent = self._scroll_extent()
+        self.label_scene.setSceneRect(QRectF(0, 0, LABEL_W, height + extent))
         self.body_scene.setSceneRect(QRectF(0, 0, width, height))
+        self.ruler_scene.setSceneRect(QRectF(0, 0, width + extent, RULER_H))
 
     def _arrow(self, a: QRectF, b: QRectF, broken: bool):
         points = DS.arrow_route(a.right(), a.center().y(), b.left(), b.center().y())
@@ -498,7 +550,7 @@ class GanttView(QWidget):
                 title = code + (f" – {names[code]}" if names.get(code) and
                                 names[code].casefold() != code.casefold() else "")
                 self._row_band(ry, rh, width, header=True, label=fold + title,
-                               key=f"project:{code}", detail=f"{open_count}/{count}",
+                               key=f"project:{code}", detail=f"{open_count} open of {count}",
                                tooltip=f"{title}: {open_count} open of {count}. Click to "
                                        f"{'show' if code in self.collapsed else 'hide'} its milestones.")
                 # A summary bar across the project's span.
@@ -574,14 +626,14 @@ class GanttView(QWidget):
     # ------------------------------------------------------------ people
     def show_people(self, plan: DS.PeoplePlan, calendar: DS.WorkCalendar, *,
                     today: Optional[date] = None, names: Dict[str, str] = None,
-                    milestone_tone: Dict[int, str] = None) -> None:
+                    milestone_tone: Dict[int, str] = None, overdue_ids=()) -> None:
         def render():
             self._draw_people(plan, calendar, today or date.today(), names or {},
-                              milestone_tone or {})
+                              milestone_tone or {}, set(overdue_ids))
         self._render = render
         render()
 
-    def _draw_people(self, plan, calendar, today, names, milestone_tone):
+    def _draw_people(self, plan, calendar, today, names, milestone_tone, overdue_ids):
         spans = [today]
         for items in plan.items.values():
             for item in items:
@@ -615,8 +667,9 @@ class GanttView(QWidget):
         for person, items, rows, ry, rh in layout:
             shown = names.get(person) or person
             trouble = conflicts_by_person.get(person, [])
+            self.lane_y[person] = ry
             self._row_band(ry, rh, width, header=False, bold=True, label=shown,
-                           detail=f"{len(items)}" if items else "",
+                           detail=DS.plural(len(items), "item") if items else "",
                            tooltip=f"{shown}: {DS.plural(len(items), 'piece')} of work"
                                    + (f", {DS.plural(len(trouble), 'problem')}" if trouble else ""))
             for a in plan.away.get(person, []):
@@ -630,15 +683,14 @@ class GanttView(QWidget):
                               self.scale.width(item.start, item.end), ROW_H - 2 * BAR_PAD)
                 if item.kind == "milestone":
                     fill = status_colour(milestone_tone.get(item.ref, "info"))
-                    dim = False
                 else:
                     fill = Gate.mix(Gate.GROUND, Gate.INFO, 0.45)
-                    dim = True
                 tip = (f"{item.label}\n{item.project_code}\n{format_range(item.start, item.end)}"
                        + (f"\n{item.days.normalize():f} days of work" if item.days else "")
                        + ("\nFrom the VFX Dashboard (read-only here)" if item.kind == "task" else ""))
                 bar = _Bar(self, item.ref if item.kind == "milestone" else ("task", id(item)),
-                           rect, fill, item.label, tip, dim_text=dim,
+                           rect, fill, item.label, tip,
+                           outline=Gate.BAD if item.kind == "milestone" and item.ref in overdue_ids else "",
                            selected=item.kind == "milestone" and item.ref in self.selected_ids)
                 self.body_scene.addItem(bar)
                 if item.kind == "milestone":
@@ -689,45 +741,53 @@ def _rgba(css: str) -> QColor:
 
 class ScheduleTimeline(QWidget):
     """
-    The Timeline / People page: zoom, Fit, Today and Export PNG above the
-    drawing; in People mode a list of the problems found beside it.
+    The Timeline / People page: the chart, with zoom, Fit, Today, Export PNG
+    and the legend in its top-left corner; in People mode a list of the
+    problems found beside it (under it on a narrow window).
     """
 
-    def __init__(self, parent=None, *, people_mode: bool = False):
+    LEGEND = ("Red outline: overdue. Red arrow: starts before what it waits on ends. "
+              "Weekly offs and holidays (amber) are shaded.")
+    DRAG = "Drag a bar to move it, its left or right edge to change the start or the end. "
+    PEOPLE_LEGEND = ("Shaded: weekly offs, holidays (amber) and approved leave (red). "
+                     "Red line: more than a day of work booked per day. Red outline: overdue.")
+
+    def __init__(self, parent=None, *, people_mode: bool = False, editable: bool = False):
         super().__init__(parent)
         self.people_mode = people_mode
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(Gate.SPACE_2)
 
-        bar = QHBoxLayout()
-        bar.setSpacing(Gate.SPACE_2)
+        self.gantt = GanttView(self)
+        bar = self.gantt.corner_layout
         self.zoom_cb = QComboBox()
         for name in DS.ZOOMS:
             self.zoom_cb.addItem(name, name)
         self.zoom_cb.setCurrentIndex(self.zoom_cb.findData(DS.ZOOM_WEEK))
         self.zoom_cb.setToolTip("Zoom (or Ctrl + mouse wheel over the chart)")
-        bar.addWidget(QLabel("Zoom"))
-        bar.addWidget(self.zoom_cb)
+        # activated, not currentIndexChanged: choosing Week again after Fit
+        # applies it; the box follows Fit and the wheel through zoom_changed.
+        self.zoom_cb.activated.connect(lambda *_: self.gantt.set_zoom(self.zoom_cb.currentData()))
+        self.gantt.zoom_changed.connect(self._show_zoom)
         self.fit_button = make_button("Fit", "secondary", tooltip="Fit the whole plan in the window",
                                       on_click=lambda: self.gantt.fit())
-        self.today_button = make_button("Today", "secondary", tooltip="Scroll to today",
+        self.today_button = make_button("", "secondary", icon="calendar", tooltip="Scroll to today",
                                         on_click=lambda: self.gantt.scroll_to(date.today()))
-        self.export_button = make_button("Export PNG…", "ghost", icon="download",
+        self.export_button = make_button("", "ghost", icon="download", tooltip="Export PNG…",
                                          on_click=self.export_png)
-        bar.addWidget(self.fit_button)
-        bar.addWidget(self.today_button)
-        self.legend = QLabel("")
-        self.legend.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: {Gate.SIZE_SM}px;")
-        bar.addWidget(self.legend, 1)
-        bar.addWidget(self.export_button)
-        layout.addLayout(bar)
+        self.legend = make_button("", "ghost", icon="help",
+                                  on_click=lambda: QToolTip.showText(QCursor.pos(), self.legend.toolTip()))
+        self.legend.setToolTip(self.PEOPLE_LEGEND if people_mode
+                               else (self.DRAG if editable else "") + self.LEGEND)
+        for w in (self.zoom_cb, self.fit_button, self.today_button, self.export_button):
+            bar.addWidget(w)
+        bar.addStretch()
+        bar.addWidget(self.legend)
 
-        self.gantt = GanttView(self)
-        self.zoom_cb.currentIndexChanged.connect(lambda *_: self.gantt.set_zoom(self.zoom_cb.currentData()))
         if people_mode:
-            split = QSplitter(Qt.Orientation.Horizontal)
-            split.addWidget(self.gantt)
+            self.split = QSplitter(Qt.Orientation.Horizontal)
+            self.split.addWidget(self.gantt)
             side = QWidget()
             side_layout = QVBoxLayout(side)
             side_layout.setContentsMargins(Gate.SPACE_2, 0, 0, 0)
@@ -739,20 +799,37 @@ class ScheduleTimeline(QWidget):
             self.problems.itemActivated.connect(self._problem_activated)
             self.problems.itemClicked.connect(self._problem_activated)
             side_layout.addWidget(self.problems, 1)
-            split.addWidget(side)
-            split.setStretchFactor(0, 4)
-            split.setStretchFactor(1, 1)
-            split.setSizes([900, 260])
-            layout.addWidget(split, 1)
-            self.legend.setText("Shaded: weekly offs, holidays (amber) and approved leave (red). "
-                                "Red line: more than a day of work booked per day.")
+            self.split.addWidget(side)
+            self.split.setStretchFactor(0, 4)
+            self.split.setStretchFactor(1, 1)
+            self.split.setSizes([900, 260])
+            layout.addWidget(self.split, 1)
         else:
             layout.addWidget(self.gantt, 1)
             self.problems = None
-            self.legend.setText("Drag a bar to move it, its right edge to change the end. "
-                                "Red outline: overdue. Red arrow: starts before what it waits on ends.")
 
-    def set_people_problems(self, plan: DS.PeoplePlan, names: Dict[str, str]) -> None:
+    NARROW = 1400
+
+    def resizeEvent(self, event):
+        """People: the problems go under the chart on a narrow window, so the chart keeps its width."""
+        super().resizeEvent(event)
+        if self.problems is None:
+            return
+        narrow = self.width() < self.NARROW
+        wanted = Qt.Orientation.Vertical if narrow else Qt.Orientation.Horizontal
+        if self.split.orientation() != wanted:
+            self.split.setOrientation(wanted)
+            total = self.height() if narrow else self.width()
+            self.split.setSizes([int(total * 0.75), total - int(total * 0.75)])
+            self.problems.parentWidget().layout().setContentsMargins(
+                0 if narrow else Gate.SPACE_2, Gate.SPACE_2 if narrow else 0, 0, 0)
+
+    def _show_zoom(self, zoom: str):
+        index = self.zoom_cb.findData(zoom)
+        if index >= 0:
+            self.zoom_cb.setCurrentIndex(index)
+
+    def set_people_problems(self, plan: DS.PeoplePlan, names: Dict[str, str], notes=()) -> None:
         if self.problems is None:
             return
         self.problems.clear()
@@ -760,11 +837,16 @@ class ScheduleTimeline(QWidget):
             who = names.get(c.person) or c.person
             item = QListWidgetItem(f"{who}: {c.text}")
             item.setData(Qt.ItemDataRole.UserRole, c.start.isoformat())
+            item.setData(Qt.ItemDataRole.UserRole + 1, c.person)
             item.setForeground(QBrush(_colour(Gate.BAD if c.kind == "overload" else Gate.WARN)))
             self.problems.addItem(item)
         if plan.skipped_tasks:
             note = QListWidgetItem(f"{DS.plural(plan.skipped_tasks, 'dashboard assignment')} "
                                    "without a target date or bid days are not drawn.")
+            note.setForeground(QBrush(_colour(Gate.TEXT_DIM)))
+            self.problems.addItem(note)
+        for text in notes:
+            note = QListWidgetItem(text)
             note.setForeground(QBrush(_colour(Gate.TEXT_DIM)))
             self.problems.addItem(note)
         if not plan.conflicts:
@@ -777,6 +859,9 @@ class ScheduleTimeline(QWidget):
         value = item.data(Qt.ItemDataRole.UserRole)
         if value:
             self.gantt.scroll_to(date.fromisoformat(value))
+        lane = self.gantt.lane_y.get(item.data(Qt.ItemDataRole.UserRole + 1))
+        if lane is not None:
+            self.gantt.body.verticalScrollBar().setValue(int(max(lane - ROW_H, 0)))
 
     def export_png(self) -> Optional[str]:
         from PySide6.QtWidgets import QFileDialog
