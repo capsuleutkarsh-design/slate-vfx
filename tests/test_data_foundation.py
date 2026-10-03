@@ -331,7 +331,8 @@ def test_studio_settings_start_from_the_plan(db):
     assert s.get("currency") == "INR"
     assert s.get("day_rates") == {"INR": 8000, "USD": 300}
     assert s.get("gst_rate") == 18
-    assert s.get("working_hours") == {"start": "10:00", "end": "19:00", "days": [0, 1, 2, 3, 4, 5]}
+    # The working days are the studio policy's weekly offs (SYS2-046).
+    assert s.get("working_hours") == {"start": "10:00", "end": "19:00"}
 
 
 def test_a_studio_setting_is_one_value_for_every_reader(db):

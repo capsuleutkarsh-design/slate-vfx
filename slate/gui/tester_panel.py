@@ -2,14 +2,19 @@
 Tester Panel: tools for checking Slate itself.
 
 Everything that writes works inside one shared test folder (chosen above the
-tabs), and everything destructive - wiping a folder, changing file dates -
-only acts on a folder this panel created: the generators leave a
-'.slate_tester' marker in it. Before, Cancel on a Browse dialog left the target
-empty, which Path() reads as '.', and Wipe then offered to delete the folder
-Slate was running from. The destructive tools, the large generators and VACUUM
+tabs), and everything destructive - deleting the folder, changing file dates -
+only acts on a folder this panel created itself. A folder counts as created
+by the panel only when it did not exist or was empty when the panel first
+wrote to it; then it gets the MARKER file. Any other folder chosen as the test
+folder is left as it is and the panel works in a 'Slate_tester' folder it
+makes inside it (claim_folder). Round 1 marked whatever folder was chosen, so
+a folder of personal files became deletable after one generator run.
+
+The destructive tools, large runs (generator and workflow sim) and VACUUM
 also need the tester_destructive ability (developers).
 """
 
+import html
 import os
 import random
 import string
@@ -23,7 +28,6 @@ from typing import Optional
 
 # Import DB for verification
 from ..core.infra.database_manager import database_manager
-from ..core.infra.global_config import GlobalConfig
 from ..core.infra.app_context import AppContext
 from ..core.domain import access
 
@@ -53,7 +57,11 @@ except ImportError:                                  # pragma: no cover
         """Fallback when the manager cannot be imported."""
 
 
-MARKER = ".slate_tester"
+# A new name in round 2: folders the old rule marked (any folder chosen, with
+# whatever it held) no longer count as the panel's own.
+MARKER = ".slate_tester_made"
+# The folder the panel makes inside a test folder it did not create.
+WORK_FOLDER = "Slate_tester"
 WINDOWS_PATH_LIMIT = 259          # MAX_PATH less the terminating character
 CONFIRM_ABOVE_BYTES = 5 * 1024 ** 3
 KEEP_FREE_FRACTION = 0.10
@@ -61,12 +69,21 @@ KEEP_FREE_FRACTION = 0.10
 LARGE_RUN_BYTES = 1024 ** 3
 SIZES = {"Empty": 0, "1KB": 1024, "1MB": 1024 * 1024, "50MB": 50 * 1024 * 1024,
          "Random": 10 * 1024 * 1024}       # Random is up to 10 MB a file
+# What the size choices are called on screen (the keys stay the stored names).
+SIZE_LABELS = {"Empty": "Empty", "1KB": "1 KB", "1MB": "1 MB", "50MB": "50 MB",
+               "Random": "Random (up to 10 MB)"}
+# Workflow sim: 2 reels of 5 shots.
+WORKFLOW_SHOTS = 10
 PATH_TOO_LONG = ("The folder path became longer than Windows allows (260 characters). "
                  "Choose a shorter test folder, or fewer levels.")
 
 
 def default_test_folder() -> Path:
     return Path.home() / "Downloads" / "TesterData"
+
+
+def plural(n: int, word: str) -> str:
+    return f"{n:,} {word}" + ("" if n == 1 else "s")
 
 
 def human_size(n: float) -> str:
@@ -103,22 +120,79 @@ def validate_test_folder(text) -> tuple:
         return None, "The test folder cannot contain Slate's own folder."
     except ValueError:
         pass
-    if resolved == Path(os.path.abspath(Path.home())):
+    home = Path(os.path.abspath(Path.home()))
+    if resolved == home:
         return None, "Your home folder cannot be the test folder - choose a folder inside it."
+    if resolved.parent == home and resolved.name.lower() in LIBRARY_FOLDERS:
+        return None, (f"Your {resolved.name} folder cannot be the test folder - "
+                      "choose (or type) a folder inside it.")
+    if is_network_path(resolved):
+        return None, "The test folder must be on this computer, not on a network share."
     return resolved, ""
 
 
-def mark_folder(folder: Path) -> None:
-    """Leave the marker that says this panel created the folder."""
-    folder.mkdir(parents=True, exist_ok=True)
-    marker = folder / MARKER
-    if not marker.exists():
-        marker.write_text("Created by Slate's Tester Panel. The panel's destructive tools "
-                          "only act on folders holding this file.\n", encoding="utf-8")
+LIBRARY_FOLDERS = {"desktop", "documents", "downloads", "pictures", "videos", "music", "onedrive"}
+
+
+def is_network_path(path: Path) -> bool:
+    """A \\server\share path, or a drive letter mapped to one."""
+    text = str(path)
+    if text.startswith("\\\\") or text.startswith("//"):
+        return True
+    if os.name == "nt" and len(text) >= 2 and text[1] == ":":
+        import ctypes
+        return ctypes.windll.kernel32.GetDriveTypeW(text[:2] + "\\") == 4   # DRIVE_REMOTE
+    return False
 
 
 def is_marked(folder: Path) -> bool:
     return (Path(folder) / MARKER).is_file()
+
+
+def _is_empty(folder: Path) -> bool:
+    try:
+        return not any(Path(folder).iterdir())
+    except OSError:
+        return False
+
+
+def mark_folder(folder: Path) -> bool:
+    """
+    Create the folder and mark it as the panel's own - but only when it is
+    new or empty. A folder that already holds something is never marked, so
+    it can never become deletable here. Returns whether it is marked.
+    """
+    folder = Path(folder)
+    if is_marked(folder):
+        return True
+    if folder.exists() and not _is_empty(folder):
+        return False
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / MARKER).write_text("Created by Slate's Tester Panel. The panel's destructive tools "
+                                 "only act on folders holding this file.\n", encoding="utf-8")
+    return True
+
+
+def claim_folder(folder: Path) -> Path:
+    """
+    The folder the panel writes into for this test folder: the test folder
+    itself when the panel made it (or it is new or empty), else a
+    'Slate_tester' folder inside it.
+    """
+    folder = Path(folder)
+    if mark_folder(folder):
+        return folder
+    return claim_folder(folder / WORK_FOLDER)
+
+
+def owned_folder(folder: Path) -> Optional[Path]:
+    """The panel's own folder for this test folder, or None when it never made one."""
+    folder = Path(folder)
+    while folder.is_dir():
+        if is_marked(folder):
+            return folder
+        folder = folder / WORK_FOLDER
+    return None
 
 
 def count_files(folder: Path) -> int:
@@ -223,7 +297,8 @@ class FileGeneratorWorker(QThread):
             try:
                 self._create_file(file_path)
                 self.created += 1
-                self.log_signal.emit(f"Created: {name}")
+                # No line per file: 10,000 of them pushed the summary out of
+                # the results. Errors are still listed one by one.
             except Exception as e:
                 self.errors.append(f"{name}: {e}")
                 self.log_signal.emit(f"Could not create {name}: {e}")
@@ -310,6 +385,15 @@ def workflow_base(root: Path, now: datetime = None) -> Path:
     return Path(root) / f"TEST_{stamp}"
 
 
+def workflow_files(count: int, scans: int) -> int:
+    return WORKFLOW_SHOTS * scans * count
+
+
+def workflow_bytes(count: int, scans: int, size: str) -> int:
+    """The most a workflow sim writes (Random counts as its 10 MB ceiling)."""
+    return workflow_files(count, scans) * SIZES.get(size, 0)
+
+
 def workflow_longest_path(base: Path, nesting: int, scans: int, sequences: bool, count: int) -> int:
     client = Path(base) / "For_move" / "From_Client"
     for i in range(nesting):
@@ -334,15 +418,16 @@ class WorkflowWorker(QThread):
         self.create_sequences = create_sequences
         self.base = Path(base) if base else workflow_base(self.root_path)
         self.files_created = 0
+        self.stopped = False
 
         # Helper for file creation
         self.gen_worker = FileGeneratorWorker(Path("."), count, size_strategy, file_types)
 
     def run(self):
         try:
-            mark_folder(self.root_path)
+            # The root is the panel's own folder (claimed before the run);
+            # the TEST folder is always new.
             base = self.base
-            base.mkdir(parents=True, exist_ok=True)
             mark_folder(base)
 
             path_move = base / "For_move"
@@ -379,18 +464,19 @@ class WorkflowWorker(QThread):
                         shot_dir = current_client_root / shot_folder_name
                         shot_dir.mkdir(parents=True, exist_ok=True)
 
-                        if self.create_sequences:
-                            ext = next((t for t in self.file_types if t in ['.exr', '.jpg', '.png', '.dpx']), '.exr')
-                            seq_name = f"{shot_base_name}_v01"
-                            for i in range(self.count):
-                                frame_num = 1001 + i
-                                self.gen_worker._create_file(shot_dir / f"{seq_name}.{frame_num:04d}{ext}")
-                                files_created += 1
-                        else:
-                            for i in range(self.count):
-                                ext = random.choice(self.file_types)
-                                self.gen_worker._create_file(shot_dir / f"{shot_base_name}_v{i+1:03d}{ext}")
-                                files_created += 1
+                        for i in range(self.count):
+                            # Stop is honoured per file: a big shot used to
+                            # run to its end first.
+                            if self.isInterruptionRequested():
+                                break
+                            if self.create_sequences:
+                                ext = next((t for t in self.file_types
+                                            if t in ['.exr', '.jpg', '.png', '.dpx']), '.exr')
+                                name = f"{shot_base_name}_v01.{1001 + i:04d}{ext}"
+                            else:
+                                name = f"{shot_base_name}_v{i+1:03d}{random.choice(self.file_types)}"
+                            self.gen_worker._create_file(shot_dir / name)
+                            files_created += 1
 
             df = pd.DataFrame(data)
             excel_path = path_move / "EXCEL_TEMPLATE.xlsx"
@@ -400,8 +486,10 @@ class WorkflowWorker(QThread):
                 (path_rename / f"DCIM_{random.randint(1000,9999)}.JPG").touch()
 
             self.files_created = files_created
+            self.stopped = self.isInterruptionRequested()
             msg = (
-                f"Test environment ready: {files_created} files.\n\n"
+                (f"Test environment stopped early: {plural(files_created, 'file')}.\n\n" if self.stopped
+                 else f"Test environment ready: {plural(files_created, 'file')}.\n\n") +
                 f"Folder: {base}\n"
                 f"Client files: {current_client_root}\n"
                 f"Levels: {self.nesting_level} | Scans per shot: {self.scans_per_shot} | "
@@ -508,10 +596,16 @@ class ValidationWorker(QThread):
                 if not self.src_path.exists(): raise Exception("The source folder does not exist")
                 if not self.dst_path.exists(): raise Exception("The destination folder does not exist")
 
-                report.append(f"<b>Folder comparison</b><br>Source: {self.src_path}<br>Destination: {self.dst_path}")
+                report.append(f"<b>Folder comparison</b><br>Source: {html.escape(str(self.src_path))}"
+                              f"<br>Destination: {html.escape(str(self.dst_path))}")
 
-                src_files = {f.name: f.stat().st_size for f in self.src_path.rglob('*') if f.is_file()}
-                dst_files = {f.name: f.stat().st_size for f in self.dst_path.rglob('*') if f.is_file()}
+                # Keyed by the path inside each folder: by name alone, two
+                # shots each holding v001.exr were one entry, and a lost or
+                # misplaced copy still read as 'arrived intact'.
+                src_files = {f.relative_to(self.src_path).as_posix(): f.stat().st_size
+                             for f in self.src_path.rglob('*') if f.is_file() and f.name != MARKER}
+                dst_files = {f.relative_to(self.dst_path).as_posix(): f.stat().st_size
+                             for f in self.dst_path.rglob('*') if f.is_file() and f.name != MARKER}
 
                 report.append(f"<br>Source files: {len(src_files)} | Destination files: {len(dst_files)}")
 
@@ -528,8 +622,10 @@ class ValidationWorker(QThread):
                     report.append(f"<font color='{Gate.OK}'>Files: every source file arrived intact.</font>")
                 else:
                     report.append(f"<font color='{Gate.BAD}'>Files: problems found</font>")
-                    if missing: report.append(f"  - Missing: {len(missing)} (e.g. {', '.join(missing[:3])})")
-                    if corrupted: report.append(f"  - Different size: {len(corrupted)} (e.g. {'; '.join(corrupted[:3])})")
+                    if missing: report.append(f"  - Missing: {len(missing)} (e.g. "
+                                              f"{html.escape(', '.join(missing[:3]))})")
+                    if corrupted: report.append(f"  - Different size: {len(corrupted)} (e.g. "
+                                                f"{html.escape('; '.join(corrupted[:3]))})")
 
                 if self.verify_db:
                     report.append("<br><b>Database and report check</b>")
@@ -677,6 +773,8 @@ class DatabaseHealthWorker(QThread):
                 cur.execute("SELECT COALESCE(SUM(checksum_failures), 0) FROM pg_stat_database "
                             "WHERE datname = current_database()")
                 failures = int((cur.fetchone() or [0])[0] or 0)
+                cur.execute("SHOW data_checksums")
+                checksums_on = str((cur.fetchone() or ["off"])[0]).lower() == "on"
             conn.rollback()
         if failures:
             problems.append(f"{failures} page checksum failures reported by PostgreSQL")
@@ -684,8 +782,12 @@ class DatabaseHealthWorker(QThread):
             return False, "Integrity check found problems:\n" + "\n".join(problems)
         if has_amcheck:
             return True, f"Integrity check: OK ({checked} indexes checked with amcheck, no checksum failures)."
-        return True, ("No checksum failures reported. The amcheck extension is not installed, so "
-                      "indexes were not checked one by one.")
+        # Not a pass: without amcheck almost nothing is checked, and checksum
+        # failures are only counted when the server has data checksums on.
+        return True, ("Only a basic check was possible: PostgreSQL reported no damaged pages"
+                      + ("" if checksums_on else " (but data checksums are off on this server, so "
+                                                 "it would not notice them)")
+                      + ". Ask IT to install the amcheck extension for a full check.")
 
 
 class _LiveLogView(QWidget):
@@ -749,7 +851,6 @@ class TesterPanel(QWidget):
         self.structure_worker: Optional[QThread] = None
         self.workflow_worker: Optional[QThread] = None
         self.analysis_worker: Optional[QThread] = None
-        self.stress_worker: Optional[QThread] = None
         self.reg_gen: Optional[QThread] = None
         self.reg_ingest: Optional[QThread] = None
         self.reg_valid: Optional[QThread] = None
@@ -766,34 +867,27 @@ class TesterPanel(QWidget):
         # tab's field without saying so.
         top = QHBoxLayout()
         top.addWidget(QLabel("Test folder"))
-        self.test_root = QLineEdit(str(default_test_folder()))
-        self.test_root.setToolTip("Every tool writes here. Destructive tools only act on a folder "
-                                  "this panel created.")
+        self.test_root = QLineEdit()
         self.test_root.textChanged.connect(self._test_folder_changed)
         top.addWidget(self.test_root, 1)
         btn_browse = make_button("Browse…", "secondary", on_click=self.browse_test_folder)
         top.addWidget(btn_browse)
+        # Beside the folder it deletes (it was alone on a Utilities tab).
+        self.btn_wipe = self._destructive(
+            make_button("Delete test folder…", "danger", on_click=self.wipe_folder,
+                        tooltip="Delete the folder the Tester Panel made here, with everything in it"),
+            "delete the test folder")
+        top.addWidget(self.btn_wipe)
         layout.addLayout(top)
         self.gen_path = self.test_root      # older name, kept for callers
+        self.set_test_folder(str(default_test_folder()))
 
         self.lbl_rights = QLabel(
             "" if self.can_destroy else
-            "Wipe, Set file dates, large generator runs and VACUUM are for developers.")
+            "Delete test folder, Set modified dates, large runs and VACUUM are for developers.")
         self.lbl_rights.setStyleSheet(f"color: {Gate.TEXT_DIM};")
         self.lbl_rights.setVisible(not self.can_destroy)
         layout.addWidget(self.lbl_rights)
-
-        self.sandbox_banner = QFrame()
-        self.sandbox_banner.setObjectName("SandboxBanner")
-        self.sandbox_banner.setStyleSheet(f"QFrame#SandboxBanner {{ background: {Gate.WARN_SURFACE}; "
-                                          f"border: 1px solid {Gate.WARN}; border-radius: 5px; }}")
-        banner_row = QHBoxLayout(self.sandbox_banner)
-        self.lbl_sandbox = QLabel("")
-        self.lbl_sandbox.setWordWrap(True)
-        banner_row.addWidget(self.lbl_sandbox, 1)
-        banner_row.addWidget(make_button("Reset", "secondary", on_click=self.reset_config_sandbox))
-        self.sandbox_banner.hide()
-        layout.addWidget(self.sandbox_banner)
 
         self.tabs = QTabWidget()
         pages = (
@@ -804,7 +898,6 @@ class TesterPanel(QWidget):
             (self.create_diagnostics_tab, "Diagnostics"),
             (self.create_system_tab, "System"),
             (self.create_automation_tab, "Automation"),
-            (self.create_utils_tab, "Utilities"),
         )
         for build, title in pages:
             # Each page scrolls: at 1280x720 the fields overlapped and the
@@ -832,6 +925,8 @@ class TesterPanel(QWidget):
         self.log_area.setReadOnly(True)
         self.log_area.setMaximumBlockCount(5000)
         self.log_area.setStyleSheet(f"font-family: {Gate.FONT_MONO};")
+        # About eight lines at least: at 1280x720 it was three, the fourth cut.
+        self.log_area.setMinimumHeight(self.log_area.fontMetrics().lineSpacing() * 8 + 12)
         rl.addWidget(self.log_area)
 
         self.splitter = QSplitter(Qt.Orientation.Vertical)
@@ -879,7 +974,7 @@ class TesterPanel(QWidget):
     def closeEvent(self, event):
         """Cleanup running testing threads when panel closes."""
         for attr_name in ("generation_worker", "structure_worker", "workflow_worker",
-                          "analysis_worker", "stress_worker", "reg_gen", "reg_ingest",
+                          "analysis_worker", "reg_gen", "reg_ingest",
                           "reg_valid", "folder_job", "db_job"):
             self._cleanup_worker_attr(attr_name)
         self.live_log.detach()
@@ -922,7 +1017,52 @@ class TesterPanel(QWidget):
         chosen = QFileDialog.getExistingDirectory(self, "Choose the test folder", self.test_root.text())
         # Cancel returns ''; the field keeps what it had.
         if chosen:
-            self.test_root.setText(chosen)
+            self.set_test_folder(chosen)
+
+    def set_test_folder(self, text):
+        """Show the path from its start (it used to show its middle), whole in the tooltip."""
+        self.test_root.setText(str(text))
+        self.test_root.setCursorPosition(0)
+        self.test_root.setToolTip(f"{text}\n\nEvery tool writes here. If the Tester Panel did not "
+                                  f"make this folder, it works in a '{WORK_FOLDER}' folder inside it.")
+
+    def work_folder(self, title="Tester Panel"):
+        """
+        Where a tool writes: the test folder when the panel made it, else a
+        Slate_tester folder inside it. None after saying why not.
+        """
+        folder = self.test_folder()
+        if folder is None:
+            return None
+        try:
+            work = claim_folder(folder)
+        except OSError as exc:
+            QMessageBox.warning(self, title, f"The test folder could not be used:\n{exc}")
+            return None
+        if work != folder:
+            self.log(f"{folder} already holds other files, so the Tester Panel works in {work}.")
+        return work
+
+    def run_allowed(self, title, path, total) -> bool:
+        """
+        The one check before a run that writes: large runs are for developers,
+        the disk must keep 10 % free, and above 5 GB the person is asked.
+        """
+        if total > LARGE_RUN_BYTES and not self.can_destroy:
+            QMessageBox.warning(self, title,
+                                f"{human_size(total)} is a large run; only developers can write "
+                                f"more than {human_size(LARGE_RUN_BYTES)} at once.")
+            return False
+        ok, ask, message = free_space_check(path, total)
+        if not ok:
+            QMessageBox.warning(self, title, message)
+            return False
+        if ask and QMessageBox.question(
+                self, title, f"This writes up to {human_size(total)} into {path}. Continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return False
+        return True
 
     def test_folder(self, quiet=False):
         """The validated test folder, or None after saying why."""
@@ -940,20 +1080,20 @@ class TesterPanel(QWidget):
         self.lbl_nest_limit.setText(f"Up to {self.spin_nest.maximum()} levels fit in this folder.")
 
     def _marked_test_folder(self, action):
-        """The test folder, only if this panel created it."""
+        """The folder the panel made for the test folder (itself or Slate_tester inside it)."""
         folder = self.test_folder()
         if folder is None:
             return None
         if not folder.exists():
             QMessageBox.information(self, action, f"{folder} does not exist - there is nothing to do.")
             return None
-        if not is_marked(folder):
+        owned = owned_folder(folder)
+        if owned is None:
             QMessageBox.warning(
                 self, action,
-                f"{folder} was not created by the Tester Panel, so it is left alone.\n\n"
-                f"Only folders holding the '{MARKER}' file this panel writes can be changed here.")
+                f"Nothing in {folder} was made by the Tester Panel, so it is left alone.")
             return None
-        return folder
+        return owned
 
     def _offer_open_folder(self, title, text, folder):
         box = QMessageBox(QMessageBox.Icon.Information, title, text, QMessageBox.StandardButton.Ok, self)
@@ -972,10 +1112,15 @@ class TesterPanel(QWidget):
         self.spin_count.valueChanged.connect(self._update_generator_state)
         cl.addRow("Files:", self.spin_count)
 
-        self.combo_size = QComboBox(); self.combo_size.addItems(list(SIZES))
-        self.combo_size.setFixedWidth(110)
-        self.combo_size.currentTextChanged.connect(self._update_generator_state)
+        self.combo_size = self._size_combo(SIZES)
+        self.combo_size.currentIndexChanged.connect(self._update_generator_state)
         cl.addRow("Size of each:", self.combo_size)
+        # The 1,000-small-files load run is a preset of this generator (it was
+        # a separate button under Diagnostics, with no Stop and no checks).
+        btn_small = make_button("1,000 small files", "ghost", on_click=self.preset_small_files,
+                                tooltip="1,000 .jpg files of 1 KB - for watching how browsing and "
+                                        "ingest cope")
+        cl.addRow("Preset:", btn_small)
 
         type_box = QGroupBox("File types"); tl = QHBoxLayout(type_box)
         self.chk_jpg = QCheckBox(".jpg"); self.chk_jpg.setChecked(True); tl.addWidget(self.chk_jpg)
@@ -1006,23 +1151,44 @@ class TesterPanel(QWidget):
         if self.chk_txt.isChecked(): types.append(".txt")
         return types
 
+    @staticmethod
+    def _size_combo(keys):
+        combo = QComboBox()
+        for key in keys:
+            combo.addItem(SIZE_LABELS[key], key)
+        combo.setMinimumWidth(110)
+        return combo
+
+    def preset_small_files(self):
+        self.spin_count.setValue(1000)
+        self.combo_size.setCurrentIndex(self.combo_size.findData("1KB"))
+        for box in (self.chk_mov, self.chk_exr, self.chk_txt):
+            box.setChecked(False)
+        self.chk_jpg.setChecked(True)
+
     def generator_bytes(self) -> int:
-        return self.spin_count.value() * SIZES.get(self.combo_size.currentText(), 0)
+        return self.spin_count.value() * SIZES.get(self.combo_size.currentData(), 0)
 
     def _update_generator_state(self, *_):
         if not hasattr(self, "btn_gen"):
             return
         types = self.generator_types()
         total = self.generator_bytes()
-        upto = "up to " if self.combo_size.currentText() == "Random" else ""
-        self.lbl_gen_total.setText(f"{self.spin_count.value():,} files, {upto}{human_size(total)} in all."
+        upto = "up to " if self.combo_size.currentData() == "Random" else ""
+        self.lbl_gen_total.setText(f"{plural(self.spin_count.value(), 'file')}, {upto}{human_size(total)} in all."
                                    + ("" if types else " Tick at least one file type."))
         running = self.generation_worker is not None
         if not running:
             self.btn_gen.setEnabled(bool(types))
             self.btn_gen.setToolTip("" if types else "Tick at least one file type.")
-        if hasattr(self, "btn_sim") and self.workflow_worker is None:
-            self.btn_sim.setEnabled(bool(self.workflow_types()))
+        if hasattr(self, "btn_sim"):
+            wf_total = workflow_bytes(self.wf_count.value(), self.wf_multiscan.value(),
+                                      self.wf_size.currentData())
+            files = workflow_files(self.wf_count.value(), self.wf_multiscan.value())
+            upto = "up to " if self.wf_size.currentData() == "Random" else ""
+            self.lbl_wf_total.setText(f"{plural(files, 'file')} in 10 shots, {upto}{human_size(wf_total)} in all.")
+            if self.workflow_worker is None:
+                self.btn_sim.setEnabled(bool(self.workflow_types()))
 
     def toggle_generation(self):
         if self.generation_worker is not None:
@@ -1033,29 +1199,18 @@ class TesterPanel(QWidget):
         self.start_generation()
 
     def start_generation(self):
-        path = self.test_folder()
-        if path is None:
+        if self.test_folder() is None:
             return
         types = self.generator_types()
         if not types:
             return
         count = self.spin_count.value()
-        size = self.combo_size.currentText()
+        size = self.combo_size.currentData()
         total = self.generator_bytes()
-        if total > LARGE_RUN_BYTES and not self.can_destroy:
-            QMessageBox.warning(self, "Generate files",
-                                f"{human_size(total)} is a large run; only developers can generate "
-                                f"more than {human_size(LARGE_RUN_BYTES)} at once.")
+        if not self.run_allowed("Generate files", self.test_folder(quiet=True), total):
             return
-        ok, ask, message = free_space_check(path, total)
-        if not ok:
-            QMessageBox.warning(self, "Generate files", message)
-            return
-        if ask and QMessageBox.question(
-                self, "Generate files",
-                f"This writes {human_size(total)} into {path}. Continue?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+        path = self.work_folder("Generate files")
+        if path is None:
             return
 
         self.btn_gen.setText("Stop")
@@ -1083,7 +1238,7 @@ class TesterPanel(QWidget):
         self.btn_gen.setText("Generate files")
         self.btn_gen.setEnabled(bool(self.generator_types()))
         self.prog_bar.setVisible(False)
-        text = f"Created {worker.created} files in {worker.target_path}."
+        text = f"Created {plural(worker.created, 'file')} in {worker.target_path}."
         if worker.errors:
             text += f"\n{len(worker.errors)} could not be created: {worker.errors[0]}"
         self.log(text)
@@ -1094,18 +1249,20 @@ class TesterPanel(QWidget):
         w = QWidget(); l = QVBoxLayout(w)
 
         info = QLabel("<b>Workflow simulator</b><br>Builds a 'For_move' incoming structure with "
-                      "an Excel sheet, in a new TEST folder inside the test folder.")
+                      "an Excel sheet, in a new TEST folder inside the test folder: 2 reels of 5 "
+                      "shots. Large runs need a developer, and the disk must keep 10% free.")
         info.setWordWrap(True)
         l.addWidget(info)
 
         config_box = QGroupBox("Files"); cl = self._form(); config_box.setLayout(cl)
 
         self.wf_count = self._spin(1, 1000, 5)
+        self.wf_count.valueChanged.connect(self._update_generator_state)
         cl.addRow("Files per shot:", self.wf_count)
 
-        self.wf_size = QComboBox(); self.wf_size.addItems(["Empty", "1KB", "1MB", "Random"])
-        self.wf_size.setCurrentText("1KB")
-        self.wf_size.setFixedWidth(110)
+        self.wf_size = self._size_combo(["Empty", "1KB", "1MB", "Random"])
+        self.wf_size.setCurrentIndex(self.wf_size.findData("1KB"))
+        self.wf_size.currentIndexChanged.connect(self._update_generator_state)
         cl.addRow("Size of each:", self.wf_size)
 
         type_w = QWidget(); tl = QHBoxLayout(type_w); tl.setContentsMargins(0,0,0,0)
@@ -1125,6 +1282,7 @@ class TesterPanel(QWidget):
         cxl.addRow("Extra folder levels:", self.wf_nesting)
 
         self.wf_multiscan = self._spin(1, 5, 1)
+        self.wf_multiscan.valueChanged.connect(self._update_generator_state)
         self.wf_multiscan.setToolTip("Several folders per shot (Shot_ScanA, Shot_ScanB...)")
         cxl.addRow("Scans per shot:", self.wf_multiscan)
 
@@ -1133,6 +1291,10 @@ class TesterPanel(QWidget):
         cxl.addRow("", self.wf_seq)
 
         l.addWidget(complex_box)
+
+        self.lbl_wf_total = QLabel("")
+        self.lbl_wf_total.setStyleSheet(f"color: {Gate.TEXT_2};")
+        l.addWidget(self.lbl_wf_total)
 
         self.btn_sim = make_button("Create test environment", "primary", on_click=self.toggle_workflow)
         l.addLayout(self._end_row(self.btn_sim))
@@ -1156,17 +1318,24 @@ class TesterPanel(QWidget):
         self.start_workflow_sim()
 
     def start_workflow_sim(self):
-        path = self.test_folder()
-        if path is None:
+        if self.test_folder() is None:
             return
         types = self.workflow_types()
         if not types:
             return
         count = self.wf_count.value()
-        size = self.wf_size.currentText()
+        size = self.wf_size.currentData()
         nesting = self.wf_nesting.value()
         scans = self.wf_multiscan.value()
         seq = self.wf_seq.isChecked()
+        # The same size check and developer gate as the generator: this
+        # could write about 500 GB with neither.
+        if not self.run_allowed("Create test environment", self.test_folder(quiet=True),
+                                workflow_bytes(count, scans, size)):
+            return
+        path = self.work_folder("Create test environment")
+        if path is None:
+            return
 
         base = workflow_base(path)
         if workflow_longest_path(base, nesting, scans, seq, count) > WINDOWS_PATH_LIMIT:
@@ -1192,7 +1361,7 @@ class TesterPanel(QWidget):
         self.log(msg)
         if msg.startswith("Error"):
             QMessageBox.warning(self, "Create test environment", msg[len("Error: "):])
-        else:
+        elif worker.base.exists():
             self._offer_open_folder("Create test environment", msg, worker.base)
 
     # ---------------------------------------------------------- analysis tab
@@ -1232,7 +1401,7 @@ class TesterPanel(QWidget):
 
         db_box = QGroupBox("Database health"); dbl = QHBoxLayout(db_box)
         self.btn_vac = self._destructive(
-            make_button("Run VACUUM", "secondary", on_click=self.run_db_vacuum,
+            make_button("Tidy up the database (VACUUM)", "secondary", on_click=self.run_db_vacuum,
                         tooltip="Reclaim space and refresh statistics - heavy on a busy database"),
             "run VACUUM")
         self.btn_chk = make_button("Integrity check", "secondary", on_click=self.run_db_integrity)
@@ -1260,7 +1429,7 @@ class TesterPanel(QWidget):
         self.db_job = DatabaseHealthWorker(job)
         self.db_job.done.connect(self._on_db_job_done)
         self.btn_vac.setEnabled(False); self.btn_chk.setEnabled(False)
-        self.log("Running VACUUM…" if job == "vacuum" else "Checking the database…")
+        self.log("Tidying up the database (VACUUM)…" if job == "vacuum" else "Checking the database…")
         self.db_job.start()
         return self.db_job
 
@@ -1326,7 +1495,7 @@ class TesterPanel(QWidget):
         self.start_structure()
 
     def start_structure(self):
-        path = self.test_folder()
+        path = self.work_folder("Deep folders")
         if path is None:
             return
         target = path / "Deep_folders"
@@ -1350,19 +1519,6 @@ class TesterPanel(QWidget):
         else:
             self._offer_open_folder("Deep folders", msg, worker.target_path)
 
-    # -------------------------------------------------------- utilities tab
-    def create_utils_tab(self):
-        w = QWidget(); l = QVBoxLayout(w)
-        info = QLabel("Deletes the test folder and everything in it - only when the Tester Panel "
-                      f"created it (it holds a '{MARKER}' file).")
-        info.setWordWrap(True)
-        l.addWidget(info)
-        self.btn_wipe = self._destructive(
-            make_button("Delete test folder…", "danger", on_click=self.wipe_folder), "delete the test folder")
-        l.addLayout(self._end_row(self.btn_wipe))
-        l.addStretch()
-        return w
-
     # ------------------------------------------------------ diagnostics tab
     def create_diagnostics_tab(self):
         w = QWidget(); l = QVBoxLayout(w)
@@ -1373,17 +1529,10 @@ class TesterPanel(QWidget):
         ll.addWidget(self.live_log)
         l.addWidget(log_group, 2)
 
-        action_group = QGroupBox("Load"); al = QVBoxLayout(action_group)
-        al.addWidget(QLabel("Writes 1,000 small .jpg files (1 KB each) into the test folder - "
-                            "for watching how browsing and ingest cope. It does not make thumbnails."))
-        btn_thumb = make_button("Create 1,000 small files", "secondary", on_click=self.run_thumb_stress)
-        al.addLayout(self._end_row(btn_thumb))
-        l.addWidget(action_group)
-
-        # Crashing the program on purpose is not a sibling of a harmless
-        # button: its own group, developers only.
+        # Raising an error on purpose: its own group, developers only.
         self.crash_group = QGroupBox("Developer only"); cl = QVBoxLayout(self.crash_group)
-        cl.addWidget(QLabel("Raises an error on purpose to test the crash reporter. Slate closes."))
+        cl.addWidget(QLabel("Raises an unhandled error on purpose, to test crash logging: it is "
+                            "written to the log as an uncaught error. Slate keeps running."))
         self.btn_crash = make_button("Simulate crash", "danger", on_click=self.simulate_crash)
         cl.addLayout(self._end_row(self.btn_crash))
         self.crash_group.setVisible(self.can_destroy)
@@ -1395,55 +1544,47 @@ class TesterPanel(QWidget):
         if not self.can_destroy:
             return
         if QMessageBox.warning(self, "Simulate crash",
-                               "This closes Slate with an error, to test the crash reporter. Continue?",
+                               "This raises an unhandled error on purpose. It is logged as an uncaught "
+                               "error; Slate keeps running. Continue?",
                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                                QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
             raise ValueError("Intentional Crash Triggered from Tester Panel.")
-
-    def run_thumb_stress(self):
-        path = self.test_folder()
-        if path is None:
-            return
-        self.log("Creating 1,000 small files…")
-        self._cleanup_worker_attr("stress_worker")
-        self.stress_worker = FileGeneratorWorker(path / "Small_files", 1000, "1KB", [".jpg"])
-        self.stress_worker.progress_signal.connect(self._on_stress_progress)
-        self.stress_worker.finished_signal.connect(self._on_stress_finished)
-        self.stress_worker.start()
-        return self.stress_worker
-
-    def _on_stress_progress(self, value):
-        if self.sender() is not self.stress_worker:
-            return
-        if value % 25 == 0:
-            self.log(f"Small files: {value}%")
-
-    def _on_stress_finished(self):
-        worker = self.sender()
-        if not self._release_finished_worker("stress_worker", worker):
-            return
-        self.log(f"Created {worker.created} small files in {worker.target_path}.")
 
     # -------------------------------------------------------- automation tab
     def create_automation_tab(self):
         w = QWidget(); l = QVBoxLayout(w)
 
         info = QLabel("<b>Regression run</b><br>Creates 50 test images in a new folder inside the "
-                      "test folder, ingests them into the stock library, checks that every one "
-                      "arrived, then removes the test rows again.")
+                      "test folder, ingests them into the stock library and checks that every one "
+                      "arrived. After a pass the test rows and the images are removed again; after "
+                      "a failure the images are kept to look at.")
         info.setWordWrap(True)
         l.addWidget(info)
 
-        self.btn_reg = make_button("Run regression", "primary", on_click=self.run_regression)
-        l.addLayout(self._end_row(self.btn_reg))
+        self.btn_reg = make_button("Run regression", "primary", on_click=self.toggle_regression)
+        self.lbl_reg_step = QLabel("")
+        self.lbl_reg_step.setStyleSheet(f"color: {Gate.TEXT_2};")
+        l.addLayout(self._end_row(self.btn_reg, self.lbl_reg_step))
 
         l.addStretch()
         return w
 
     REGRESSION_FILES = 50
 
+    def toggle_regression(self):
+        """Run, or stop the run that is going (an ingest that never ends kept the button dead)."""
+        if self.reg_gen is not None or self.reg_ingest is not None:
+            self._cleanup_worker_attr("reg_gen")
+            self._cleanup_worker_attr("reg_ingest")
+            self._reg_finish(False, self._regression.get("created", 0), 0, "stopped by you")
+            return None
+        return self.run_regression()
+
+    def _reg_step(self, text):
+        self.lbl_reg_step.setText(text)
+
     def run_regression(self):
-        root = self.test_folder()
+        root = self.work_folder("Run regression")
         if root is None:
             return None
         target = root / f"Regression_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -1453,7 +1594,8 @@ class TesterPanel(QWidget):
         self._cleanup_worker_attr("reg_gen")
         self._cleanup_worker_attr("reg_ingest")
         self._cleanup_worker_attr("reg_valid")
-        self.btn_reg.setEnabled(False)
+        self.btn_reg.setText("Stop")
+        self._reg_step("Step 1 of 3: creating images…")
 
         # Names without trailing digits, so the ingest keeps them as stills.
         self.reg_gen = FileGeneratorWorker(target, self.REGRESSION_FILES, "1KB", [".jpg"],
@@ -1468,6 +1610,7 @@ class TesterPanel(QWidget):
             return
         self._regression["created"] = worker.created
         self.log(f"Step 1: {worker.created} images created. Ingesting…")
+        self._reg_step("Step 2 of 3: ingesting…")
         self._cleanup_worker_attr("reg_ingest")
         # The ingest writes the stock library itself (the Stock Viewer's own
         # writer); the check below reads what it wrote.
@@ -1500,6 +1643,7 @@ class TesterPanel(QWidget):
             return
         target = self._regression.get("target")
         expected = self._regression.get("created", 0)
+        self._reg_step("Step 3 of 3: checking…")
         try:
             found = self.count_stock_rows(target) if success else 0
         except Exception as exc:
@@ -1514,10 +1658,15 @@ class TesterPanel(QWidget):
         self._reg_finish(passed, expected, found, message)
 
     def _reg_finish(self, passed, expected, found, message=""):
-        self.btn_reg.setEnabled(True)
+        self.btn_reg.setText("Run regression")
+        self._reg_step("")
         if passed:
+            # The images go too: Regression_ folders piled up run after run.
+            target = self._regression.get("target")
+            if target is not None:
+                shutil.rmtree(target, ignore_errors=True)
             text = (f"Regression passed: {found} of {expected} images reached the stock library. "
-                    f"The test rows were removed again.")
+                    f"The test rows and images were removed again.")
             self.log(text)
             QMessageBox.information(self, "Regression passed", text)
         else:
@@ -1534,33 +1683,27 @@ class TesterPanel(QWidget):
 
         perm_box = QGroupBox("Permission matrix"); pl = QVBoxLayout(perm_box)
         self.perm_table = QTableWidget()
-        self.perm_table.setMinimumHeight(240)
-        pl.addWidget(self.perm_table)
+        self.perm_table.setMinimumHeight(300)
+        pl.addWidget(self.perm_table, 1)
         btn_refresh_perm = make_button("Refresh", "secondary", on_click=self.load_permissions)
         pl.addLayout(self._end_row(btn_refresh_perm))
         l.addWidget(perm_box, 1)
         self.load_permissions()
 
-        conf_box = QGroupBox("Config sandbox (this session only)"); cl = self._form(); conf_box.setLayout(cl)
-        self.conf_path = QLineEdit(str(GlobalConfig.server_root()))
-        self.conf_path.setMinimumWidth(420)
-        cl.addRow("Server root:", self.conf_path)
-        self.conf_cache = QLineEdit(str(GlobalConfig.local_cache_dir()))
-        self.conf_cache.setMinimumWidth(420)
-        cl.addRow("Local cache:", self.conf_cache)
-        cl.addRow("", self._end_row(
-            make_button("Apply for this session", "secondary", on_click=self.apply_config_sandbox),
-            make_button("Reset", "ghost", on_click=self.reset_config_sandbox)))
-        l.addWidget(conf_box)
+        # The config sandbox (another server root / cache for this session) is
+        # gone: objects made at start-up (Live Ops, fleet commands, the audit
+        # log) kept the real root while later ones took the new one, so Slate
+        # ran split across two roots. Start Slate with another config instead.
 
-        time_box = QGroupBox("Set file dates"); tl = QHBoxLayout(time_box)
-        tl.addWidget(QLabel("Set every file in the test folder to"))
+        time_box = QGroupBox("Set modified dates"); tl = QHBoxLayout(time_box)
+        # Modified (and accessed) time only - Windows' 'Date created' is not changed.
+        tl.addWidget(QLabel("Set the modified date of every file in the test folder to"))
         self.time_date = QDateEdit(); self.time_date.setCalendarPopup(True)
         self.time_date.setDisplayFormat("yyyy-MM-dd")
         self.time_date.setDate(QDate.currentDate().addDays(-365))
         tl.addWidget(self.time_date)
         self.btn_time = self._destructive(
-            make_button("Set file dates…", "secondary", on_click=self.run_time_travel), "change file dates")
+            make_button("Set modified dates…", "secondary", on_click=self.run_time_travel), "change file dates")
         tl.addWidget(self.btn_time)
         tl.addStretch(1)
         l.addWidget(time_box)
@@ -1603,52 +1746,26 @@ class TesterPanel(QWidget):
             item = QTableWidgetItem(abilities)
             item.setToolTip(abilities)
             self.perm_table.setItem(i, len(headers) - 1, item)
-        style_table(self.perm_table, {"Role": "contents", "Abilities": ("interactive", 320)})
-
-    def apply_config_sandbox(self):
-        """Point this session at another server root / cache. Nothing is saved."""
-        server = self.conf_path.text().strip()
-        cache = self.conf_cache.text().strip()
-        if server:
-            GlobalConfig.set_runtime_override("SERVER_ROOT", server)
-        if cache:
-            GlobalConfig.set_runtime_override("LOCAL_CACHE_DIR", cache)
-        self.log(f"Sandbox: server root {server or '(unchanged)'}, local cache {cache or '(unchanged)'}")
-        self._show_sandbox_banner()
-
-    def reset_config_sandbox(self):
-        GlobalConfig.clear_runtime_overrides()
-        self.conf_path.setText(str(GlobalConfig.server_root()))
-        self.conf_cache.setText(str(GlobalConfig.local_cache_dir()))
-        self.log("Sandbox: overrides cleared.")
-        self._show_sandbox_banner()
-
-    def _show_sandbox_banner(self):
-        overrides = GlobalConfig.runtime_overrides()
-        if not overrides:
-            self.sandbox_banner.hide()
-            return
-        parts = []
-        if "SERVER_ROOT" in overrides:
-            parts.append(f"server root {overrides['SERVER_ROOT']}")
-        if "LOCAL_CACHE_DIR" in overrides:
-            parts.append(f"local cache {overrides['LOCAL_CACHE_DIR']}")
-        self.lbl_sandbox.setText("Sandbox override active for this session: " + "; ".join(parts)
-                                 + ". Live Ops, logs and commands use it until you reset or restart.")
-        self.sandbox_banner.show()
+        # Every tab column as wide as its name: headers were cut mid-word
+        # ('Timeline Viewe'); the table scrolls sideways instead.
+        style_table(self.perm_table, {"Role": "contents", "Abilities": ("interactive", 320),
+                                      **{label: "contents" for label in
+                                         [self.perm_table.horizontalHeaderItem(c).text()
+                                          for c in range(1, self.perm_table.columnCount() - 1)]}})
 
     def run_time_travel(self):
         """Set the dates of the files in the test folder, after saying how many and to what."""
         if not self.can_destroy:
             return None
-        folder = self._marked_test_folder("Set file dates")
+        folder = self._marked_test_folder("Set modified dates")
         if folder is None:
             return None
         new_date = self.time_date.date()
         count = count_files(folder)
         if QMessageBox.question(
-                self, "Set file dates",
-                f"Set the date of {count:,} files in {folder} to {new_date.toString('yyyy-MM-dd')}?",
+                self, "Set modified dates",
+                f"Set the modified date of {plural(count, 'file')} in {folder} to "
+                f"{new_date.toString('yyyy-MM-dd')}?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
                 QMessageBox.StandardButton.Cancel) != QMessageBox.StandardButton.Yes:
             return None
@@ -1670,7 +1787,8 @@ class TesterPanel(QWidget):
         """Says the path and how many files; Cancel is the default."""
         from .components.feedback import confirm
         return confirm(self, "Delete test folder",
-                       f"Delete {count:,} files in {folder}?\n\nThis cannot be undone.",
+                       f"Delete {folder}, which the Tester Panel made, with the "
+                       f"{plural(count, 'file')} in it?\n\nThis cannot be undone.",
                        yes_label="Delete", destructive=True)
 
     def _start_folder_job(self, folder, job, timestamp=None):
@@ -1686,9 +1804,9 @@ class TesterPanel(QWidget):
         worker = self.sender()
         if not self._release_finished_worker("folder_job", worker):
             return
-        title = "Delete test folder" if worker.job == "wipe" else "Set file dates"
-        done = (f"Deleted {count:,} files in {worker.folder}." if worker.job == "wipe"
-                else f"Set the date of {count:,} files in {worker.folder}.")
+        title = "Delete test folder" if worker.job == "wipe" else "Set modified dates"
+        done = (f"Deleted {plural(count, 'file')} in {worker.folder}." if worker.job == "wipe"
+                else f"Set the modified date of {plural(count, 'file')} in {worker.folder}.")
         self.log(done)
         if errors:
             self.log("\n".join(errors[:50]))

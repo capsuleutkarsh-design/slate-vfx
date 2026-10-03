@@ -558,9 +558,9 @@ def test_a_figure_filter_is_shown(db, app):
     view = _desk(db)
     view.card_breached.clicked.emit()
     assert view.card_chip.isVisibleTo(view) and "Breached" in view.card_chip.text()
-    assert view.card_breached._selected
+    assert view.card_breached._active
     view.clear_card()
-    assert not view.card_chip.isVisibleTo(view) and not view.card_breached._selected
+    assert not view.card_chip.isVisibleTo(view) and not view.card_breached._active
     assert len(view._rows) == 2
 
 

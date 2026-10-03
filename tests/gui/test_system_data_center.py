@@ -141,6 +141,7 @@ def test_sidebar_and_console_look(explorer):
     explorer.show_tables([{"table_name": "ut_users"}, {"table_name": "stock_library"}])
     labels = {explorer.table_list.item(i).text(): explorer.table_list.item(i).toolTip()
               for i in range(explorer.table_list.count())}
+    assert labels.pop("Overview")
     assert labels == {"Users": "ut_users", "Stock library": "stock_library"}
     import pathlib, re
     source = pathlib.Path(dx.__file__).read_text(encoding="utf-8")
@@ -165,6 +166,60 @@ def test_bar_value_label_sits_above_the_bar():
     assert rect.bottom() <= 150
     top = dx.SimpleBarChart.value_label_rect(100, 50, 40, 50)
     assert top.top() >= 34
+
+
+def test_table_list_groups_system_tables(explorer):
+    """SYS2-030 / SYS2-032 / SYS2-037."""
+    explorer.show_tables([{"table_name": n} for n in
+                          ("ut_users", "stock_favorites", "it_licenses", "ut_role_seeds")])
+    items = [explorer.table_list.item(i) for i in range(explorer.table_list.count())]
+    texts = [i.text() for i in items]
+    assert texts[0] == "Overview" and explorer.table_list.currentItem() is items[0]
+    assert "Stock favourites" in texts and "▸ System tables (2)" in texts
+    system = [i for i in items if i.data(dx.TABLE_ROLE) in dx.SYSTEM_TABLES]
+    assert system and all(i.isHidden() for i in system)
+    header = next(i for i in items if i.data(dx.TABLE_ROLE) == dx.SYSTEM_HEADER)
+    explorer._on_list_clicked(header)
+    assert not any(i.isHidden() for i in system)
+    assert "padding" in explorer.table_list.styleSheet()
+
+
+def test_table_view_counts_rows_and_formats_times(explorer):
+    """SYS2-018: row count, Refresh, formatted timestamps (raw in the editor)."""
+    from datetime import datetime
+    data = {"cols_res": [{"column_name": "id"}, {"column_name": "seen"}],
+            "rows": [{"id": 1, "seen": datetime(2026, 10, 3, 16, 41, 5, 123456)}], "keys": ["id"]}
+    explorer.show_table("dc_pair", data)
+    assert explorer.lbl_rows.text() == "1 row" and explorer.btn_reload.text() == "Refresh"
+    index = explorer.data_grid.model().index(0, 1)
+    from PySide6.QtWidgets import QStyleOptionViewItem
+    option = QStyleOptionViewItem()
+    explorer.data_grid.itemDelegate().initStyleOption(option, index)
+    assert option.text == "3 Oct 2026, 16:41:05"
+    assert "123456" in explorer.data_grid.item(0, 1).text()
+
+
+def test_sql_result_clears_the_no_key_note(explorer, qtbot):
+    """SYS2-015 / SYS2-034: the note goes; the SQL box is under both views."""
+    _load(explorer, "dc_nokey")
+    assert not explorer.lbl_note.isHidden()
+    explorer.txt_sql.setPlainText("SELECT 1 AS one")
+    explorer.run_custom_sql()
+    qtbot.waitUntil(lambda: explorer.lbl_table_name.text().startswith("SQL Result"), timeout=5000)
+    assert explorer.lbl_note.isHidden()
+    assert explorer.sql_box.parent() is explorer.right_split
+
+
+def test_overview_tones_and_purge_placeholder(explorer):
+    """SYS2-031 / SYS2-033."""
+    from slate.core.infra.gate import Gate
+    explorer.dashboard_view.show_stats({"count_assets": 1, "count_users": 2, "count_projects_lineup": 0,
+                                        "count_projects_tracking": 0, "res_types": [],
+                                        "roles": {"Artist": 2}})
+    users = explorer.dashboard_view.cards[1]
+    assert users._tone == Gate.INFO
+    dlg = dx.MaintenanceDialog()
+    assert dlg.confirm_input.placeholderText() != dlg.WORD
 
 
 @pytest.fixture(autouse=True)

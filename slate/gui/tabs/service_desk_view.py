@@ -488,7 +488,7 @@ class ServiceDeskView(QWidget):
         """The figure the queue is filtered by: highlighted, and named in a chip."""
         self._active_card = card
         for each in self.stats.cards:
-            each.set_selected(each is card)
+            each.set_active(each is card)
         if card is None:
             self._card_filter = ""
         self.card_chip.setText("%s  ×" % label)

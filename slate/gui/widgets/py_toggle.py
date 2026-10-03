@@ -41,7 +41,9 @@ class PyToggle(QCheckBox):
         
         # Colors - now using design tokens for theme consistency
         self._bg_color = C.BG_ELEVATED      # "#26262D" → token
-        self._circle_color = Gate.TEXT       # Circle color (light gray)
+        # A light knob in every theme: Gate.TEXT is near-black in Light, which
+        # drew a heavy dark blob on the track. In Light it takes a hairline.
+        self._circle_color = Gate.TEXT if Gate.IS_DARK else Gate.PANEL
         self._active_color = C.ACCENT_PRIMARY  # "#3EA8BF" → token
         
         # Animation setup
@@ -81,6 +83,8 @@ class PyToggle(QCheckBox):
         
         # Draw circle
         painter.setBrush(QColor(self._circle_color))
+        if not Gate.IS_DARK:
+            painter.setPen(QColor(Gate.LINE))
         painter.drawEllipse(self._circle_position, 3, 22, 22)
         
         painter.end()

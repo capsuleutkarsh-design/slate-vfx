@@ -44,8 +44,17 @@ def test_explanations_are_plain_and_never_guess():
     assert alv.LogInterpreter.explain("No critical issues found in scan") == ""
     assert alv.LogInterpreter.explain("INFO Warning: x") == ""
     assert "permissions" in alv.LogInterpreter.explain("PermissionError: [WinError 5]")
-    for _pattern, sentence in alv.LogInterpreter.RULES:
+    for _names, _phrases, sentence in alv.LogInterpreter.RULES:
         assert "[" not in sentence and "ℹ" not in sentence
+
+
+def test_only_warnings_and_errors_are_explained():
+    """SYS2-011: INFO lines and exception names in the message are not explained."""
+    assert alv.LogInterpreter.explain("Info line with Timeout in it timed out", "INFO") == ""
+    assert alv.LogInterpreter.explain("could not parse, a ValueError maybe", "WARNING") == ""
+    assert "too long" in alv.LogInterpreter.explain("the server timed out", "ERROR")
+    assert "developers" in alv.LogInterpreter.explain(
+        "boom\nTraceback (most recent call last):\nValueError: bad", "ERROR")
 
 
 def test_machine_label():
@@ -77,18 +86,25 @@ def sys_viewer(qtbot, tmp_path):
     viewer.cleanup_resources()
 
 
-def test_workstation_list_and_filters(sys_viewer):
+def _open(viewer, qtbot, row=0):
+    viewer.load_log_file(viewer.list_widget.item(row))
+    qtbot.waitUntil(lambda: viewer.lbl_info.text().startswith("Showing"), timeout=5000)
+
+
+def test_workstation_list_and_filters(sys_viewer, qtbot):
     item = sys_viewer.list_widget.item(0)
     assert item.text().startswith("COMP-03 · rahul")
     assert sys_viewer.right_layout.contentsMargins().left() >= 8
     sys_viewer.load_log_file(item)
-    assert sys_viewer.lbl_info.text() == "Showing the whole log."
+    assert sys_viewer.lbl_info.text() == "Reading…"          # read off the UI thread (SYS2-012)
+    qtbot.waitUntil(lambda: sys_viewer.lbl_info.text() == "Showing the whole log.", timeout=5000)
     assert sys_viewer.log_table.rowCount() == 26
     sys_viewer.level_filter.setCurrentIndex(2)      # errors only
     assert sys_viewer.log_table.rowCount() == 6
     sys_viewer.level_filter.setCurrentIndex(0)
     sys_viewer.search.setText("disk")
-    assert sys_viewer.log_table.rowCount() == 20
+    assert sys_viewer.log_table.rowCount() == 26         # debounced (SYS2-026)
+    qtbot.waitUntil(lambda: sys_viewer.log_table.rowCount() == 20, timeout=2000)
     assert sys_viewer.log_table.isSortingEnabled()
 
 
@@ -102,7 +118,7 @@ def test_missing_log_folder_shows_an_empty_state(qtbot, tmp_path):
 
 
 def test_auto_refresh_keeps_selection_and_scroll(sys_viewer, qtbot):
-    sys_viewer.load_log_file(sys_viewer.list_widget.item(0))
+    _open(sys_viewer, qtbot)
     table = sys_viewer.log_table
     table.selectRow(3)
     key = table.item(3, 0).data(alv.Qt.ItemDataRole.UserRole + 51)
@@ -133,7 +149,7 @@ def test_detail_pane_shows_the_whole_entry(qtbot, tmp_path):
     viewer = alv.SystemLogViewer(log_root=root)
     viewer.refresh_timer.stop()
     qtbot.addWidget(viewer)
-    viewer.load_log_file(viewer.list_widget.item(0))
+    _open(viewer, qtbot)
     viewer.log_table.selectRow(0)
     assert "Traceback line" in viewer.detail.toPlainText()
     viewer.cleanup_resources()
@@ -238,6 +254,10 @@ def test_audit_trail_reads_both_sources(qtbot, tmp_path):
     assert viewer.table.rowCount() == 2
     viewer.chk_failures.setChecked(True)
     assert viewer.table.rowCount() == 1
+    assert viewer.chk_failures.text() == "Problems only"
+    viewer.chk_failures.setChecked(False)
+    results = {viewer.table.item(r, 3).text() for r in range(viewer.table.rowCount())}
+    assert "Done" in results                          # the Admin Panel's own lines (SYS2-027)
 
 
 def test_unified_viewer_names_its_tabs(qtbot, tmp_path):
@@ -285,6 +305,74 @@ def test_change_history_count_wording(qtbot, monkeypatch):
     viewer.search.setText("")
     viewer.populate_table()
     assert viewer.lbl_count.text() == "Showing all 2,128 changes."
+
+
+def test_trail_types_come_from_the_entries(qtbot, tmp_path):
+    """SYS2-003 / SYS2-014: the filter lists what is there; dates and the cap are said."""
+    lines = [json.dumps({"timestamp": "2026-09-30T10:00:00", "type": t, "user": "hr",
+                         "status": "SUCCESS", "details": "x"}) for t in ("ATTENDANCE", "RENAME")]
+    (tmp_path / "audit_2026-09-30.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (tmp_path / "audit_2026-08-01.log").write_text(json.dumps({
+        "timestamp": "2026-08-01T10:00:00", "type": "ONBOARDING", "user": "hr",
+        "status": "SUCCESS", "details": "old"}) + "\n", encoding="utf-8")
+    viewer = alv.AuditTrailViewer(tmp_path)
+    qtbot.addWidget(viewer)
+    names = [viewer.type_filter.itemText(i) for i in range(viewer.type_filter.count())]
+    assert names == ["All types", "Attendance edit", "CAP rename", "Onboarding"]
+    assert "Sign-in" not in names
+    from datetime import date
+    entries = alv.read_audit_trail(tmp_path, since=date(2026, 9, 1), until=date(2026, 9, 30))
+    assert {e["type"] for e in entries} == {"ATTENDANCE", "RENAME"}
+    assert viewer.btn_export.text() == "Export"
+    viewer.entries = viewer.entries * 1
+    viewer.capped = True
+    viewer.populate_table()
+    assert "newest" in viewer.lbl_count.text()
+
+
+def test_date_range_choices(qtbot):
+    """SYS2-029: a combo, with the dates only for Custom."""
+    rng = alv.DateRange()
+    qtbot.addWidget(rng)
+    rng.show()
+    assert rng.dates() == (None, None) and not rng.date_from.isVisible()
+    rng.combo.setCurrentIndex(1)
+    start, end = rng.dates()
+    assert (end - start).days == 6
+    rng.combo.setCurrentIndex(3)
+    assert rng.date_from.isVisible()
+
+
+def test_change_history_names_people_like_the_trail(qtbot):
+    """SYS2-028: no 'Unknown' - an empty user is 'Not recorded'."""
+    db = FakeHistoryDb(2)
+    db.rows[0]["user_name"] = db.rows[0]["display_name"] = ""
+    viewer = alv.DatabaseAuditViewer(db)
+    qtbot.addWidget(viewer)
+    users = {viewer.table.item(r, 1).text() for r in range(viewer.table.rowCount())}
+    assert alv.NOT_RECORDED in users and "Unknown" not in users
+
+
+def test_audit_logs_do_not_reload_on_every_switch(qtbot, tmp_path, monkeypatch):
+    """SYS2-013."""
+    viewer = alv.UnifiedLogViewer(db_manager=FakeHistoryDb(3), audit_dir=tmp_path,
+                                  audit_file=tmp_path / "audit.log", log_root=tmp_path)
+    qtbot.addWidget(viewer)
+    calls = []
+    monkeypatch.setattr(viewer.db_audit, "refresh_data", lambda: calls.append(1))
+    viewer.tabs.setCurrentIndex(1)
+    viewer.refresh_all()
+    assert calls == []
+    viewer.refresh_all(force=True)
+    assert calls == [1]
+    viewer.cleanup_resources()
+
+
+def test_freshness_dot_is_visible():
+    """SYS2-017: the dot icon draws something."""
+    from slate.gui.core.icons import icon
+    image = icon("dot", "#FF0000", 12).pixmap(12, 12).toImage()
+    assert any(image.pixelColor(x, y).alpha() > 0 for x in range(12) for y in range(12))
 
 
 @pytest.fixture(autouse=True)

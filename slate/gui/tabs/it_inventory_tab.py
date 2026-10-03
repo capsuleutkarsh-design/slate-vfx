@@ -568,7 +568,7 @@ class ItInventoryTab(QWidget):
     def _show_figure(self, figure):
         self._figure = figure
         for key, card in self._figure_cards.items():
-            card.set_selected(key == figure)
+            card.set_active(key == figure)
 
     @on_database_error
     def load_data(self, *_):

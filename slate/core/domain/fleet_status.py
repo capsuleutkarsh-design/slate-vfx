@@ -35,9 +35,18 @@ LABELS = {
     UNKNOWN: "Unknown",
 }
 
-# The order states are listed in: what needs attention is not first, the
-# working fleet is - but every report and screen uses the same order.
-ORDER = {ONLINE: 0, NOT_RESPONDING: 1, OFFLINE: 2, UNKNOWN: 3}
+# The order machines are listed in, on every report and screen: what needs
+# attention first, the working fleet last - an admin opens Live Ops to see
+# what is down, and it used to be below thirteen rows of green cards.
+ORDER = {OFFLINE: 0, NOT_RESPONDING: 1, UNKNOWN: 2, ONLINE: 3}
+
+# What each state means, for tooltips and the card.
+EXPLAIN = {
+    ONLINE: "Reported in the last minute",
+    NOT_RESPONDING: "Has not reported for more than a minute",
+    OFFLINE: "Has not reported for five minutes or more",
+    UNKNOWN: "The report has no time on it (an old client) or could not be read",
+}
 
 # Disk usage thresholds, in percent full.
 DISK_WARN = 80
@@ -45,9 +54,19 @@ DISK_BAD = 90
 
 
 def last_seen_of(data) -> Optional[float]:
-    """The report's last_seen as a number, or None when it is missing or junk."""
+    """
+    When the report was last written, as a number, or None when unknown.
+
+    The file's own modification time on the share ('_file_mtime', added by the
+    reader) wins over the client's last_seen: that is the file server's clock,
+    so a workstation whose clock runs an hour fast no longer stays 'Online'
+    for an hour after it is switched off, and a slow one is not shown as
+    'Not responding'.
+    """
     try:
-        value = (data or {}).get("last_seen")
+        value = (data or {}).get("_file_mtime")
+        if value in (None, ""):
+            value = (data or {}).get("last_seen")
     except AttributeError:
         return None
     if value is None or value == "":

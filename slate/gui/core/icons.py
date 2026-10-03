@@ -212,7 +212,10 @@ def icon(name: str, colour: str = None, size: int = 18) -> QIcon:
         painter = QPainter(drawn)
         try:
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            QSvgRenderer(QByteArray(_svg(key, ink, pixels, 1.6).encode("utf-8"))).render(painter)
+            # The dot is a zero-length path: only a thick round stroke makes it a
+            # visible disc. At 1.6 it was nothing at all.
+            stroke = 11.0 if key == "dot" else 1.6
+            QSvgRenderer(QByteArray(_svg(key, ink, pixels, stroke).encode("utf-8"))).render(painter)
         finally:
             painter.end()
         drawn.setDevicePixelRatio(ratio)

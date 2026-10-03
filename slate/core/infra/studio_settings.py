@@ -75,8 +75,9 @@ DEFAULTS: Dict[str, Any] = {
     # GST on rupee bids, percent. Foreign-currency bids start at 0.
     "gst_rate": 18,
     # Business hours, for SLA clocks and anything else that counts working
-    # time. days: 0 = Monday ... 6 = Sunday. Studio holidays are skipped too.
-    "working_hours": {"start": "10:00", "end": "19:00", "days": [0, 1, 2, 3, 4, 5]},
+    # time. The working days are the studio policy's weekly offs
+    # (attendance_policy); an older saved value may still carry 'days'.
+    "working_hours": {"start": "10:00", "end": "19:00"},
     # The leave and attendance rules (see core/domain/leave_policy.py for what
     # each one means). Only the keys present override the rule's default.
     "attendance_policy": {},
@@ -144,10 +145,15 @@ def _check_hours(value):
         raise ValueError("Working hours are HH:MM on a 24-hour clock.")
     if str(start).zfill(5) >= str(end).zfill(5):
         raise ValueError("The working day must end after it starts.")
-    days = sorted({int(d) for d in (value.get("days") or [])})
-    if not days or any(d < 0 or d > 6 for d in days):
-        raise ValueError("Pick at least one working day.")
-    return {"start": str(start)[:5].zfill(5), "end": str(end)[:5].zfill(5), "days": days}
+    out = {"start": str(start)[:5].zfill(5), "end": str(end)[:5].zfill(5)}
+    # The working days are the studio policy's weekly offs now; 'days' is
+    # only checked (and kept) when an older value still carries it.
+    if "days" in value:
+        days = sorted({int(d) for d in (value.get("days") or [])})
+        if not days or any(d < 0 or d > 6 for d in days):
+            raise ValueError("Pick at least one working day.")
+        out["days"] = days
+    return out
 
 
 def _check_policy(value):

@@ -534,8 +534,9 @@ class MainWindowBuilderMixin:
                     "Admin Panel",
                     lambda: (
                         self._build_sync_disabled_tab(
-                            "Admin Panel Unavailable",
-                            "Admin fleet monitoring and remote controls are unavailable in LOCAL MODE.",
+                            "Admin Panel needs the studio server",
+                            "Slate is working offline right now. Live Ops, the logs and the "
+                            "database come back when the studio server can be reached.",
                         )
                         if self._is_sqlite_fallback_mode()
                         else screen("slate.gui.admin_panel", "AdminPanelTab")(
@@ -556,7 +557,7 @@ class MainWindowBuilderMixin:
                     tooltip=(
                         "Workstations, logs and the database"
                         if not self._is_sqlite_fallback_mode()
-                        else "Unavailable in LOCAL MODE (requires central PostgreSQL)."
+                        else "Admin Panel needs the studio server. Slate is working offline right now."
                     )
                 )
 

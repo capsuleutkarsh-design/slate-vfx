@@ -1,13 +1,15 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem, QTableWidget,
     QTableWidgetItem, QLabel, QSplitter, QGridLayout, QDialog,
-    QPlainTextEdit, QMessageBox, QFrame, QAbstractItemView, QLineEdit, QMenu
+    QPlainTextEdit, QMessageBox, QFrame, QAbstractItemView, QLineEdit, QMenu,
+    QStyledItemDelegate
 )
 from PySide6.QtCore import Qt, QRectF
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QShortcut, QKeySequence
 
 from ..core.infra.db_worker import run_db_async
 from ..core.infra.app_context import AppContext
+from ..core.domain.dates import format_datetime
 from .components.qt_safety import safe_single_shot
 from .components.feedback import confirm
 
@@ -30,29 +32,76 @@ SAVED_VALUE_ROLE = Qt.ItemDataRole.UserRole + 1
 NULL_ROLE = Qt.ItemDataRole.UserRole + 2
 # The raw table name on a list item; the item shows a friendly label.
 TABLE_ROLE = Qt.ItemDataRole.UserRole + 3
+# True on a cell loaded from a date/time column: shown as '3 Oct 2026, 16:41:05',
+# edited (and searched) as the database's own text.
+DATETIME_ROLE = Qt.ItemDataRole.UserRole + 4
+# The two list entries that are not tables.
+OVERVIEW = "__overview__"
+SYSTEM_HEADER = "__system__"
+# The rows a table shows (the grid's own LIMIT).
+TABLE_ROW_LIMIT = 500
 
 # How many rows a typed SELECT shows at most; the title says when there were more.
 SQL_RESULT_LIMIT = 5000
 
-# Friendly names for the tables people actually open. Anything else is shown
-# with its underscores as spaces; the raw name is always the tooltip.
+# A friendly name for every table (British spelling); an unknown one is shown
+# with its underscores as spaces. The raw name is always the tooltip.
 TABLE_LABELS = {
     "ut_users": "Users",
     "ut_roles": "Roles",
     "stock_library": "Stock library",
+    "stock_favorites": "Stock favourites",
+    "stock_picks": "Studio picks",
+    "stock_roots": "Stock library folders",
     "tracking_projects": "Dashboard projects",
     "tracking_shots": "Dashboard shots",
+    "tracking_tasks": "Dashboard tasks",
+    "tracking_versions": "Dashboard versions",
+    "tracking_version_notes": "Version notes",
+    "tracking_deliveries": "Deliveries",
+    "tracking_delivery_items": "Delivery items",
     "projects": "Lineup projects",
     "change_history": "Change history",
     "attendance_log": "Attendance log",
     "leave_requests": "Leave requests",
+    "leave_balances": "Leave balances",
+    "leave_year_close": "Leave year closing",
+    "comp_off_ledger": "Comp-off earned",
+    "comp_off_spends": "Comp-off taken",
+    "holiday_calendar": "Holiday calendar",
+    "payroll_records": "Payroll records",
+    "performance_reviews": "Performance reviews",
+    "onboarding_workflows": "Onboarding",
     "notifications": "Notifications",
     "studio_settings": "Studio settings",
     "hardware_inventory": "Hardware",
     "asset_assignments": "Machine loans",
     "it_tickets": "IT tickets",
+    "it_ticket_comments": "IT ticket comments",
+    "it_deployments": "IT deployments",
+    "software_licenses": "Software licences",
+    "licence_readings": "Licence readings",
+    "licence_reminders": "Licence reminders",
+    "prod_bidding": "Bids",
+    "prod_bid_lines": "Bid lines",
+    "bidding_costs": "Bid costs",
+    "prod_scheduling": "Schedule",
+    "project_schedules": "Project schedules",
+    "operations": "Ingest runs",
+    "task_details": "Ingest files",
+    # Plumbing and kept-for-history tables: listed under 'System tables'.
     "slate_migrations": "Schema migrations",
+    "slate_change_feed": "Change feed",
+    "slate_json_write_locks": "Shared-file write locks",
+    "ut_role_seeds": "Role seeds",
+    "ut_role_upgrades": "Role upgrades",
+    "audit_log": "Old audit log",
+    "ut_attendance": "Old attendance",
+    "it_licenses": "Old IT licences",
 }
+SYSTEM_TABLES = frozenset({"slate_migrations", "slate_change_feed", "slate_json_write_locks",
+                           "ut_role_seeds", "ut_role_upgrades", "audit_log", "ut_attendance",
+                           "it_licenses"})
 
 
 def table_label(name: str) -> str:
@@ -113,6 +162,15 @@ def _is_active_user(row) -> bool:
         return UserManager._flag_active(dict(row))
     except Exception:
         return True
+
+
+class _DateTimeDelegate(QStyledItemDelegate):
+    """Shows date/time cells formatted; the editor gets the stored text."""
+
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        if index.data(DATETIME_ROLE):
+            option.text = format_datetime(index.data(Qt.ItemDataRole.EditRole), seconds=True)
 
 
 # --- CUSTOM VISUAL WIDGETS ---
@@ -182,14 +240,22 @@ class SimpleBarChart(QWidget):
         chart_w = self.width() - margin_left - margin_right
         chart_h = self.height() - margin_bottom - margin_top
 
-        bar_width = chart_w / len(keys) * 0.6
-        spacing = chart_w / len(keys) * 0.4
+        # Slim bars: a 70 px block for one figure read as a warning panel.
+        slot = chart_w / len(keys)
+        bar_width = min(slot * 0.6, 48)
+        spacing = slot - bar_width
 
         p.setPen(QPen(QColor(Gate.LINE), 2))
         p.drawLine(margin_left, self.height() - margin_bottom, self.width() - margin_right, self.height() - margin_bottom) # X
         p.drawLine(margin_left, margin_top, margin_left, self.height() - margin_bottom) # Y
 
         font_small = QFont(); font_small.setPixelSize(10)
+        # The axis says what the height means: 0 at the foot, the largest at the top.
+        p.setFont(font_small)
+        p.setPen(QColor(Gate.TEXT_DIM))
+        for value, y_axis in ((0, self.height() - margin_bottom), (max_val, margin_top)):
+            p.drawText(QRectF(0, y_axis - 8, margin_left - 8, 16),
+                       Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, str(value))
         for i, (key, val) in enumerate(self.data.items()):
             x = margin_left + (i * (bar_width + spacing)) + (spacing/2)
             bar_h = (val / max_val) * chart_h
@@ -353,7 +419,8 @@ class DashboardHome(QWidget):
             self.cards = [
                 StatCard("Stock assets", val_assets, Gate.ACCENT,
                          tooltip="Files in the stock library"),
-                StatCard("Active users", val_users, Gate.BAD,
+                # Neutral figures take neutral tones; red is kept for problems.
+                StatCard("Active users", val_users, Gate.INFO,
                          tooltip="Accounts that are not deactivated and whose last day has not passed"),
                 StatCard("Lineup projects", val_proj, Gate.OK,
                          tooltip="Projects in the 'projects' table, used for Timeline lineups"),
@@ -371,7 +438,7 @@ class DashboardHome(QWidget):
 
             self._clear_layout(self.charts_layout)
             self.charts_layout.addWidget(SimpleBarChart("Stock assets by type", type_data, Gate.ACCENT))
-            self.charts_layout.addWidget(SimpleBarChart("Active users by role", data['roles'], Gate.BAD))
+            self.charts_layout.addWidget(SimpleBarChart("Active users by role", data['roles'], Gate.INFO))
         except Exception as e:
             logging.exception("Failed to render Data Center dashboard stats")
             self.error_label.setText(f"The overview could not be shown: {e}")
@@ -430,7 +497,8 @@ class MaintenanceDialog(QDialog):
         body.setWordWrap(True)
         layout.addWidget(body)
         self.confirm_input = QLineEdit()
-        self.confirm_input.setPlaceholderText(self.WORD)
+        # Not the word itself: the empty field looked as if it already said it.
+        self.confirm_input.setPlaceholderText("Type the word here")
         layout.addWidget(self.confirm_input)
         row = QHBoxLayout()
         row.addStretch(1)
@@ -459,6 +527,7 @@ class DatabaseExplorer(QWidget):
         self.app_context = app_context or AppContext()
         self.db = db_manager or self.app_context.db_manager()
         self.current_table = None
+        self._system_open = False     # the folded "System tables" group
         self.primary_key_col = None   # the first key column (kept for older callers)
         self.key_columns = []         # the table's real primary key, possibly several columns
         self.columns = []
@@ -538,18 +607,13 @@ class DatabaseExplorer(QWidget):
         left_layout.setContentsMargins(10, 20, 10, 10)
         left_layout.setSpacing(10)
 
-        btn_dash = make_button("Overview", "ghost", on_click=self.show_dashboard,
-                               tooltip="Counts and charts of what the database holds")
-        btn_dash.setIcon(draw_icon("chart"))
-        left_layout.addWidget(btn_dash)
-
-        tables_label = QLabel("Tables")
-        tables_label.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-weight: 600;")
-        left_layout.addWidget(tables_label)
-
+        # Overview is the list's first item, so the sidebar always shows where
+        # you are (a ghost button above it never looked selected).
         self.table_list = QListWidget()
         self.table_list.setFrameShape(QFrame.NoFrame)
-        self.table_list.itemClicked.connect(self.load_table_data)
+        # Rows a mouse can hit, like the other lists (they were 16 px).
+        self.table_list.setStyleSheet("QListWidget::item { padding: 5px 6px; }")
+        self.table_list.itemClicked.connect(self._on_list_clicked)
         # The list takes the height; a stretch above the maintenance button
         # used to leave it seven rows tall.
         left_layout.addWidget(self.table_list, 1)
@@ -578,7 +642,14 @@ class DatabaseExplorer(QWidget):
         self.stack_layout.addWidget(self.table_view_widget)
         self.table_view_widget.hide()
 
-        splitter.addWidget(self.right_stack)
+        # The SQL box sits under both views in a splitter that can be pulled
+        # taller: it was part of the table view only, fixed at 60 px.
+        self.right_split = QSplitter(Qt.Orientation.Vertical)
+        self.right_split.addWidget(self.right_stack)
+        self.right_split.addWidget(self.sql_box)
+        self.right_split.setStretchFactor(0, 1)
+        self.right_split.setSizes([600, 90])
+        splitter.addWidget(self.right_split)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([230, 1000])
         layout.addWidget(splitter)
@@ -591,7 +662,36 @@ class DatabaseExplorer(QWidget):
         self.table_view_widget.hide()
         self.dashboard_view.show()
         self.dashboard_view.load_stats()
+        self._select_entry(OVERVIEW)
+
+    def _select_entry(self, key):
+        for i in range(self.table_list.count()):
+            item = self.table_list.item(i)
+            if item.data(TABLE_ROLE) == key:
+                self.table_list.setCurrentItem(item)
+                return
         self.table_list.clearSelection()
+
+    def _on_list_clicked(self, item):
+        key = item.data(TABLE_ROLE) if item is not None else None
+        if key == OVERVIEW:
+            self.show_dashboard()
+        elif key == SYSTEM_HEADER:
+            self._toggle_system_tables()
+        else:
+            self.load_table_data(item)
+
+    def _toggle_system_tables(self, show=None):
+        show = (not self._system_open) if show is None else bool(show)
+        self._system_open = show
+        for i in range(self.table_list.count()):
+            item = self.table_list.item(i)
+            key = item.data(TABLE_ROLE)
+            if key == SYSTEM_HEADER:
+                count = item.data(Qt.ItemDataRole.UserRole)
+                item.setText(f"{'▾' if show else '▸'} System tables ({count})")
+            elif key in SYSTEM_TABLES:
+                item.setHidden(not show)
 
     def setup_table_view_ui(self):
         """Builds the Data Grid + SQL UI inside self.table_view_widget"""
@@ -599,8 +699,14 @@ class DatabaseExplorer(QWidget):
         layout.setContentsMargins(20, 20, 20, 20)
 
         h = QHBoxLayout()
-        self.lbl_table_name = QLabel("Users")
-        self.lbl_table_name.setStyleSheet(f"font-size: {Gate.SIZE_XL}px; font-weight: 700; color: {Gate.TEXT};")
+        # The same heading as the Overview, with the row count under it.
+        heading = page_title("Users", " ")
+        self.lbl_table_name = heading.findChild(QLabel, "pageTitle")
+        self.lbl_rows = heading.findChild(QLabel, "pageSubtitle")
+
+        self.btn_reload = make_button("Refresh", "secondary", on_click=self.reload_table,
+                                      tooltip="Read this table again")
+        self.btn_reload.setIcon(draw_icon("refresh"))
 
         self.inp_search = QLineEdit()
         self.inp_search.setPlaceholderText("Search the rows shown…")
@@ -609,9 +715,10 @@ class DatabaseExplorer(QWidget):
         self.inp_search.setFixedWidth(250)
         self.inp_search.textChanged.connect(self.apply_filter)
 
-        h.addWidget(self.lbl_table_name)
+        h.addWidget(heading)
         h.addStretch()
-        h.addWidget(self.inp_search)
+        h.addWidget(self.inp_search, 0, Qt.AlignmentFlag.AlignTop)
+        h.addWidget(self.btn_reload, 0, Qt.AlignmentFlag.AlignTop)
         layout.addLayout(h)
 
         # Said when the table has no primary key: its rows cannot be told
@@ -628,11 +735,13 @@ class DatabaseExplorer(QWidget):
         self.data_grid.itemChanged.connect(self.on_item_changed)
         self.data_grid.setContextMenuPolicy(Qt.CustomContextMenu)
         self.data_grid.customContextMenuRequested.connect(self.show_context_menu)
+        self.data_grid.setItemDelegate(_DateTimeDelegate(self.data_grid))
         layout.addWidget(self.data_grid)
 
         # SQL Console
+        self.sql_box = QWidget()
         self.txt_sql = QPlainTextEdit()
-        self.txt_sql.setFixedHeight(60)
+        self.txt_sql.setMinimumHeight(48)
         self.txt_sql.setPlaceholderText("SQL query - Ctrl+Enter runs it")
         self.txt_sql.setStyleSheet(f"font-family: {Gate.FONT_MONO};")
 
@@ -645,10 +754,10 @@ class DatabaseExplorer(QWidget):
             shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
             shortcut.activated.connect(self.run_custom_sql)
 
-        h_sql = QHBoxLayout()
+        h_sql = QHBoxLayout(self.sql_box)
+        h_sql.setContentsMargins(20, 6, 20, 12)
         h_sql.addWidget(self.txt_sql)
-        h_sql.addWidget(btn_run, 0, Qt.AlignmentFlag.AlignBottom)
-        layout.addLayout(h_sql)
+        h_sql.addWidget(btn_run, 0, Qt.AlignmentFlag.AlignTop)
 
     def refresh_tables(self):
         """Load table list asynchronously."""
@@ -684,11 +793,34 @@ class DatabaseExplorer(QWidget):
             name = row['table_name'] if isinstance(row, dict) else row[0]
             self._valid_tables.add(name)
             names.append(name)
-        for name in sorted(names, key=lambda n: table_label(n).lower()):
+        overview = QListWidgetItem(draw_icon("chart"), "Overview")
+        overview.setData(TABLE_ROLE, OVERVIEW)
+        overview.setToolTip("Counts and charts of what the database holds")
+        self.table_list.addItem(overview)
+
+        def add(name):
             item = QListWidgetItem(table_label(name))
             item.setData(TABLE_ROLE, name)
             item.setToolTip(name)
             self.table_list.addItem(item)
+
+        ordered = sorted(names, key=lambda n: table_label(n).lower())
+        for name in ordered:
+            if name not in SYSTEM_TABLES:
+                add(name)
+        # Internal plumbing is listed apart, folded away, below the studio's data.
+        system = [n for n in ordered if n in SYSTEM_TABLES]
+        if system:
+            header = QListWidgetItem()
+            header.setData(TABLE_ROLE, SYSTEM_HEADER)
+            header.setData(Qt.ItemDataRole.UserRole, len(system))
+            header.setToolTip("Tables Slate uses for its own bookkeeping")
+            header.setForeground(QColor(Gate.TEXT_DIM))
+            self.table_list.addItem(header)
+            for name in system:
+                add(name)
+        self._toggle_system_tables(show=self.current_table in SYSTEM_TABLES)
+        self._select_entry(self.current_table if self.table_view_widget.isVisibleTo(self) else OVERVIEW)
 
     def _validate_identifier(self, name):
         """Validate that a SQL identifier (table/column name) is safe."""
@@ -732,15 +864,20 @@ class DatabaseExplorer(QWidget):
             """, (table,), fetch="all") or []
         return [r["column_name"] if isinstance(r, dict) else r[0] for r in rows]
 
+    def reload_table(self):
+        """Read the open table again."""
+        if self.current_table:
+            self.load_table_data(self.current_table)
+
     def load_table_data(self, item):
-        """Load table data asynchronously."""
+        """Load table data asynchronously (item: a list entry or a table name)."""
         if self._is_closing:
             return
         if not item: return
         self.dashboard_view.hide()
         self.table_view_widget.show()
 
-        table_name = item.data(TABLE_ROLE) or item.text()
+        table_name = item if isinstance(item, str) else (item.data(TABLE_ROLE) or item.text())
 
         # Validate table name against whitelist
         if not self._validate_identifier(table_name) or table_name not in self._valid_tables:
@@ -748,8 +885,10 @@ class DatabaseExplorer(QWidget):
             return
 
         self.current_table = table_name
+        self._select_entry(table_name)
         self.lbl_table_name.setText(table_label(table_name))
         self.lbl_table_name.setToolTip(table_name)
+        self.lbl_rows.setText("Reading…")
         self.is_loading = True
         self.inp_search.clear()
 
@@ -765,7 +904,7 @@ class DatabaseExplorer(QWidget):
                 ) or []
             keys = self.primary_key_of(table_name)
             rows = self.db.execute_query(
-                f"SELECT * FROM {_safe_identifier(table_name)} LIMIT 500", fetch="all") or []
+                f"SELECT * FROM {_safe_identifier(table_name)} LIMIT {TABLE_ROW_LIMIT}", fetch="all") or []
             return {'cols_res': cols_res, 'rows': rows, 'keys': keys}
 
         def _on_done(data):
@@ -810,6 +949,9 @@ class DatabaseExplorer(QWidget):
                 self.lbl_note.show()
 
             rows = data['rows']
+            count = len(rows)
+            self.lbl_rows.setText(f"The first {TABLE_ROW_LIMIT} rows" if count >= TABLE_ROW_LIMIT
+                                  else f"{count} row{'' if count == 1 else 's'}")
             self.data_grid.clear()
             self.data_grid.setColumnCount(len(self.columns))
             self.data_grid.setHorizontalHeaderLabels(self.columns)
@@ -821,6 +963,11 @@ class DatabaseExplorer(QWidget):
                 for c, col in enumerate(self.columns):
                     val = values[c]
                     item = QTableWidgetItem("" if val is None else str(val))
+                    if hasattr(val, "isoformat") and hasattr(val, "hour"):
+                        # Shown formatted (no microseconds or offset); the
+                        # stored text is the tooltip and what an edit starts from.
+                        item.setData(DATETIME_ROLE, True)
+                        item.setToolTip(str(val))
                     item.setData(Qt.ItemDataRole.UserRole, key)
                     # The value as loaded, so a refused edit can be put back.
                     item.setData(SAVED_VALUE_ROLE, None if val is None else str(val))
@@ -1153,6 +1300,13 @@ class DatabaseExplorer(QWidget):
                 try:
                     self.current_table = None
                     self.primary_key_col = None
+                    # The result replaces the table: its note, list highlight
+                    # and row count go with it.
+                    self.lbl_note.hide()
+                    self.lbl_rows.setText("")
+                    self.table_list.clearSelection()
+                    self.dashboard_view.hide()
+                    self.table_view_widget.show()
                     self.data_grid.clear()
                     self.data_grid.setRowCount(0)
                     self.data_grid.setColumnCount(0)

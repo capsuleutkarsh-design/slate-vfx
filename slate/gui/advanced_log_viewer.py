@@ -8,9 +8,9 @@ Three tabs:
   traceback of the selected line.
 - Change history - the change_history table (shots, tasks, settings...), with
   the item each change was made to, a date range and paging.
-- Audit trail - sign-ins, user and role changes and admin actions: the daily
-  JSON files AuditLogger writes to <server>/Logs/Audit and the Admin Panel's
-  own <server>/Config/audit.log. They were written all along and never shown.
+- Audit trail - user and role changes, attendance edits, onboarding, CAP
+  renames and admin actions: the daily JSON files AuditLogger writes to
+  <server>/Logs/Audit and the Admin Panel's own <server>/Config/audit.log.
 
 The parsing and wording are plain functions at the top of the file, so they
 can be tested without a window.
@@ -27,7 +27,7 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QListWidget,
     QListWidgetItem, QLabel, QLineEdit, QComboBox, QTabWidget, QTableWidget,
-    QAbstractItemView, QCheckBox, QPlainTextEdit, QDateEdit
+    QCheckBox, QPlainTextEdit, QDateEdit
 )
 from PySide6.QtCore import Qt, QTimer, QThread, Signal, QDate
 
@@ -51,6 +51,19 @@ READ_LIMIT_BYTES = 500 * 1024
 ROW_LIMIT = 2000
 # Change history rows per page.
 HISTORY_PAGE = 2000
+# Audit trail entries read at most.
+TRAIL_LIMIT = 5000
+# A page of the Audit Logs is read again when it is shown and older than this.
+RELOAD_AFTER_SECONDS = 120
+
+
+def debounced(owner, callback, ms=200):
+    """A single-shot timer that runs callback once typing (or arrow-pressing) stops."""
+    timer = QTimer(owner)
+    timer.setSingleShot(True)
+    timer.setInterval(ms)
+    timer.timeout.connect(callback)
+    return timer
 
 
 # ==========================================================================
@@ -122,7 +135,7 @@ def parse_log_text(text: str, limit: int = ROW_LIMIT):
     if capped:
         entries = entries[-limit:]
     for entry in entries:
-        entry["explanation"] = LogInterpreter.explain(entry["detail"])
+        entry["explanation"] = LogInterpreter.explain(entry["detail"], entry["level"])
     return entries, dates, capped
 
 
@@ -132,37 +145,50 @@ class LogInterpreter:
 
     It used to match plain words, so 'No critical issues found' read as
     'Serious System Failure' and an INFO line containing 'Warning:' raised an
-    alarm; every other row said 'System Info'. Only exception names and the
-    operating system's own disk-full messages are matched now.
+    alarm; every other row said 'System Info'.
+
+    Only warnings and errors are explained. Each rule is (exception names,
+    operating-system phrases, sentence): the names are matched in the
+    traceback under the line only - a message that merely mentions
+    'ValueError' is not one - and the phrases ('Access is denied', 'timed
+    out') anywhere in the entry.
     """
+    LEVELS = ("WARNING", "ERROR", "CRITICAL")
     RULES = [
-        (r"\bPermissionError\b|\bWinError 5\b|Access is denied",
+        ("PermissionError", r"\bWinError 5\b|Access is denied",
          "Slate was not allowed to open a file or folder - check its permissions."),
-        (r"\bFileNotFoundError\b|\bWinError [23]\b",
+        ("FileNotFoundError", r"\bWinError [23]\b",
          "A file or folder Slate needed was missing - it may have been moved or deleted."),
-        (r"No space left on device|\bWinError 112\b|There is not enough space on the disk",
+        ("", r"No space left on device|\bWinError 112\b|There is not enough space on the disk",
          "A disk is full - free some space on it."),
-        (r"\bConnectionRefusedError\b|\bWinError 10061\b",
+        ("ConnectionRefusedError", r"\bWinError 10061\b",
          "A server refused the connection - check that it is running."),
-        (r"\bTimeoutError\b|timed out",
+        ("TimeoutError", r"timed out",
          "Something took too long to answer - the network or a server may be slow."),
-        (r"\bImportError\b|\bModuleNotFoundError\b",
+        ("ImportError|ModuleNotFoundError", "",
          "Part of Slate is missing on this computer - reinstall or update it."),
-        (r"\bKeyError\b",
+        ("KeyError", "",
          "Slate expected a value that was not there - report this to the developers."),
-        (r"\bValueError\b",
+        ("ValueError", "",
          "Slate met a value in a form it did not expect - report this to the developers."),
-        (r"\bOSError\b",
+        ("OSError", "",
          "The operating system refused a file operation."),
     ]
-    _COMPILED = [(re.compile(p, re.I), t) for p, t in RULES]
+    _COMPILED = [(re.compile(rf"\b(?:{names})\b") if names else None,
+                  re.compile(phrases, re.I) if phrases else None, sentence)
+                 for names, phrases, sentence in RULES]
 
     @staticmethod
-    def explain(message) -> str:
-        text = str(message or "")
-        for pattern, explanation in LogInterpreter._COMPILED:
-            if pattern.search(text):
-                return explanation
+    def explain(detail, level="ERROR") -> str:
+        """A sentence for a warning or error entry (its message plus traceback), else ''."""
+        if canonical_level(level) not in LogInterpreter.LEVELS:
+            return ""
+        text = str(detail or "")
+        traceback = text.partition("\n")[2]
+        for names, phrases, sentence in LogInterpreter._COMPILED:
+            if (names is not None and names.search(traceback)) or \
+                    (phrases is not None and phrases.search(text)):
+                return sentence
         return ""
 
 
@@ -264,6 +290,7 @@ class SystemLogViewer(QWidget):
         v.addWidget(title)
 
         self.list_widget = QListWidget()
+        self.list_widget.setStyleSheet("QListWidget::item { padding: 4px 6px; }")
         self.list_widget.itemClicked.connect(self.load_log_file)
         v.addWidget(self.list_widget, 1)
         self.list_empty = EmptyState(
@@ -297,7 +324,9 @@ class SystemLogViewer(QWidget):
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search the log…")
         self.search.setClearButtonEnabled(True)
-        self.search.textChanged.connect(self.populate_table)
+        # Debounced like Change history: each key press rebuilt 2,000 rows.
+        self._search_timer = debounced(self, self.populate_table)
+        self.search.textChanged.connect(self._search_timer.start)
         filters.addWidget(self.search, 1)
         self.level_filter = QComboBox()
         for text, levels in LEVEL_FILTERS:
@@ -326,6 +355,10 @@ class SystemLogViewer(QWidget):
 
         self.detail = QPlainTextEdit()
         self.detail.setReadOnly(True)
+        # The same ground as the table above it: in Light the table was grey
+        # and this pane white, so one viewer looked like two widgets.
+        self.detail.setStyleSheet(f"QPlainTextEdit {{ background-color: {Gate.GROUND}; "
+                                  f"border: 1px solid {Gate.LINE}; border-radius: {Gate.RADIUS_MD}px; }}")
         self.detail.setPlaceholderText("Pick a line to see all of it, with its traceback.")
         split = QSplitter(Qt.Orientation.Vertical)
         split.addWidget(self.log_table)
@@ -350,24 +383,32 @@ class SystemLogViewer(QWidget):
     def refresh_list(self):
         current = self.current_file
         self.list_widget.clear()
-        if not self.log_root.exists():
+        # One stat per file (it was two, both on the share), and a listing
+        # that fails says why instead of showing an empty list.
+        files = []
+        error = ""
+        try:
+            for f in self.log_root.glob("*.log"):
+                try:
+                    files.append((f.stat().st_mtime, f))
+                except OSError:
+                    continue
+            if not self.log_root.is_dir():
+                error = "missing"
+        except OSError as exc:
+            logger.warning("Could not list workstation logs: %s", exc)
+            error = str(exc)
+        if error:
             self.list_widget.hide()
+            if error != "missing":
+                self.list_empty.set_message("The workstation logs could not be listed", error)
             self.list_empty.show()
             return
         self.list_empty.hide()
         self.list_widget.show()
 
-        try:
-            files = sorted(self.log_root.glob("*.log"), key=lambda f: f.stat().st_mtime, reverse=True)
-        except OSError as exc:
-            logger.warning("Could not list workstation logs: %s", exc)
-            files = []
         now = time.time()
-        for f in files:
-            try:
-                mod_time = f.stat().st_mtime
-            except OSError:
-                continue
+        for mod_time, f in sorted(files, key=lambda pair: pair[0], reverse=True):
             word, colour = freshness(now - mod_time)
             item = QListWidgetItem(draw_icon("dot", colour, 12),
                                    f"{machine_label(f.stem)}\nupdated {_age(now - mod_time)}")
@@ -384,6 +425,9 @@ class SystemLogViewer(QWidget):
         self.current_file = Path(path_str)
         self._stamp = None
         self.lbl_viewing.setText(machine_label(self.current_file.stem))
+        self.cached_lines = []
+        self.populate_table()
+        self.lbl_info.setText("Reading…")
         self.read_file()
 
     # ---------------------------------------------------------------- read
@@ -401,26 +445,28 @@ class SystemLogViewer(QWidget):
             return
         if self._stamp == (stat.st_mtime, stat.st_size):
             return
+        self._start_reader(auto=True)
+
+    def _start_reader(self, auto):
         if self._reader is not None and self._reader.isRunning():
-            return
+            if auto:
+                return
+            # A newer pick: its result is wanted, the running one is ignored
+            # (_on_read checks the path).
+            self._reader.done.disconnect()
         self._reader = _LogReader(self.current_file, self)
-        self._reader.done.connect(self._on_read)
+        self._reader.done.connect(lambda result: self._on_read(result, auto=auto))
         self._reader.start()
 
     def read_file(self, auto=False):
-        """Read the current log now (a machine was just picked)."""
+        """
+        Read the current log (a machine was just picked) off the UI thread:
+        the log is on the share, and reading it here froze the window on
+        every click.
+        """
         if self._is_closing or not self.current_file:
             return
-        try:
-            stat = self.current_file.stat()
-            text, size, truncated = read_log_tail(self.current_file)
-            entries, dates, capped = parse_log_text(text)
-        except Exception as exc:
-            self.lbl_info.setText(f"The log could not be read: {exc}")
-            return
-        self._on_read({"path": self.current_file, "stamp": (stat.st_mtime, stat.st_size),
-                       "entries": entries, "dates": dates, "size": size,
-                       "truncated": truncated, "capped": capped}, auto=auto)
+        self._start_reader(auto=auto)
 
     def _on_read(self, result, auto=True):
         if self._is_closing or result.get("path") != self.current_file:
@@ -541,6 +587,7 @@ class SystemLogViewer(QWidget):
                 self._reader.wait(3000)
             except RuntimeError:
                 pass
+        self._search_timer.stop()
         self.current_file = None
         self.cached_lines = []
         self._is_cleaned = True
@@ -647,6 +694,81 @@ def _timestamp_text(ts):
     return str(ts or "")
 
 
+def who(user) -> str:
+    """One rendering of a person in every Audit Logs table: 'Rahul Sharma (rahul.s)'."""
+    user = str(user or "").strip()
+    if not user or user.upper() == "SYSTEM":
+        return user
+    try:
+        from slate.core.domain.people import label
+        return label(user)
+    except Exception:
+        return user
+
+
+NOT_RECORDED = "Not recorded"
+
+
+class DateRange(QWidget):
+    """
+    'All time / Last 7 days / Last 30 days / Custom…', with the two dates shown
+    only for Custom. It was a checkbox labelled 'From' that read like a label.
+    changed fires once the choice settles (date arrows are debounced).
+    """
+    changed = Signal()
+    CHOICES = (("All time", None), ("Last 7 days", 7), ("Last 30 days", 30), ("Custom…", "custom"))
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        self.combo = QComboBox()
+        self.combo.setToolTip("Only show entries from this period")
+        for text, value in self.CHOICES:
+            self.combo.addItem(text, value)
+        row.addWidget(self.combo)
+        self.date_from = QDateEdit(QDate.currentDate().addDays(-30))
+        self.date_to = QDateEdit(QDate.currentDate())
+        self.lbl_to = QLabel("to")
+        for edit in (self.date_from, self.date_to):
+            edit.setCalendarPopup(True)
+            edit.setDisplayFormat("d MMM yyyy")
+        row.addWidget(self.date_from)
+        row.addWidget(self.lbl_to)
+        row.addWidget(self.date_to)
+        self._timer = debounced(self, self.changed.emit, 400)
+        self.combo.currentIndexChanged.connect(self._on_choice)
+        self.date_from.dateChanged.connect(lambda *_: self._timer.start())
+        self.date_to.dateChanged.connect(lambda *_: self._timer.start())
+        self._on_choice(emit=False)
+
+    def _on_choice(self, *_args, emit=True):
+        custom = self.combo.currentData() == "custom"
+        for widget in (self.date_from, self.lbl_to, self.date_to):
+            widget.setVisible(custom)
+        if emit:
+            self.changed.emit()
+
+    def dates(self):
+        """(first day, last day) or (None, None) for all time. Reversed dates are swapped."""
+        value = self.combo.currentData()
+        if value is None:
+            return None, None
+        if value == "custom":
+            start, end = self.date_from.date().toPython(), self.date_to.date().toPython()
+            return (end, start) if end < start else (start, end)
+        today = date.today()
+        return today - timedelta(days=value - 1), today
+
+    def bounds(self):
+        """(since, until) datetimes, until exclusive, or (None, None)."""
+        start, end = self.dates()
+        if start is None:
+            return None, None
+        return (datetime.combine(start, datetime.min.time()),
+                datetime.combine(end + timedelta(days=1), datetime.min.time()))
+
+
 class DatabaseAuditViewer(QWidget):
     """
     The change_history table: who changed what, when.
@@ -675,23 +797,9 @@ class DatabaseAuditViewer(QWidget):
         self.search.textChanged.connect(self._search_timer.start)
         h.addWidget(self.search, 1)
 
-        self.chk_range = QCheckBox("From")
-        self.chk_range.setToolTip("Only show changes made between these two dates")
-        self.date_from = QDateEdit(QDate.currentDate().addDays(-30))
-        self.date_to = QDateEdit(QDate.currentDate())
-        for edit in (self.date_from, self.date_to):
-            edit.setCalendarPopup(True)
-            edit.setDisplayFormat("d MMM yyyy")
-            edit.setEnabled(False)
-        self.chk_range.toggled.connect(self.date_from.setEnabled)
-        self.chk_range.toggled.connect(self.date_to.setEnabled)
-        self.chk_range.toggled.connect(lambda *_: self.refresh_data())
-        self.date_from.dateChanged.connect(lambda *_: self.chk_range.isChecked() and self.refresh_data())
-        self.date_to.dateChanged.connect(lambda *_: self.chk_range.isChecked() and self.refresh_data())
-        h.addWidget(self.chk_range)
-        h.addWidget(self.date_from)
-        h.addWidget(QLabel("to"))
-        h.addWidget(self.date_to)
+        self.date_range = DateRange()
+        self.date_range.changed.connect(self.refresh_data)
+        h.addWidget(self.date_range)
 
         self.chk_explain = QCheckBox("Explain")
         self.chk_explain.setChecked(True)
@@ -729,14 +837,7 @@ class DatabaseAuditViewer(QWidget):
 
     # ----------------------------------------------------------------- data
     def _range(self):
-        if not self.chk_range.isChecked():
-            return None, None
-        start = self.date_from.date().toPython()
-        end = self.date_to.date().toPython()
-        if end < start:
-            start, end = end, start
-        return (datetime.combine(start, datetime.min.time()),
-                datetime.combine(end + timedelta(days=1), datetime.min.time()))
+        return self.date_range.bounds()
 
     def _fetch(self, offset=0):
         if not hasattr(self.db_manager, 'get_history'):
@@ -769,7 +870,7 @@ class DatabaseAuditViewer(QWidget):
         r = dict(row)
         r['timestamp'] = _timestamp_text(r.get('timestamp'))
         r['_date'] = r['timestamp'][:10] if r['timestamp'] else ""
-        r['_user'] = r.get('display_name') or r.get('user_name') or r.get('author') or ""
+        r['_user'] = who(r.get('user_name') or r.get('author')) or r.get('display_name') or ""
         r['_item'] = item_label(r)
         r['_description'] = describe_change(r)
         r['_analysis'] = AuditInterpreter.analyze(r.get('action_type'), r.get('field_changed'),
@@ -827,7 +928,7 @@ class DatabaseAuditViewer(QWidget):
                     elif c == 6:
                         item = make_item(val, foreground=Gate.ACCENT)
                     elif c == 1 and not val:
-                        item = make_item("Unknown", foreground=Gate.TEXT_DIM)
+                        item = make_item(NOT_RECORDED, foreground=Gate.TEXT_DIM)
                     else:
                         item = make_item(val, tooltip=val if c == 5 and len(val) > 60 else None)
                     self.table.setItem(r, c, item)
@@ -861,17 +962,24 @@ class DatabaseAuditViewer(QWidget):
 _LEGACY_LINE = re.compile(r"^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]\s+([^:]+):\s?(.*)$")
 
 
-def read_audit_trail(audit_dir=None, legacy_file=None, limit=5000):
+def read_audit_trail(audit_dir=None, legacy_file=None, limit=TRAIL_LIMIT, since=None, until=None):
     """
     Everything the audit trail holds, newest first: the daily JSON-lines files
-    of AuditLogger (sign-ins, user changes...) and the Admin Panel's own log
-    ('[2026-09-30 11:00:00] admin: Broadcast Alert: ...').
+    of AuditLogger (user and role changes, attendance edits...) and the Admin
+    Panel's own log ('[2026-09-30 11:00:00] admin: Broadcast Alert: ...').
+    since / until are dates (until inclusive); a daily file outside them is
+    not read at all.
     """
+    first = since.isoformat() if since else ""
+    last = until.isoformat() if until else ""
     entries = []
     if audit_dir is not None:
         folder = Path(audit_dir)
         files = sorted(folder.glob("audit_*.log"), reverse=True) if folder.exists() else []
         for path in files:
+            day = path.stem[len("audit_"):]
+            if (first and day < first) or (last and day > last):
+                continue
             try:
                 lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
             except OSError as exc:
@@ -888,6 +996,8 @@ def read_audit_trail(audit_dir=None, legacy_file=None, limit=5000):
                 if not isinstance(data, dict):
                     continue
                 stamp = str(data.get("timestamp") or "").replace("T", " ")[:19]
+                if (first and stamp[:10] < first) or (last and stamp[:10] > last):
+                    continue
                 entries.append({"time": stamp, "user": str(data.get("user") or ""),
                                 "type": str(data.get("type") or ""),
                                 "status": str(data.get("status") or ""),
@@ -902,17 +1012,31 @@ def read_audit_trail(audit_dir=None, legacy_file=None, limit=5000):
             except OSError as exc:
                 logger.warning("Could not read %s: %s", legacy, exc)
                 lines = []
-            for line in lines[-limit:]:
+            for line in lines:
                 m = _LEGACY_LINE.match(line.strip())
                 if m:
+                    day = m.group(1)[:10]
+                    if (first and day < first) or (last and day > last):
+                        continue
+                    # The Admin Panel only writes what it did: 'Done', so the
+                    # Result column is not blank beside AuditLogger's 'Success'.
                     entries.append({"time": m.group(1), "user": m.group(2).strip(),
-                                    "type": "ADMIN", "status": "", "details": m.group(3)})
+                                    "type": "ADMIN", "status": "DONE", "details": m.group(3)})
     entries.sort(key=lambda e: e["time"], reverse=True)
     return entries[:limit]
 
 
+# Friendly names of the types AuditLogger is written with. The Type filter
+# lists only the types the loaded entries hold (it offered two that never
+# occurred and missed three that did).
 TRAIL_TYPES = {"AUTH": "Sign-in", "USER_MGMT": "Users", "ROLE_MGMT": "Roles",
-               "SYSTEM": "System", "ADMIN": "Admin action"}
+               "SYSTEM": "System", "ADMIN": "Admin action", "ATTENDANCE": "Attendance edit",
+               "ONBOARDING": "Onboarding", "RENAME": "CAP rename"}
+PROBLEM_STATUSES = ("FAILURE", "FAILED", "WARNING")
+
+
+def trail_type(key) -> str:
+    return TRAIL_TYPES.get(key, str(key or "").replace("_", " ").title())
 
 
 def trail_details(entry: dict) -> str:
@@ -938,23 +1062,30 @@ class AuditTrailViewer(QWidget):
         self.audit_dir = audit_dir
         self.legacy_file = legacy_file
         self.entries = []
+        self.capped = False
         layout = QVBoxLayout(self)
 
         h = QHBoxLayout()
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search user, type or details…")
         self.search.setClearButtonEnabled(True)
-        self.search.textChanged.connect(self.populate_table)
+        self._search_timer = debounced(self, self.populate_table)
+        self.search.textChanged.connect(self._search_timer.start)
         h.addWidget(self.search, 1)
         self.type_filter = QComboBox()
         self.type_filter.addItem("All types", "")
-        for key, text in TRAIL_TYPES.items():
-            self.type_filter.addItem(text, key)
         self.type_filter.currentIndexChanged.connect(self.populate_table)
         h.addWidget(self.type_filter)
-        self.chk_failures = QCheckBox("Failures only")
+        self.date_range = DateRange()
+        self.date_range.changed.connect(self.refresh_data)
+        h.addWidget(self.date_range)
+        self.chk_failures = QCheckBox("Problems only")
+        self.chk_failures.setToolTip("Only failed actions and warnings")
         self.chk_failures.toggled.connect(self.populate_table)
         h.addWidget(self.chk_failures)
+        self.btn_export = make_button("Export", "secondary", on_click=self.export_rows,
+                                      tooltip="Save the rows shown as CSV or Excel")
+        h.addWidget(self.btn_export)
         btn = make_button("Refresh", "secondary", on_click=self.refresh_data)
         btn.setIcon(draw_icon("refresh"))
         h.addWidget(btn)
@@ -968,20 +1099,41 @@ class AuditTrailViewer(QWidget):
         setup_table(self.table)
         layout.addWidget(self.table, 1)
         self.empty = EmptyState.over(self.table, "Nothing in the audit trail yet",
-                                     "Sign-ins, user and role changes and admin actions appear here.",
-                                     glyph="shield")
+                                     "User and role changes, attendance edits and admin actions "
+                                     "appear here.", glyph="shield")
         self.lbl_count = QLabel("")
         self.lbl_count.setStyleSheet(f"color: {Gate.TEXT_DIM};")
         layout.addWidget(self.lbl_count)
         self.refresh_data()
 
     def refresh_data(self):
+        since, until = self.date_range.dates()
         try:
-            self.entries = read_audit_trail(self.audit_dir, self.legacy_file)
+            entries = read_audit_trail(self.audit_dir, self.legacy_file, limit=TRAIL_LIMIT + 1,
+                                       since=since, until=until)
         except Exception as exc:
             logger.exception("Audit trail could not be read: %s", exc)
-            self.entries = []
+            entries = []
+        self.capped = len(entries) > TRAIL_LIMIT
+        self.entries = entries[:TRAIL_LIMIT]
+        self._fill_types()
         self.populate_table()
+
+    def _fill_types(self):
+        current = self.type_filter.currentData() or ""
+        present = sorted({e["type"] for e in self.entries if e["type"]} | ({current} - {""}),
+                         key=trail_type)
+        self.type_filter.blockSignals(True)
+        self.type_filter.clear()
+        self.type_filter.addItem("All types", "")
+        for key in present:
+            self.type_filter.addItem(trail_type(key), key)
+        self.type_filter.setCurrentIndex(max(0, self.type_filter.findData(current)))
+        self.type_filter.blockSignals(False)
+
+    def export_rows(self):
+        from slate.gui.core.data_display import export_table_dialog
+        return export_table_dialog(self, self.table, "audit_trail", title="Export audit trail")
 
     def populate_table(self, *_args):
         text = self.search.text().strip().lower()
@@ -991,9 +1143,9 @@ class AuditTrailViewer(QWidget):
         for e in self.entries:
             if wanted and e["type"] != wanted:
                 continue
-            if failures and e["status"].upper() not in ("FAILURE", "FAILED", "WARNING"):
+            if failures and e["status"].upper() not in PROBLEM_STATUSES:
                 continue
-            values = [e["time"], self._who(e["user"]), TRAIL_TYPES.get(e["type"], e["type"].title()),
+            values = [e["time"], who(e["user"]), trail_type(e["type"]),
                       e["status"].title(), trail_details(e)]
             if text and not any(text in str(v).lower() for v in values):
                 continue
@@ -1012,17 +1164,11 @@ class AuditTrailViewer(QWidget):
                                                        foreground=colour,
                                                        tooltip=val if c == 4 and len(val) > 80 else None))
         self.empty.set_filtered(bool(self.entries) and not rows, noun="entries")
-        self.lbl_count.setText(f"{len(rows):,} of {len(self.entries):,} entries.")
-
-    @staticmethod
-    def _who(user):
-        if not user or user.upper() == "SYSTEM":
-            return user or ""
-        try:
-            from slate.core.domain.people import label
-            return label(user)
-        except Exception:
-            return user
+        if self.capped:
+            self.lbl_count.setText(f"Showing {len(rows):,} of the newest {len(self.entries):,} entries - "
+                                   "older ones exist: pick a date range to see them.")
+        else:
+            self.lbl_count.setText(f"{len(rows):,} of {len(self.entries):,} entries.")
 
 
 # ==========================================================================
@@ -1056,11 +1202,28 @@ class UnifiedLogViewer(QWidget):
         self.tabs.addTab(self.audit_trail, "Audit trail")
 
         layout.addWidget(self.tabs)
+        # Each page was read when it was built; it is read again only when it
+        # is shown and older than RELOAD_AFTER_SECONDS. Every switch to Audit
+        # Logs used to re-list the logs, re-run the history query and re-read
+        # every audit file.
+        built = time.monotonic()
+        self._loaded_at = {page: built for page in (self.sys_logs, self.db_audit, self.audit_trail)}
+        self.tabs.currentChanged.connect(lambda *_: self.refresh_all())
 
-    def refresh_all(self):
-        self.sys_logs.refresh_list()
-        self.db_audit.refresh_data()
-        self.audit_trail.refresh_data()
+    def _reload(self, page):
+        if page is self.sys_logs:
+            page.refresh_list()
+        else:
+            page.refresh_data()
+        self._loaded_at[page] = time.monotonic()
+
+    def refresh_all(self, force=False):
+        """Read the page on show again when it is stale (or force)."""
+        page = self.tabs.currentWidget()
+        if page is None:
+            return
+        if force or time.monotonic() - self._loaded_at.get(page, 0) > RELOAD_AFTER_SECONDS:
+            self._reload(page)
 
     def cleanup_resources(self):
         if hasattr(self, "sys_logs") and hasattr(self.sys_logs, "cleanup_resources"):

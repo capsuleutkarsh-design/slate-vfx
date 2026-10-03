@@ -10,12 +10,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Iterable, List, Tuple
 
-from PySide6.QtCore import QThread, Signal, Qt
+from PySide6.QtCore import QStandardPaths, QThread, Signal, Qt
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from ..core.domain import fleet_status as fs
+from ..core.workers.admin_workers import list_reports, load_report
 from .admin_fleet_export import export_fleet_xlsx
-from .admin_widgets import _load_json_with_fallback
+from .admin_widgets import ram_gb, reported
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,6 @@ FIELDS: List[Tuple[str, str]] = [
     ("pc_name", "Machine"),
     ("status", "Status"),
     ("last_seen", "Last report"),
-    ("last_seen_age", "Age"),
     ("age_seconds", "Age (s)"),
     ("ut_user", "Slate user"),
     ("os_user", "Windows account"),
@@ -40,7 +40,7 @@ FIELDS: List[Tuple[str, str]] = [
     ("serial_no", "Serial number"),
     ("cpu", "CPU"),
     ("gpu", "GPU"),
-    ("ram_gb", "RAM (GB)"),
+    ("ram_gb", "RAM (GB)"),   # a number: clients write '32 GB' as text
     ("os", "OS"),
     ("windows_version", "Windows version"),
     ("client_version", "Slate version"),
@@ -66,50 +66,42 @@ def header_for(key: str) -> str:
     return key.replace("_", " ").capitalize()
 
 
-def _age_text(age_seconds: int) -> str:
-    if age_seconds < 60:
-        return f"{age_seconds} s ago"
-    if age_seconds < 3600:
-        return f"{age_seconds // 60} min ago"
-    return f"{age_seconds // 3600} h {(age_seconds % 3600) // 60} min ago"
-
-
 def record_for(data: dict, fallback_name: str, now: float) -> dict:
     """One machine's row of the report."""
     seen = fs.last_seen_of(data)
     state = fs.status_for(seen, now)
     last_seen_str = ""
     age_seconds = None
-    age_human = ""
     if seen is not None:
         try:
             last_seen_str = datetime.fromtimestamp(seen).strftime("%Y-%m-%d %H:%M:%S")
             age_seconds = max(0, int(now - seen))
-            age_human = _age_text(age_seconds)
         except (OverflowError, OSError, ValueError):
             last_seen_str = str(data.get("last_seen"))
 
+    ram = ram_gb(data.get("RAM_GB"))
+    # 'Unknown' / 'N/A' written by a client that could not read a value is
+    # left empty, like a value it never sent.
     record = {
         "pc_name": data.get("pc_name") or fallback_name,
         "status": fs.label(state),
         "last_seen": last_seen_str,
-        "last_seen_age": age_human,
         "age_seconds": age_seconds if age_seconds is not None else "",
-        "ut_user": data.get("user", "") or "",
-        "os_user": data.get("os_user", "") or "",
-        "ip_address": data.get("IPAddress", "") or "",
-        "mac_address": data.get("MACAddress", "") or "",
-        "computer_name": data.get("ComputerName", "") or "",
-        "manufacturer": data.get("Manufacturer", "") or "",
-        "model": data.get("Model", "") or "",
-        "motherboard": data.get("Motherboard", "") or "",
-        "serial_no": data.get("SerialNo", "") or "",
-        "cpu": data.get("CPU", "") or "",
-        "gpu": data.get("GPU", "") or "",
-        "ram_gb": data.get("RAM_GB", "") or "",
-        "os": data.get("OS", "") or "",
-        "windows_version": data.get("WindowsVersion", "") or "",
-        "client_version": data.get("client_version", "") or "",
+        "ut_user": reported(data.get("user")),
+        "os_user": reported(data.get("os_user")),
+        "ip_address": reported(data.get("IPAddress")),
+        "mac_address": reported(data.get("MACAddress")),
+        "computer_name": reported(data.get("ComputerName")),
+        "manufacturer": reported(data.get("Manufacturer")),
+        "model": reported(data.get("Model")),
+        "motherboard": reported(data.get("Motherboard")),
+        "serial_no": reported(data.get("SerialNo")),
+        "cpu": reported(data.get("CPU")),
+        "gpu": reported(data.get("GPU")),
+        "ram_gb": ram if ram is not None else "",
+        "os": reported(data.get("OS")),
+        "windows_version": reported(data.get("WindowsVersion")),
+        "client_version": reported(data.get("client_version")),
     }
 
     unlettered = 0
@@ -131,7 +123,8 @@ def record_for(data: dict, fallback_name: str, now: float) -> dict:
         record[f"{prefix}_label"] = drive.get("Label") or ""
         record[f"{prefix}_total_gb"] = drive.get("Capacity_GB") or ""
         record[f"{prefix}_free_gb"] = drive.get("Free_GB") or ""
-        record[f"{prefix}_usage_pct"] = f"{usage_pct:.1f}%" if usage_pct is not None else ""
+        # A number (the workbook shows it as 88.0%), so it sorts and filters.
+        record[f"{prefix}_usage_pct"] = round(usage_pct, 1) if usage_pct is not None else ""
         record[f"{prefix}_alert"] = {"bad": "CRITICAL", "warn": "WARNING", "ok": "OK"}.get(level, "")
     return record
 
@@ -142,11 +135,8 @@ def build_records(files: Iterable[Path], now: float = None):
     records, raw, skipped = [], [], 0
     for report_file in files:
         try:
-            data = _load_json_with_fallback(report_file)
+            data = load_report(report_file)
         except Exception:
-            skipped += 1
-            continue
-        if not isinstance(data, dict):
             skipped += 1
             continue
         raw.append(data)
@@ -249,6 +239,9 @@ class FleetReportWorker(QThread):
     def run(self):
         try:
             self.done.emit(write_report(self.output_path, self.files))
+        except PermissionError:
+            self.done.emit({"ok": False, "message": f"{self.output_path.name} could not be written. "
+                            "If it is open in Excel, close it and try again."})
         except Exception as exc:
             logger.exception("Fleet report failed")
             self.done.emit({"ok": False, "message": f"The report could not be written:\n{exc}"})
@@ -260,14 +253,22 @@ def run_fleet_report_export(parent, hub, log_action: Callable[[str], None]):
     Reading hundreds of reports from the share happens on a worker thread;
     returns that worker (or None when nothing was started).
     """
-    status_dir = hub.get_livestatus_dir()
-    files = sorted(Path(status_dir).glob("*.json"))
+    try:
+        files = list_reports(hub.get_livestatus_dir())
+    except OSError as exc:
+        QMessageBox.warning(parent, "Fleet report", "The status folder could not be read. Check that "
+                            f"the server share is reachable.\n\n{exc.strerror or exc}")
+        return None
     if not files:
         QMessageBox.information(parent, "Fleet report",
                                 "No workstation has reported yet, so there is nothing to export.")
         return None
 
-    default_name = f"fleet_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    # Documents (or where the last report went this session), not the
+    # program's working folder.
+    folder = getattr(parent, "_fleet_report_dir", "") or QStandardPaths.writableLocation(
+        QStandardPaths.StandardLocation.DocumentsLocation) or str(Path.home())
+    default_name = str(Path(folder) / f"fleet_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
     path, selected_filter = QFileDialog.getSaveFileName(
         parent,
         "Export fleet report",
@@ -276,6 +277,7 @@ def run_fleet_report_export(parent, hub, log_action: Callable[[str], None]):
     )
     if not path:
         return None
+    parent._fleet_report_dir = str(Path(path).parent)
 
     if not Path(path).suffix:
         if "json" in selected_filter.lower():
