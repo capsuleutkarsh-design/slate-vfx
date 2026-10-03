@@ -269,7 +269,7 @@ def test_figure_filters_show_what_they_count_and_columns_read_well(db, app):
     tab.repo.update("WS-C", {"asset_tag": "TAG-9277"})
     tab.load_data()
     tab.fig_loan.clicked.emit()
-    assert _rows(tab) == ["WS-A"] and tab.fig_loan._selected
+    assert _rows(tab) == ["WS-A"] and tab.fig_loan._active
     tab.fig_total.clicked.emit()
     assert len(_rows(tab)) == 3
     tab.toolbar.search.setText("TAG-9277")
