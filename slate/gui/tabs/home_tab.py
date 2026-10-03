@@ -87,13 +87,16 @@ VFX_TILES = (
 )
 OPS_TILES = (
     ("Attendance", "Your punches and your month", "clock"),
-    ("Leave", "Ask for leave, or decide requests", "leave"),
-    ("IT Support", "Report a problem, or work the queue", "ticket"),
+    ("Leave", "Ask for leave and see your balance", "leave"),
+    ("IT Support", "Report a problem and follow it up", "ticket"),
     ("Users & Roles", "People, roles and permissions", "users"),
     ("Hardware", "Machines and who has them", "monitor"),
     ("Joining & Leaving", "Checklists for joiners and leavers", "handshake"),
 )
 MAX_TILES = 6
+# For the people who work the other side of those two screens.
+DECIDER_SUBTITLES = {"Leave": "Ask for leave, or decide requests",
+                     "IT Support": "Report a problem, or work the queue"}
 
 # Shot statuses that are finished, and those that wait for a review.
 DONE_STATUSES = {"APPROVED", "DONE", "FINAL", "DELIVERED", "OMIT", "OMITTED"}
@@ -221,12 +224,17 @@ def punch_text(punch_in, punch_out, now=None) -> str:
     return "Not punched in today"
 
 
-def greeting(name: str, now=None) -> str:
-    """'Good morning, Priya' - first name, by the time of day."""
+def greeting(name: str, now=None, whole_name: bool = False) -> str:
+    """
+    'Good morning, Priya' - first name, by the time of day. whole_name for an
+    account that is not a person ('System Admin' was greeted as 'System').
+    """
     hour = (now or datetime.now()).hour
     part = "morning" if hour < 12 else "afternoon" if hour < 17 else "evening"
     words = str(name or "").split()
-    return f"Good {part}, {words[0]}" if words else f"Good {part}"
+    if not words:
+        return f"Good {part}"
+    return f"Good {part}, {' '.join(words) if whole_name else words[0]}"
 
 
 class QuickActionBtn(QFrame):
@@ -354,8 +362,11 @@ class HomeLoaderWorker(QThread):
     load_failed = Signal(str)
 
     def __init__(self, username, app_context, parent=None, mode="vfx", identities=(),
-                 figures=(), db=None, report_dir=None):
+                 figures=(), db=None, report_dir=None, leave_stage=""):
         super().__init__(parent)
+        # "HR", "Supervisor" or "": whose leave this person may see on Home
+        # (workplace_access.leave_stage, the Leave queue's own rule).
+        self.leave_stage = leave_stage
         # The login, not the name on screen. Attendance rows are keyed by the
         # username; looking them up by display name meant Home and the
         # Attendance tab kept two separate records for one person.
@@ -444,32 +455,51 @@ class HomeLoaderWorker(QThread):
         return {"punch_in": since, "punch_out": record["punch_out"],
                 "first_in": record["punch_in"], "sessions": len(sessions)}
 
+    def _leave_rows(self) -> list:
+        """
+        The leave this person may see: HR everybody's, a supervisor their
+        reports', everybody else only their own - the Leave queue's rule. It
+        used to be the whole studio's for every artist, sick leave included.
+        """
+        from slate.core.infra.leave_repository import LeaveRepository
+        repo = LeaveRepository(self._db())
+        if self.leave_stage:
+            return repo.stage_requests(self.username, self.leave_stage)
+        return repo.for_user(self.username)
+
     def leave_pulse(self) -> list:
-        """Current and coming leave, soonest first, with dates."""
+        """Current and coming leave (not rejected or cancelled), soonest first."""
+        from slate.core.domain import leave_policy as lp
+        from slate.core.domain.dates import format_range
+        from slate.core.infra.leave_repository import as_date
         db = self._db()
         try:
-            from slate.core.domain.dates import format_range
             today = db_today(db)
-            rows = db.execute_query(
-                "SELECT COALESCE(u.display_name, u.username, l.user_id) AS applicant, "
-                "       l.type AS leave_type, l.status, l.start_date, l.end_date "
-                "FROM leave_requests l "
-                "LEFT JOIN ut_users u ON u.username = l.user_id "
-                "WHERE l.end_date >= %s "
-                "ORDER BY l.start_date, l.id LIMIT 5",
-                (today.isoformat(),), fetch="all") or []
+            rows = [r for r in self._leave_rows()
+                    if lp.normalise_status(r.get("status")) in lp.LIVE_STATUSES
+                    and (as_date(r.get("end_date")) or today) >= today]
         except DatabaseUnavailableError:
             raise
         except Exception as exc:
             logging.debug("Home: leave pulse not read: %s", exc)
             return []
+        rows.sort(key=lambda r: (str(as_date(r.get("start_date")) or ""), r.get("id") or 0))
+        from slate.core.domain import people
+        me = self.username.strip().lower()
         items = []
-        for row in rows:
-            who = _value(row, "applicant", 0) or "Someone"
-            kind = _value(row, "leave_type", 1) or "Leave"
-            when = format_range(_value(row, "start_date", 3), _value(row, "end_date", 4))
-            items.append({"title": f"{who} - {kind}, {when}",
-                          "status": str(_value(row, "status", 2) or "Pending")})
+        for row in rows[:5]:
+            uid = str(row.get("user_id") or "")
+            own = uid.strip().lower() == me
+            when = format_range(row.get("start_date"), row.get("end_date"))
+            # The kind of leave (Sick, Medical) is the person's own business
+            # and HR's - a supervisor sees that a report is away, not why.
+            if own:
+                title = f"You - {row.get('type') or 'Leave'}, {when}"
+            elif self.leave_stage == "HR":
+                title = f"{people.display_name(uid, db)} - {row.get('type') or 'Leave'}, {when}"
+            else:
+                title = f"{people.display_name(uid, db)} - away, {when}"
+            items.append({"title": title, "status": lp.normalise_status(row.get("status"))})
         return items
 
     def _my_shot_rows(self):
@@ -477,7 +507,7 @@ class HomeLoaderWorker(QThread):
         if self._shot_rows_cache is not None:
             return self._shot_rows_cache
         rows = self._db().execute_query(
-            "SELECT s.shot_name, s.status, s.data_json FROM tracking_shots s "
+            "SELECT s.shot_name, s.status, s.data_json, s.project_code FROM tracking_shots s "
             "JOIN tracking_projects p ON p.code = s.project_code "
             "WHERE p.active = 1 ORDER BY s.last_updated DESC LIMIT 3000",
             fetch="all") or []
@@ -490,7 +520,10 @@ class HomeLoaderWorker(QThread):
                 data = {}
             if shot_artists(data) & self.identities:
                 status = _value(row, "status", 1) or data.get("status") or ""
-                mine.append({"title": _value(row, "shot_name", 0), "status": str(status), "shot": True})
+                # The project goes with the shot: the dashboard opens it
+                # before selecting the shot, and two shows can both have SH010.
+                mine.append({"title": _value(row, "shot_name", 0), "status": str(status), "shot": True,
+                             "project": str(_value(row, "project_code", 3) or "")})
         self._shot_rows_cache = mine
         return mine
 
@@ -535,8 +568,12 @@ class HomeLoaderWorker(QThread):
 
     def _figure_waiting_review(self):
         placeholders = ", ".join(["%s"] * len(REVIEW_STATUSES))
+        # Active projects only, like every other figure here: a finished show
+        # with shots left in Review inflated this for ever.
         return _count(self._db().execute_query(
-            "SELECT COUNT(*) AS c FROM tracking_shots WHERE UPPER(COALESCE(status, '')) IN (%s)"
+            "SELECT COUNT(*) AS c FROM tracking_shots s "
+            "JOIN tracking_projects p ON p.code = s.project_code AND p.active = 1 "
+            "WHERE UPPER(COALESCE(s.status, '')) IN (%s)"
             % placeholders, tuple(sorted(REVIEW_STATUSES)), fetch="one"))
 
     def _figure_open_tickets(self):
@@ -569,21 +606,24 @@ class HomeLoaderWorker(QThread):
         return {"value": len(due), "tip": tip, "warn": bool(due)}
 
     def _figure_upcoming_leave(self):
-        # Starting after today and within two weeks - not leave already
-        # running, nor leave a year away.
-        db = self._db()
-        today = db_today(db)
-        return _count(db.execute_query(
-            "SELECT COUNT(*) AS c FROM leave_requests WHERE status = 'Approved' "
-            "AND start_date > %s AND start_date <= %s",
-            (today.isoformat(), (today + timedelta(days=UPCOMING_LEAVE_DAYS)).isoformat()),
-            fetch="one"))
+        # Approved, starting after today and within two weeks - not leave
+        # already running, nor leave a year away. Of the people this person sees.
+        from slate.core.domain import leave_policy as lp
+        from slate.core.infra.leave_repository import as_date
+        today = db_today(self._db())
+        last = today + timedelta(days=UPCOMING_LEAVE_DAYS)
+        return sum(1 for r in self._leave_rows()
+                   if lp.normalise_status(r.get("status")) == lp.STATUS_APPROVED
+                   and today < (as_date(r.get("start_date")) or today) <= last)
 
     def _figure_pending_leave(self):
-        rows = self._db().execute_query(
-            "SELECT status, COUNT(*) AS c FROM leave_requests GROUP BY status", fetch="all") or []
-        return sum(_count(r, 1) for r in rows
-                   if str(_value(r, "status", 0) or "").strip().lower().startswith("pending"))
+        """What waits on this person's decision - as their Leave queue counts it."""
+        from slate.core.domain import leave_policy as lp
+        waiting = lp.STAGE_DECIDES.get(self.leave_stage, ())
+        me = self.username.strip().lower()
+        return sum(1 for r in self._leave_rows()
+                   if lp.normalise_status(r.get("status")) in waiting
+                   and str(r.get("user_id") or "").strip().lower() != me)
 
     def _figure_people_online(self):
         report_dir = self.report_dir
@@ -605,6 +645,8 @@ FIGURE_LABELS = {
     "licence_renewals": "Licences to renew",
     "upcoming_leave": "Leave in the next 2 weeks",
 }
+# Figures that mean somebody has something to do while they are above zero.
+ACTION_FIGURES = {"pending_leave", "open_tickets", "licence_renewals"}
 
 
 class HomeTab(QWidget):

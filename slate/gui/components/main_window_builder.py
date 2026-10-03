@@ -24,22 +24,16 @@ class MainWindowBuilderMixin:
         from PySide6.QtWidgets import QTabWidget
         from ..tabs.leave_approvals_view import LeaveApprovalsView
         from ..tabs.my_leave_view import MyLeaveView
-        from ...core.domain.access import can
-        from ...core.domain.workplace_access import manages_leave
+        from ...core.domain.workplace_access import leave_stage
 
-        roles = getattr(self, "user_roles", None)
         username = self._current_username()
 
         # HR own the final stage; a supervisor owns the first one. Who counts
         # as a supervisor here is the "approve_leave" ability, so a Comp
         # Supervisor or Team Lead gets the queue without a code change.
-        stage = None
-        if manages_leave(roles, self.allowed_tabs):
-            stage = "HR"
-        elif can(roles, "approve_leave"):
-            stage = "Supervisor"
+        stage = leave_stage(getattr(self, "user_roles", None), self.allowed_tabs)
 
-        if stage is None:
+        if not stage:
             return MyLeaveView(username)
 
         # An approver takes leave like anybody else. They used to get the queue

@@ -333,6 +333,20 @@ class LeaveRepository:
             logger.exception("all_requests failed")
             return []
 
+    def stage_requests(self, username: str, stage: str) -> list:
+        """
+        The requests an approval stage covers: HR every request, a supervisor
+        only their own reports' (nothing when nobody reports to them). The
+        Leave queue and Home's leave panel use this one rule.
+        """
+        rows = self.all_requests()
+        if stage == "HR":
+            return rows
+        if stage != "Supervisor":
+            return []
+        reports = self.reports_to(username)
+        return [r for r in rows if str(r.get("user_id") or "").strip().lower() in reports]
+
     def clash(self, username, start, end, ignore_id=None) -> list:
         """
         Requests this person already has that cover any of these days.

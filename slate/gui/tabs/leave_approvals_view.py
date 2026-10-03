@@ -80,10 +80,9 @@ class LeaveApprovalsView(QWidget):
         if self.stage == "HR":
             self.actionable = (lp.STATUS_PENDING_HR, lp.STATUS_CANCEL_REQUESTED,
                                lp.STATUS_PENDING_SUPERVISOR)
-            self.mine_first = (lp.STATUS_PENDING_HR, lp.STATUS_CANCEL_REQUESTED)
         else:
             self.actionable = (lp.STATUS_PENDING_SUPERVISOR,)
-            self.mine_first = (lp.STATUS_PENDING_SUPERVISOR,)
+        self.mine_first = lp.STAGE_DECIDES[self.stage]
 
         root = QVBoxLayout(self)
         root.setContentsMargins(Gate.SPACE_5, Gate.SPACE_4, Gate.SPACE_5, Gate.SPACE_4)
@@ -212,22 +211,17 @@ class LeaveApprovalsView(QWidget):
     # ------------------------------------------------------------------ data
     @on_database_error
     def refresh(self, *_):
-        everything = self.repo.all_requests()
+        # A supervisor decides for their own team. Every supervisor in the
+        # studio used to see - and could approve - every request in it.
+        everything = self.repo.stage_requests(self.username, self.stage)
         for row in everything:
             row["_status"] = lp.normalise_status(row.get("status"))
 
-        # A supervisor decides for their own team. Every supervisor in the
-        # studio used to see - and could approve - every request in it.
-        if self.stage == "Supervisor":
-            reports = self.repo.reports_to(self.username)
-            if reports:
-                everything = [r for r in everything
-                              if str(r.get("user_id") or "").strip().lower() in reports]
-            else:
+        if self.stage == "Supervisor" and not everything:
+            if not self.repo.reports_to(self.username):
                 # Nobody is recorded as reporting to this person. Showing the
                 # whole studio would be the old bug; showing nothing without
                 # saying why reads as broken, so the empty state explains it.
-                everything = []
                 self.empty.set_message(
                     "Nobody reports to you yet",
                     "Leave requests appear here once somebody's record names you "
