@@ -205,17 +205,23 @@ def icon(name: str, colour: str = None, size: int = 18) -> QIcon:
 
     # Drawn at the screen's pixel density, so it stays sharp at 125% and 150%.
     pixels = max(1, int(round(size * ratio)))
-    pixmap = QPixmap(pixels, pixels)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    try:
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        QSvgRenderer(QByteArray(_svg(key, colour, pixels, 1.6).encode("utf-8"))).render(painter)
-    finally:
-        painter.end()
-    pixmap.setDevicePixelRatio(ratio)
 
-    result = QIcon(pixmap)
+    def draw(ink):
+        drawn = QPixmap(pixels, pixels)
+        drawn.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(drawn)
+        try:
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            QSvgRenderer(QByteArray(_svg(key, ink, pixels, 1.6).encode("utf-8"))).render(painter)
+        finally:
+            painter.end()
+        drawn.setDevicePixelRatio(ratio)
+        return drawn
+
+    result = QIcon(draw(colour))
+    # A disabled button's icon is dimmed like its text - an icon-only button
+    # (Move up / down) otherwise looked enabled when it was not.
+    result.addPixmap(draw(Gate.TEXT_DIM), QIcon.Mode.Disabled)
     _cache[cache_key] = result
     return result
 

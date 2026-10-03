@@ -256,6 +256,20 @@ def register_ingested_shots(
     if not entries:
         return result
 
+    # Two deliveries of one shot in one run (SH_050_ScanA, SH_050_ScanB) are
+    # one shot: the newest scan version is the one recorded, it is the one
+    # the comp should use.
+    def _version_number(entry):
+        digits = "".join(c for c in entry.scan_version if c.isdigit())
+        return int(digits) if digits else 0
+
+    newest: Dict = {}
+    for entry in entries:
+        key = (entry.reel.lower(), entry.shot.lower())
+        if key not in newest or _version_number(entry) > _version_number(newest[key]):
+            newest[key] = entry
+    entries = list(newest.values())
+
     if db is None:
         from slate.core.infra.database_manager import database_manager
         db = database_manager

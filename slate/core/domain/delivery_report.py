@@ -22,10 +22,10 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 
-# Where reports live inside a project. Beside the client's own delivery folder,
-# because that is where a coordinator goes looking for them.
+# Where reports live inside a project. Beside the client's own delivery folder
+# (ingest_survey.client_folder_for), because that is where a coordinator goes
+# looking for them.
 REPORT_DIRNAME = "_ingest_reports"
-CLIENT_FOLDER_CANDIDATES = ("01_Frm Client", "01_From Client", "01_Client")
 
 
 def frame_summary(frames, limit: int = 12) -> str:
@@ -64,6 +64,7 @@ class DeliveryReport:
     incomplete: List[Dict] = field(default_factory=list)
     skipped: List[Dict] = field(default_factory=list)
     failed: List[Dict] = field(default_factory=list)
+    pending: List[Dict] = field(default_factory=list)      # a stopped run never reached these
     documents: List[Dict] = field(default_factory=list)
     ignored: List[Dict] = field(default_factory=list)
     unchanged: List[Dict] = field(default_factory=list)
@@ -72,6 +73,8 @@ class DeliveryReport:
     files_skipped: int = 0
     errors: int = 0
     reels: int = 0
+    register_shots: bool = False       # the run added its shots to the Dashboard
+    retries: List[Dict] = field(default_factory=list)
 
     @staticmethod
     def distinct_shots(entries) -> int:
@@ -110,6 +113,11 @@ class DeliveryReport:
         return sum(len(s.get("missing") or []) for s in self.incomplete)
 
     @property
+    def not_landed(self) -> List[Dict]:
+        """Sequences some of whose frames failed or were never reached."""
+        return [s for s in self.real_sequences if s.get("not_landed")]
+
+    @property
     def stopped(self) -> bool:
         return self.status != "completed"
 
@@ -133,6 +141,8 @@ class DeliveryReport:
                          f"{self.missing_frame_count} frame(s)")
         if self.failed:
             parts.append(f"{len(self.failed)} file(s) failed")
+        if self.pending:
+            parts.append(f"{len(self.pending)} file(s) not reached")
         if self.is_clean:
             parts.append("no problems found")
         return " | ".join(parts)
@@ -146,6 +156,7 @@ class DeliveryReport:
             "dry_run": self.dry_run,
             "operation": self.operation,
             "status": self.status,
+            "register_shots": self.register_shots,
             "totals": {
                 "shots": self.shot_count,
                 "unchanged_shots": self.distinct_shots(self.unchanged),
@@ -162,10 +173,31 @@ class DeliveryReport:
             "incomplete": self.incomplete,
             "skipped": self.skipped,
             "failed": self.failed,
+            "pending": self.pending,
             "documents": self.documents,
             "ignored": self.ignored,
             "unchanged": self.unchanged,
+            "retries": self.retries,
         }
+
+    @classmethod
+    def from_manifest(cls, data: Dict) -> "DeliveryReport":
+        """The report a manifest describes - so a retry can write the report again."""
+        totals = data.get("totals") or {}
+        return cls(
+            project=data.get("project", ""), source=data.get("source", ""),
+            started_at=data.get("started_at", ""), finished_at=data.get("finished_at", ""),
+            dry_run=bool(data.get("dry_run")), operation=data.get("operation", "copy"),
+            status=data.get("status", "completed"),
+            shots=list(data.get("shots") or []), sequences=list(data.get("sequences") or []),
+            incomplete=list(data.get("incomplete") or []), skipped=list(data.get("skipped") or []),
+            failed=list(data.get("failed") or []), pending=list(data.get("pending") or []),
+            documents=list(data.get("documents") or []), ignored=list(data.get("ignored") or []),
+            unchanged=list(data.get("unchanged") or []),
+            files_moved=int(totals.get("files_moved") or 0), files_skipped=int(totals.get("files_skipped") or 0),
+            errors=int(totals.get("errors") or 0), reels=int(totals.get("reels") or 0),
+            register_shots=bool(data.get("register_shots")), retries=list(data.get("retries") or []),
+        )
 
 
 def build_report(worker, project_name: str, source_path) -> DeliveryReport:
@@ -190,6 +222,7 @@ def build_report(worker, project_name: str, source_path) -> DeliveryReport:
         incomplete=list(getattr(worker, "incomplete_sequences", []) or []),
         skipped=list(getattr(worker, "skipped_files", []) or []),
         failed=list(getattr(worker, "failed_files", []) or []),
+        pending=list(getattr(worker, "pending_files", []) or []),
         documents=list(getattr(worker, "documents_filed", []) or []),
         ignored=ignored,
         unchanged=list(getattr(worker, "skipped_shots", []) or []),
@@ -197,6 +230,7 @@ def build_report(worker, project_name: str, source_path) -> DeliveryReport:
         files_skipped=int(getattr(worker, "files_skipped", 0) or 0),
         errors=int(getattr(worker, "errors", 0) or 0),
         reels=int(getattr(worker, "reels_count", 0) or 0),
+        register_shots=bool(getattr(worker, "register_shots", False)),
     )
     return report
 
@@ -208,17 +242,17 @@ def _report_dir(project_root, client_folder: str = "") -> Path:
     The folder used to depend on whether the client folder happened to exist
     yet, so the first report of a project landed somewhere else from the rest.
     """
-    root = Path(project_root)
-    if not client_folder:
-        client_folder = next((c for c in CLIENT_FOLDER_CANDIDATES if (root / c).is_dir()),
-                             CLIENT_FOLDER_CANDIDATES[0])
-    return root / client_folder / REPORT_DIRNAME
+    from slate.core.domain.ingest_survey import client_folder_for
+    return Path(project_root) / (client_folder or client_folder_for(None)) / REPORT_DIRNAME
 
 
 def report_dirs(project_root) -> List[Path]:
-    """Every place a report of this project may be, the current scheme first."""
+    """Every place a report of this project may be: under any client folder a template named, or the project."""
     root = Path(project_root)
-    places = [root / c / REPORT_DIRNAME for c in CLIENT_FOLDER_CANDIDATES]
+    try:
+        places = [d / REPORT_DIRNAME for d in sorted(root.iterdir()) if d.is_dir()]
+    except OSError:
+        places = []
     places.append(root / REPORT_DIRNAME)          # where early reports went
     return places
 
@@ -258,16 +292,23 @@ def _render_html(report: DeliveryReport) -> str:
     else:
         status = "No problems found" if report.is_clean else "Problems found"
     status_class = "ok" if report.is_clean else "bad"
-    verb = {"move": "Moved", "copy": "Copied"}.get(report.operation, "Brought in")
-    drive = "emptied" if report.operation == "move" else "left as it was"
+    if report.dry_run:
+        what = (f"Would {'move' if report.operation == 'move' else 'copy'} into the project "
+                "<strong>(dry run - nothing was copied, moved or created)</strong>")
+    else:
+        verb = {"move": "Moved", "copy": "Copied"}.get(report.operation, "Brought in")
+        drive = "emptied" if report.operation == "move" else "left as it was"
+        what = e(f"{verb} into the project (the client drive was {drive})")
+    retried = ""
+    if report.retries:
+        last = report.retries[-1]
+        retried = (f"<br>Retried {len(report.retries)} time(s), last at {e(str(last.get('at', '')))}: "
+                   f"{len(last.get('recovered') or [])} file(s) recovered")
 
     body = [
         f"<h1>Delivery Report &mdash; {e(report.project)}</h1>",
-        f"<p class='meta'>Source: {e(report.source)}<br>"
-        f"{e(verb)} into the project (the client drive was {e(drive)})<br>"
-        f"Started: {e(report.started_at or '-')} &middot; finished: {e(report.finished_at)}"
-        + (" <strong>(DRY RUN &mdash; nothing was moved)</strong>" if report.dry_run else "")
-        + "</p>",
+        f"<p class='meta'>Source: {e(report.source)}<br>{what}<br>"
+        f"Started: {e(report.started_at or '-')} &middot; finished: {e(report.finished_at)}{retried}</p>",
         f"<p class='status {status_class}'>{e(status)}</p>",
         f"<p class='headline'>{e(report.headline())}</p>",
         table("Shots received", report.shots, [
@@ -287,6 +328,13 @@ def _render_html(report: DeliveryReport) -> str:
         table("Files that failed", report.failed, [
             ("File", lambda s: s.get("file", "")),
             ("Reason", lambda s: s.get("error", "")),
+        ], warn=True),
+        table("Sequences not fully brought in (failed or stopped)", report.not_landed, [
+            ("Reel", lambda s: s.get("reel", "")),
+            ("Shot", lambda s: s.get("shot", "")),
+            ("Sequence", lambda s: s.get("name", "")),
+            ("Frames in", lambda s: f"{s.get('frames', 0)} of {s.get('planned', s.get('frames', 0))}"),
+            ("Not brought in", lambda s: frame_summary(s.get("not_landed"))),
         ], warn=True),
         table("Shots already in the project (not brought in again)", report.unchanged, [
             ("Reel", lambda s: s.get("reel", "")),
@@ -322,27 +370,43 @@ def _render_html(report: DeliveryReport) -> str:
 <title>Delivery Report - {e(report.project)}</title>
 <style>
   body {{ font-family: "Segoe UI", system-ui, sans-serif; color: #16323A;
-         background: #E8E6E1; margin: 32px auto; max-width: 1000px; padding: 0 20px;
+         background: #FFFFFF; margin: 32px auto; max-width: 1000px; padding: 0 20px;
          line-height: 1.55; }}
   h1 {{ font-size: 24px; margin: 0 0 8px; }}
   h2 {{ font-size: 15px; text-transform: uppercase; letter-spacing: .08em;
-        color: #87857F; margin: 34px 0 8px; }}
-  h2.warn {{ color: #D9635F; }}
-  .count {{ color: #B4B1AA; font-weight: 400; }}
-  .meta {{ color: #87857F; font-size: 13px; margin: 0 0 16px; }}
+        color: #5E5C57; margin: 34px 0 8px; }}
+  h2.warn {{ color: #B23A36; }}
+  .count {{ color: #87857F; font-weight: 400; }}
+  .meta {{ color: #5E5C57; font-size: 13px; margin: 0 0 16px; }}
   .status {{ display: inline-block; padding: 5px 12px; border-radius: 3px;
              font-weight: 600; font-size: 13px; }}
-  .status.ok {{ background: #E8E6E1; color: #5FBF8F; }}
+  .status.ok {{ background: #DDF2E6; color: #1E6B43; }}
   .status.bad {{ background: #D9635F; color: #FFFFFF; }}
   .headline {{ font-size: 15px; margin: 14px 0 0; }}
   table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
-  th {{ text-align: left; border-bottom: 1px solid #16323A; padding: 5px 10px 5px 0;
-        font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
-        color: #87857F; }}
-  td {{ border-bottom: 1px solid #E8E6E1; padding: 6px 10px 6px 0;
+  th {{ text-align: left; background: #E8E6E1; border-bottom: 1px solid #16323A;
+        padding: 5px 10px; font-size: 11px; text-transform: uppercase;
+        letter-spacing: .06em; color: #4A4843; }}
+  td {{ border-bottom: 1px solid #D3D0C9; padding: 6px 10px;
         vertical-align: top; }}
 </style></head>
 <body>{''.join(body)}</body></html>"""
+
+
+def rewrite_html(manifest_path) -> Optional[Path]:
+    """
+    Write the report of a manifest again, after a retry changed it, so the
+    report a coordinator sends matches what is in the project now.
+    """
+    try:
+        manifest_path = Path(manifest_path)
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        html_path = manifest_path.with_name(manifest_path.name.replace("manifest_", "delivery_", 1))
+        html_path.write_text(_render_html(DeliveryReport.from_manifest(data)), encoding="utf-8")
+        return html_path
+    except Exception as exc:
+        logging.warning("Could not rewrite the delivery report for %s: %s", manifest_path, exc)
+        return None
 
 
 def write_report(report: DeliveryReport, project_root, client_folder: str = "") -> Optional[Dict[str, str]]:

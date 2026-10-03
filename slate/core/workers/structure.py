@@ -22,6 +22,7 @@ and the pre-flight summary - and this worker carries out exactly that plan:
 """
 
 import logging
+import os
 import re
 import time
 from datetime import date, datetime
@@ -32,10 +33,10 @@ from PySide6.QtCore import QThread, Signal, QMutex, QWaitCondition
 
 from slate.utils.security import SecurityValidator
 from slate.core.infra.database_manager import database_manager
-from slate.core.infra.file_operations import SafeFileOperations, same_volume
+from slate.core.infra.file_operations import SafeFileOperations, long_path, same_volume
 from slate.core.services.path_template_manager import get_path_manager
 from slate.core.domain.ingest_survey import (
-    IGNORED_FILES, IGNORED_SUFFIXES, IngestSurvey, is_junk_file, survey_drive,
+    IGNORED_FILES, IGNORED_SUFFIXES, IngestSurvey, client_folder_for, is_junk_file, survey_drive,
 )
 from slate.core.domain.naming import name_problem, shot_name_problem
 from slate.utils.sequence_utils import group_frames
@@ -47,6 +48,9 @@ __all__ = ["FolderCreationWorker", "ShotSubfoldersWorker", "is_junk_file",
 # The shot folders every shot gets when a template names none. One list, so
 # the preview, the pre-flight and the run agree about what will be created.
 DEFAULT_SHOT_FOLDERS = ["01_Scan", "07_Comp", "08_Output"]
+# What goes inside every scan version when a template does not say. A
+# template that lists none gets none.
+DEFAULT_VERSION_FOLDERS = ["Denoise"]
 
 COPY = "copy"
 MOVE = "move"
@@ -55,12 +59,10 @@ COMPLETED = "completed"
 STOPPED = "stopped"
 FAILED = "failed"
 
-CLIENT_FOLDER_CANDIDATES = ("01_Frm Client", "01_From Client", "01_Client")
-
 # Task rows are written in batches of this many.
 DETAIL_BATCH = 200
-# The ingest lock is refreshed this often during a run, so a long ingest is
-# never judged abandoned and cleared by somebody else.
+# The ingest lock is refreshed this often while a run is on screen - paused
+# or not - so it is never judged abandoned (Build & Ingest's timer does it).
 LOCK_TOUCH_SECONDS = 300
 # Progress is reported at most this often.
 PROGRESS_SECONDS = 0.1
@@ -137,7 +139,7 @@ class FolderCreationWorker(QThread):
                  overwrite=False, dry_run=False, format_mapping=None, fast_mode=False,
                  scan_version_folders=None, stitch_mapping=None, parent=None, root_dir=None,
                  operation=COPY, survey=None, project_dir=None, lock=None,
-                 register_shots=False, client_folder="", **kwargs):
+                 register_shots=False, client_folder="", register_existing=None, **kwargs):
         super().__init__(parent)
         self.target_dir = Path(target_dir or root_dir or ".")
         self.excel_df = excel_df
@@ -159,6 +161,9 @@ class FolderCreationWorker(QThread):
         self.survey = survey
         self.lock = lock
         self.register_shots = bool(register_shots)
+        # Shots already in the project, unchanged, that are not on the
+        # Dashboard yet: registered with this run's shots.
+        self.register_existing = list(register_existing or [])
         self.client_folder = client_folder
         self.is_running = True
         self.is_paused = False
@@ -186,11 +191,11 @@ class FolderCreationWorker(QThread):
         self._total_bytes = 0
         self._started = 0.0
         self._last_progress = 0.0
-        self._last_touch = 0.0
 
         self.ingested_shots = []
         self._scan_versions = {}
-        self.scan_version_folders = list(scan_version_folders or ["Denoise"])
+        self.scan_version_folders = list(DEFAULT_VERSION_FOLDERS if scan_version_folders is None
+                                         else scan_version_folders)
         self.stitch_mapping = dict(stitch_mapping or {})
         self._stitch_versions = {}
         self._stitch_split = {}
@@ -201,11 +206,17 @@ class FolderCreationWorker(QThread):
         self._reels_seen = set()
         self._shots_seen = set()
         self._details = []
+        self._placement = {}
+        self._attempted = set()
+        self._moved_from = set()
 
         self.sequences_found = []
         self.incomplete_sequences = []
         self.skipped_files = []
         self.failed_files = []
+        # Files a stopped run never reached, with where they were going: the
+        # retry finishes the run into the same scan version.
+        self.pending_files = []
         self.documents_filed = []
         self.skipped_shots = []
 
@@ -297,16 +308,18 @@ class FolderCreationWorker(QThread):
         self._started = time.monotonic()
         self.started_at = datetime.now().isoformat(timespec="seconds")
 
-        try:
-            pid = database_manager.record_project(self.project_name, self.template_type, str(self.target_dir))
-            op_type = "Auto-Scan & Build" if self.source_scan_path else "Folder Creation"
-            self.op_id = database_manager.start_operation(pid, op_type)
-        except Exception:
-            self.op_id = 0
+        self.op_id = 0
+        if not self.dry_run:
+            # A simulation leaves no project row behind: that table feeds the
+            # 'latest project' of reports and the Dashboard's fallback.
+            try:
+                pid = database_manager.record_project(self.project_name, self.template_type, str(self.target_dir))
+                op_type = "Auto-Scan & Build" if self.source_scan_path else "Folder Creation"
+                self.op_id = database_manager.start_operation(pid, op_type)
+            except Exception:
+                self.op_id = 0
 
         try:
-            self.log_signal.emit("[START] Starting.")
-
             if not self.template_data or len(self.template_data) < 4:
                 self.log_signal.emit("[WARN] The template is incomplete - using the default folders.")
                 base_folders, prod_subs, outsource_subs = ["01_Scan", "05_Reels"], [], []
@@ -321,8 +334,7 @@ class FolderCreationWorker(QThread):
             project_path = self.project_dir or (self.target_dir / self.project_name)
             reels_path = reels_root_for(project_path, self.project_name, self.target_dir)
             if not self.client_folder:
-                self.client_folder = next((b for b in base_folders if b in CLIENT_FOLDER_CANDIDATES),
-                                          CLIENT_FOLDER_CANDIDATES[0])
+                self.client_folder = client_folder_for({"base_folders": base_folders})
 
             if self.source_scan_path is not None and self.excel_df is None and self.survey is None:
                 self._emit_progress("Looking at the client drive…", force=True)
@@ -364,6 +376,9 @@ class FolderCreationWorker(QThread):
                     self._emit_progress(force=True)
                     self._process_survey(reels_path, shot_subs, project_path)
 
+            if self.cancelled and self.survey is not None and not self.dry_run:
+                self._record_pending()
+            self._tidy_drive()
             self._attach_frame_ranges()
             self._flush_details()
 
@@ -371,7 +386,7 @@ class FolderCreationWorker(QThread):
                 self._finish(STOPPED, "Stopped by the user", success=False)
                 return
 
-            if self.register_shots and not self.dry_run and self.ingested_shots:
+            if self.register_shots and not self.dry_run and (self.ingested_shots or self.register_existing):
                 self._register(project_path)
 
             self._finish(COMPLETED, self._summary(), success=True)
@@ -415,7 +430,7 @@ class FolderCreationWorker(QThread):
         try:
             from slate.core.domain.shot_registry import register_ingested_shots
             self.registration = register_ingested_shots(
-                project_code=self.project_name, shots=self.ingested_shots,
+                project_code=self.project_name, shots=self.ingested_shots + self.register_existing,
                 project_name=self.project_name, folder_base=str(Path(project_path).parent),
             )
             self.log_signal.emit(f"[INFO] {self.registration.summary()}")
@@ -517,6 +532,9 @@ class FolderCreationWorker(QThread):
         survey: IngestSurvey = self.survey
         oid = getattr(self, "op_id", 0)
         self._plan_stitch_splits()
+        scan_root = next((s.split('/')[0] for s in subs if "scan" in s.lower()), "01_Scan")
+        self._reels_path, self._subs, self._scan_root = reels_path, subs, scan_root
+        self._docs_folder = Path(project_path) / self.client_folder / f"{date.today().isoformat()}_docs"
 
         if survey.documents:
             self._file_documents(project_path)
@@ -535,19 +553,11 @@ class FolderCreationWorker(QThread):
             if not self._should_go_on():
                 break
 
-            stitched = survey.stitched_name(shot, self.stitch_mapping)
-            dest_name = stitched or shot.name
-            problem = shot_name_problem(dest_name, "A shot name") or name_problem(shot.reel, "A reel name")
-            dest_reel = reels_path / shot.reel
-            dest_shot = dest_reel / dest_name
-            if not problem:
-                try:
-                    dest_shot.resolve().relative_to(Path(reels_path).resolve())
-                except ValueError:
-                    problem = "The shot would land outside the project."
-            if problem:
+            place = self._place(shot)
+            if place.get("problem"):
                 # Never built: a name like '../x' would put a shot tree
                 # outside the project. The pre-flight refuses these too.
+                problem = place["problem"]
                 self.log_signal.emit(f"[ERR] {shot.source_name}: {problem}")
                 for f in shot.files:
                     self.errors += 1
@@ -555,16 +565,14 @@ class FolderCreationWorker(QThread):
                                               "destination": "", "error": problem})
                 continue
 
+            dest_reel, dest_shot = place["dest_shot"].parent, place["dest_shot"]
             if shot.reel not in self._reels_seen:
                 self._reels_seen.add(shot.reel)
                 self.reels_count += 1
                 self._mkdir(dest_reel)
             self._mkdir(dest_shot)
-            scan_root = "01_Scan"
             for s in subs:
                 self._mkdir(dest_shot / s)
-                if "scan" in s.lower() and scan_root == "01_Scan":
-                    scan_root = s.split('/')[0]
 
             if survey.structure_only or not shot.files:
                 # A folder skeleton: the shot is built, there is no scan yet.
@@ -572,6 +580,41 @@ class FolderCreationWorker(QThread):
                     self._entry(shot, dest_shot, "", count=True)
                 continue
 
+            if place["stitched"] and place["scan_target"] != place["version"]:
+                self.log_signal.emit(f"[STITCH] {shot.source_name} shares file names with another "
+                                     f"part; it goes in {place['scan_target']}")
+            elif shot.tail and not place["stitched"]:
+                self.log_signal.emit(f"[SCAN] {shot.source_name} -> {dest_shot.name} {place['version']}")
+
+            context = {"shot": shot, "dest_shot": dest_shot, "scan_root": scan_root,
+                       "version": place["version"], "stitched": place["stitched"]}
+            self._process_files(shot, dest_shot, subs, scan_root, place["scan_target"], oid, context)
+            if self.cancelled:
+                break
+
+        self._emit_progress(force=True)
+
+    def _place(self, shot) -> dict:
+        """
+        Where a shot goes - its folder, scan version and the folder inside
+        the version - worked out once per shot, for the run and for the files
+        a stopped run leaves to the retry.
+        """
+        if id(shot) in self._placement:
+            return self._placement[id(shot)]
+        survey, reels_path, scan_root = self.survey, self._reels_path, self._scan_root
+        stitched = survey.stitched_name(shot, self.stitch_mapping)
+        dest_name = stitched or shot.name
+        problem = shot_name_problem(dest_name, "A shot name") or name_problem(shot.reel, "A reel name")
+        dest_shot = reels_path / shot.reel / dest_name
+        if not problem:
+            try:
+                dest_shot.resolve().relative_to(Path(reels_path).resolve())
+            except ValueError:
+                problem = "The shot would land outside the project."
+        place = {"problem": problem, "dest_shot": dest_shot, "stitched": bool(stitched),
+                 "version": "", "scan_target": ""}
+        if not problem and shot.files and not survey.structure_only:
             if stitched:
                 version = self._stitch_versions.get(str(dest_shot))
                 if version is None:
@@ -579,42 +622,44 @@ class FolderCreationWorker(QThread):
                     self._stitch_versions[str(dest_shot)] = version
             else:
                 version = self._next_scan_version(dest_shot, scan_root)
-
             scan_target = version
             if stitched and self._stitch_split.get((shot.reel, dest_name)):
-                part = self._part_folder(shot, dest_name)
-                scan_target = f"{version}/{part}"
-                self.log_signal.emit(f"[STITCH] {shot.source_name} shares file names with another "
-                                     f"part; it goes in {version}/{part}")
-            elif shot.tail and not stitched:
-                self.log_signal.emit(f"[SCAN] {shot.source_name} -> {dest_name} {version}")
+                scan_target = f"{version}/{self._part_folder(shot, dest_name)}"
+            place.update(version=version, scan_target=scan_target)
+        self._placement[id(shot)] = place
+        return place
 
-            context = {"shot": shot, "dest_shot": dest_shot, "scan_root": scan_root,
-                       "version": version, "stitched": bool(stitched)}
-            self._process_files(shot, dest_shot, subs, scan_root, scan_target, oid, context)
-            if self.cancelled:
-                break
-
-        self._emit_progress(force=True)
+    def _target(self, shot, file_info, path: Path, target_sub: str) -> str:
+        """The folder inside the shot a file lands in (its format folder, and its own sub-folder when names repeat)."""
+        sub = getattr(file_info, "sub", "") if shot.keep_subfolders else ""
+        parts = [p for p in sub.split("/") if p]
+        if parts and parts[0].lower() == Path(target_sub).name.lower():
+            parts = parts[1:]                    # EXR/4K inside .../EXR -> .../EXR/4K
+        return "/".join([target_sub] + parts)
 
     def _file_documents(self, project_path: Path):
-        """Paperwork from the top of the drive: filed under the client folder, not as a shot."""
-        folder = Path(project_path) / self.client_folder / f"{date.today().isoformat()}_docs"
+        """Client material (paperwork, LUTs, references): filed under the client folder, not as a shot."""
+        folder = self._docs_folder
         for doc in self.survey.documents:
             if not self._should_go_on():
                 return
-            try:
-                relative = doc.path.relative_to(self.survey.source)
-            except ValueError:
-                relative = Path(doc.path.name)
-            destination = folder / relative
-            status = self._transfer(doc.path, destination, doc.size, getattr(self, "op_id", 0))
+            status = self._transfer(doc.path, self._doc_destination(doc), doc.size, getattr(self, "op_id", 0))
             if status == "ok":
-                self.documents_filed.append({"file": str(relative), "destination": str(destination)})
+                self.documents_filed.append({"file": str(self._doc_relative(doc)),
+                                             "destination": str(self._doc_destination(doc))})
         if self.documents_filed:
             verb = "would be filed" if self.dry_run else "filed"
             self.log_signal.emit(f"[DOCS] {len(self.documents_filed)} document(s) {verb} in "
                                  f"{self.client_folder}/{folder.name}")
+
+    def _doc_relative(self, doc) -> Path:
+        try:
+            return doc.path.relative_to(self.survey.source)
+        except ValueError:
+            return Path(doc.path.name)
+
+    def _doc_destination(self, doc) -> Path:
+        return self._docs_folder / self._doc_relative(doc)
 
     def _entry(self, shot, dest_shot, version, count=True):
         """The ingested-shot record, made when the first file of it lands."""
@@ -660,8 +705,6 @@ class FolderCreationWorker(QThread):
         key = (str(context["dest_shot"]).lower(), context["version"])
         if key in self._created_versions:
             return
-        import os
-        from slate.core.infra.file_operations import long_path
         top = Path(context["dest_shot"]) / context["scan_root"] / context["version"]
         try:
             for root, dirs, files in os.walk(long_path(top), topdown=False):
@@ -670,26 +713,49 @@ class FolderCreationWorker(QThread):
         except OSError as exc:
             logging.debug("Could not tidy the unused version %s: %s", top, exc)
 
+    def _meta(self, context) -> dict:
+        """What a retry needs to finish a file the way this run would have: its shot and scan version."""
+        if not context:
+            return {}
+        shot = context["shot"]
+        return {
+            "reel": shot.reel, "shot": context["dest_shot"].name, "path": str(context["dest_shot"]),
+            "scan_version": context["version"], "source_folder": shot.source_name,
+            "client_version": shot.client_version,
+            "version_dir": str(Path(context["dest_shot"]) / context["scan_root"] / context["version"]),
+            "derived": list(self.scan_version_folders),
+            "sequence": context.get("sequence"), "frame": context.get("frame"),
+        }
+
     def _process_files(self, shot, dest_shot, subs, scan_root, scan_target, oid, context):
         sequences, stills = group_frames([f.path for f in shot.files])
-        sizes = {str(f.path): f.size for f in shot.files}
+        by_path = {str(f.path): f for f in shot.files}
 
         for seq in sequences:
             if not self._should_go_on():
                 return
             ext = seq.tail.lstrip('.').lower()
             target_sub = self._resolve_target_sub(ext, subs, scan_root, scan_target)
-            missing, display = self._record_sequence(seq, dest_shot, shot)
+            missing, display = self._sequence_display(seq)
             done = failed = skipped = 0
-            for frame_path in seq.files:
+            landed = []
+            for frame, frame_path in zip(seq.frames, seq.files):
                 if not self._should_go_on():
                     break
-                status = self._transfer(frame_path, dest_shot / target_sub / frame_path.name,
-                                        sizes.get(str(frame_path), 0), oid, context)
+                info = by_path.get(str(frame_path))
+                context["sequence"], context["frame"] = display, frame
+                status = self._transfer(frame_path,
+                                        dest_shot / self._target(shot, info, frame_path, target_sub) / frame_path.name,
+                                        getattr(info, "size", 0), oid, context)
                 done += status == "ok"
                 failed += status == "fail"
                 skipped += status == "skip"
-            self._log_group(display, seq.frame_count, target_sub, done, failed, skipped, missing)
+                if status != "fail":
+                    landed.append(frame)
+            context["sequence"] = context["frame"] = None
+            self._record_sequence(seq, dest_shot, shot, display, missing, landed)
+            self._log_group(display, seq.frame_count, target_sub, done, failed, skipped, missing,
+                            landed=len(landed))
             if self.cancelled:
                 return
 
@@ -702,20 +768,25 @@ class FolderCreationWorker(QThread):
             for path in files:
                 if not self._should_go_on():
                     break
-                self._record_still(path, dest_shot, shot)
-                status = self._transfer(path, dest_shot / target_sub / path.name,
-                                        sizes.get(str(path), 0), oid, context)
+                info = by_path.get(str(path))
+                status = self._transfer(path, dest_shot / self._target(shot, info, path, target_sub) / path.name,
+                                        getattr(info, "size", 0), oid, context)
+                if status != "fail":
+                    self._record_still(path, dest_shot, shot)
                 done += status == "ok"
                 failed += status == "fail"
                 skipped += status == "skip"
             label = files[0].name if len(files) == 1 else f"{len(files)} single file(s)"
-            self._log_group(label, len(files), target_sub, done, failed, skipped, [])
+            self._log_group(label, len(files), target_sub, done, failed, skipped, [],
+                            landed=done + skipped)
             if self.cancelled:
                 return
 
-    def _log_group(self, label, count, target_sub, done, failed, skipped, missing):
+    def _log_group(self, label, count, target_sub, done, failed, skipped, missing, landed=None):
         if self.dry_run:
             line = f"[DRY] would {self.operation} {label} ({count} file(s)) -> {target_sub}"
+        elif self.cancelled and (done + failed + skipped) < count:
+            line = f"[STOP] {label} - {landed if landed is not None else done} of {count} file(s), stopped"
         elif failed:
             line = f"[ERR] {label}: {failed} of {count} file(s) failed -> {target_sub}"
         else:
@@ -726,40 +797,133 @@ class FolderCreationWorker(QThread):
             line += f"  MISSING {len(missing)}: {_frame_summary(missing)}"
         self.log_signal.emit(line)
 
-    def _record_sequence(self, seq, dest_shot: Path, shot):
-        """Note a sequence for the delivery report; returns (missing frames, display name)."""
-        missing = list(seq.missing_frames)
+    @staticmethod
+    def _sequence_display(seq):
+        """(frames the client did not deliver, 'plate [1001-1060].exr')."""
         base = seq.head.rstrip("._- ")
-        display = f"{base} [{seq.start}-{seq.end}]{seq.tail}"
+        missing = list(seq.missing_frames)
+        # A numbering that jumps (1001 ... 9001) is not a short delivery of
+        # 8,000 frames; it is irregular.
+        if missing and seq.end - seq.start + 1 > 10 * seq.frame_count:
+            missing = []
+        return missing, f"{base} [{seq.start}-{seq.end}]{seq.tail}"
+
+    def _record_sequence(self, seq, dest_shot: Path, shot, display=None, missing=None, landed=None):
+        """
+        Note a sequence for the delivery report, counting the frames that
+        actually landed: a stopped or failed sequence is never reported whole.
+        """
+        if display is None:
+            missing, display = self._sequence_display(seq)
+        landed = list(seq.frames) if landed is None else list(landed)
         entry = {
             "shot": dest_shot.name,
             "reel": dest_shot.parent.name,
             "source": shot.source_name,
             "name": display,
             "kind": "sequence",
-            "frames": seq.frame_count,
+            "frames": len(landed),
             "start": seq.start,
             "end": seq.end,
-            "missing": missing,
+            "missing": list(missing or []),
         }
-        # A numbering that jumps (1001 ... 9001) is not a short delivery of
-        # 8,000 frames; say it is irregular instead of shouting about it.
-        span = seq.end - seq.start + 1
-        if missing and span > 10 * seq.frame_count:
+        if seq.missing_frames and not missing:
             entry["irregular"] = True
-            entry["missing"] = []
-            missing = []
+        not_landed = sorted(set(seq.frames) - set(landed))
+        if not_landed:
+            entry["planned"] = seq.frame_count
+            entry["not_landed"] = not_landed
+            if self.cancelled:
+                entry["stopped"] = True
         self.sequences_found.append(entry)
         if missing:
             self.incomplete_sequences.append(entry)
             logging.warning("Short delivery: %s is missing %d frame(s)", display, len(missing))
-        return missing, display
+        return list(missing or []), display
 
     def _record_still(self, path: Path, dest_shot: Path, shot):
         self.sequences_found.append({
             "shot": dest_shot.name, "reel": dest_shot.parent.name, "source": shot.source_name,
             "name": path.name, "kind": "file", "frames": 1, "start": None, "end": None, "missing": [],
         })
+
+    def _record_pending(self):
+        """
+        A stopped run: every file it did not reach, with the shot, scan
+        version and folder it was going to - so 'Finish the stopped run'
+        brings them into the same scan version instead of a new one.
+        """
+        survey = self.survey
+        for doc in survey.documents:
+            if str(doc.path) not in self._attempted:
+                self.pending_files.append({
+                    "file": doc.path.name, "source": str(doc.path),
+                    "destination": str(self._doc_destination(doc)),
+                    "error": "Not copied - the run was stopped", "pending": True})
+        for shot in survey.active_shots():
+            if not shot.files or survey.structure_only:
+                continue
+            todo = [f for f in shot.files if str(f.path) not in self._attempted]
+            if not todo:
+                continue
+            place = self._place(shot)
+            if place.get("problem"):
+                continue
+            context = {"shot": shot, "dest_shot": place["dest_shot"], "scan_root": self._scan_root,
+                       "version": place["version"]}
+            by_path = {str(f.path): f for f in shot.files}
+            sequences, stills = group_frames([f.path for f in shot.files])
+            recorded = {(e["shot"], e["name"]) for e in self.sequences_found}
+            planned = []
+            for seq in sequences:
+                _missing, display = self._sequence_display(seq)
+                if (place["dest_shot"].name, display) not in recorded:
+                    # Never reached: in the report as a sequence none of whose frames landed.
+                    self._record_sequence(seq, place["dest_shot"], shot, landed=[])
+                target_sub = self._resolve_target_sub(seq.tail.lstrip('.').lower(), self._subs,
+                                                      self._scan_root, place["scan_target"])
+                planned += [(p, target_sub, display, frame) for frame, p in zip(seq.frames, seq.files)]
+            for still in stills:
+                target_sub = self._resolve_target_sub(still.suffix.lower().lstrip('.'), self._subs,
+                                                      self._scan_root, place["scan_target"])
+                planned.append((still, target_sub, None, None))
+            for path, target_sub, display, frame in planned:
+                if str(path) in self._attempted:
+                    continue
+                info = by_path.get(str(path))
+                context.update(sequence=display, frame=frame)
+                destination = place["dest_shot"] / self._target(shot, info, path, target_sub) / path.name
+                self.pending_files.append({
+                    "file": path.name, "source": str(path), "destination": str(destination),
+                    "error": "Not copied - the run was stopped", "pending": True, **self._meta(context)})
+        if self.pending_files:
+            self.log_signal.emit(f"[STOP] {len(self.pending_files):,} file(s) not reached - "
+                                 "'Finish the stopped run' brings them into the same scan version.")
+
+    def _tidy_drive(self):
+        """
+        After a Move: take away the folders on the client drive this run
+        emptied (bottom up, only empty ones), so the drive does not look like
+        an undelivered one. Folders still holding something stay, and are said.
+        """
+        if self.operation != MOVE or self.dry_run or not self._moved_from or self.source_scan_path is None:
+            return
+        root = Path(self.source_scan_path)
+        left = 0
+        for folder in sorted(self._moved_from, key=lambda p: len(p.parts), reverse=True):
+            current = folder
+            while current != root and root in current.parents:
+                try:
+                    os.rmdir(long_path(current))
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    left += current == folder
+                    break
+                current = current.parent
+        if left:
+            self.log_signal.emit(f"[INFO] {left} folder(s) on the client drive still hold files Slate did "
+                                 "not bring in (system files, or files left out) and were kept.")
 
     def _attach_frame_ranges(self):
         """
@@ -835,6 +999,7 @@ class FolderCreationWorker(QThread):
     def _transfer(self, source: Path, dest_file: Path, size: int, oid, context=None) -> str:
         """Bring one file in: 'ok', 'skip' or 'fail'."""
         self._processed_files += 1
+        self._attempted.add(str(source))
         key = str(dest_file).lower()
         try:
             if key in self._placed or SafeFileOperations.exists(dest_file):
@@ -857,6 +1022,8 @@ class FolderCreationWorker(QThread):
                 if not success:
                     raise RuntimeError(msg)
                 self._record_task_detail(oid, source.name, str(source), str(dest_file), size, 0, "Success", "")
+                if self.operation == MOVE:
+                    self._moved_from.add(Path(source).parent)
 
             self._placed.add(key)
             self.files_moved += 1
@@ -871,7 +1038,7 @@ class FolderCreationWorker(QThread):
         except Exception as e:
             self.errors += 1
             self.failed_files.append({"file": source.name, "source": str(source),
-                                      "destination": str(dest_file), "error": str(e)})
+                                      "destination": str(dest_file), "error": str(e), **self._meta(context)})
             self._record_task_detail(oid, source.name, str(source), str(dest_file), 0, 0, "Failed", str(e))
             self.log_signal.emit(f"[ERR] {source.name}: {e}")
             if context is not None and not self.dry_run:
@@ -879,12 +1046,6 @@ class FolderCreationWorker(QThread):
             return "fail"
         finally:
             self._emit_progress()
-            if self.lock is not None and time.monotonic() - self._last_touch > LOCK_TOUCH_SECONDS:
-                self._last_touch = time.monotonic()
-                try:
-                    self.lock.touch()
-                except Exception:  # pragma: no cover
-                    pass
 
     # kept for older callers
     def _move_file(self, f, dest_shot, target_sub, oid):

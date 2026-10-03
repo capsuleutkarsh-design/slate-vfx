@@ -27,7 +27,7 @@ import logging
 from PySide6.QtCore import Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QFont
 from PySide6.QtWidgets import (
-    QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QGridLayout,
+    QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QFrame, QGridLayout,
     QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
     QProgressBar, QRadioButton, QScrollArea, QSplitter, QTextEdit, QTreeWidget,
     QTreeWidgetItem, QVBoxLayout, QWidget,
@@ -35,7 +35,9 @@ from PySide6.QtWidgets import (
 
 from ...core.infra.config_manager import ConfigManager
 from ...core.worker_threads import FolderCreationWorker
-from ...core.domain.naming import name_problem
+from ...core.workers.structure import DEFAULT_SHOT_FOLDERS, DEFAULT_VERSION_FOLDERS, LOCK_TOUCH_SECONDS
+from ...core.domain.ingest_survey import client_folder_for
+from ...core.domain.naming import name_problem, shot_name_problem
 from ...utils.text_utils import normalize_name
 from ...gui.dialogs.custom_template_dialog import CustomTemplateDialog, template_key
 from ...gui.dialogs.stitch_confirm_dialog import StitchConfirmDialog
@@ -46,8 +48,8 @@ from slate.gui.core.controls import form_layout, make_button, plain
 logger = logging.getLogger(__name__)
 
 IDLE_STATUS = "Ready"
+NOT_READY = "Not ready"
 IDLE_HINT = "Enter a project code, choose the projects folder and the client drive."
-DEFAULT_SHOT_FOLDERS = ("01_Scan", "07_Comp", "08_Output")
 COPY, MOVE = "copy", "move"
 
 _LOG_COLOURS = {"ERR": "BAD", "SKIP": "WARN", "WARN": "WARN", "STOP": "WARN", "WAIT": "WARN",
@@ -89,9 +91,10 @@ class RetryWorker(QThread):
     progress = Signal(int, int, str)
     done = Signal(object)
 
-    def __init__(self, manifest, fast_mode=False):
+    def __init__(self, manifests, fast_mode=False):
         super().__init__()
-        self.manifest = manifest
+        # Every run of the project with files waiting, newest first.
+        self.manifests = [manifests] if isinstance(manifests, (str, Path)) else list(manifests or [])
         self.fast_mode = fast_mode
         self._stop = False
         self.result = None
@@ -102,9 +105,13 @@ class RetryWorker(QThread):
     def run(self):
         from slate.core.domain.ingest_retry import RetryResult, retry_failures
         try:
-            self.result = retry_failures(self.manifest, fast_mode=self.fast_mode,
-                                         progress=lambda d, t, n: self.progress.emit(d, t, n),
-                                         should_stop=lambda: self._stop)
+            self.result = RetryResult()
+            for manifest in self.manifests:
+                if self._stop:
+                    break
+                self.result.merge(retry_failures(manifest, fast_mode=self.fast_mode,
+                                                 progress=lambda d, t, n: self.progress.emit(d, t, n),
+                                                 should_stop=lambda: self._stop))
         except Exception as exc:
             logger.exception("Retry failed: %s", exc)
             self.result = RetryResult(error=str(exc))
@@ -118,8 +125,9 @@ def wrap_path(text: str) -> str:
 
 def find_project_folder(root: str, code: str) -> Optional[Path]:
     """
-    A folder at or above `root` that is this project, by name - 'My-Show'
-    for MYSHOW. The coordinator may have picked a folder inside the project.
+    The folder that is this project, by name - 'My-Show' for MYSHOW: the
+    projects folder itself or one above it (the coordinator may have picked
+    a folder inside the project), else a folder inside the projects folder.
     """
     if not root or not code:
         return None
@@ -129,8 +137,16 @@ def find_project_folder(root: str, code: str) -> Optional[Path]:
         if normalize_name(current.name) == wanted:
             return current
         if current.parent == current:
-            return None
+            break
         current = current.parent
+    exact = Path(root) / code
+    if exact.is_dir():
+        return exact
+    try:
+        return next((child for child in sorted(Path(root).iterdir())
+                     if child.is_dir() and normalize_name(child.name) == wanted), None)
+    except OSError:
+        return None
 
 
 class FolderCreatorTab(QWidget):
@@ -157,10 +173,17 @@ class FolderCreatorTab(QWidget):
         self._last_report = None
         self._ingest_lock = None
         self._last_survey = None
+        self._retry_manifests: List[Path] = []
         self._log_lines: List[Tuple[str, str]] = []
         self._pending: Dict[str, Any] = {}
+        # Keeps the ingest lock fresh while a run is on screen - paused or
+        # not - so a run paused overnight is never taken for an abandoned one.
+        self._lock_timer = QTimer(self)
+        self._lock_timer.setInterval(LOCK_TOUCH_SECONDS * 1000)
+        self._lock_timer.timeout.connect(self._touch_lock)
 
         self.setup_ui()
+        self._sync_studio_templates()
         self.load_templates_to_ui()
         self.restore_last_paths()
         settings_dict = getattr(self.config_manager, "settings", {}) or {}
@@ -344,6 +367,17 @@ class FolderCreatorTab(QWidget):
         left_layout.addWidget(self.scan_card)
         left_layout.addStretch()
 
+        # One label column for both cards, so their fields line up.
+        labels = []
+        for form in (project_layout, scan_layout):
+            for row in range(form.rowCount()):
+                item = form.itemAt(row, QFormLayout.ItemRole.LabelRole)
+                if item is not None and item.widget() is not None:
+                    labels.append(item.widget())
+        width = max((label.sizeHint().width() for label in labels), default=0)
+        for label in labels:
+            label.setMinimumWidth(width)
+
         # Typing is checked after a short pause, not on every key.
         self.typing_timer = QTimer(self)
         self.typing_timer.setSingleShot(True)
@@ -405,6 +439,7 @@ class FolderCreatorTab(QWidget):
         self.errors_only_cb.toggled.connect(self._render_log)
         self.save_log_btn = make_button("Save log…", "ghost", on_click=self.save_log,
                                         tooltip="Save the log as a text file.")
+        self.save_log_btn.setEnabled(False)
         self.open_report_btn = make_button("Open report", "ghost", on_click=self.open_last_report,
                                            tooltip="Open the delivery report of the last run.")
         self.open_report_btn.setEnabled(False)
@@ -416,13 +451,26 @@ class FolderCreatorTab(QWidget):
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
         self.log_text.setPlaceholderText("What each run did appears here.")
-        self.log_text.setMinimumHeight(40)
+        # Six lines at least: the log is what a coordinator reads during a run.
+        self.log_text.setMinimumHeight(self.log_text.fontMetrics().lineSpacing() * 6 + 12)
         log_layout.addWidget(self.log_text)
         self.right_splitter.addWidget(log_card)
         self.right_splitter.setStretchFactor(0, 3)
-        self.right_splitter.setStretchFactor(1, 1)
-        self.right_splitter.setSizes([520, 160])
+        self.right_splitter.setStretchFactor(1, 2)
+        sizes = self._settings().get("build_ingest_split")
+        valid = isinstance(sizes, list) and len(sizes) == 2 and all(isinstance(v, int) and v > 0 for v in sizes)
+        self.right_splitter.setSizes(sizes if valid else [460, 240])
+        # Where the person drags it is kept (saved once the dragging stops).
+        self._split_timer = QTimer(self)
+        self._split_timer.setSingleShot(True)
+        self._split_timer.setInterval(600)
+        self._split_timer.timeout.connect(self._remember_split)
+        self.right_splitter.splitterMoved.connect(lambda *_: self._split_timer.start())
         return self.right_splitter
+
+    def _remember_split(self):
+        self._settings()["build_ingest_split"] = [int(v) for v in self.right_splitter.sizes()]
+        self._save_settings()
 
     def _create_run_bar(self) -> QWidget:
         bar = QFrame()
@@ -561,7 +609,9 @@ class FolderCreatorTab(QWidget):
         code, root, source, reel = self._inputs()
         out = {}
         if code:
-            problem = name_problem(code, "The project code")
+            # The shot rule: the code is the top folder and the Dashboard
+            # code, typed into render paths and Nuke scripts like a shot name.
+            problem = shot_name_problem(code, "The project code")
             if problem:
                 out["code"] = problem
         if root:
@@ -666,6 +716,12 @@ class FolderCreatorTab(QWidget):
             self.create_btn.setToolTip("Look at the client drive and show the plan before anything is copied.")
 
         if not busy:
+            # 'Ready' never sits next to a problem.
+            if problems:
+                self.progress_label.setText(NOT_READY)
+            elif self.progress_label.text() == NOT_READY:
+                self.progress_label.setText(IDLE_STATUS)
+            self.stats_label.setStyleSheet(f"color: {Gate.WARN if problems else Gate.TEXT_2};")
             if blocked:
                 self.stats_label.setText(blocked if problems else IDLE_HINT)
             elif exists:
@@ -693,6 +749,23 @@ class FolderCreatorTab(QWidget):
     def _user_keys(self) -> set:
         return set(self._templates()) - self._builtin_keys()
 
+    def _sync_studio_templates(self):
+        """Templates are the studio's (the database); this PC's file is the offline copy."""
+        sync = getattr(self.config_manager, "sync_studio_templates", None)
+        if callable(sync) and not sync(by=self._username()):
+            logger.info("Studio templates unavailable - using this PC's copy.")
+
+    def _share_templates(self, name: str):
+        """Save the templates for the whole studio; say so when only this PC has them."""
+        share = getattr(self.config_manager, "share_templates", None)
+        if callable(share) and not share(by=self._username()):
+            from slate.gui.components.feedback import warn
+            warn(self, "Templates", f"'{name}' is saved on this PC only - the studio database could not "
+                 "be reached. It is shared the next time Slate starts with the database.")
+
+    def _username(self) -> str:
+        return str(self.user_data.get("username") or self.user_data.get("user_id") or "")
+
     def load_templates_to_ui(self, select_key: Optional[str] = None):
         """
         Fill the template combo from the configuration without firing anything.
@@ -711,10 +784,13 @@ class FolderCreatorTab(QWidget):
                 keys = self.config_manager.get_available_templates() or []
             else:
                 keys = []
-            for key in keys:
+            builtin = self._builtin_keys()
+            for key in sorted(keys, key=lambda k: (k not in builtin, str(k).lower())):
                 info = self._templates().get(key)
                 name = info.get("name", key) if isinstance(info, dict) else str(key)
-                self.template_combo.addItem(str(name), key)
+                # Built-ins first and marked: they cannot be edited, the
+                # studio's own templates can.
+                self.template_combo.addItem(f"{name} (built-in)" if key in builtin else str(name), key)
             last = ((self._settings().get("global_settings") or {}).get("last_template_used")
                     if isinstance(self._settings().get("global_settings"), dict) else None)
             for wanted in (select_key, previous, last, "standard"):
@@ -755,7 +831,7 @@ class FolderCreatorTab(QWidget):
         menu = self.templates_menu
         menu.clear()
         key = self.template_combo.currentData()
-        name = self.template_combo.currentText()
+        name = self._template_name(key)
         builtin = key in self._builtin_keys()
         menu.addAction("New template…", self.create_custom_template)
         edit = menu.addAction(plain(f"Edit '{name}'…"), self.edit_current_template)
@@ -768,6 +844,22 @@ class FolderCreatorTab(QWidget):
         delete = menu.addAction(plain(f"Delete '{name}'"), self.delete_current_template)
         delete.setEnabled(bool(key) and not builtin)
         menu.setToolTipsVisible(True)
+
+    def _template_name(self, key) -> str:
+        info = self._templates().get(key)
+        return str(info.get("name", key)) if isinstance(info, dict) else str(key or "")
+
+    @staticmethod
+    def _version_folders(info) -> list:
+        """
+        What goes inside each scan version: the template's list - an empty
+        list means none - or Denoise for templates from before the list.
+        """
+        structure = info if isinstance(info, dict) else {}
+        if isinstance(structure.get("structure"), dict):
+            structure = structure["structure"]
+        folders = structure.get("scan_version_folders")
+        return list(DEFAULT_VERSION_FOLDERS if folders is None else folders)
 
     def _template_dialog(self, template=None, original_key="", title=""):
         return CustomTemplateDialog(self, template, original_key=original_key,
@@ -812,6 +904,7 @@ class FolderCreatorTab(QWidget):
         if not self.config_manager.save_templates(templates) or key not in self._templates():
             warn(self, "Save template", f"'{data['name']}' could not be saved. Nothing was changed.")
             return
+        self._share_templates(data["name"])
         self.load_templates_to_ui(select_key=key)
         self.on_template_activated(self.template_combo.currentIndex())
         self.template_changed.emit(data)
@@ -822,7 +915,7 @@ class FolderCreatorTab(QWidget):
         key = self.template_combo.currentData()
         if not key or key in self._builtin_keys():
             return
-        name = self.template_combo.currentText()
+        name = self._template_name(key)
         if not confirm(self, "Delete template", f"Delete the template '{name}'? Projects already built "
                        "with it are not changed.", yes_label="Delete template", destructive=True):
             return
@@ -831,6 +924,7 @@ class FolderCreatorTab(QWidget):
         if not self.config_manager.save_templates(templates) or key in self._templates():
             warn(self, "Delete template", f"'{name}' could not be deleted.")
             return
+        self._share_templates(name)
         self.load_templates_to_ui(select_key="standard")
         self.on_template_activated(self.template_combo.currentIndex())
         self.template_changed.emit({"name": name, "deleted": True})
@@ -854,7 +948,7 @@ class FolderCreatorTab(QWidget):
     def _preview_code(self) -> str:
         """The typed code, when it can be a folder name; '' otherwise."""
         code = self.project_name_input.text().strip()
-        return code if code and not name_problem(code) else ""
+        return code if code and not shot_name_problem(code) else ""
 
     def update_preview(self, template_key, survey=None):
         """The project this template builds, folder by folder, merged by path."""
@@ -867,8 +961,7 @@ class FolderCreatorTab(QWidget):
             self.preview_warning.setVisible(False)
             return
         base, production, outsource, shots = self._extract_template_lists(info)
-        structure = info.get("structure") if isinstance(info.get("structure"), dict) else info
-        version_folders = structure.get("scan_version_folders") or ["Denoise"]
+        version_folders = self._version_folders(info)
         code = self._preview_code()
         root = QTreeWidgetItem(tree, [code or "Project"])
         bold = QFont(root.font(0))
@@ -892,6 +985,7 @@ class FolderCreatorTab(QWidget):
             add(root, folder)
         for folder in list(production) + list(outsource):
             add(root, f"04_Production/{folder}")
+        add(root, client_folder_for(info), "client deliveries and reports")
 
         defaulted = not shots
         shot_folders = list(shots) or list(DEFAULT_SHOT_FOLDERS)
@@ -946,12 +1040,16 @@ class FolderCreatorTab(QWidget):
                 value = settings.get(key, '')
                 if value and Path(value).exists():
                     field.setText(value)
+            # The code too: the retry of a run looks for that project's
+            # failures, so they show after a restart without retyping it.
+            if settings.get('last_project_code') and self.project_dir_input.text():
+                self.project_name_input.setText(str(settings['last_project_code']))
         except Exception as e:
             logger.warning(f"Could not restore last paths: {e}")
 
     # ================================================================ the log
     def log_message(self, message: str):
-        """Add a line to the log, coloured by what it says."""
+        """Add a line to the log, coloured by what it says; the view follows the newest lines."""
         stamp = datetime.now().strftime("%H:%M:%S")
         text = str(message)
         tag = text[1:text.index("]")] if text.startswith("[") and "]" in text else ""
@@ -959,7 +1057,14 @@ class FolderCreatorTab(QWidget):
         if len(self._log_lines) > 5000:
             self._log_lines = self._log_lines[-4000:]
         if self._log_visible(tag):
+            bar = self.log_text.verticalScrollBar()
+            # Follow unless the person scrolled up to read; a new run always
+            # brings its header into view.
+            follow = tag == "RUN" or bar.value() >= bar.maximum() - 4
             self.log_text.append(self._log_html(tag, f"[{stamp}] {text}"))
+            if follow:
+                bar.setValue(bar.maximum())
+        self.save_log_btn.setEnabled(True)
         logger.info(text)
 
     def _log_visible(self, tag: str) -> bool:
@@ -1025,12 +1130,20 @@ class FolderCreatorTab(QWidget):
         self.update_folder_creator_progress(value, text)
 
     def _on_worker_state(self, state: str):
+        from slate.gui.core.icons import icon as draw_icon
         self._paused = state == "paused"
+        bar = self._status_bar()
         if self._paused:
             self.progress_label.setText("Paused")
             self.progress_label.setStyleSheet(f"color: {Gate.WARN}; font-weight: 600;")
+            if bar is not None:
+                bar.showMessage("Build & Ingest is paused")      # stays until it resumes
         else:
             self.progress_label.setStyleSheet(f"color: {Gate.TEXT}; font-weight: 600;")
+            if bar is not None:
+                bar.clearMessage()
+        self.pause_btn.setText("Resume" if self._paused else "Pause")
+        self.pause_btn.setIcon(draw_icon("play" if self._paused else "pause", Gate.TEXT, 16))
 
     def toggle_pause(self):
         worker = self.folder_creation_thread
@@ -1039,11 +1152,9 @@ class FolderCreatorTab(QWidget):
         if not self._paused:
             worker.pause()
             self._on_worker_state("paused")
-            self.pause_btn.setText("Resume")
         else:
             worker.resume()
             self._on_worker_state("running")
-            self.pause_btn.setText("Pause")
             self.progress_label.setText("Resuming…")
 
     # ================================================================ phases
@@ -1054,12 +1165,14 @@ class FolderCreatorTab(QWidget):
         self.is_processing = busy
         self.stop_btn.setEnabled(phase in ("survey", "run", "retry"))
         self.pause_btn.setEnabled(phase == "run")
+        if phase != "run" and self._paused:
+            self._on_worker_state("running")
         if phase != "run":
-            self._paused = False
-            self.pause_btn.setText("Pause")
             self.progress_label.setStyleSheet(f"color: {Gate.TEXT}; font-weight: 600;")
         for widget in (self.project_card, self.scan_card, self.clear_btn):
             widget.setEnabled(not busy)
+        # The last run's line belongs to that run: not shown under a new one.
+        self.last_run_label.setVisible(not busy and bool(self.last_run_label.text()))
         self.check_destination_status()
         hints = {"survey": "Looking at every folder on the client drive. Stop cancels; nothing is copied yet.",
                  "run": "Pause and Stop act between files - nothing is ever left half copied.",
@@ -1090,8 +1203,10 @@ class FolderCreatorTab(QWidget):
                          "template": self.template_combo.currentData()}
         self._set_phase("survey")
         self.progress_bar.setValue(0)
+        self.progress_bar.setStyleSheet("")
         self.progress_label.setText("Looking at the client drive…")
-        self.right_splitter.setSizes([360, 320])
+        self._settings()["last_project_code"] = code
+        self._save_settings()
         self._log_run_header(f"{datetime.now():%d %b %Y %H:%M}  {code} from {source}")
 
         self._cleanup_worker("survey_thread")
@@ -1136,23 +1251,15 @@ class FolderCreatorTab(QWidget):
         info = self._templates().get(key)
         base, production, outsource, shots = self._extract_template_lists(info)
         defaulted = not shots
-        structure = info.get("structure") if isinstance(info, dict) and isinstance(info.get("structure"), dict) \
-            else (info or {})
-        version_folders = structure.get("scan_version_folders") or ["Denoise"]
-        return (base, production, outsource, list(shots) or list(DEFAULT_SHOT_FOLDERS)), defaulted, \
-            version_folders, (info or {}).get("name", key)
+        return ((base, production, outsource, list(shots) or list(DEFAULT_SHOT_FOLDERS)), defaulted,
+                self._version_folders(info), (info or {}).get("name", key))
 
     def finalize_creation_process(self, survey=None):
         """Stitches, pre-flight, lock - then the worker. Any 'no' leaves everything untouched."""
         pending = self._pending
         code, root = pending["code"], pending["root"]
         template_data, defaulted, version_folders, template_name = self._template_data(pending["template"])
-
-        stitch_mapping = self._confirm_stitch_shots(survey)
-        if stitch_mapping is None:
-            self.log_message("[STOP] Cancelled at the stitch question - nothing was copied.")
-            self._reset_run_ui()
-            return
+        client = client_folder_for(self._templates().get(pending["template"]))
 
         found = find_project_folder(root, code)
         project_choice = None
@@ -1165,17 +1272,25 @@ class FolderCreatorTab(QWidget):
             project_path = Path(root) / code
         target_root = project_path.parent
 
+        stitch_mapping, decisions = self._confirm_stitch_shots(survey, project_path, client)
+        if stitch_mapping is None:
+            self.log_message("[STOP] Cancelled at the stitch question - nothing was copied.")
+            self._reset_run_ui()
+            return
+
         from slate.core.workers.structure import reels_root_for
         reels_root = reels_root_for(project_path, code, target_root)
         scan_root = next((f.split("/")[0] for f in template_data[3] if "scan" in f.lower()), "01_Scan")
         if project_path.is_dir():
-            skipped = survey.mark_unchanged(reels_root, scan_root, stitch_mapping)
-            if skipped:
-                self.log_message(f"[INFO] {skipped} shot(s) are already in the project unchanged.")
+            survey.mark_unchanged(reels_root, scan_root, stitch_mapping)
+            unchanged = {(s.reel, survey.destination_of(s, stitch_mapping)) for s in survey.shots
+                         if s.unchanged_from}
+            if unchanged:
+                self.log_message(f"[INFO] {len(unchanged)} shot(s) are already in the project unchanged.")
             from slate.core.domain.ingest_survey import mark_documents_filed
-            client = next((b for b in template_data[0] if b.lower().startswith("01_")), "01_Frm Client")
             if mark_documents_filed(survey, project_path / client):
                 self.log_message("[INFO] The documents on the drive were filed by an earlier run.")
+        untracked = self._untracked_shots(survey, code, stitch_mapping, reels_root)
 
         dialog = IngestPreflightDialog(
             survey, project_code=code, project_path=project_path,
@@ -1183,9 +1298,11 @@ class FolderCreatorTab(QWidget):
             dry_run=self.dry_run_cb.isChecked(), template_name=template_name,
             shot_folders_defaulted=defaulted, stitch_mapping=stitch_mapping,
             long_paths=survey.long_paths(project_path, reels_root, scan_root),
-            project_choice=project_choice, project_exists=project_path.is_dir(), parent=self)
+            project_choice=project_choice, project_exists=project_path.is_dir(),
+            client_folder=client, untracked=len(untracked), parent=self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
-            self.log_message("[STOP] Cancelled at the check - nothing was copied.")
+            self.log_message("[INFO] Nothing new on this drive - nothing was copied." if dialog._nothing_new()
+                             else "[STOP] Cancelled at the check - nothing was copied.")
             self._reset_run_ui()
             return
         if dialog.problems():
@@ -1198,6 +1315,7 @@ class FolderCreatorTab(QWidget):
         operation = dialog.operation
         project_path = dialog.chosen_project_dir()
         target_root = project_path.parent
+        register_existing = untracked if dialog.add_untracked() else []
 
         # One ingest per project: two runs would both claim the same scan
         # version. Taken before anything on screen says "running".
@@ -1205,6 +1323,7 @@ class FolderCreatorTab(QWidget):
             if not self._take_lock(project_path):
                 self._reset_run_ui()
                 return
+            self._save_stitch_decisions(project_path, client, decisions)
 
         self._pending.update({"project_path": project_path, "dry_run": dry_run, "operation": operation})
         self._set_phase("run")
@@ -1219,6 +1338,7 @@ class FolderCreatorTab(QWidget):
             fast_mode=self.fast_mode_cb.isChecked(), scan_version_folders=version_folders,
             stitch_mapping=stitch_mapping, operation=operation, survey=survey,
             lock=self._ingest_lock, register_shots=self.add_to_dashboard_cb.isChecked(),
+            client_folder=client, register_existing=register_existing,
         )
         worker.log_signal.connect(self.log_message)
         worker.progress_signal.connect(self._on_folder_worker_progress)
@@ -1227,21 +1347,107 @@ class FolderCreatorTab(QWidget):
         self.folder_creation_thread = worker
         worker.start()
 
-    def _confirm_stitch_shots(self, survey):
-        """The confirmed {(reel, folder): shot} mapping, {} when none, None when cancelled."""
+    def _untracked_shots(self, survey, code, stitch_mapping, reels_root) -> List[dict]:
+        """
+        Shots already in the project, unchanged, that the Dashboard does not
+        have (an earlier run had 'Add shots to the Dashboard' off): the
+        pre-flight offers to add them, even when there is nothing to copy.
+        """
+        unchanged = [s for s in survey.shots if s.unchanged_from]
+        if not unchanged or not self.add_to_dashboard_cb.isChecked():
+            return []
+        try:
+            from slate.core.workers import structure        # the database the run registers into
+            rows = structure.database_manager.get_tracking_shots(code) or []
+        except Exception as exc:
+            logger.debug("Dashboard shots not read: %s", exc)
+            return []
+        tracked = {(str(r.get("reel_episode") or r.get("reel") or "").lower(),
+                    str(r.get("shot_name") or "").lower()) for r in rows if isinstance(r, dict)}
+        out, seen = [], set()
+        for shot in unchanged:
+            dest = survey.destination_of(shot, stitch_mapping)
+            key = (shot.reel.lower(), dest.lower())
+            if key in tracked or key in seen:
+                continue
+            seen.add(key)
+            out.append({"reel": shot.reel, "shot": dest, "path": str(Path(reels_root) / shot.reel / dest),
+                        "scan_version": shot.unchanged_from, "source_folder": shot.source_name,
+                        "client_version": shot.client_version, "is_media": True})
+        return out
+
+    # ---------------------------------------------------------------- stitches
+    @staticmethod
+    def _stitch_key(group) -> str:
+        return f"{group.reel}|{'+'.join(sorted(p.lower() for p in group.parts))}".lower()
+
+    @staticmethod
+    def _stitch_file(project_path: Path, client: str) -> Path:
+        from slate.core.domain.delivery_report import REPORT_DIRNAME
+        return Path(project_path) / client / REPORT_DIRNAME / "stitch_decisions.json"
+
+    def _confirm_stitch_shots(self, survey, project_path=None, client=""):
+        """
+        ({(reel, folder): shot} for the confirmed stitches, the decisions to
+        remember); (None, None) when cancelled. A group answered in an
+        earlier run of this project is answered the same way again, and only
+        new groups are asked about.
+        """
+        import json
+        from slate.core.domain.stitch_detect import StitchGroup, apply_groups
         groups = list(getattr(survey, "stitch_groups", []) or [])
         if not groups:
-            return {}
-        self.log_message(f"[INFO] {len(groups)} possible stitch shot(s) - asking before anything is copied.")
-        dialog = StitchConfirmDialog(groups, self, survey=survey)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return None
-        mapping = dialog.mapping()
-        for group in dialog.accepted_groups():
-            self.log_message(f"[STITCH] {group.describe()}")
+            return {}, {}
+        remembered = {}
+        if project_path is not None:
+            try:
+                remembered = json.loads(self._stitch_file(project_path, client).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                remembered = {}
+        known = [g for g in groups if self._stitch_key(g) in remembered]
+        new = [g for g in groups if self._stitch_key(g) not in remembered]
+        accepted = []
+        for group in known:
+            answer = remembered[self._stitch_key(group)]
+            if answer.get("merge"):
+                accepted.append(StitchGroup(shot_name=answer.get("name") or group.shot_name,
+                                            parts=list(group.parts), reel=group.reel))
+            self.log_message(f"[STITCH] As in an earlier run: {' + '.join(group.parts)} "
+                             + (f"become {accepted[-1].shot_name}" if answer.get("merge") else "stay separate"))
+        decisions = {}
+        if new:
+            self.log_message(f"[INFO] {len(new)} possible stitch shot(s) - asking before anything is copied.")
+            dialog = StitchConfirmDialog(new, self, survey=survey)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return None, None
+            chosen = dialog.accepted_groups()
+            names = {self._stitch_key(g): g.shot_name for g in chosen}
+            for group in new:
+                key = self._stitch_key(group)
+                decisions[key] = {"merge": key in names, "name": names.get(key, "")}
+            for group in chosen:
+                self.log_message(f"[STITCH] {group.describe()}")
+            accepted += chosen
+        mapping = apply_groups([], accepted)
         if not mapping:
             self.log_message("[STITCH] Nothing merged - every folder stays its own shot.")
-        return mapping
+        return mapping, decisions
+
+    def _save_stitch_decisions(self, project_path: Path, client: str, decisions: dict):
+        if not decisions:
+            return
+        import json
+        path = self._stitch_file(project_path, client)
+        try:
+            known = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        except (OSError, ValueError):
+            known = {}
+        known.update(decisions)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(known, indent=1), encoding="utf-8")
+        except OSError as exc:
+            logger.warning("Stitch answers not remembered: %s", exc)
 
     # ---------------------------------------------------------------- the lock
     def _holder(self) -> str:
@@ -1263,29 +1469,51 @@ class FolderCreatorTab(QWidget):
             return False
 
     def _take_lock(self, project_path: Path) -> bool:
+        import socket
         from slate.core.domain.ingest_lock import IngestLock, IngestLocked, clear_lock
         from slate.gui.components.feedback import confirm, warn
         try:
             self._ingest_lock = IngestLock(project_path, holder=self._holder()).acquire()
+            self._lock_timer.start()
             return True
         except IngestLocked as exc:
-            info = exc.info.describe()
-            if self._is_admin():
+            info = exc.info
+            mine = bool((info.holder and info.holder == self._holder())
+                        or (info.machine and info.machine.lower() == socket.gethostname().lower()))
+            # The person (or machine) holding it, an admin, or anyone once
+            # nobody has touched it for hours - always asked, never silent.
+            if mine or info.stale or self._is_admin():
+                if mine:
+                    why = ("The lock is yours (this user or this computer) - left behind if Slate crashed "
+                           "or was closed during a run.")
+                elif info.stale:
+                    why = (f"Nobody has touched it for hours - the run on {info.machine or 'that machine'} "
+                           "has probably stopped.")
+                else:
+                    why = "If that ingest is not really running (Slate crashed or was closed), you can clear the lock."
                 if confirm(self, "Ingest already running",
-                           f"{exc}\n\nIf that ingest is not really running (Slate crashed or was closed), "
-                           "you can clear the lock. Clearing a lock that is in use lets two deliveries "
-                           "mix in one scan version.", yes_label="Clear the lock and continue",
+                           f"{exc}\n\n{why} Clearing a lock that is in use lets two deliveries mix in one "
+                           "scan version.", yes_label="Clear the lock and continue",
                            no_label="Cancel", destructive=True):
                     if clear_lock(project_path):
-                        self.log_message(f"[WARN] Ingest lock held by {info} cleared by hand.")
+                        self.log_message(f"[WARN] Ingest lock held by {info.describe()} cleared by hand.")
                         return self._take_lock(project_path)
                 return False
             warn(self, "Ingest already running",
-                 f"{exc}\n\nWait for it to finish. If it is not really running, ask an admin to "
-                 "clear the lock.")
+                 f"{exc}\n\nWait for it to finish. If it is not really running, the person who started "
+                 "it, or an admin, can clear the lock.")
             return False
 
+    def _touch_lock(self):
+        lock = getattr(self, "_ingest_lock", None)
+        if lock is not None:
+            try:
+                lock.touch()
+            except Exception as exc:  # pragma: no cover
+                logger.debug("Ingest lock not touched: %s", exc)
+
     def _release_ingest_lock(self):
+        self._lock_timer.stop()
         lock = getattr(self, "_ingest_lock", None)
         if lock is None:
             return
@@ -1329,8 +1557,6 @@ class FolderCreatorTab(QWidget):
             if paths:
                 self.log_message(f"[INFO] Report saved: {paths['report']}")
                 self._last_report = paths["report"]
-                if not report.dry_run:
-                    self._last_manifest = paths.get("manifest")
                 self.open_report_btn.setEnabled(True)
             return {"report": report, "paths": paths}
         except Exception as exc:
@@ -1400,26 +1626,41 @@ class FolderCreatorTab(QWidget):
         elif report is not None and report.incomplete:
             title, level = "Short delivery", "warn"
             head = f"Frames are missing in {len(report.incomplete)} sequence(s) - see the report."
+        elif not moved and not getattr(worker, "documents_filed", None):
+            title, level = "Nothing new", "ok"
+            head = "Nothing new - the project already has everything on this drive."
         else:
             title, level = "Ingest finished", "ok"
             head = "Everything arrived."
 
-        stamp = datetime.now().strftime("%H:%M")
         colour = {"ok": Gate.OK, "warn": Gate.WARN, "bad": Gate.BAD, "info": Gate.INFO}[level]
         link = " &middot; <a href='report'>Open report</a>" if paths.get("report") else ""
-        self.last_run_label.setText(
-            f"<span style='color:{colour}; font-weight:600'>Last run {stamp}: {html.escape(title)}</span>"
-            f" &middot; {html.escape(lines[1])}"
+        self._set_last_run(
+            f"<span style='color:{colour}; font-weight:600'>{html.escape(self._last_run_stamp(worker))}: "
+            f"{html.escape(title)}</span> &middot; {html.escape(lines[1])}"
             + (f" &middot; failed {errors:,}" if errors else "") + link)
-        self.last_run_label.setVisible(True)
         self.log_message(("[STOP] " if outcome != "completed" else "[INFO] ") + head)
 
-        if outcome == "completed":
+        # The bar shows what came in, in the colour of the outcome - a run
+        # with failures never ends full and teal.
+        if total:
+            self.progress_bar.setValue(int((moved + skipped) / total * 100))
+        elif outcome == "completed":
             self.progress_bar.setValue(100)
+        self.progress_bar.setStyleSheet(
+            "" if level in ("ok", "info") else f"QProgressBar::chunk {{ background: {colour}; }}")
         self._reset_run_ui("Ready")
         self._refresh_retry_button()
         self._message(title, head + "\n\n" + "\n".join(lines), level,
                       report=paths.get("report"), folder=paths.get("folder"))
+
+    def _last_run_stamp(self, worker=None, what="Last run") -> str:
+        code = getattr(worker, "project_name", "") or self._pending.get("code") or self._inputs()[0]
+        return f"{what} {code}, {datetime.now():%d %b %H:%M}".replace("  ", " ")
+
+    def _set_last_run(self, text: str):
+        self.last_run_label.setText(text)
+        self.last_run_label.setVisible(self._phase == "idle")
 
     def _message(self, title, text, level, report=None, folder=None):
         """The completion box, with the report and its folder a click away."""
@@ -1465,27 +1706,38 @@ class FolderCreatorTab(QWidget):
         return self._planned_project_path()
 
     def _refresh_retry_button(self):
+        """What is waiting in every run of this project: failed files, and files a stopped run never reached."""
         if not hasattr(self, "retry_btn"):
             return
-        from slate.core.domain.ingest_retry import latest_manifest, load_failures
+        from slate.core.domain.ingest_retry import manifests_with_failures
         path = self._project_path_for_retry()
-        manifest = latest_manifest(path) if path is not None and path.is_dir() else None
-        failures = load_failures(manifest) if manifest else []
-        self._last_manifest = str(manifest) if failures else None
-        self.retry_btn.setEnabled(bool(failures) and self._phase == "idle")
-        self.retry_btn.setText(f"Retry {len(failures)} failed file(s)" if failures else "Retry failed files")
+        waiting = manifests_with_failures(path) if path is not None and path.is_dir() else []
+        self._retry_manifests = [item["manifest"] for item in waiting]
+        failed = sum(item["failed"] for item in waiting)
+        stopped = sum(item["pending"] for item in waiting)
+        self.retry_btn.setEnabled(bool(waiting) and self._phase == "idle")
+        if stopped:
+            self.retry_btn.setText(f"Finish the stopped run ({failed + stopped:,} files)")
+            self.retry_btn.setToolTip("Bring in the files a stopped run did not reach (and any that failed), "
+                                      "into the same scan version.")
+        elif failed:
+            self.retry_btn.setText(f"Retry {failed:,} failed file(s)")
+            self.retry_btn.setToolTip(f"Bring in the files that failed, from {len(waiting)} run(s) of this project.")
+        else:
+            self.retry_btn.setText("Retry failed files")
+            self.retry_btn.setToolTip("Nothing is waiting for this project.")
 
     def retry_failed_files(self):
-        """Re-attempt the files the newest run could not bring in, in the background."""
-        manifest = self._last_manifest
-        if not manifest or self._phase != "idle":
+        """Re-attempt what every run of this project could not bring in, in the background."""
+        manifests = list(self._retry_manifests)
+        if not manifests or self._phase != "idle":
             return
         project = self._project_path_for_retry()
         if project is None or not self._take_lock(project):
             return
         self._set_phase("retry")
         self._log_run_header(f"{datetime.now():%d %b %Y %H:%M}  retry")
-        worker = RetryWorker(manifest, fast_mode=self.fast_mode_cb.isChecked())
+        worker = RetryWorker(manifests, fast_mode=self.fast_mode_cb.isChecked())
         worker.progress.connect(lambda d, t, n: self.update_folder_creator_progress(
             int(d / max(t, 1) * 100), f"Retrying {d} of {t}: {n}"))
         worker.done.connect(self._on_retry_done)
@@ -1498,11 +1750,24 @@ class FolderCreatorTab(QWidget):
         self.log_message(f"[INFO] Retry: {result.summary()}")
         for entry in result.still_failing[:10]:
             self.log_message(f"[ERR] {entry['file']}: {entry['error']}")
+        if result.reports:
+            self._last_report = result.reports[0]
+            self.open_report_btn.setEnabled(True)
+            self.log_message(f"[INFO] Report updated: {result.reports[0]}")
         self._reset_run_ui()
         self._refresh_retry_button()
-        level = "ok" if result.ok and not result.still_failing else "warn"
+        level = "ok" if result.ok and not result.still_failing and not result.missing else "warn"
+        if level == "ok":
+            outcome = f"all {len(result.recovered):,} recovered - delivery complete"
+        else:
+            outcome = result.summary()
+        colour = Gate.OK if level == "ok" else Gate.WARN
+        link = " &middot; <a href='report'>Open report</a>" if result.reports else ""
+        self._set_last_run(f"<span style='color:{colour}; font-weight:600'>"
+                           f"{html.escape(self._last_run_stamp(what='Retry'))}: {html.escape(outcome)}</span>{link}")
+        self.progress_bar.setStyleSheet("")
         self._message("Retry finished" if level == "ok" else "Some files still failing",
-                      result.summary(), level)
+                      result.summary(), level, report=result.reports[0] if result.reports else None)
 
     # ---------------------------------------------------------------- reset
     def clear_all(self):
