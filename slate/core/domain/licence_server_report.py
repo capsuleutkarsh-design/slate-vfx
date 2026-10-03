@@ -80,7 +80,7 @@ def _squash(text: str) -> str:
     return re.sub(r"[^a-z0-9]", "", str(text or "").lower())
 
 
-def match_licence(product: str, licences: Iterable[dict]) -> Optional[dict]:
+def match_licence(product: str, licences: Iterable[dict], total: Optional[int] = None) -> Optional[dict]:
     """
     The licence a server product most likely is: the same name, or the one
     licence whose name starts the product's ('Nuke' for 'nuke_i'). None when
@@ -89,12 +89,14 @@ def match_licence(product: str, licences: Iterable[dict]) -> Optional[dict]:
     licences = list(licences)
     wanted = _squash(product)
     exact = [l for l in licences if _squash(l.get("software_name")) == wanted]
-    if len(exact) == 1:
-        return exact[0]
-    if exact:
-        return None
-    prefix = [l for l in licences if _squash(l.get("software_name"))
-              and wanted.startswith(_squash(l.get("software_name")))]
-    if len(prefix) == 1:
-        return prefix[0]
+    candidates = exact or [l for l in licences if _squash(l.get("software_name"))
+                           and wanted.startswith(_squash(l.get("software_name")))]
+    if len(candidates) == 1:
+        return candidates[0]
+    # Several contracts of one product: the server's issued count tells them
+    # apart when exactly one contract has that many seats.
+    if candidates and total is not None:
+        sized = [l for l in candidates if int(l.get("total_seats") or 0) == int(total)]
+        if len(sized) == 1:
+            return sized[0]
     return None

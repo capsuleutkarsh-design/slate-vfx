@@ -539,7 +539,7 @@ class ImportReadingsDialog(QDialog):
             combo.addItem("Skip - not a licence we track", None)
             for licence in self.licences:
                 combo.addItem(licence_label(licence), licence)
-            match = server_report.match_licence(reading.product, self.licences)
+            match = server_report.match_licence(reading.product, self.licences, reading.total)
             if match is not None:
                 combo.setCurrentIndex(self.licences.index(match) + 1)
             include.setChecked(match is not None)

@@ -425,3 +425,15 @@ def test_clearing_filters_leaves_a_plain_empty_search(db, app):
     from slate.gui.tabs.my_tickets_view import RaiseTicketDialog
     dialog = _keep(RaiseTicketDialog(username="ravi", machines_of=lambda u: []))
     assert dialog.detail.property("prose") is True
+
+
+def test_hash_number_finds_exactly_that_ticket(db, app):
+    """IT-091 (round 3): '#1' found tickets 10 and 11 as well."""
+    ids = [_ticket(db, text="Ticket %d" % n) for n in range(12)]
+    view = _desk(db)
+    view.search.setText("#%d" % ids[0])
+    view._apply_filters()
+    assert [r["id"] for r in view._rows] == [ids[0]]
+    view.search.setText(str(ids[0]))
+    view._apply_filters()
+    assert ids[0] in [r["id"] for r in view._rows]
