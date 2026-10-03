@@ -782,6 +782,13 @@ class ScheduleTimeline(QWidget):
                                   on_click=lambda: QToolTip.showText(QCursor.pos(), self.legend.toolTip()))
         self.legend.setToolTip(self.PEOPLE_LEGEND if people_mode
                                else (self.DRAG if editable else "") + self.LEGEND)
+        # Compact, so all of it fits the 260 px corner.
+        # (widths in the sheet: main.qss gives buttons a min-width that wins over setFixedWidth)
+        for button, width in ((self.fit_button, 22), (self.today_button, 18),
+                              (self.export_button, 18), (self.legend, 18)):
+            button.setStyleSheet(button.styleSheet() + "QPushButton { min-width: %dpx; max-width: %dpx; "
+                                 "padding-left: 5px; padding-right: 5px; }" % (width, width))
+        self.zoom_cb.setFixedWidth(96)
         for w in (self.zoom_cb, self.fit_button, self.today_button, self.export_button):
             bar.addWidget(w)
         bar.addStretch()
@@ -802,8 +809,8 @@ class ScheduleTimeline(QWidget):
             self.problems.itemClicked.connect(self._problem_activated)
             side_layout.addWidget(self.problems, 1)
             self.split.addWidget(side)
-            self.split.setStretchFactor(0, 4)
-            self.split.setStretchFactor(1, 1)
+            self.split.setStretchFactor(0, 1)
+            self.split.setStretchFactor(1, 0)     # a bigger window goes to the chart
             self.split.setSizes([900, 260])
             layout.addWidget(self.split, 1)
         else:
