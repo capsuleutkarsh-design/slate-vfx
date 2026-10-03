@@ -81,7 +81,7 @@ def codec_text(asset) -> str:
 def analysed(asset) -> bool:
     meta = _meta(asset)
     return bool(meta.get("width") or meta.get("duration_sec") or meta.get("raw")
-                or meta.get("frame_count"))
+                or meta.get("frame_count") or meta.get("unreadable"))
 
 
 class StockInspectorPanel(QWidget):
@@ -316,7 +316,11 @@ class StockInspectorPanel(QWidget):
         status = asset.get('status', 'ready')
 
         self._set(self.values["type"], KIND_NAMES.get(kind, "File"))
-        if status in ('pending', 'ingesting'):
+        if status == 'corrupt' or _meta(asset).get("unreadable"):
+            self._set(self.values["resolution"], "Could not read this file", "bad")
+            for key in ("length", "fps", "codec"):
+                self._set(self.values[key], DASH)
+        elif status in ('pending', 'ingesting'):
             for key in ("resolution", "length", "fps", "codec"):
                 self._set(self.values[key], "Analysing…", "analysing")
         elif not analysed(asset) and kind != "RAW":

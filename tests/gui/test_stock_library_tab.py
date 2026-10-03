@@ -78,8 +78,8 @@ def test_the_count_is_the_library_total(qtbot, library, tmp_path):
     assert tab.db_total == 320
     loaded = tab.model.rowCount()
     assert loaded in (300, 320)
-    expected = "320 assets" if loaded == 320 else "Showing 300 of 320 assets"
-    assert tab.gallery.lbl_count.text() == expected                         # MED-006, MED-069
+    # The rest loads on scroll; nothing is filtered, so no "300 of 320" (MED2-009).
+    assert tab.gallery.lbl_count.text() == "320 assets"                     # MED-006, MED-069
 
 
 def test_count_text_reads_well():
@@ -210,9 +210,9 @@ def test_clear_library_needs_the_word(qtbot):
     assert "434" in words and "cannot be undone" in words and "everybody" in words  # MED-014
     assert not dialog.btn_clear.isEnabled()
     assert dialog.btn_cancel.isDefault()
-    dialog.edit.setText("clear")
+    dialog.edit.setText("clea")
     assert not dialog.btn_clear.isEnabled()
-    dialog.edit.setText("CLEAR")
+    dialog.edit.setText("clear")                     # any case (MED2-034)
     assert dialog.btn_clear.isEnabled()
 
 
@@ -681,3 +681,79 @@ def test_the_thumbnail_loader_lets_go_of_the_file(qtbot, tmp_path):
         assert not thumb.exists()
     finally:
         loader.stop()
+
+
+# ------------------------------------------------------------------ round 2
+
+def test_the_inspector_stays_in_step_with_the_list(qtbot, library, tmp_path):
+    _seed(library, tmp_path, count=3, folder="Stock/Fire", category="Fire")
+    _seed(library, tmp_path, count=2, folder="Stock/Smoke", category="Smoke")
+    tab = _tab(qtbot, library)
+    row = next(r for r in range(tab.proxy_model.rowCount())
+               if tab.proxy_model.index(r, 0).data(Qt.ItemDataRole.UserRole)["category"] == "Fire")
+    _select(tab, [row])
+    shown = tab.inspector.current_asset["file_path"]
+    tab.load_library_from_server()                          # Reload keeps it selected
+    _wait(qtbot, tab)
+    assert tab.inspector.current_asset["file_path"] == shown                       # MED2-001
+    assert tab.gallery.selected_assets()[0]["file_path"] == shown
+    assert tab.sidebar.btn_delete_selected.isEnabled()
+    tab.on_category_changed("Smoke")                        # not in the list any more
+    _wait(qtbot, tab)
+    assert tab.inspector.current_asset is None
+
+
+def test_removed_assets_can_be_restored(qtbot, library, tmp_path, monkeypatch):
+    _seed(library, tmp_path, count=3)
+    tab = _tab(qtbot, library)
+    monkeypatch.setattr(tab, "_confirm_delete", lambda *a: True)
+    monkeypatch.setattr(tab, "_notify", lambda *a, **k: None)
+    _select(tab, [0])
+    tab.delete_selected_assets()
+    tab._refresh_categories()
+    assert "Removed" in tab.sidebar.category_texts()                               # MED2-028
+    tab.on_category_changed("Removed")
+    tab.sidebar.current_category = "Removed"
+    _wait(qtbot, tab)
+    assert tab.model.rowCount() == 1
+    _select(tab, [0])
+    assert tab.sidebar.btn_delete_selected.text() == "Restore"
+    menu = tab.gallery.build_context_menu(tab.proxy_model.index(0, 0))
+    assert any("Restore" in a.text() for a in menu.actions())
+    assert not any("Delete" in a.text() for a in menu.actions())
+    tab.delete_selected_assets()                            # the same button restores
+    _wait(qtbot, tab)
+    assert library.get_total_count() == 3 and library.get_removed_count() == 0
+
+
+def test_library_actions_need_something_to_act_on(qtbot, library, tmp_path):
+    tab = _tab(qtbot, library)
+    assert not tab.sidebar.btn_clear.isEnabled()                                    # MED2-020
+    assert not tab.sidebar.btn_export.isEnabled()
+    assert not tab.sidebar.btn_rescan.isEnabled()
+    assert "empty" in tab.sidebar.btn_clear.toolTip()
+    _seed(library, tmp_path, count=2)
+    library.remember_root(str(tmp_path / "Stock"))
+    tab.load_library_from_server()
+    _wait(qtbot, tab)
+    assert tab.sidebar.btn_clear.isEnabled() and tab.sidebar.btn_export.isEnabled()
+    assert tab.sidebar.btn_rescan.isEnabled()
+    assert artist_sees_no_removed(qtbot, library)
+
+
+def artist_sees_no_removed(qtbot, library):
+    tab = _tab(qtbot, library, roles=ARTIST, user="sam")
+    return "Removed" not in tab.sidebar.category_texts()
+
+
+def test_an_unreadable_file_says_so(qtbot, library, tmp_path):
+    broken = tmp_path / "Stock" / "broken_download.mp4"
+    broken.parent.mkdir(parents=True)
+    broken.write_bytes(b"0" * 1024)
+    library.add_assets_batch([{"file_path": str(broken), "metadata": {}}])
+    tab = _tab(qtbot, library)
+    _select(tab, [0])
+    qtbot.waitUntil(lambda: tab.inspector.values["resolution"].text() != "Analysing…",
+                    timeout=20000)
+    assert tab.inspector.values["resolution"].text() == "Could not read this file"   # MED2-011
+    assert tab.model.assets[0]["status"] == "corrupt"

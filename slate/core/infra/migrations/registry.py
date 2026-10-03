@@ -146,6 +146,9 @@ MEDIA = (
     step("media_schema", "slate.core.infra.migrations.media_schema:apply_migration"),
     step("repair_stock_library",
          "slate.core.infra.migrations.media_schema:repair_stock_library", once=True),
+    # Whole-word categories and search; tags without filler words or the category.
+    step("reword_stock_library",
+         "slate.core.infra.migrations.media_schema:reword_stock_library", once=True),
 )
 
 # ---- ingest (Ingest, CAP Rename, Timeline) ----

@@ -51,9 +51,11 @@ class MetadataAnalysisMixin:
 
         def job():
             from .....core.domain.metadata_engine import SmartMetadataManager
-            meta = SmartMetadataManager.extract_tech_metadata(path)
-            if not meta:
-                return
+            meta = SmartMetadataManager.extract_tech_metadata(path) or {}
+            if not (meta.get("width") or meta.get("duration_sec")):
+                # Nothing could be read: said, and kept, rather than an
+                # "Analysing…" that never ends (MED2-011).
+                meta["unreadable"] = True
             saved = lib.update_asset(asset_id, {"file_path": path, "metadata": meta,
                                                 "category": asset.get("category")})
             if not saved:
@@ -70,7 +72,7 @@ class MetadataAnalysisMixin:
         except ValueError:
             meta = {}
         update = {'id': asset_id, 'file_path': path, 'path': path, 'metadata': meta,
-                  'status': 'ready'}
+                  'status': 'corrupt' if meta.get('unreadable') else 'ready'}
         self.model.update_item(update)
         self.inspector.refresh_facts(update)
 

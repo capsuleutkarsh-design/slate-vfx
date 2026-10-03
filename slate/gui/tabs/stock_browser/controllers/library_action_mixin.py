@@ -16,7 +16,26 @@ from PySide6.QtCore import Qt, QStandardPaths, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QFileDialog
 
+from .....core.infra.stock_repository import REMOVED
+
 MANAGERS = "Only leads, supervisors and admins can"
+
+
+def import_sentence(summary: dict) -> tuple:
+    """(message, level): new, already there, not on disk and unreadable, each said apart (MED2-021)."""
+    from .....core.domain.olive_lineup import plural
+    imported = int(summary.get("imported") or 0)
+    existing = int(summary.get("existing") or 0)
+    missing = int(summary.get("missing") or 0)
+    invalid = int(summary.get("invalid") or 0)
+    parts = [f"Imported {plural(imported, 'new asset')}"]
+    if existing:
+        parts.append(f"{existing:,} {'was' if existing == 1 else 'were'} already in the library")
+    if missing:
+        parts.append(f"{plural(missing, 'file')} not on disk, left out")
+    if invalid:
+        parts.append(f"{plural(invalid, 'entry', 'entries')} could not be read")
+    return "; ".join(parts) + ".", ("warning" if missing or invalid else "success")
 
 
 def default_export_path() -> str:
@@ -27,8 +46,9 @@ def default_export_path() -> str:
 
 
 def exportable(asset: dict) -> dict:
-    """An asset as written to an export: no screen-only keys."""
-    return {k: v for k, v in asset.items() if not str(k).startswith("_") and k != "status"}
+    """An asset as written to an export: only what means something on another server (MED2-022)."""
+    from .....core.domain.asset_ingestor import ImportLibWorker
+    return {k: v for k, v in asset.items() if k in ImportLibWorker.PORTABLE_KEYS}
 
 
 class LibraryActionMixin:
@@ -60,13 +80,17 @@ class LibraryActionMixin:
             yes_label=f"Delete {count} {noun}" if count > 1 else "Delete",
             destructive=True,
             informative=("The source files are not touched, and nothing is removed from disk.\n"
-                         "You can undo it from the message that appears next."))
+                         "Undo it from the message that appears next, or later from Removed "
+                         "in the sidebar. A Rescan leaves deleted assets out."))
 
     def delete_selected_assets(self):
         """Remove the selected assets from the library, with an Undo."""
         if not self.can_ingest:
             self._notify(f"{MANAGERS} delete stock.", "warning")
             return
+        if getattr(self, "current_category", "") == REMOVED:
+            # In Removed the same button brings them back (MED2-028).
+            return self.restore_selected_assets()
         selected_assets = self._get_selected_assets()
         if not selected_assets:
             self._notify("Select one or more assets to delete.", "info")
@@ -109,12 +133,23 @@ class LibraryActionMixin:
                          action=("Undo", lambda: self.undo_delete(ids)))
 
     def undo_delete(self, ids):
+        from .....core.domain.olive_lineup import plural
         restored = self.lib_manager.restore_assets(ids)
         if restored:
-            self._notify(f"Restored {restored} asset{'s' if restored != 1 else ''}.", "success")
+            self._notify(f"Restored {plural(restored, 'asset')}.", "success")
             self.load_library_from_server()
         else:
             self._notify("They could not be restored.", "error")
+
+    def restore_selected_assets(self):
+        """Removed: put the selected assets back in the library (MED2-028)."""
+        if not self.can_ingest:
+            return
+        ids = [a.get("id") for a in self._get_selected_assets() if str(a.get("id", "")).isdigit()]
+        if not ids:
+            self._notify("Select one or more assets to restore.", "info")
+            return
+        self.undo_delete(ids)
 
     # -------------------------------------------------------------- clear
     def clear_entire_library(self):
@@ -136,15 +171,18 @@ class LibraryActionMixin:
         ok, removed, failed = result if isinstance(result, tuple) else (bool(result), 0, 0)
         if not ok:
             self._notify("The library could not be cleared.", "error")
+            # The gallery was emptied to let go of the pictures: show what is
+            # still there, or it looks cleared (MED2-027).
+            self.load_library_from_server()
             return
+        from .....core.domain.olive_lineup import plural
         self.model.clear_assets()
         self.db_total = 0
         self.inspector.clear()
         self._refresh_categories()
         self.update_ui_counts()
-        extra = (f" {failed} cached file{'s' if failed != 1 else ''} could not be removed."
-                 if failed else "")
-        self._notify(f"Cleared the stock library ({count:,} assets).{extra}",
+        extra = f" {plural(failed, 'cached file')} could not be removed." if failed else ""
+        self._notify(f"Cleared the stock library ({plural(count, 'asset')}).{extra}",
                      "warning" if failed else "success")
 
     # ------------------------------------------------------------- import
@@ -185,13 +223,9 @@ class LibraryActionMixin:
             self.sidebar.set_ingest_state(summary["error"], True)
             self._notify(summary["error"], "error")
             return
-        imported, missing = int(summary.get("imported") or 0), int(summary.get("missing") or 0)
-        text = f"Imported {imported:,} asset{'s' if imported != 1 else ''}"
-        if missing:
-            text += f"; {missing:,} skipped because their files are not on disk"
-        text += "."
+        text, level = import_sentence(summary)
         self.sidebar.set_ingest_state(text, True)
-        self._notify(text, "warning" if missing else "success")
+        self._notify(text, level)
         self.load_library_from_server()
 
     # ------------------------------------------------------------- export
@@ -210,8 +244,9 @@ class LibraryActionMixin:
         except Exception as e:
             self._notify("The library could not be exported.", "error", details=str(e))
             return
+        from .....core.domain.olive_lineup import plural
         folder = str(Path(path).parent)
-        self._notify(f"Exported {len(data):,} assets to {Path(path).name}.", "success",
+        self._notify(f"Exported {plural(len(data), 'asset')} to {Path(path).name}.", "success",
                      action=("Open folder", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(folder))))
 
     # ------------------------------------------------ favourites, picks, tags

@@ -27,8 +27,18 @@ from ....core.controls import make_button
 from ....core.icons import icon as draw_icon
 from slate.core.infra.gate import Gate
 
-ALL, FAVORITES, STUDIO_PICKS = "All", "Favorites", "Studio picks"
+from slate.core.infra.stock_repository import ALL, FAVORITES, REMOVED, STUDIO_PICKS
+
 CATEGORY_ROLE = Qt.ItemDataRole.UserRole
+# The keys stay as stored; the list says them the studio's way (MED2-025).
+SHOWN_AS = {FAVORITES: "Favourites"}
+ROW_LOOK = {
+    ALL: ("grid", "Everything in the library"),
+    FAVORITES: ("star", "Assets you have starred - yours alone"),
+    STUDIO_PICKS: ("sparkle", "Assets the leads have picked for everybody"),
+    REMOVED: ("trash", "Deleted from the library. Select them and choose Restore to bring "
+                       "them back; a Rescan leaves them out."),
+}
 
 
 class StockSidebar(QWidget):
@@ -55,6 +65,8 @@ class StockSidebar(QWidget):
         self._categories_shown = None
         self._ingest_running = False
         self._selection = 0
+        self.library_total = 0
+        self.root_count = None
         self.setup_ui()
 
     def _heading(self, text):
@@ -211,6 +223,8 @@ class StockSidebar(QWidget):
                                                  "everybody. Asks you to type CLEAR first.")
             self.btn_clear.clicked.connect(self.clear_library_requested.emit)
             layout.addWidget(self.btn_clear)
+            for button in (self.btn_clear, self.btn_export, self.btn_rescan):
+                button.setProperty("full_tip", button.toolTip())
             self.set_selection_count(0)
         else:
             actions.addWidget(self.btn_refresh)
@@ -224,15 +238,18 @@ class StockSidebar(QWidget):
         name = item.data(CATEGORY_ROLE) or ALL
         if name != self.current_category:
             self.current_category = name
+            self._apply_library_state()
             self.category_selected.emit(name)
 
     def update_categories(self, categories, favorites: int = None, picks: int = None,
-                          current: str = None):
+                          current: str = None, removed: int = None):
         """
         Rebuild the list - only when it really changed - and keep the
         highlight on the category being shown (MED-013).
 
         categories is {name: count} (a plain list is accepted, without counts).
+        removed is how many deleted assets "Removed" holds; it is listed for
+        the people who can restore them (MED2-028).
         """
         if current is not None:
             self.current_category = current or ALL
@@ -241,9 +258,12 @@ class StockSidebar(QWidget):
         else:
             counts = {str(c): None for c in (categories or [])}
         total = sum(v for v in counts.values() if v) if counts else 0
+        self.library_total = total
         entries = [(ALL, total if counts else None), (FAVORITES, favorites),
                    (STUDIO_PICKS, picks)]
         entries += [(name, counts[name]) for name in sorted(counts, key=str.lower)]
+        if self.can_ingest and removed is not None:
+            entries.append((REMOVED, removed))
         if self.current_category not in [name for name, _ in entries]:
             self.current_category = ALL
 
@@ -252,18 +272,19 @@ class StockSidebar(QWidget):
             self.category_list.blockSignals(True)
             self.category_list.clear()
             for name, count in entries:
-                text = name if count is None else f"{name}  ({count:,})"
+                label = SHOWN_AS.get(name, name)
+                text = label if count is None else f"{label}  ({count:,})"
                 item = QListWidgetItem(text)
                 item.setData(CATEGORY_ROLE, name)
-                if name == FAVORITES:
-                    item.setIcon(draw_icon("star", Gate.TEXT_2, 14))
-                    item.setToolTip("Assets you have starred - yours alone")
-                elif name == STUDIO_PICKS:
-                    item.setIcon(draw_icon("sparkle", Gate.TEXT_2, 14))
-                    item.setToolTip("Assets the leads have picked for everybody")
+                # Every row has its icon, so the names line up (MED2-029).
+                glyph, tip = ROW_LOOK.get(name, ("folder", ""))
+                item.setIcon(draw_icon(glyph, Gate.TEXT_2, 14))
+                if tip:
+                    item.setToolTip(tip)
                 self.category_list.addItem(item)
             self.category_list.blockSignals(False)
         self._select_current()
+        self._apply_library_state()
 
     def _select_current(self):
         self.category_list.blockSignals(True)
@@ -311,10 +332,9 @@ class StockSidebar(QWidget):
         self._ingest_running = bool(running)
         if not self.can_ingest:
             return
-        for widget in (self.btn_ingest, self.btn_rescan, self.btn_refresh, self.btn_export,
-                       self.btn_import, self.btn_clear, self.toggle_fast):
+        for widget in (self.btn_ingest, self.btn_refresh, self.btn_import, self.toggle_fast):
             widget.setEnabled(not running)
-        self.btn_delete_selected.setEnabled(not running and self._selection > 0)
+        self._apply_library_state()
         self.btn_pause.setEnabled(running)
         self.btn_stop.setEnabled(running)
         # When it ends only the last sentence stays: no full bar, no greyed
@@ -340,12 +360,38 @@ class StockSidebar(QWidget):
 
     # ---------------------------------------------------------- actions
     def set_selection_count(self, count: int):
-        """'Delete (3)', enabled only with something selected (MED-033)."""
+        """'Delete (3)' - or 'Restore (3)' in Removed - enabled only with something selected (MED-033)."""
         self._selection = int(count or 0)
-        if not hasattr(self, "btn_delete_selected"):
+        self._apply_library_state()
+
+    def set_root_count(self, count):
+        """How many folders Rescan would look in (None: not known yet)."""
+        self.root_count = count
+        self._apply_library_state()
+
+    def _apply_library_state(self):
+        """
+        Only what can do something is enabled: Clear and Export need assets,
+        Rescan needs a folder to look in (MED2-020), and nothing of it while
+        an ingest runs.
+        """
+        if not self.can_ingest or not hasattr(self, "btn_clear"):
             return
-        self.btn_delete_selected.setText(f"Delete ({self._selection})" if self._selection > 1 else "Delete")
-        self.btn_delete_selected.setEnabled(self._selection > 0 and not self._ingest_running)
+        running = self._ingest_running
+        empty = not self.library_total
+        for button, why_not in ((self.btn_clear, "The library is empty."),
+                                (self.btn_export, "The library is empty.")):
+            button.setEnabled(not running and not empty)
+            button.setToolTip(why_not if empty else button.property("full_tip"))
+        no_roots = self.root_count == 0
+        self.btn_rescan.setEnabled(not running and not no_roots)
+        self.btn_rescan.setToolTip("No folders are recorded yet: ingest a folder first."
+                                   if no_roots else self.btn_rescan.property("full_tip"))
+        restore = self.current_category == REMOVED
+        noun = "Restore" if restore else "Delete"
+        self.btn_delete_selected.setText(f"{noun} ({self._selection})" if self._selection > 1 else noun)
+        self.btn_delete_selected.setIcon(draw_icon("undo" if restore else "trash", Gate.TEXT, 16))
+        self.btn_delete_selected.setEnabled(self._selection > 0 and not running)
 
     def set_controls_enabled(self, enabled):
         """While the list loads: Reload waits. The ingest lock is separate."""

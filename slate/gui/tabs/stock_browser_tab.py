@@ -15,6 +15,7 @@ from PySide6.QtCore import Qt, Signal, QTimer
 
 from ...core.domain.asset_api import create_asset_api
 from ...core.infra.design_tokens import ColorTokens as C
+from ...core.infra.stock_repository import REMOVED
 from ..stock_model import StockModel, asset_path, can_preview
 from .stock_browser.widgets import AssetSortFilterProxyModel
 from ..components.qt_safety import safe_single_shot
@@ -167,6 +168,7 @@ class StockBrowserTab(
         g.files_dropped.connect(self._on_files_dropped)
         g.scroll_bottom_reached.connect(self.load_more_assets)
         g.delete_requested.connect(self.delete_selected_assets)
+        g.restore_requested.connect(self.restore_selected_assets)
         g.sidebar_expand_requested.connect(self.toggle_sidebar)
         g.preview_requested.connect(self.open_quick_look)
         g.play_requested.connect(self.play_current)
@@ -309,13 +311,19 @@ class StockBrowserTab(
         self.apply_filters()
 
     def update_ui_counts(self):
+        """
+        '350 assets' when nothing narrows the list - the rest of a long list
+        loads as you scroll, it is not hidden (MED2-009) - and 'Showing 40 of
+        350 assets' when a search, filter or category does.
+        """
         visible = self.proxy_model.rowCount()
         loaded = self.model.rowCount()
-        total = int(getattr(self, "db_total", 0) or 0)
-        # What is shown out of what matches: rows hidden on screen since the
-        # last load come off the total too.
-        total = max(visible, total - (loaded - visible))
-        self.gallery.update_count(total, visible)
+        # What matches: rows hidden on screen since the last load come off it.
+        matches = max(visible, int(getattr(self, "db_total", 0) or 0) - (loaded - visible))
+        category = getattr(self, "current_category", "All") or "All"
+        narrowed = self.gallery.filters_active() or category not in ("All", REMOVED)
+        library = int(getattr(self.sidebar, "library_total", 0) or 0)
+        self.gallery.update_count(max(library, matches) if narrowed else matches, matches)
 
     # ------------------------------------------------------------ selection
     def current_asset(self):

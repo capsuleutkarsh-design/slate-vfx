@@ -21,6 +21,7 @@ from PySide6.QtGui import QPainter, QColor, QDrag, QKeySequence, QPen
 from pathlib import Path
 import logging
 from slate.core.infra.gate import Gate
+from slate.core.infra.stock_repository import ALL, FAVORITES, REMOVED, STUDIO_PICKS
 
 
 class PyToggle(QCheckBox):
@@ -131,11 +132,11 @@ class AssetSortFilterProxyModel(QSortFilterProxyModel):
             return False
 
         category = self.filter_category
-        if category == "Favorites":
+        if category == FAVORITES:
             return bool(asset.get('is_favorite'))
-        if category == "Studio picks":
+        if category == STUDIO_PICKS:
             return bool(asset.get('is_pick'))
-        if category not in ("All", "") and asset.get('category') != category:
+        if category not in (ALL, REMOVED, "") and asset.get('category') != category:
             return False
 
         if self.media_type_filter != "All" and asset.get('status') == 'ingesting':

@@ -23,6 +23,7 @@ from ....stock_model import (
 )
 from ....components.qt_safety import safe_single_shot
 from .....core.infra.design_tokens import TypographyTokens as T
+from .....core.infra.stock_repository import FAVORITES, REMOVED, STUDIO_PICKS
 from ....widgets.styled_buttons import StyledComboBox
 from ....core.controls import make_button, style_button
 from ....core.empty_state import EmptyState
@@ -148,6 +149,7 @@ class StockGallery(QWidget):
     tags_requested = Signal()
     ingest_requested = Signal()
     clear_filters_requested = Signal()
+    restore_requested = Signal()             # Removed: bring the selection back
 
     def __init__(self, model, proxy_model, can_manage_assets=False, parent=None):
         super().__init__(parent)
@@ -445,7 +447,7 @@ class StockGallery(QWidget):
         super().keyPressEvent(event)
 
     def _delete_from_keyboard(self):
-        if self.can_manage_assets:
+        if self.can_manage_assets and self.category != REMOVED:
             self.delete_requested.emit()
 
     # ------------------------------------------------------------ views
@@ -530,6 +532,14 @@ class StockGallery(QWidget):
         menu = QMenu(self)
         if can_preview(asset):
             menu.addAction(draw_icon("eye"), "Preview\tSpace", self.preview_requested.emit)
+        if self.category == REMOVED:
+            # Deleted assets: bring them back, or look at them (MED2-028).
+            if self.can_manage_assets:
+                menu.addAction(draw_icon("undo"), "Restore to the library" if count == 1
+                               else f"Restore {count} to the library", self.restore_requested.emit)
+            menu.addSeparator()
+            self._add_copy_actions(menu, index, count)
+            return menu
         if asset.get("is_favorite"):
             menu.addAction(draw_icon("star"), "Remove from favourites\tCtrl+D",
                            self.favorite_requested.emit)
@@ -543,16 +553,19 @@ class StockGallery(QWidget):
             if count == 1:
                 menu.addAction(draw_icon("tag"), "Edit tags…", self.tags_requested.emit)
         menu.addSeparator()
-        menu.addAction(draw_icon("copy"), "Copy path" if count == 1 else f"Copy {count} paths",
-                       self.copy_selection)
-        menu.addAction(draw_icon("copy"), "Copy name", lambda: self._copy_name(index))
-        menu.addAction(draw_icon("folder"), "Show in Explorer", lambda: self._reveal_in_explorer(index))
+        self._add_copy_actions(menu, index, count)
         if self.can_manage_assets:
             menu.addSeparator()
             menu.addAction(draw_icon("trash"),
                            "Delete from library…" if count == 1 else f"Delete {count} from library…",
                            self.delete_requested.emit)
         return menu
+
+    def _add_copy_actions(self, menu, index, count):
+        menu.addAction(draw_icon("copy"), "Copy path" if count == 1 else f"Copy {count} paths",
+                       self.copy_selection)
+        menu.addAction(draw_icon("copy"), "Copy name", lambda: self._copy_name(index))
+        menu.addAction(draw_icon("folder"), "Show in Explorer", lambda: self._reveal_in_explorer(index))
 
     def copy_selection(self):
         return copy_paths([self.proxy_model.index(r, 0) for r in self.selected_rows()])
@@ -675,13 +688,19 @@ class StockGallery(QWidget):
 
     def set_empty_message(self):
         """What an empty gallery says depends on who is looking and what is selected."""
-        if self.category == "Favorites":
+        if self.category == REMOVED:
+            self.empty_state.set_message(
+                "Nothing deleted",
+                "Assets deleted from the library wait here, so they can be restored. "
+                "A Rescan leaves them out.")
+            self._empty_ingest.hide()
+        elif self.category == FAVORITES:
             self.empty_state.set_message(
                 "No favourites yet",
                 "Star assets to keep them here: click the star on a card, or press Ctrl+D. "
                 "Your favourites are yours alone.")
             self._empty_ingest.hide()
-        elif self.category == "Studio picks":
+        elif self.category == STUDIO_PICKS:
             self.empty_state.set_message(
                 "No studio picks yet",
                 "Leads and supervisors mark the studio's picks from a card's right-click menu."
@@ -710,10 +729,10 @@ class StockGallery(QWidget):
         if self.is_loading_state:
             self.stack.setCurrentWidget(self.skeleton_state)
             return
-        if visible:
+        if self.proxy_model.rowCount():
             self.stack.setCurrentWidget(self.active_view())
             return
-        special = self.category in ("Favorites", "Studio picks")
+        special = self.category in (FAVORITES, STUDIO_PICKS, REMOVED)
         narrowed = self.filters_active() or (self.category not in ("All", "") and not special)
         if narrowed:
             # Something is narrowing the list: say so, and offer to clear it.
@@ -729,8 +748,7 @@ class StockGallery(QWidget):
             self.skeleton_state.start()
             return
         self.skeleton_state.stop()
-        self.update_count(max(self._last_total_count, self.proxy_model.rowCount()),
-                          self.proxy_model.rowCount())
+        self.update_count(self._last_total_count, self._last_visible_count)
 
     def set_sidebar_collapsed(self, collapsed: bool):
         self.btn_show_filters.setVisible(bool(collapsed))

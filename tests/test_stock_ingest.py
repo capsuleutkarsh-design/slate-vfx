@@ -200,3 +200,29 @@ def test_an_ingest_of_two_folders(tmp_path, cache, mock_db, monkeypatch):
     after = {dict(r)["file_name"]: (dict(r)["tags"], dict(r)["metadata"])
              for r in mock_db.execute_query("SELECT * FROM stock_library")}
     assert after == before
+
+    # Deleted stays deleted; sound files are named; a broken file is said
+    # once, kept as "could not read", and not tried again (MED2-002/013/019).
+    explosion = next(x for x in lib.search_library() if x["file_name"] == "explosion.mp4")
+    lib.delete_assets([explosion])
+    (a / "sfx_boom.wav").write_bytes(b"RIFF")
+    (a / "broken_download.mp4").write_bytes(b"\x00" * 2048)
+    third = asset_ingestor.IngestWorker(root_paths=[str(a), str(b)], fast_mode=True)
+    summaries.clear()
+    third.summary_ready.connect(summaries.append)
+    third.run()
+    summary = summaries[-1]
+    assert summary["removed"] == 1 and summary["added"] == 0 and summary["failed"] == 1
+    assert summary["not_taken"] == ["sfx_boom.wav"]
+    assert lib.get_total_count() == 7
+    broken = next(x for x in lib.search_library() if x["file_name"] == "broken_download.mp4")
+    assert broken["status"] == "corrupt"
+    from slate.gui.tabs.stock_browser.controllers.ingest_controller import summary_sentence
+    text, _level = summary_sentence(summary)
+    assert "1 deleted asset left out" in text and "1 file left out: not a picture" in text
+
+    fourth = asset_ingestor.IngestWorker(root_paths=[str(a), str(b)], fast_mode=True)
+    summaries.clear()
+    fourth.summary_ready.connect(summaries.append)
+    fourth.run()
+    assert summaries[-1]["failed"] == 0 and summaries[-1]["skipped"] == 7

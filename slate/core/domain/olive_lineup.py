@@ -63,8 +63,8 @@ _NUMBERS = re.compile(r"(\d+)")
 
 
 def plural(count: int, singular: str, plural_form: str = "") -> str:
-    """'1 shot', '2 shots', '1 proxy', '3 proxies'."""
-    return f"{count} {singular if count == 1 else (plural_form or singular + 's')}"
+    """'1 shot', '2 shots', '1 proxy', '3 proxies', '1,200 shots'."""
+    return f"{count:,} {singular if count == 1 else (plural_form or singular + 's')}"
 
 
 def natural_key(text: str) -> tuple:

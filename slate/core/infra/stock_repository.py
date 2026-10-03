@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 ALL = "All"
 FAVORITES = "Favorites"
 STUDIO_PICKS = "Studio picks"
+REMOVED = "Removed"          # deleted assets, for the people who can restore them
 
 # Every way the list can be ordered, and how. Each ends on the id so a page
 # boundary never splits or repeats rows that tie (MED-004).
@@ -374,11 +375,13 @@ class StockRepository:
         similarity vectors - to build that list, which on a large library is a
         great deal of network traffic before the first new file is even looked at.
 
-        Deleted rows are left out, so ingesting a deleted file again brings it
-        back instead of being skipped as "already there".
+        Deleted rows are included, with deleted_at set: the ingest leaves them
+        out, so a deletion sticks however often the folder is rescanned
+        (MED2-002). Restoring is done from "Removed".
         """
         rows = self.db.execute_query(
-            f"SELECT id, file_path, thumb_path, metadata FROM stock_library WHERE {LIVE}") or []
+            "SELECT id, file_path, file_size, thumb_path, metadata, deleted_at "
+            "FROM stock_library") or []
         return [dict(r) for r in rows]
 
     def get_stock_count(self) -> int:
@@ -400,34 +403,26 @@ class StockRepository:
         "frame_count, pattern, added_by"
     )
 
-    # Where a search looks. search_text holds resolution words, frame rate,
-    # codec, category and folder names, so "4K" or "smoke" find clips nobody
-    # named that way (MED-026).
-    SEARCH_COLUMNS = ("file_name", "display_name", "tags", "category", "search_text")
-
     def _where(self, search_query=None, file_types=None, asset_ids=None, category=None,
-               visual=None, username=None, include_deleted=False):
+               visual=None, username=None):
         """The filter shared by the listing and the count, so they agree."""
         from slate.core.domain.stock_search import escape_like, search_terms
 
-        clauses, params = [], []
-        if not include_deleted:
-            clauses.append(LIVE)
+        # "Removed" lists the deleted rows (MED2-028); everything else the live ones.
+        clauses, params = ["deleted_at IS NOT NULL" if category == REMOVED else LIVE], []
 
         if asset_ids:
             clauses.append("id IN (%s)" % ",".join(["%s"] * len(asset_ids)))
             params.extend(int(a) for a in asset_ids)
 
-        # Every word must appear somewhere. Typed text is matched literally:
-        # "_" matched every row and "%" none, because both are LIKE wildcards
-        # (MED-025). LOWER(...) LIKE LOWER(...) rather than ILIKE, which the
-        # local fallback database does not have.
-        for word in search_terms(search_query):
-            pattern = "%" + escape_like(word.lower()) + "%"
-            clauses.append("(" + " OR ".join(
-                f"LOWER(COALESCE({column}, '')) LIKE %s ESCAPE '\\'"
-                for column in self.SEARCH_COLUMNS) + ")")
-            params.extend([pattern] * len(self.SEARCH_COLUMNS))
+        # Every word must start a word of search_text, which holds the names,
+        # tags, category, folders, resolution words, frame rate, codec and kind
+        # (MED-026) already lower case and split into words. The start of a
+        # word, not anywhere in it: "HD" found every "uhd" (MED2-026). Typed
+        # text is matched literally: "_" and "%" are LIKE wildcards (MED-025).
+        for word, whole in search_terms(search_query):
+            clauses.append("(' ' || COALESCE(search_text, '')) LIKE %s ESCAPE '\\'")
+            params.append(("% " if whole else "%") + escape_like(word) + "%")
 
         if file_types:
             clauses.append("file_type IN (%s)" % ",".join(["%s"] * len(file_types)))
@@ -436,7 +431,7 @@ class StockRepository:
         # The category is filtered here, with the paging, so the list, the page
         # count and the total all agree. It was filtered on screen over the
         # first page only, so most of a category was silently missing (MED-007).
-        if category and category != ALL:
+        if category and category not in (ALL, REMOVED):
             if category == FAVORITES:
                 clauses.append("id IN (SELECT stock_id FROM stock_favorites WHERE username = %s)")
                 params.append(str(username or ""))
@@ -609,11 +604,18 @@ class StockRepository:
 
     def purge_deleted(self, older_than: datetime = None, asset_ids: Iterable = None) -> List[Dict]:
         """
-        Remove deleted rows for good; returns their cached file paths to clean.
+        Let go of what deleted rows hold once their Undo time is over: their
+        favourites, picks and cached pictures. Returns the cached file paths to
+        clean.
+
+        The row itself stays, marked deleted: it is what keeps a Rescan from
+        adding the file again (MED2-002), and "Removed" can still restore it
+        (its thumbnail is made again then).
 
         older_than limits it to rows deleted before then; asset_ids to those rows.
         """
-        clauses = ["deleted_at IS NOT NULL"]
+        clauses = ["deleted_at IS NOT NULL",
+                   "(COALESCE(thumb_path, '') != '' OR COALESCE(proxy_path, '') != '')"]
         params: List[Any] = []
         if older_than is not None:
             clauses.append("deleted_at < %s")
@@ -635,7 +637,8 @@ class StockRepository:
         with atomic(self.db) as tx:
             tx.write(f"DELETE FROM stock_favorites WHERE stock_id IN ({marks})", tuple(gone))
             tx.write(f"DELETE FROM stock_picks WHERE stock_id IN ({marks})", tuple(gone))
-            tx.write(f"DELETE FROM stock_library WHERE id IN ({marks})", tuple(gone))
+            tx.write(f"UPDATE stock_library SET thumb_path = '', proxy_path = '' "
+                     f"WHERE id IN ({marks})", tuple(gone))
         self._invalidate()
         return rows
 
@@ -687,5 +690,8 @@ class StockRepository:
         if ok:
             self.db.write("DELETE FROM stock_favorites")
             self.db.write("DELETE FROM stock_picks")
+            # And the folders: a Rescan right after a clear rebuilt the whole
+            # library that had just been emptied (MED2-002).
+            self.db.write("DELETE FROM stock_roots")
         self._invalidate()
         return bool(ok)

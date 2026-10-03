@@ -166,8 +166,6 @@ class PaginationLoaderMixin:
         else:
             self.offset = len(new_assets)
             self.model.load_data(new_assets)
-            if not new_assets:
-                self.inspector.clear()
 
         if result.get("total") is not None:
             self.db_total = int(result["total"])
@@ -175,27 +173,56 @@ class PaginationLoaderMixin:
             self.db_total = len(new_assets)
 
         if result.get("categories") is not None:
-            self.sidebar.update_categories(result["categories"], result.get("favorites"),
-                                           result.get("picks"),
-                                           current=getattr(self, "current_category", "All"))
+            self._show_categories(result["categories"], result.get("favorites"),
+                                  result.get("picks"), result.get("removed"))
+        if result.get("roots") is not None:
+            self.sidebar.set_root_count(result["roots"])
 
         self.gallery.set_loading_state(False)
+        self.apply_post_load_filters()
+        if not append:
+            self._keep_inspector_in_step()
         # A fresh list drops the selection without saying so.
         self.sidebar.set_selection_count(len(self.gallery.selected_rows()))
-        self.apply_post_load_filters()
         self.check_missing_files(new_assets)
         if self.has_more:
             safe_single_shot(100, self, self._auto_fill_check)
 
+    def _keep_inspector_in_step(self):
+        """
+        After a fresh list (Reload, a search, a category): the asset the
+        inspector shows is selected again when it is in the list, and the
+        inspector is cleared when it is not (MED2-001). A model reset drops
+        the selection without a word, so the inspector went on showing - and
+        acting on - an asset that was no longer listed.
+        """
+        shown = self.inspector.current_asset
+        if shown is None:
+            return
+        row = self.model._row_of(shown)
+        index = (self.proxy_model.mapFromSource(self.model.index(row, 0))
+                 if row is not None else None)
+        if index is None or not index.isValid():
+            self.inspector.clear()
+            return
+        self.inspector.refresh_facts(self.model.assets[row])
+        self.gallery.select_row(index.row())
+
+    def _show_categories(self, counts, favorites=None, picks=None, removed=None):
+        self.sidebar.update_categories(counts, favorites, picks,
+                                       current=getattr(self, "current_category", "All"),
+                                       removed=removed)
+
     def _refresh_categories(self):
         """Counts after a change (delete, favourite, pick) without reloading the list."""
+        lib = self.lib_manager
         try:
-            self.sidebar.update_categories(self.lib_manager.get_category_counts(),
-                                           self.lib_manager.get_favorite_count(),
-                                           self.lib_manager.get_pick_count(),
-                                           current=getattr(self, "current_category", "All"))
+            self._show_categories(lib.get_category_counts(), lib.get_favorite_count(),
+                                  lib.get_pick_count(), lib.get_removed_count())
+            self.sidebar.set_root_count(len(lib.ingest_roots() or []))
         except Exception as exc:
             logging.debug("Category counts not refreshed: %s", exc)
+        self.update_ui_counts()
 
     def apply_filters(self):
         """Triggered by UI filter changes: a fresh first page."""

@@ -107,9 +107,45 @@ def escape_like(text: str) -> str:
             .replace("_", "\\_"))
 
 
-def search_terms(query: str) -> List[str]:
-    """The words a search is made of; every one of them has to match."""
-    return [word for word in str(query or "").split() if word]
+_CAMEL = re.compile(r"([a-z])([A-Z])")
+_SPLIT = re.compile(r"[\W_]+")
+
+
+def name_words(text) -> List[str]:
+    """
+    The words of a name, lower case: 'FireBurst_v002-final.exr' ->
+    ['fire', 'burst', 'v002', 'final', 'exr'].
+
+    Split on anything that is not a letter or digit and on lower-to-upper
+    case changes. One splitter for categories, tags and search, so a rule
+    matches whole words and never the inside of one ('rain' in 'grain',
+    'ember' in 'December', 'hd' in 'uhd' - MED2-005, MED2-026).
+    """
+    return [w for w in _SPLIT.split(_CAMEL.sub(r"\1 \2", str(text or "")).lower()) if w]
+
+
+# Words in file names that say nothing about the picture (MED2-014).
+STOP_WORDS = frozenset({
+    "a", "an", "and", "the", "of", "for", "with", "to", "in", "on", "at", "by", "from",
+    "file", "files", "name", "final", "copy", "min", "sec", "tex", "test", "tests",
+    "new", "old", "version", "take", "temp", "tmp", "img", "dsc", "untitled",
+})
+
+
+def search_terms(query: str) -> List[tuple]:
+    """
+    What a search is made of, as (text, at_word_start) pairs; every one has
+    to match. Words match the start of a word; something typed that holds no
+    word at all ('_', '%') is looked for anywhere, literally.
+    """
+    terms = []
+    for typed in str(query or "").lower().split():
+        words = name_words(typed)
+        if words:
+            terms += [(w, True) for w in words]
+        else:
+            terms.append((typed, False))
+    return terms
 
 
 def _metadata(value) -> dict:
@@ -182,16 +218,19 @@ def build_search_text(asset: dict) -> str:
     words: List[str] = []
 
     def add(*items: Iterable):
+        # Each item whole ('23.976fps') and in its words ('23', '976fps'):
+        # a search matches the start of either (MED2-026).
         for item in items:
-            text = str(item or "").strip().lower()
+            text = str(item or "").strip()
             if text:
-                words.append(text)
+                words.append(text.lower())
+                words.extend(name_words(text))
 
     path_text = asset.get("file_path") or asset.get("path") or ""
     path = Path(str(path_text)) if path_text else None
     add(asset.get("display_name"), asset.get("name"), asset.get("file_name"))
     if path is not None:
-        add(path.stem.replace("_", " ").replace(".", " ").replace("-", " "))
+        add(path.stem)
         add(path.suffix.lstrip("."))
         try:
             add(path.parent.name, path.parent.parent.name)
@@ -212,12 +251,16 @@ def build_search_text(asset: dict) -> str:
         add(f"{whole}fps", whole)
     add(meta.get("codec") if str(meta.get("codec") or "").lower() != "unknown" else "")
 
+    # The words the screen uses for the kind (the List view's Type column says
+    # "Movie"), as well as the ones people say.
     if asset.get("is_sequence") or meta.get("is_sequence"):
-        add("sequence")
+        add("image sequence")
+    elif meta.get("raw"):
+        add("camera raw")
     elif meta.get("is_still"):
-        add("still", "image")
+        add("still", "image", "picture")
     elif meta.get("duration_sec"):
-        add("clip", "video")
+        add("clip", "video", "movie")
 
     # One copy of each word, in first-seen order: shorter to store and search.
     seen = set()

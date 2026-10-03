@@ -32,7 +32,7 @@ class StockLoaderWorker(QThread):
 
     def run(self):
         result = {"assets": [], "total": None, "categories": None, "favorites": None,
-                  "picks": None, "error": ""}
+                  "picks": None, "removed": None, "roots": None, "error": ""}
         try:
             assets = self.lib_manager.search_library(
                 query=self.query, limit=self.limit, offset=self.offset,
@@ -47,6 +47,11 @@ class StockLoaderWorker(QThread):
                 result["categories"] = self.lib_manager.get_category_counts()
                 result["favorites"] = self.lib_manager.get_favorite_count()
                 result["picks"] = self.lib_manager.get_pick_count()
+                # For the people who manage the library: what Removed holds,
+                # and whether Rescan has folders to look in (MED2-028, MED2-020).
+                lib = self.lib_manager
+                result["removed"] = getattr(lib, "get_removed_count", lambda: 0)()
+                result["roots"] = len(getattr(lib, "ingest_roots", list)() or [])
         except Exception as exc:
             # A failed read is said as such, never shown as an empty library.
             logging.exception("The stock library could not be read: %s", exc)

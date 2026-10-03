@@ -20,7 +20,19 @@ class TestMetadataEngine(unittest.TestCase):
             # EXR files are aggressively caught as HDRI in current logic if they have 'exr' in name/ext?
             # Code: if re.search(r'(hdri|...|exr|hdr)', full_str) and suffix in ['.exr', '.hdr']
             # So ANY .exr file is HDRI? Yes.
-            ("shot010_plate_v01.exr", "HDRI"),  
+            ("shot010_plate_v01.exr", "References"),   # not HDRI for being an EXR (MED2-005)
+            ("forest_latlong_8k.exr", "HDRI"),
+            ("studio.hdr", "HDRI"),
+            ("film_grain_35mm.mov", "Unknown"),
+            ("train_station_ambience.mov", "Unknown"),
+            ("december_snowfall.mov", "Unknown"),
+            ("chaos_crowd.mov", "Unknown"),
+            ("search_light_sweep.mov", "Unknown"),
+            ("vertex_lowpoly_turntable.mov", "Unknown"),
+            ("fire_explosion_large.mov", "Explosions"),
+            ("FireballLoop.mov", "Fire"),
+            ("explosions_pack_02.mov", "Explosions"),
+            ("warm_square_tex.jpg", "Textures"),
             
             # 1. Textures
             ("wood_diffuse.jpg", "Textures"),
