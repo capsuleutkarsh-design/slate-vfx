@@ -885,6 +885,7 @@ class DatabaseExplorer(QWidget):
             return
 
         self.current_table = table_name
+        self._select_entry(table_name)
         self.lbl_table_name.setText(table_label(table_name))
         self.lbl_table_name.setToolTip(table_name)
         self.lbl_rows.setText("Reading…")

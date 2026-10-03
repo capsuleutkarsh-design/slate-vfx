@@ -342,7 +342,11 @@ def test_money_and_number_display(qtbot, monkeypatch):
     policy = cards.StudioPolicyEditor()
     qtbot.addWidget(policy)
     policy.comp_half.setValue(12)
-    assert policy.comp_half.text() == "12 hours" and policy.comp_weekly.suffix() == " days"
+    assert policy.comp_half.text() == "12 hours"
+    policy.comp_weekly.setValue(1)
+    assert policy.comp_weekly.text() == "1 day"
+    policy.accrual.setValue(2)
+    assert policy.accrual.text() == "2 days a month"
     assert cards.number_text(0.25) == "0.25" and cards.number_text(2.0) == "2"
 
 

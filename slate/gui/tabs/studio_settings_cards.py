@@ -101,6 +101,32 @@ class _Number(QDoubleSpinBox):
         return number_text(value)
 
 
+class _Days(_Number):
+    """A number of days that reads right: '1 day', '2.5 days', '1 day a month'."""
+
+    def __init__(self, tail="", parent=None):
+        super().__init__(parent)
+        self.tail = tail
+
+    def textFromValue(self, value):
+        return f"{number_text(value)} {_plural_days(value)}{self.tail}"
+
+    def valueFromText(self, text):
+        try:
+            return float(str(text).split()[0])
+        except (IndexError, ValueError):
+            return self.value()
+
+    def validate(self, text, pos):
+        from PySide6.QtGui import QValidator
+        head = str(text).split()[0] if str(text).split() else ""
+        try:
+            float(head)
+            return QValidator.State.Acceptable, text, pos
+        except ValueError:
+            return QValidator.State.Intermediate, text, pos
+
+
 class _Money(QDoubleSpinBox):
     """An amount in the currency's own grouping: '₹ 1,50,000', '$ 300'."""
 
@@ -292,15 +318,13 @@ class StudioPolicyEditor(_StudioEditor):
         # clocks all count from it.
         form.addRow("Weekly off", offs)
 
-        self.accrual = _fixed(_Number())
+        self.accrual = _fixed(_Days(" a month"))
         self.accrual.setRange(0, 10)
         self.accrual.setSingleStep(0.25)
-        self.accrual.setSuffix(" days a month")
         form.addRow("Leave earned", self.accrual)
 
-        self.carry_cap = _fixed(_Number())
+        self.carry_cap = _fixed(_Days())
         self.carry_cap.setRange(0, 365)
-        self.carry_cap.setSuffix(" days")
         form.addRow("Carry into next year, at most", self.carry_cap)
 
         self.sandwich = QCheckBox("A lone working day between days off, taken as leave, "
@@ -341,10 +365,9 @@ class StudioPolicyEditor(_StudioEditor):
 
     @staticmethod
     def _days_box(grid, row, label):
-        box = _fixed(_Number())
+        box = _fixed(_Days())
         box.setRange(0, 5)
         box.setSingleStep(0.5)
-        box.setSuffix(" days")
         grid.addWidget(QLabel(label), row, 0)
         grid.addWidget(box, row, 1)
         return box
