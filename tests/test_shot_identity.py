@@ -15,6 +15,7 @@ import pytest
 from slate.core.domain.shot_registry import register_ingested_shots
 from slate.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler
 from slate.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
+from tests.dashboard_util import open_project
 
 
 PROJECT = "IDENT_PRJ"
@@ -22,6 +23,7 @@ PROJECT = "IDENT_PRJ"
 
 @pytest.fixture
 def handler(mock_db):
+    open_project(mock_db, PROJECT)
     return SQLiteHandler(project_code=PROJECT, db_manager=mock_db,
                          user_id=1, user_role="supervisor")
 

@@ -18,6 +18,7 @@ from slate.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import (
 )
 from slate.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
 from slate.gui.tabs.vfx_dashboard_pro.ui.shot_table_model import ShotTableModel
+from tests.dashboard_util import open_project
 
 
 PRIYA = ["priya", "Priya"]
@@ -25,6 +26,7 @@ PRIYA = ["priya", "Priya"]
 
 def _seed(mock_db):
     """Two shots: priya comps SH010, arjun rotos SH020."""
+    open_project(mock_db, "PRJ")
     handler = SQLiteHandler("PRJ", db_manager=mock_db, user_role="supervisor")
     a = Shot(shot_name="SH010", reel_episode="ReelA", status="WIP", sow="wires")
     a.dept("comp").artist = "priya"
@@ -167,6 +169,7 @@ class TestWhatIsNotStoredAndNotEditable:
         _modified was serialised into the row, so every shot ever edited came
         back "unsaved" for everyone, in every session, forever.
         """
+        open_project(mock_db, "PRJ")
         handler = SQLiteHandler("PRJ", db_manager=mock_db, user_role="supervisor")
         shot = Shot(shot_name="SH010", reel_episode="ReelA")
         shot._modified = True

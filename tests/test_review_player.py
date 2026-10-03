@@ -100,8 +100,8 @@ def test_review_queue_dialog_has_player_button(qapp, fake_store):
     assert hasattr(dialog, "play_btn")
     assert dialog.play_btn.isEnabled() is True
     assert dialog.table.rowCount() == 2
-    assert dialog.table.item(0, 0).text() == "SH010"
-    assert dialog.table.item(1, 0).text() == "SH020"
+    assert dialog.table.item(0, 1).text() == "SH010"
+    assert dialog.table.item(1, 1).text() == "SH020"
 
 
 def test_review_player_navigation_and_approval(qapp, fake_store):

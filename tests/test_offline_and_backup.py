@@ -16,6 +16,7 @@ from slate.core.domain import access
 from slate.core.domain.access import OfflineError, is_offline_fallback
 from slate.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler
 from slate.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
+from tests.dashboard_util import open_project
 
 
 PROJECT = "OFFLINE_PRJ"
@@ -95,10 +96,10 @@ class TestWritesAreRefusedWhileOffline:
         with pytest.raises(OfflineError):
             handler.write_shots([Shot(shot_name="SH010", reel_episode="ReelA")])
 
-    def test_editing_a_field_is_refused(self, mock_db, offline):
+    def test_setting_a_status_is_refused(self, mock_db, offline):
         handler = SQLiteHandler(PROJECT, db_manager=mock_db, user_role="supervisor")
         with pytest.raises(OfflineError):
-            handler.update_shot_field("SH010", "status", "WIP", 1)
+            handler.update_department_status("SH010", "ReelA", "comp", "WIP", 1)
 
     def test_reading_still_works(self, mock_db, offline):
         """People can look at the board during an outage; they just cannot change it."""
@@ -106,6 +107,7 @@ class TestWritesAreRefusedWhileOffline:
         assert handler.read_shots() == []
 
     def test_writing_resumes_when_the_connection_returns(self, mock_db, online):
+        open_project(mock_db, PROJECT)
         handler = SQLiteHandler(PROJECT, db_manager=mock_db, user_role="supervisor")
         assert handler.write_shots([Shot(shot_name="SH010", reel_episode="ReelA")]) is True
 

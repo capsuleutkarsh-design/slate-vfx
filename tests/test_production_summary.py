@@ -210,7 +210,7 @@ class TestUnassigned:
         orphan = _shot("SH020")
 
         summary = build_summary([assigned, orphan], today=TODAY)
-        assert summary.unassigned == ["SH020"]
+        assert summary.unassigned == ["ReelA / SH020"]
 
     def test_a_shot_level_artist_counts_as_assigned(self):
         shot = _shot("SH010", artist="Rahul")
@@ -251,7 +251,7 @@ class TestSummaryDialog:
         assert summary.total_shots == 3
         assert summary.percent_complete == pytest.approx(33.3, abs=0.1)
         assert [e.shot_name for e in summary.late] == ["SH010"]
-        assert summary.unassigned == ["SH030"]
+        assert summary.unassigned == ["ReelA / SH030"]
 
     def test_dialog_handles_an_empty_project(self, qtbot):
         from slate.gui.tabs.vfx_dashboard_pro.ui.production_summary_dialog import (

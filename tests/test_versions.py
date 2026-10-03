@@ -192,9 +192,9 @@ class TestReviewQueue:
 
     def test_queue_is_oldest_submission_first(self, store):
         newer = store.add_version(PROJECT, "SH010")
-        store.update_version(newer.id, sent_date="2026-09-08")
+        store.update_version(newer.id, sent_to=SENT_CLIENT, sent_date="2026-09-08")
         older = store.add_version(PROJECT, "SH020")
-        store.update_version(older.id, sent_date="2026-09-01")
+        store.update_version(older.id, sent_to=SENT_CLIENT, sent_date="2026-09-01")
 
         queue = store.awaiting_review(PROJECT)
         assert [v.shot_name for v in queue] == ["SH020", "SH010"]
@@ -221,18 +221,22 @@ class TestDeletion:
 
 class TestResilience:
 
-    def test_a_database_failure_never_raises(self):
+    def test_a_database_failure_is_reported_not_read_as_empty(self):
+        """DSH2-107: an outage used to read as 'Nothing is waiting for review'."""
         class DeadDB:
-            def __getattr__(self, name):
-                def boom(*a, **k):
-                    raise RuntimeError("database unavailable")
-                return boom
+            def execute_query(self, *a, **k):
+                return None                 # what a refused read returns
+
+            def execute_update(self, *a, **k):
+                raise RuntimeError("database unavailable")
 
         store = VersionStore(db=DeadDB())
-        assert store.list_for_shot(PROJECT, "SH010") == []
-        assert store.add_version(PROJECT, "SH010") is None
-        assert store.awaiting_review(PROJECT) == []
-        assert store.notes_for_version(1) == []
+        for read in (lambda: store.list_for_shot(PROJECT, "SH010"),
+                     lambda: store.awaiting_review(PROJECT),
+                     lambda: store.notes_for_version(1)):
+            with pytest.raises(RuntimeError):
+                read()
+        assert store.add_version(PROJECT, "SH010", version_name="v001") is None
 
 
 class TestVersionsUI:
@@ -291,7 +295,7 @@ class TestVersionsUI:
         qtbot.addWidget(dialog)
 
         assert dialog.table.rowCount() == 1
-        assert dialog.table.item(0, 0).text() == "SH010"
+        assert dialog.table.item(0, 1).text() == "SH010"
 
     def test_review_queue_handles_an_empty_queue(self, qtbot, mock_db):
         from slate.gui.tabs.vfx_dashboard_pro.ui.review_queue_dialog import (
@@ -302,7 +306,9 @@ class TestVersionsUI:
         qtbot.addWidget(dialog)
 
         assert dialog.table.rowCount() == 0
-        assert "Nothing" in dialog.heading.text()
+        # Said once, by the empty state - not again in a caption (DSH2-118).
+        assert not dialog.heading.isVisibleTo(dialog)
+        assert not dialog.actions.isVisibleTo(dialog)
 
     def test_shot_detail_shows_the_versions_section(self, qtbot, mock_db):
         from slate.gui.tabs.vfx_dashboard_pro.ui.shot_detail import ShotDetailWidget

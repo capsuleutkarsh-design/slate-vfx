@@ -283,7 +283,7 @@ class TestUndo:
         undone = model.undo()
         assert shot.status == "YTS"
         assert undone["shot"] == "SH010"
-        assert "Status" in undone["description"]
+        assert "status" in undone["description"]
 
     def test_a_department_cell_can_be_taken_back(self, qtbot):
         model, shot = self._model()

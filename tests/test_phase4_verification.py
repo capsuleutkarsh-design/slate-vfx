@@ -109,7 +109,7 @@ class TestReviewPlayerBuilds:
         dlg = ReviewPlayerDialog(version=v, queue_versions=[v], current_index=0,
                                  store=store)
         qtbot.addWidget(dlg)
-        assert "not found" in dlg.media_path_label.text().lower()
+        assert "not where it was recorded" in dlg.no_media_label.text()
 
     def test_a_verdict_is_written_to_the_version(self, qtbot, mock_db):
         from slate.gui.tabs.vfx_dashboard_pro.ui.review_player_dialog import (

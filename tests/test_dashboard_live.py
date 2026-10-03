@@ -37,9 +37,19 @@ def test_only_checked_shots_change():
 def test_unsaved_edits_are_kept():
     b = _shot(2, "SH020", "MINE")
     b._modified = True
-    result = merge_shots([b], [_shot(2, "SH020", "THEIRS")], {2})
+    theirs = _shot(2, "SH020", "THEIRS")
+    theirs.version = 2                      # someone else saved it
+    result = merge_shots([b], [theirs], {2})
     assert result.shots[0] is b and b.status == "MINE"
     assert result.kept == [b] and not result.replaced
+
+
+def test_reading_back_the_same_version_is_not_news():
+    """DSH2-018: Refresh read the same version back and called it 'changed by someone else'."""
+    b = _shot(2, "SH020", "MINE")
+    b._modified = True
+    result = merge_shots([b], [_shot(2, "SH020", "WIP")], {2})
+    assert result.shots[0] is b and not result.kept and not result.changed
 
 
 def test_deleted_and_new_shots():
@@ -137,6 +147,7 @@ class _Database:
         self.rows = {s.id: s for s in shots}
         self.asked = []
         self.full_reads = 0
+        self.fail = False
 
     def change(self, sid, **fields):
         old = self.rows.get(sid)
@@ -144,12 +155,17 @@ class _Database:
                      fields.pop("status", old.status if old else "WIP"))
         for key, value in fields.items():
             setattr(shot, key, value)
+        shot.version = (old.version if old else 1) + 1
         self.rows[sid] = shot
+        self.fail = False
 
     def handler(self):
         from slate.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler
         handler = SQLiteHandler.__new__(SQLiteHandler)
-        copy = lambda s: _shot(s.id, s.shot_name, s.status)
+        def copy(s):
+            out = _shot(s.id, s.shot_name, s.status)
+            out.version = s.version
+            return out
 
         def by_id(ids):
             self.asked.append(set(ids))
@@ -157,6 +173,8 @@ class _Database:
 
         def everything():
             self.full_reads += 1
+            if self.fail:
+                raise RuntimeError("tracking_shots could not be read")
             return [copy(s) for s in self.rows.values()]
 
         handler.read_shots_by_id = by_id
@@ -445,7 +463,7 @@ def test_a_failed_read_never_clears_the_grid(app, manual_change_feed):
     """A database hiccup must not look like 'those shots were deleted'."""
     database = _Database(_three())
     dash = _dashboard(_three(), database)
-    database.rows.clear()                    # what read_shots() returns when it fails
+    database.fail = True                     # read_shots() raises when it fails
     manual_change_feed.push({"tracking_shots": {None}})
     dash._apply_live_changes()
     assert len(dash.all_shots) == 3

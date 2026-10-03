@@ -14,6 +14,7 @@ from slate.gui.tabs.vfx_dashboard_pro.models.shot_model import (
     Shot, DepartmentInfo, FeedbackEntry,
 )
 from slate.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler
+from tests.dashboard_util import open_project
 
 
 PROJECT = "AUDIT_PRJ"
@@ -22,6 +23,7 @@ PROJECT = "AUDIT_PRJ"
 @pytest.fixture
 def handler(mock_db):
     """A supervisor-level handler bound to the isolated test database."""
+    open_project(mock_db, PROJECT)
     return SQLiteHandler(
         project_code=PROJECT,
         db_manager=mock_db,
@@ -105,24 +107,16 @@ class TestShotRoundTrip:
 
 
 class TestGranularEdit:
-    """update_shot_field is what inline table editing calls."""
+    """Every edit is saved through write_shots (the one save path)."""
 
     def test_editing_a_top_level_field_persists(self, handler):
         handler.write_shots([_sample_shot()])
-        before = handler.read_shots()[0]
-
-        assert handler.update_shot_field(
-            "SH010", "status", "APPROVED", before.version
-        ) is True
-
-        after = handler.read_shots()[0]
-        assert after.status == "APPROVED"
+        shot = handler.read_shots()[0]
+        shot.status = "APPROVED"
+        assert handler.write_shots([shot]) is True
+        assert handler.read_shots()[0].status == "APPROVED"
 
     def test_department_edit_via_batch_save_persists(self, handler):
-        """
-        This is the real inline-edit path: the table mutates the Shot in
-        memory, then save_changes() calls write_shots(all_shots).
-        """
         handler.write_shots([_sample_shot("SH010"), _sample_shot("SH020")])
         shots = handler.read_shots()
 
@@ -135,44 +129,19 @@ class TestGranularEdit:
             "department edit did not survive the batch save"
         )
 
-    def test_department_edit_via_dotted_field_persists(self, handler):
-        """The documented granular path for a nested field."""
-        handler.write_shots([_sample_shot()])
-        before = handler.read_shots()[0]
-
-        assert handler.update_shot_field(
-            "SH010", "comp_dept.status", "APPROVED", before.version
-        ) is True
-
-        after = handler.read_shots()[0]
-        assert after.comp_dept.status == "APPROVED"
-
-    def test_unknown_field_name_is_rejected(self, handler):
-        """
-        An unrecognised field name used to be written as a junk top-level key
-        in data_json and reported as a successful save.
-        """
-        handler.write_shots([_sample_shot()])
-        before = handler.read_shots()[0]
-
-        result = handler.update_shot_field(
-            "SH010", "comp_status", "APPROVED", before.version
-        )
-        assert result is False, (
-            "unknown field reported success; the edit went nowhere"
-        )
-
     def test_stale_edit_is_rejected(self, handler):
         """Two coordinators editing the same shot must not silently clobber."""
         from slate.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import StaleDataError
 
         handler.write_shots([_sample_shot()])
-        current = handler.read_shots()[0]
+        first = handler.read_shots()[0]
+        second = handler.read_shots()[0]
+        first.status = "APPROVED"
+        handler.write_shots([first])
 
-        handler.update_shot_field("SH010", "status", "APPROVED", current.version)
-
+        second.status = "RETAKE"
         with pytest.raises(StaleDataError):
-            handler.update_shot_field("SH010", "status", "RETAKE", current.version)
+            handler.write_shots([second])
 
 
 class TestPermissions:
@@ -263,8 +232,8 @@ class TestStatusMirroring:
     def test_status_change_leaves_comp_alone(self, handler):
         handler.write_shots([_sample_shot()])
         before = handler.read_shots()[0]
-
-        handler.update_shot_field("SH010", "status", "APPROVED", before.version)
+        before.status = "APPROVED"
+        handler.write_shots([before])
 
         after = handler.read_shots()[0]
         assert after.status == "APPROVED"
@@ -273,8 +242,8 @@ class TestStatusMirroring:
     def test_artist_change_leaves_comp_alone(self, handler):
         handler.write_shots([_sample_shot()])
         before = handler.read_shots()[0]
-
-        handler.update_shot_field("SH010", "assigned_artist", "Vikram", before.version)
+        before.assigned_artist = "Vikram"
+        handler.write_shots([before])
 
         after = handler.read_shots()[0]
         assert after.assigned_artist == "Vikram"

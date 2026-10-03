@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from slate.core.infra.sqlite_manager import SQLiteManager
 from slate.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
 from slate.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler, StaleDataError
+from tests.dashboard_util import open_project
 
 
 class TestOptimisticConcurrencyControl(unittest.TestCase):
@@ -23,6 +24,7 @@ class TestOptimisticConcurrencyControl(unittest.TestCase):
         self.tmp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
         self.tmp_db.close()
         self.db = SQLiteManager(db_path=self.tmp_db.name)
+        open_project(self.db, "PRJ_OCC")
         self.handler = SQLiteHandler(project_code="PRJ_OCC", db_manager=self.db, user_role="supervisor")
 
     def tearDown(self):
