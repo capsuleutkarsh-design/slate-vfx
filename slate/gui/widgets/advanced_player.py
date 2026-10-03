@@ -33,8 +33,9 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QComboBox, QSlider, QSizePolicy, QFrame, QLabel, QMenu, QFileDialog,
+    QStyle, QStyleOptionComboBox, QStylePainter,
 )
-from PySide6.QtCore import Qt, Signal, QTimer, QRect
+from PySide6.QtCore import Qt, Signal, QTimer, QRect, QSize
 from PySide6.QtGui import QPainter, QColor, QFont, QFontDatabase
 
 from .media_engines.image_engine import ImageEngine
@@ -117,6 +118,45 @@ def _mono_font() -> QFont:
     return font
 
 
+class ElidingComboBox(QComboBox):
+    """
+    A combo that never cuts its text mid-letter: when narrower than its text
+    it shows "..." and keeps the full name in the tooltip.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.currentTextChanged.connect(self._update_tip)
+
+    def _update_tip(self, text):
+        base = self.property("base_tooltip") or ""
+        self.setToolTip(f"{text}\n{base}".strip() if text else base)
+
+    def minimumSizeHint(self):
+        hint = super().minimumSizeHint()
+        return QSize(min(hint.width(), 90), hint.height())
+
+    def displayed_text(self) -> str:
+        """What is painted: the current text, elided to the room there is."""
+        option = QStyleOptionComboBox()
+        self.initStyleOption(option)
+        field = self.style().subControlRect(QStyle.ComplexControl.CC_ComboBox, option,
+                                            QStyle.SubControl.SC_ComboBoxEditField, self)
+        return self.fontMetrics().elidedText(self.currentText(), Qt.TextElideMode.ElideRight,
+                                             max(10, field.width() - 2))
+
+    def paintEvent(self, event):
+        painter = QStylePainter(self)
+        option = QStyleOptionComboBox()
+        self.initStyleOption(option)
+        painter.drawComplexControl(QStyle.ComplexControl.CC_ComboBox, option)
+        option.currentText = self.displayed_text()
+        painter.drawControl(QStyle.ControlElement.CE_ComboBoxLabel, option)
+
+
 class AdvancedPlayer(QWidget):
     """
     Smart Host for Media Engines.
@@ -188,6 +228,21 @@ class AdvancedPlayer(QWidget):
         """Show/Hide internal controls (for embedding)."""
         if hasattr(self, 'controls_widget'):
             self.controls_widget.setVisible(visible)
+
+    def _labelled_row(self, label, combo, tooltip):
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        caption = QLabel(label)
+        caption.setObjectName("PlayerNoSound")      # the dim caption style
+        caption.setMinimumWidth(36)
+        layout.addWidget(caption)
+        layout.addWidget(combo, 1)
+        combo.setProperty("base_tooltip", tooltip)
+        combo.setToolTip(tooltip)
+        row.hide()
+        return row
 
     def _icon_button(self, name, tooltip, checkable=False, width=30):
         from ..core.icons import icon as draw_icon
@@ -303,22 +358,27 @@ class AdvancedPlayer(QWidget):
         row_transport.addWidget(self.lbl_no_audio)
         controls_layout.addLayout(row_transport)
 
-        # Row 3: colour, speed, loop, snapshot, full screen
+        # Row 3 (EXR only): input colourspace and view, each on its own line
+        # with the full width. In one row with speed and the tool buttons the
+        # layout squeezed them to ~130 px and cut "Linear Rec.7(" (MED-112);
+        # if a panel is narrower still they elide with "..." and the full
+        # name is the tooltip.
+        self.combo_input = ElidingComboBox()
+        self.combo_input.currentIndexChanged.connect(self.change_input_space)
+        self.combo_view = ElidingComboBox()
+        self.combo_view.addItem("Standard")
+        self.combo_view.currentIndexChanged.connect(self.change_view_transform)
+        self.row_input = self._labelled_row("Input", self.combo_input,
+                                            "Input colourspace of this EXR (read from the file "
+                                            "when it says)")
+        self.row_view = self._labelled_row("View", self.combo_view,
+                                           "Colour view for EXRs. Other files are shown as they are.")
+        controls_layout.addWidget(self.row_input)
+        controls_layout.addWidget(self.row_view)
+
+        # Row 4: speed, loop, snapshot, full screen
         row_tools = QHBoxLayout()
         row_tools.setSpacing(6)
-        self.combo_input = QComboBox()
-        self.combo_input.setToolTip("Input colourspace of this EXR (read from the file when it says)")
-        self.combo_input.setMinimumWidth(130)
-        # Sized to the longest name ("Linear Rec.709 (sRGB)"), never clipped (MED-112).
-        self.combo_input.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
-        self.combo_input.currentTextChanged.connect(self.combo_input.setToolTip)
-        self.combo_input.currentIndexChanged.connect(self.change_input_space)
-        self.combo_view = QComboBox()
-        self.combo_view.addItem("Standard")
-        self.combo_view.setToolTip("Colour view for EXRs. Other files are shown as they are.")
-        self.combo_view.setMinimumWidth(120)
-        self.combo_view.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
-        self.combo_view.currentIndexChanged.connect(self.change_view_transform)
         self.combo_speed = QComboBox()
         self.combo_speed.addItems(self.SPEEDS)
         self.combo_speed.setCurrentIndex(1)
@@ -327,8 +387,6 @@ class AdvancedPlayer(QWidget):
         self.combo_speed.currentIndexChanged.connect(self.change_speed)
         for combo in (self.combo_input, self.combo_view, self.combo_speed):
             combo.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        row_tools.addWidget(self.combo_input)
-        row_tools.addWidget(self.combo_view)
         row_tools.addWidget(self.combo_speed)
         row_tools.addStretch(1)
 
@@ -405,9 +463,9 @@ class AdvancedPlayer(QWidget):
         engine = self.engines['image']
         exr = kind == "image" and getattr(engine, "is_exr", False)
         has_views = bool(getattr(engine, "views", None))
-        self.combo_view.setVisible(exr and has_views)
         self.combo_view.setEnabled(exr and has_views)
-        self.combo_input.setVisible(exr and bool(getattr(engine, "input_spaces", None)))
+        self.row_view.setVisible(exr and has_views)
+        self.row_input.setVisible(exr and bool(getattr(engine, "input_spaces", None)))
         self.btn_snap.setEnabled(kind is not None)
         self._on_audio_available(self.audio.has_audio)
 

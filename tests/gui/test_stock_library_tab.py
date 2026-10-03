@@ -658,3 +658,26 @@ def test_the_inspector_never_scrolls_sideways(qtbot, library):
     tab = _tab(qtbot, library, load=False)
     area = tab.inspector.findChild(QScrollArea)
     assert area.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+
+
+def test_the_thumbnail_loader_lets_go_of_the_file(qtbot, tmp_path):
+    """
+    NEW-media-7: Clear library could not delete the last thumbnail the gallery
+    had shown - the loader thread's QImageReader kept it open while waiting
+    for the next request. Load it the way the gallery does, then delete it.
+    """
+    import os
+    from slate.gui.stock_model import ThumbnailLoader
+    thumb = _picture(tmp_path / "abc_thumb.jpg", 320, 180)
+    loader = ThumbnailLoader()
+    loaded = []
+    loader.image_loaded.connect(lambda path, image: loaded.append(path))
+    loader.start()
+    try:
+        loader.request_image(str(thumb))
+        qtbot.waitUntil(lambda: bool(loaded), timeout=5000)
+        qtbot.wait(200)                       # the loader is now idle, waiting
+        os.remove(str(thumb))                 # WinError 32 while it was held
+        assert not thumb.exists()
+    finally:
+        loader.stop()

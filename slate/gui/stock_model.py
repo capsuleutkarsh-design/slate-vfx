@@ -270,6 +270,11 @@ class ThumbnailLoader(QThread):
             except Exception as e:
                 logging.exception(f"Thumbnail load error {path}: {e}")
             finally:
+                # Close the file now. The reader used to live on in this loop
+                # while the thread waited for the next request, holding the
+                # last thumbnail open - Clear library could not delete it
+                # (NEW-media-7, WinError 32).
+                reader = None
                 # Always remove from processed so it can be re-requested if evicted from cache
                 self.mutex.lock()
                 self.processed.discard(path)
