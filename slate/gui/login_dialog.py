@@ -369,7 +369,22 @@ class LoginDialog(QDialog):
                 QEvent.Type.KeyPress, QEvent.Type.KeyRelease,
                 QEvent.Type.FocusIn, QEvent.Type.FocusOut):
             QTimer.singleShot(0, self, self._update_caps_hint)
+            # The Caps Lock key itself does not always reach the field, so a
+            # hint shown once could stay after Caps Lock went off. While the
+            # password has focus the state is looked at again every 250 ms.
+            if event.type() == QEvent.Type.FocusIn:
+                self._caps_timer().start()
+            elif event.type() == QEvent.Type.FocusOut:
+                self._caps_timer().stop()
         return super().eventFilter(watched, event)
+
+    def _caps_timer(self) -> QTimer:
+        timer = getattr(self, "_caps_poll", None)
+        if timer is None:
+            timer = self._caps_poll = QTimer(self)
+            timer.setInterval(250)
+            timer.timeout.connect(self._update_caps_hint)
+        return timer
 
     def _next_from_user(self):
         """Enter in the user name moves on to the password."""

@@ -185,3 +185,19 @@ def test_the_forced_change_gets_the_password_that_signed_in(qtbot, settings, mon
     qtbot.waitUntil(lambda: "current" in seen, timeout=3000)
     assert seen["current"] == " artist123 "
     assert users.calls[-1][1] == " artist123 "
+
+
+def test_the_caps_lock_hint_goes_away_when_caps_lock_is_turned_off(qtbot, settings, monkeypatch):
+    """It stayed on screen: the Caps Lock key itself does not always reach the field."""
+    state = {"on": True}
+    monkeypatch.setattr(LoginDialog, "caps_lock_on", staticmethod(lambda: state["on"]))
+    dialog = _dialog(qtbot, settings)
+    dialog.show()
+    # The offscreen test screen never gives a window real focus: say it has it.
+    from PySide6.QtCore import QEvent
+    from PySide6.QtGui import QFocusEvent
+    monkeypatch.setattr(dialog.pass_input, "hasFocus", lambda: True)
+    dialog.eventFilter(dialog.pass_input, QFocusEvent(QEvent.Type.FocusIn))
+    qtbot.waitUntil(lambda: dialog.caps_hint.isVisible(), timeout=2000)
+    state["on"] = False                     # no key event at all
+    qtbot.waitUntil(lambda: not dialog.caps_hint.isVisible(), timeout=2000)
