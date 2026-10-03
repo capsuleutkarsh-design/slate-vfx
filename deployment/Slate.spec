@@ -92,7 +92,6 @@ shared_datas = [
     (R('THIRD_PARTY_NOTICES.md'), '.'),
     (R('slate', 'core', 'help_content.json'), 'slate/core'),
     (R('slate', 'gui', 'tabs', 'vfx_dashboard_pro', 'config'), 'slate/gui/tabs/vfx_dashboard_pro/config'),
-    (R('slate', 'gui', 'tabs', 'vfx_dashboard_pro', 'sample_project.xlsx'), 'slate/gui/tabs/vfx_dashboard_pro'),
 ] + datas_qasync
 
 common_excludes = [
