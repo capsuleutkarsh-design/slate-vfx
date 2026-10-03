@@ -607,6 +607,9 @@ class JoiningLeavingView(QWidget):
     def _paint_people(self, rows):
         key = (self._selected_person[0].lower() + "|" + self._selected_person[1]) \
             if self._selected_person else None
+        # Repainting is not a choice: _selected_person decides, and a cleared
+        # selection on the way must not unset it.
+        self.people_table.blockSignals(True)
         with KeepSelection(self.people_table):
             self.people_table.setRowCount(len(rows))
             for r, row in enumerate(rows):
@@ -627,9 +630,8 @@ class JoiningLeavingView(QWidget):
                     self.people_table.setItem(r, c, item)
         if key:
             from slate.gui.components.table_tools import select_keys
-            self.people_table.blockSignals(True)
             select_keys(self.people_table, [key])
-            self.people_table.blockSignals(False)
+        self.people_table.blockSignals(False)
 
     def _person_picked(self):
         keys = selected_keys(self.people_table)

@@ -181,6 +181,19 @@ class OnboardingService:
             out.append(person)
         return out
 
+    def person(self, username: str) -> dict:
+        """One person's ut_users row ({} when there is none), for the Start dialog to prefill from."""
+        try:
+            row = self.db.execute_query(
+                "SELECT * FROM ut_users WHERE LOWER(username) = LOWER(%s)",
+                (str(username or "").strip(),), fetch="one")
+        except DatabaseUnavailableError:
+            raise
+        except Exception:
+            logger.exception("person failed")
+            return {}
+        return dict(row) if row else {}
+
     def joining_finished(self) -> set:
         """Usernames (lower-case) whose joining checklist is complete."""
         try:
@@ -301,8 +314,8 @@ class OnboardingService:
         if direction == JOINING and not _is_active(found):
             raise InactivePerson(
                 "%s's account is deactivated or their last day has passed. If they "
-                "are coming back, reactivate the account on Users & Roles (and clear "
-                "the old last day there), then start joining." % username)
+                "are coming back, reactivate the account on Users & Roles (Reactivate "
+                "also clears a last day that has passed), then start joining." % username)
 
         if direction == LEAVING and effective_date:
             joined = _as_day(found.get("joined_on"))

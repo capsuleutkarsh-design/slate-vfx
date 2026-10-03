@@ -275,3 +275,66 @@ def test_collecting_a_machine_nobody_has_is_not_reported_done(db, service):
     """HR-114."""
     _machine(db, "WS-7")
     assert not service.return_machine("WS-7", "jo")
+
+
+# ------------------------------------------------------------ round 2
+
+def _tick_all(service, username, direction):
+    for task in service.tasks_for(username, direction):
+        service.complete(task["id"], True, by="hr")
+
+
+def test_a_rehire_gets_a_new_joining_list(db, service):
+    """HR2-075: a finished list no longer blocks the next one; a half-done one is not doubled."""
+    UserManager(db=db).add_user("neha", "pw", ["Artist"], "Neha", "Comp", employment="Staff")
+    first = service.start("neha", JOINING, effective_date=date(2021, 4, 1))
+    assert service.start("neha", JOINING) == 0, "still open: nothing doubled"
+    _tick_all(service, "neha", JOINING)
+    second = service.start("neha", JOINING, effective_date=date(2026, 10, 5))
+    assert second == first
+    current = service.tasks_for("neha", JOINING)
+    assert len(current) == first and not any(t["is_completed"] for t in current)
+    assert service.progress("neha", JOINING) == {"total": first, "done": 0,
+                                                 "outstanding": first, "complete": False}
+    everything = db.execute_query("SELECT COUNT(*) AS n FROM onboarding_workflows "
+                                  "WHERE user_id = 'neha'", fetch="one")["n"]
+    assert everything == 2 * first, "the finished list is kept as it was"
+
+
+def test_starting_a_list_keeps_the_persons_employment(db, service):
+    """HR2-076: leaving never writes employment; joining without one keeps it."""
+    um = UserManager(db=db)
+    um.add_user("pari", "pw", ["Artist"], "Pari", "Comp", employment="Freelance")
+    service.start("pari", LEAVING, effective_date=date.today() + timedelta(days=20))
+    assert um.get_all_users()["pari"]["employment"] == "Freelance"
+    names = {t["task_name"] for t in service.tasks_for("pari", LEAVING)}
+    assert "Final settlement processed" not in names, "the record's employment decides"
+    um.add_user("ananya", "pw", ["Artist"], "Ananya", "Comp", employment="Contract")
+    service.start("ananya", JOINING)
+    assert um.get_all_users()["ananya"]["employment"] == "Contract"
+
+
+def test_a_last_day_before_joining_is_refused(db, service):
+    """HR2-079."""
+    UserManager(db=db).add_user("jo", "pw", ["Artist"], "Jo", "Comp", joined_on="2026-04-06")
+    with pytest.raises(ValueError):
+        service.start("jo", LEAVING, effective_date=date(2026, 1, 1))
+    assert service.last_day("jo") is None
+
+
+def test_kit_with_somebody_who_left_is_chased_without_a_leaving_list(db, service):
+    """HR2-077: a last day set on Users & Roles, or a deactivated account."""
+    um = UserManager(db=db)
+    um.add_user("kabir", "pw", ["Artist"], "Kabir", "Comp")
+    um.add_user("rohan", "pw", ["Artist"], "Rohan", "Comp")
+    _machine(db, "WS-101")
+    _machine(db, "WS-102")
+    assert service.issue_machine("WS-101", "kabir", "it")
+    assert service.issue_machine("WS-102", "rohan", "it")
+    assert service.unreturned() == []
+    um.update_user("kabir", last_day=(date.today() - timedelta(days=5)).isoformat())
+    # (deactivate_user refuses while a machine is out; switched off by hand here)
+    db.execute_update("UPDATE ut_users SET active = 0 WHERE username = 'rohan'")
+    assert {r["machine_name"] for r in service.unreturned()} == {"WS-101", "WS-102"}
+    # Leaving can still be started for somebody who has already gone.
+    assert service.start("kabir", LEAVING) > 0
