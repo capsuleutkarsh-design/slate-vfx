@@ -652,6 +652,11 @@ class UserManager:
         if existing:
             # UPDATE existing row using the stored username
             target_username = existing['username']
+            why = self._last_admin_refusal(
+                self._set_fields(target_username, roles=list(roles if isinstance(roles, list) else [roles]),
+                                 **({"last_day": supplied["last_day"]} if "last_day" in supplied else {})))
+            if why:
+                self._refuse_last_admin(why)
             sets = ["password_hash=%s", "display_name=%s", "job_title=%s",
                     "roles=%s", "profile_pic_path=%s"]
             values = [pw_hash, display_name, job_title, roles_str, pic.strip()]
@@ -854,6 +859,15 @@ class UserManager:
 
         if not sets:
             return True
+        guarded = {}
+        if roles is not None:
+            guarded["roles"] = roles
+        if "last_day" in kwargs and kwargs["last_day"] is not None:
+            guarded["last_day"] = None if kwargs["last_day"] == self.CLEAR else kwargs["last_day"]
+        if guarded:
+            why = self._last_admin_refusal(self._set_fields(target, **guarded))
+            if why:
+                self._refuse_last_admin(why)
         values.append(target)
         result = self._get_db().execute_update(
             "UPDATE ut_users SET " + ", ".join(sets) + " WHERE username=%s", tuple(values))
@@ -944,11 +958,69 @@ class UserManager:
             self.last_error = (f"{uid} has attendance, leave or other records, so the account "
                                "is kept. Deactivate it instead.")
             return False
+        why = self._last_admin_refusal(self._remove_user(uid))
+        if why:
+            self.last_error = why
+            return False
         db = self._get_db()
         success = db.execute_update("DELETE FROM ut_users WHERE LOWER(username)=LOWER(%s)", (uid,))
         if success:
             self.audit.log_user_change(self._actor(), uid, "Deleted")
         return bool(success)
+
+    # ------------------------------------------- the last administrator
+    #
+    # Every change that could take away the last way in is checked against the
+    # state it would produce (slate.core.security.admin_guard). Here, in the
+    # domain layer, so the Users screen, an import and code all meet the same
+    # rule. A refusal says why and changes nothing.
+
+    def _last_admin_refusal(self, change) -> str:
+        from slate.core.security import admin_guard
+        return admin_guard.check(self._get_db(), change)
+
+    def _refuse_last_admin(self, message):
+        from slate.core.security.admin_guard import LastAdminRefused
+        self.last_error = message
+        logging.warning("Refused (last administrator): %s", message)
+        raise LastAdminRefused(message)
+
+    @staticmethod
+    def _set_fields(username, **fields):
+        def change(users, perms):
+            from slate.core.security.admin_guard import find
+            key = find(users, username)
+            if key is not None:
+                users[key].update({k: (json.dumps(v) if k == "roles" else v)
+                                   for k, v in fields.items()})
+        return change
+
+    @staticmethod
+    def _remove_user(username):
+        def change(users, perms):
+            from slate.core.security.admin_guard import find
+            key = find(users, username)
+            if key is not None:
+                users.pop(key)
+        return change
+
+    @staticmethod
+    def _set_role(role, permissions):
+        def change(users, perms):
+            perms[str(role).strip().lower()] = list(permissions or [])
+        return change
+
+    @staticmethod
+    def _rename_role_change(old, new):
+        def change(users, perms):
+            from slate.core.security.admin_guard import parse_roles
+            old_key = str(old).strip().lower()
+            perms[str(new).strip().lower()] = perms.pop(old_key, [])
+            for record in users.values():
+                roles = parse_roles(record.get("roles"))
+                record["roles"] = json.dumps(
+                    [new if str(r).strip().lower() == old_key else r for r in roles])
+        return change
 
     # ------------------------------------------------------- who is editing
     def set_acting_user(self, username):
@@ -1033,24 +1105,10 @@ class UserManager:
 
     @staticmethod
     def _flag_active(record) -> bool:
-        from datetime import date
-        value = record.get("active")
-        if value is not None and str(value).strip() not in ("", "1", "True", "true"):
-            try:
-                if int(value) == 0:
-                    return False
-            except (TypeError, ValueError):
-                if str(value).strip().lower() in ("false", "no"):
-                    return False
-        last = record.get("last_day")
-        if last:
-            try:
-                text = str(last)[:10]
-                if date.fromisoformat(text) < date.today():
-                    return False
-            except ValueError:
-                pass
-        return True
+        """Not deactivated and not past the last day - the rule the
+        last-administrator guard uses too (admin_guard.account_active)."""
+        from slate.core.security.admin_guard import account_active
+        return account_active(record)
 
     def is_active(self, username: str) -> bool:
         row = self._get_db().execute_query(
@@ -1112,6 +1170,10 @@ class UserManager:
             self._check_account_change(uid)
         except PermissionError as exc:
             return False, str(exc)
+        why = self._last_admin_refusal(self._set_fields(uid, active=0))
+        if why:
+            self.last_error = why
+            return False, why
         waiting = self.open_items(uid)
         if waiting:
             return False, (f"{uid} still has " + "; ".join(waiting)
@@ -1222,6 +1284,9 @@ class UserManager:
                 editor_roles, role, before, tabs, self.roles_config)
             if why:
                 self._refuse(why)
+        why = self._last_admin_refusal(self._set_role(role, tabs))
+        if why:
+            self._refuse_last_admin(why)
         tabs_str = json.dumps(tabs)
         # Upsert
         existing = db.execute_query("SELECT 1 FROM ut_roles WHERE role_name=%s", (role,), fetch="one")
@@ -1300,6 +1365,10 @@ class UserManager:
             if why:
                 return False, why
         stored = next(r for r in self.get_available_roles() if str(r).lower() == old_name.lower())
+        why = self._last_admin_refusal(self._rename_role_change(stored, new_name))
+        if why:
+            self.last_error = why
+            return False, why
         holders = self.users_with_role(stored)
         from ..infra.transaction import atomic
         try:
@@ -1364,6 +1433,10 @@ class UserManager:
     def save_users(self, users_dict: Optional[Dict[str, Any]] = None) -> bool:
         db = self._get_db()
         if users_dict:
+            from slate.core.security.admin_guard import sync_change
+            why = self._last_admin_refusal(sync_change(users_dict))
+            if why:
+                self._refuse_last_admin(why)
             return db.sync_users(users_dict)
         return True
     def load_roles(self): pass

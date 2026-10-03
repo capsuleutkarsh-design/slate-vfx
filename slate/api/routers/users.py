@@ -32,7 +32,10 @@ def get_user_id(username: str, db: DatabaseManager = Depends(get_db)):
 @router.post("/sync")
 def sync_users(users_dict: Dict[str, Any], db: DatabaseManager = Depends(get_db)):
     """Sync a dictionary of users into the database."""
-    success = db.user_repo.sync_users(users_dict)
+    try:
+        success = db.user_repo.sync_users(users_dict)
+    except PermissionError as refused:          # the last administrator stays
+        raise HTTPException(status_code=409, detail=str(refused))
     if not success:
         raise HTTPException(status_code=500, detail="Failed to sync users")
     return {"status": "success"}
