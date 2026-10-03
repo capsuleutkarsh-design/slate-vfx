@@ -38,6 +38,9 @@ hiddenimports = [
 hiddenimports += collect_submodules('uvicorn')
 hiddenimports += collect_submodules('slate.api')
 hiddenimports += collect_submodules('slate.core.updater')
+# The recovery tool (Slate_Server.exe --recover) and the security safety net.
+hiddenimports += collect_submodules('slate_server.core.recovery')
+hiddenimports += collect_submodules('slate.core.security')
 
 a = Analysis(
     [R('slate_server', 'main.py')],

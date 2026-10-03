@@ -15,6 +15,7 @@ from .views.dashboard_view import DashboardView
 from .views.settings_view import SettingsView
 from .views.analytics_view import AnalyticsView
 from .views.operations_view import OperationsView
+from .views.recovery_view import RecoveryView
 from slate_server.core.db_engine import DatabaseEngine
 from slate_server.core.pgbouncer_engine import PgBouncerEngine
 from slate_server.core.db_credentials import connect_kwargs
@@ -326,6 +327,11 @@ class UTServerWindow(QMainWindow):
         self.settings_view.input_api_port.setText(str(self.api_port()))
         self.dashboard.btn_api_dashboard.setToolTip("Opens %s" % self.dashboard_url())
 
+        # Recovery: for when nobody can sign in. The same page as the
+        # standalone Recover Slate window (slate_server/core/recovery).
+        self.recovery_view = RecoveryView(self._recovery_layout)
+        self.stacked_widget.addWidget(_scrollable(self.recovery_view))
+
         # Setup Analytics Polling
         self.poll_timer = QTimer(self)
         self.poll_timer.timeout.connect(self._poll_database_stats)
@@ -340,6 +346,11 @@ class UTServerWindow(QMainWindow):
 
         # Setup Sidebar after views are ready
         self.setup_sidebar()
+
+        # The safety net: a Recovery Key for this server (made once, shown
+        # once) and a first snapshot, as soon as there is a database here.
+        if not os.environ.get("HEADLESS_TESTING"):
+            QTimer.singleShot(1500, self._prepare_recovery)
 
     # ------------------------------------------------------------ geometry
     DEFAULT_SIZE = (1200, 820)
@@ -672,9 +683,11 @@ class UTServerWindow(QMainWindow):
         self.btn_nav_analytics = QPushButton("Analytics")
         self.btn_nav_operations = QPushButton("Operations")
         self.btn_nav_settings = QPushButton("Settings")
+        self.btn_nav_recovery = QPushButton("Recovery")
 
         for btn in (self.btn_nav_dash, self.btn_nav_analytics,
-                    self.btn_nav_operations, self.btn_nav_settings):
+                    self.btn_nav_operations, self.btn_nav_settings,
+                    self.btn_nav_recovery):
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setFixedHeight(40)
             btn.setStyleSheet(f"""
@@ -701,6 +714,7 @@ class UTServerWindow(QMainWindow):
         self.btn_nav_settings.clicked.connect(lambda: self.switch_view(1))
         self.btn_nav_analytics.clicked.connect(lambda: self.switch_view(2))
         self.btn_nav_operations.clicked.connect(lambda: self.switch_view(3))
+        self.btn_nav_recovery.clicked.connect(lambda: self.switch_view(4))
 
         # Initial State
         self.switch_view(0)
@@ -718,6 +732,9 @@ class UTServerWindow(QMainWindow):
         self.btn_nav_settings.setStyleSheet(active_style if index == 1 else inactive_style)
         self.btn_nav_analytics.setStyleSheet(active_style if index == 2 else inactive_style)
         self.btn_nav_operations.setStyleSheet(active_style if index == 3 else inactive_style)
+        recovery = getattr(self, "btn_nav_recovery", None)
+        if recovery is not None:
+            recovery.setStyleSheet(active_style if index == 4 else inactive_style)
 
     def _on_save_settings(self):
         """
@@ -842,6 +859,79 @@ class UTServerWindow(QMainWindow):
                     self._log(f"CRITICAL ERROR initializing engine: {e}")
         except Exception as e:
             self._log(f"Failed to save settings: {e}")
+
+    # ------------------------------------------------------------ recovery
+    def _recovery_layout(self):
+        """Where this server's database and recovery folder are, as the window knows them."""
+        from pathlib import Path
+        from slate_server.core.recovery.layout import ServerLayout, credentials_file
+        try:
+            credentials = credentials_file()
+        except Exception:
+            credentials = None
+        return ServerLayout(
+            data_dir=Path(str(self._db_path)), port=int(self._db_port),
+            pooler_port=int(self._db_pooler_port), server_home=Path(_server_home()),
+            settings_path=Path(self.config_path), credentials_path=credentials)
+
+    def _prepare_recovery(self, show=True):
+        """
+        Once there is a database here: tell the switches where this PC's
+        override file is, make the Recovery Key if there is none (and show it,
+        once), and take a first snapshot so there is always one to go back to.
+        """
+        try:
+            layout = self._recovery_layout()
+            if not (layout.data_dir / "PG_VERSION").exists():
+                return None
+            from slate.core.security import switches
+            switches.set_override_file(layout.switches_file)
+            from slate_server.core.recovery import key as recovery_key
+            made = recovery_key.create_first_key(layout)
+            if made and show:
+                from .views.recovery_view import RecoveryKeyDialog
+                dialog = RecoveryKeyDialog(made, self, first_time=True)
+                dialog.open()
+                self._recovery_key_dialog = dialog
+                self._log("> A Recovery Key was made for this server. Print it and keep it "
+                          "safe (see the Recovery page).")
+            from slate_server.core.recovery import snapshots
+            if snapshots.latest_snapshot(layout) is None:
+                import threading
+                threading.Thread(target=lambda: snapshots.before_security_change(
+                    "first snapshot", layout), daemon=True).start()
+            return made
+        except Exception as exc:
+            logging.warning("The recovery safety net was not prepared: %s", exc)
+            return None
+
+    def _after_start_safety_net(self):
+        """After every successful start: what the recovery tool reads later."""
+        try:
+            layout = self._recovery_layout()
+            from slate_server.core import server_home
+            from slate_server.core.recovery import health
+            server_home.remember_last_good(_server_home(), layout.data_dir, layout.port,
+                                           layout.pooler_port)
+            health.record_server_state(layout)
+            # Switches forced off on this PC reach the workstations through the
+            # database.
+            from slate.core.security import switches
+            from slate.core.security.dbapi import ConnectionDB
+            switches.set_override_file(layout.switches_file)
+            if switches.local_overrides(layout.switches_file):
+                conn = psycopg2.connect(**connect_kwargs(layout.port, connect_timeout=4))
+                try:
+                    changed = switches.apply_local_overrides(ConnectionDB(conn),
+                                                             layout.switches_file)
+                    if changed:
+                        self._log("> %d security switch(es) turned off, as set on this PC."
+                                  % changed)
+                finally:
+                    conn.close()
+        except Exception as exc:
+            logging.warning("Recovery bookkeeping after start failed: %s", exc)
+        self._prepare_recovery()
 
     def server_running(self) -> bool:
         """The database is up (the power switch is on)."""
@@ -1026,6 +1116,7 @@ class UTServerWindow(QMainWindow):
                     self._log(f"> Failed to start the web API: {e}")
 
                 self.poll_timer.start(3000)
+                self._after_start_safety_net()
             else:
                 self.dashboard.status_badge.set_status("Server Offline", "error")
                 self._log("> Server stopped gracefully.")

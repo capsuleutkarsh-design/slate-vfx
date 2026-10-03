@@ -85,6 +85,8 @@ Source: "{#SourceDistDir}\Slate\SlateUpdater.exe"; DestDir: "{app}"; Flags: igno
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppExeName}"; Components: central_server
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppExeName}"; Tasks: desktopicon; Components: central_server
+; For when nobody can sign in: the recovery tool (needs the Recovery Key). docs/RECOVERY.md
+Name: "{autoprograms}\Recover Slate"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--recover"; IconFilename: "{app}\{#MyAppExeName}"; Components: central_server
 
 [Registry]
 ; --- AUTO-STARTUP CONFIGURATION ---

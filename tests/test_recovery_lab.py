@@ -718,3 +718,104 @@ def test_the_private_folder_never_locks_this_account_out(tmp_path, monkeypatch):
     folder = fs.ensure_private_dir(tmp_path / "slate_recovery")
     fs.write_json(folder / "probe.json", {"ok": True})
     assert fs.read_json(folder / "probe.json") == {"ok": True}
+
+
+# ============================== apply_hardening_step: the rule in practice
+
+def _server_login(lab):
+    return {"host": "127.0.0.1", "port": lab.port, "dbname": DBNAME, "user": "postgres",
+            "password": db_credentials.admin_password()}
+
+
+@slow
+def test_a_hardening_step_that_fails_the_precheck_is_not_applied(healthy):
+    from slate_server.core.recovery.hardening import apply_hardening_step
+    lab = healthy
+    applied = []
+    result = apply_hardening_step(
+        "strict_pg_hba", apply=lambda: applied.append(True),
+        precheck={"hba_text": "host all all 0.0.0.0/0 scram-sha-256\n"},
+        layout=lab.layout)
+    assert not result.applied and applied == []
+    assert "first line" in result.message
+    assert snapshots.latest_snapshot(lab.layout) is None, "nothing was touched"
+
+
+@slow
+def test_a_hardening_step_that_locks_people_out_is_undone_by_itself(healthy):
+    from slate.core.security.precheck import can_still_get_in
+    from slate_server.core.recovery.hardening import apply_hardening_step
+    lab = healthy
+    bad = "# Written by Slate Central Server.\nhost all all 0.0.0.0/0 reject\n"
+
+    def apply():
+        (lab.data / "pg_hba.conf").write_text(bad, encoding="utf-8")
+        lab.engine()._reload_configuration()
+
+    result = apply_hardening_step(
+        "strict_pg_hba", apply=apply,
+        precheck={"server": _server_login(lab)},                       # fine before...
+        verify=lambda: can_still_get_in(server=_server_login(lab)),    # ...refused after
+        switch="strict_pg_hba", layout=lab.layout)
+    assert not result.applied and result.rolled_back
+    assert lab.hba() == lab.hardened
+    assert lab.can_login("postgres", db_credentials.admin_password())
+
+
+@slow
+def test_a_hardening_step_that_keeps_people_in_is_applied_and_switched_on(healthy):
+    from slate.core.security import switches
+    from slate.core.security.dbapi import ConnectionDB
+    from slate.core.security.precheck import can_still_get_in
+    from slate_server.core.recovery.hardening import apply_hardening_step
+    lab = healthy
+    conn = lab.connect("postgres", db_credentials.admin_password())
+    try:
+        db = ConnectionDB(conn)
+        result = apply_hardening_step(
+            "refuse_inactive_signin", apply=lambda: None,
+            precheck={"db": db}, verify=lambda: can_still_get_in(db=db),
+            switch="refuse_inactive_signin", mode=switches.LOG_ONLY, switch_db=db,
+            layout=lab.layout)
+        assert result.applied and result.snapshot is not None
+        assert switches.mode("refuse_inactive_signin", db=db,
+                             override_path=lab.layout.switches_file) == switches.LOG_ONLY
+        # ...and the recovery tool can turn it off again, from the file alone.
+        lab.session(lab.key).switches_off(["refuse_inactive_signin"])
+        assert switches.mode("refuse_inactive_signin", db=db,
+                             override_path=lab.layout.switches_file) == switches.OFF
+    finally:
+        conn.close()
+
+
+# ===================================================== the command line, for real
+
+@slow
+def test_the_command_line_resets_a_password(healthy, monkeypatch, capsys):
+    from slate_server.core.recovery import cli
+    lab = healthy
+    answers = iter([lab.key, "Typed-at-prompt1", "Typed-at-prompt1"])
+    monkeypatch.setattr(cli.getpass, "getpass", lambda prompt="": next(answers))
+    code = cli.main(["--data-dir", str(lab.data), "--port", str(lab.port),
+                     "reset-password", "admin"])
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert bcrypt.checkpw(b"Typed-at-prompt1", lab.user("admin")["password_hash"].encode())
+    assert lab.key not in out and "Typed-at-prompt1" not in out
+    log = lab.layout.log_file.read_text(encoding="utf-8")
+    assert "reset-password" in log and "Typed-at-prompt1" not in log and lab.key not in log
+    _no_window_left(lab, lab.hardened)
+
+
+def test_the_command_line_refuses_another_pc(tmp_path, capsys):
+    from slate_server.core.recovery import cli
+    code = cli.main(["--data-dir", str(tmp_path / "not-a-database"), "reset-password", "admin"])
+    assert code == 1
+    assert "only runs on the server PC" in capsys.readouterr().out
+
+
+def test_the_health_check_runs_without_a_key_or_a_database(tmp_path, capsys):
+    from slate_server.core.recovery import cli
+    assert cli.main(["--data-dir", str(tmp_path / "nothing"), "health"]) == 0
+    out = capsys.readouterr().out
+    assert "[FAIL] This PC" in out
