@@ -210,7 +210,11 @@ def icon(name: str, colour: str = None, size: int = 18) -> QIcon:
     painter = QPainter(pixmap)
     try:
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        QSvgRenderer(QByteArray(_svg(key, colour, pixels, 1.6).encode("utf-8"))).render(painter)
+        # The dot is a zero-length path: only a thick round stroke makes it a
+        # visible disc (as the stylesheet's radio dot draws it). At 1.6 it was
+        # nothing at all.
+        stroke = 11.0 if key == "dot" else 1.6
+        QSvgRenderer(QByteArray(_svg(key, colour, pixels, stroke).encode("utf-8"))).render(painter)
     finally:
         painter.end()
     pixmap.setDevicePixelRatio(ratio)

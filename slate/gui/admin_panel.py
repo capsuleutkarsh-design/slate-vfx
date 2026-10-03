@@ -8,9 +8,6 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtCore import Qt, QUrl, QThread, Signal
-import subprocess
-import os
-import sys
 
 
 from ..core.infra.app_context import AppContext
@@ -27,6 +24,7 @@ from .advanced_log_viewer import UnifiedLogViewer
 from .admin_widgets import LiveDashboard
 from .admin_fleet_report_service import run_fleet_report_export
 from .components.queued_worker_controller import QueuedWorkerController
+from .components.feedback import toast
 
 # Import design tokens for theming
 from ..core.infra.design_tokens import ColorTokens as C
@@ -76,6 +74,18 @@ class _ApiProbe(QThread):
         self.done.emit(probe_api(self.hosts))
 
 
+class _ApiStart(QThread):
+    """Starts the API in this process and waits until its port answers."""
+    done = Signal(bool)
+
+    def __init__(self, server, parent=None):
+        super().__init__(parent)
+        self.server = server
+
+    def run(self):
+        self.done.emit(bool(self.server.start() and self.server.wait_until_ready(10)))
+
+
 def roles_of_user(roles=None, user_role=None, app_context=None):
     """The signed-in person's roles: given, legacy single role, or from the context."""
     if roles:
@@ -100,8 +110,9 @@ class AdminPanelTab(QWidget):
         self.hub = hub or self.app_context.server_hub()
         self.attendance = attendance or self.app_context.attendance()
         self.db = db_manager or self.app_context.db_manager()
-        self.api_process = None
+        self.api_server = None
         self._api_probe = None
+        self._api_start = None
 
         # Who may do what here. A supervisor keeps this tab but sees only Live
         # Ops, read-only: the logs, the database and every remote action are
@@ -286,9 +297,10 @@ class AdminPanelTab(QWidget):
         """
         if not self.can_manage_system:
             return
-        if self._api_probe is not None and self._api_probe.isRunning():
-            return
-        if self.api_process is not None and self.api_process.poll() is None:
+        for thread in (self._api_probe, self._api_start):
+            if thread is not None and thread.isRunning():
+                return
+        if self.api_server is not None and self.api_server.is_running():
             self._open_api("127.0.0.1")
             return
         self.btn_api.setEnabled(False)
@@ -313,27 +325,37 @@ class AdminPanelTab(QWidget):
         self.btn_api.setText("Open API dashboard")
 
     def _launch_api(self):
-        try:
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            api_main_path = os.path.join(base_dir, "api", "main.py")
-            cwd = os.path.dirname(base_dir)
-            proc = subprocess.Popen([sys.executable, api_main_path], cwd=cwd,
-                                    env=os.environ.copy(), shell=False)
-            try:
-                from ..utils.process_manager import subprocess_tracker
-                self.api_process = subprocess_tracker.register(proc)
-            except Exception:
-                self.api_process = proc
+        """
+        Run the API in this process, as the Slate Server does. It used to run
+        sys.executable on api/main.py - in an installed build that is Slate.exe,
+        not python - and said 'starting' even when the process died at once
+        (port 8000 in use).
+        """
+        from ..api.in_process import ApiServer
+        self.api_server = ApiServer(port=API_PORT)
+        self.btn_api.setEnabled(False)
+        self.btn_api.setText("Starting…")
+        self._api_start = _ApiStart(self.api_server, self)
+        self._api_start.done.connect(self._on_api_started)
+        self._api_start.start()
+
+    def _on_api_started(self, ok):
+        if self._is_closing:
+            return
+        self.btn_api.setEnabled(True)
+        if ok:
             self.log_action(f"Started the API gateway on port {API_PORT}")
             self.btn_api.setText("Open API dashboard")
-            QMessageBox.information(
-                self, "Start API gateway",
-                f"The API server is starting on this computer, port {API_PORT}.\n\n"
-                "Press 'Open API dashboard' in a few seconds to open it.")
-        except Exception as e:
-            self.btn_api.setText("Start API gateway")
-            QMessageBox.critical(self, "Start API gateway", f"The API server could not be started:\n{e}")
-            self.log_action(f"Could not start the API gateway: {e}")
+            toast(self, f"The API gateway is running on this computer, port {API_PORT}.", "success")
+            return
+        reason = (self.api_server.error if self.api_server is not None else "") or \
+            f"Nothing answered on port {API_PORT} - another program may be using it."
+        if self.api_server is not None:
+            self.api_server.stop(timeout=2.0)
+        self.api_server = None
+        self.btn_api.setText("Start API gateway")
+        QMessageBox.critical(self, "Start API gateway", f"The API server could not be started:\n{reason}")
+        self.log_action(f"Could not start the API gateway: {reason}")
 
     # ------------------------------------------------------- remote actions
     # Sending commands to workstations (broadcast, wipe) is unchanged here:
@@ -423,26 +445,21 @@ class AdminPanelTab(QWidget):
                 self.unified_log_viewer.cleanup_resources()
             except Exception:
                 pass
-        probe = getattr(self, "_api_probe", None)
-        if probe is not None:
-            try:
-                probe.wait(2000)
-            except RuntimeError:
-                pass
-        # Shutdown API Server
-        if hasattr(self, 'api_process') and self.api_process:
-            try:
-                from ..utils.process_manager import subprocess_tracker
-                subprocess_tracker.unregister(self.api_process)
-                if self.api_process.poll() is None:
-                    self.api_process.terminate()
-                    self.api_process.wait(timeout=1.0)
-            except Exception:
+        for name in ("_api_probe", "_api_start"):
+            thread = getattr(self, name, None)
+            if thread is not None:
                 try:
-                    self.api_process.kill()
-                except Exception:
+                    thread.wait(12000 if name == "_api_start" else 2000)
+                except RuntimeError:
                     pass
-            self.api_process = None
+        # Stop the API this panel started.
+        server = getattr(self, "api_server", None)
+        if server is not None:
+            try:
+                server.stop(timeout=2.0)
+            except Exception:
+                logging.exception("Could not stop the API gateway")
+            self.api_server = None
 
     def closeEvent(self, event):
         """Ensure all background workers are stopped when the panel closes."""

@@ -11,7 +11,6 @@ slate/core/domain/fleet_status.py, shared with the fleet report.
 """
 
 import html
-import json
 import logging
 import time
 from datetime import datetime
@@ -33,13 +32,14 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QScrollArea,
+    QSizePolicy,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from ..core.domain import fleet_status as fs
-from ..core.workers.admin_workers import LiveStatusWorker
+from ..core.workers.admin_workers import LiveStatusWorker, load_report
 from ..core.infra.design_tokens import (
     ColorTokens as C,
     RadiusTokens as R,
@@ -47,7 +47,7 @@ from ..core.infra.design_tokens import (
     TypographyTokens as T,
 )
 from .components.qt_safety import safe_single_shot
-from .components.feedback import confirm
+from .components.feedback import confirm, toast
 from ..core.infra.app_context import AppContext
 from .core.controls import make_button
 from .core.icons import icon as draw_icon
@@ -70,20 +70,6 @@ def _label(text=""):
     label.setTextFormat(Qt.TextFormat.PlainText)
     label.setText("" if text is None else str(text))
     return label
-
-
-def _load_json_with_fallback(path: Path):
-    """Load JSON with encoding fallback for mixed workstation clients."""
-    last_error = None
-    for encoding in ("utf-8", "utf-8-sig", "cp1252", "latin-1"):
-        try:
-            with open(path, "r", encoding=encoding) as fh:
-                return json.load(fh)
-        except Exception as exc:
-            last_error = exc
-    if last_error:
-        raise last_error
-    raise ValueError(f"Could not parse JSON file: {path}")
 
 
 def disk_colour(percent) -> str:
@@ -110,11 +96,32 @@ def signed_in_user(data) -> str:
     return "" if user.lower() in ("", "unknown", "none", "n/a") else user
 
 
+# What clients write when they could not read a value (hardware_info writes
+# the word 'Unknown'); shown as 'Not reported' rather than verbatim.
+_NOT_REPORTED_WORDS = ("", "unknown", "n/a", "none", "null")
+
+
+def reported(value) -> str:
+    """A client-written value, or '' when it is missing or a placeholder."""
+    text = "" if value is None else str(value).strip()
+    return "" if text.lower() in _NOT_REPORTED_WORDS else text
+
+
+def ram_gb(value):
+    """RAM as a number of GB: clients write 32, '32' or '32 GB'. None when unknown."""
+    text = reported(value).upper().replace("GB", "").strip()
+    try:
+        number = float(text)
+    except ValueError:
+        return None
+    return int(number) if number.is_integer() else number
+
+
 def _value(data, key):
-    value = (data or {}).get(key)
-    if value is None or str(value).strip() == "":
-        return "Not reported"
-    return value
+    if key == "RAM_GB":
+        gb = ram_gb((data or {}).get(key))
+        return f"{gb} GB" if gb is not None else "Not reported"
+    return reported((data or {}).get(key)) or "Not reported"
 
 
 # --------------------------------------------------------------------------
@@ -179,7 +186,7 @@ def build_specs_html(data, pc_name=None, generated=None) -> str:
       <h2>Hardware</h2>
       <table><tr><th>Field</th><th>Value</th></tr>{rows([
           ("Manufacturer", "Manufacturer"), ("Model", "Model"), ("Serial number", "SerialNo"),
-          ("Motherboard", "Motherboard"), ("CPU", "CPU"), ("GPU", "GPU"), ("RAM (GB)", "RAM_GB")])}</table>
+          ("Motherboard", "Motherboard"), ("CPU", "CPU"), ("GPU", "GPU"), ("RAM", "RAM_GB")])}</table>
       <h2>Software</h2>
       <table>{rows([("OS", "OS"), ("Windows version", "WindowsVersion"),
                     ("Slate version", "client_version")])}</table>
@@ -264,14 +271,24 @@ class PCDetailsDialog(QDialog):
         form.setSpacing(10)
         self.section_titles = []
 
-        def add_row(label, value):
+        def add_row(label, value, mono=False):
             l = _label(label)
             l.setStyleSheet(f"color: {C.TEXT_SECONDARY}; font-weight: {T.WEIGHT_STYLE_BOLD};")
             v = _label(str(value))
-            v.setStyleSheet(f"color: {Gate.TEXT}; font-family: {T.FONT_MONO};")
+            # Codes (addresses, serials) in monospace; sentences and the
+            # dimmed 'Not reported' in the normal font.
+            missing = value == "Not reported"
+            font = f" font-family: {T.FONT_MONO};" if mono and not missing else ""
+            v.setStyleSheet(f"color: {Gate.TEXT_DIM if missing else Gate.TEXT};{font}")
             v.setWordWrap(True)
             v.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             form.addRow(l, v)
+
+        def add_field(label, key, mono=False):
+            # A row the client never sends at all (an older client version)
+            # is left out rather than filling the dialog with 'Not reported'.
+            if key in data:
+                add_row(label, _value(data, key), mono)
 
         def add_section(title):
             l = _label(title)
@@ -317,25 +334,25 @@ class PCDetailsDialog(QDialog):
             add_row("Drives", "No drive information reported")
 
         add_section("Identity")
-        add_row("Computer name", _value(data, "ComputerName"))
+        add_field("Computer name", "ComputerName")
         user = signed_in_user(data)
         add_row("Signed in to Slate as", user or "Nobody signed in")
-        add_row("Windows account", _value(data, "os_user"))
-        add_row("IP address", _value(data, "IPAddress"))
-        add_row("MAC address", _value(data, "MACAddress"))
+        add_field("Windows account", "os_user")
+        add_field("IP address", "IPAddress", mono=True)
+        add_field("MAC address", "MACAddress", mono=True)
 
         add_section("Hardware")
-        add_row("Manufacturer", _value(data, "Manufacturer"))
-        add_row("Model", _value(data, "Model"))
-        add_row("Serial number", _value(data, "SerialNo"))
-        add_row("Motherboard", _value(data, "Motherboard"))
-        add_row("CPU", _value(data, "CPU"))
-        add_row("GPU", _value(data, "GPU"))
-        add_row("RAM (GB)", _value(data, "RAM_GB"))
+        add_field("Manufacturer", "Manufacturer")
+        add_field("Model", "Model")
+        add_field("Serial number", "SerialNo", mono=True)
+        add_field("Motherboard", "Motherboard")
+        add_field("CPU", "CPU")
+        add_field("GPU", "GPU")
+        add_field("RAM", "RAM_GB")
 
         add_section("Software")
-        add_row("OS", _value(data, "OS"))
-        add_row("Windows version", _value(data, "WindowsVersion"))
+        add_field("OS", "OS")
+        add_field("Windows version", "WindowsVersion")
         add_row("Slate version", _value(data, "client_version"))
 
         self.scroll.setWidget(content)
@@ -354,7 +371,7 @@ class PCDetailsDialog(QDialog):
                 self.lbl_note.setText(NOT_REPORTED)
                 self.lbl_note.show()
                 return False
-            new_data = _load_json_with_fallback(report_path)
+            new_data = load_report(report_path)
         except Exception as exc:
             logger.warning("Could not reload the report for %s: %s", self.pc_name, exc)
             self.lbl_note.setText("The latest report could not be read. Try again in a moment.")
@@ -379,6 +396,17 @@ class PCDetailsDialog(QDialog):
         if not path:
             return
 
+        # QPrinter does not raise when the file cannot be written (open in a
+        # PDF viewer, read-only folder), so 'Saved' used to appear regardless:
+        # try the file first, and check something was written after.
+        try:
+            with open(path, "ab"):
+                pass
+        except OSError as exc:
+            QMessageBox.warning(self, "Export PDF",
+                                f"The PDF could not be saved to:\n{path}\n\n{exc.strerror or exc}. "
+                                "If it is open in a PDF viewer, close it and try again.")
+            return False
         doc = QTextDocument()
         doc.setHtml(build_specs_html(self.data, self.pc_name))
 
@@ -387,14 +415,32 @@ class PCDetailsDialog(QDialog):
         printer.setOutputFileName(path)
         printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
         doc.print_(printer)
+        try:
+            written = Path(path).stat().st_size > 0
+        except OSError:
+            written = False
+        if not written:
+            QMessageBox.warning(self, "Export PDF", f"The PDF could not be written to:\n{path}")
+            return False
         QMessageBox.information(self, "Export PDF", f"Saved the specification to:\n{path}")
+        return True
+
+
+def _this_version() -> str:
+    try:
+        from slate import __version__
+        return str(__version__)
+    except Exception:
+        return ""
 
 
 class PCCard(QFrame):
+    # The narrowest a card gets; cards share the row's width beyond that.
     CARD_WIDTH = 220
     CARD_HEIGHT = 140
 
-    def __init__(self, pc_name, hub, verify_callback=None, read_only=False, log_action=None):
+    def __init__(self, pc_name, hub, verify_callback=None, read_only=False, log_action=None,
+                 on_removed=None):
         super().__init__()
         self.pc_name = pc_name
         self.hub = hub
@@ -403,9 +449,16 @@ class PCCard(QFrame):
         self.verify_callback = verify_callback
         self.read_only = bool(read_only)
         self.log_action = log_action
+        self.on_removed = on_removed
+        # (what, when) of the last restart / shut-down sent, shown on the card
+        # until the machine's next report.
+        self.requested = None
+        self._elided = {}
         self.setObjectName("PCCard")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setFixedSize(self.CARD_WIDTH, self.CARD_HEIGHT)
+        self.setMinimumWidth(self.CARD_WIDTH)
+        self.setFixedHeight(self.CARD_HEIGHT)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip("Double-click for the system specs")
@@ -413,6 +466,7 @@ class PCCard(QFrame):
         self.customContextMenuRequested.connect(self.show_context)
 
         self.main_layout = QVBoxLayout(self)
+        self.main_layout.setSpacing(4)
         self.hl = QHBoxLayout()
         self.lbl_name = _label(pc_name)
         self.lbl_name.setStyleSheet(
@@ -420,9 +474,10 @@ class PCCard(QFrame):
         self.hl.addWidget(self.lbl_name, 1)
 
         # The menu used to be reachable only by right-clicking, with nothing
-        # on the card to say so.
+        # on the card to say so. Drawn in the text colour: in TEXT_2 it all
+        # but disappeared on the card.
         self.btn_menu = QToolButton()
-        self.btn_menu.setIcon(draw_icon("more", Gate.TEXT_2, 16))
+        self.btn_menu.setIcon(draw_icon("more", Gate.TEXT, 16))
         self.btn_menu.setAutoRaise(True)
         self.btn_menu.setToolTip("Actions for this machine")
         self.btn_menu.setStyleSheet("QToolButton { border: none; background: transparent; }")
@@ -430,32 +485,44 @@ class PCCard(QFrame):
         self.hl.addWidget(self.btn_menu)
         self.main_layout.addLayout(self.hl)
 
+        # The state is the most important line, so it sits under the name at
+        # body size; it was a 10 px line at the bottom of the card.
+        self.lbl_status = _label("● Connecting...")
+        self.lbl_status.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-weight: {T.WEIGHT_STYLE_BOLD};")
+        self.main_layout.addWidget(self.lbl_status)
         self.lbl_user = _label("Loading...")
         self.lbl_user.setStyleSheet(f"color: {C.TEXT_SECONDARY};")
         self.main_layout.addWidget(self.lbl_user)
         self.lbl_disk = _label("")
         self.lbl_disk.setStyleSheet(f"color: {C.TEXT_SECONDARY}; font-size: 11px;")
         self.main_layout.addWidget(self.lbl_disk)
+        self.lbl_version = _label("")
+        self.lbl_version.setStyleSheet(f"color: {Gate.WARN}; font-size: 11px;")
+        self.lbl_version.hide()
+        self.main_layout.addWidget(self.lbl_version)
         self.main_layout.addStretch()
-        self.lbl_status = _label("● Connecting...")
-        self.lbl_status.setStyleSheet(
-            f"color: {Gate.TEXT_DIM}; font-weight: {T.WEIGHT_STYLE_BOLD}; font-size: 10px;")
-        self.main_layout.addWidget(self.lbl_status)
         self._set_elided(self.lbl_name, pc_name, reserve=30)   # room for the actions button
         self._restyle(Gate.TEXT_DIM)
 
     # ----------------------------------------------------------------- text
     def _text_width(self) -> int:
         margins = self.main_layout.contentsMargins()
-        return self.CARD_WIDTH - margins.left() - margins.right() - 8
+        return max(self.width(), self.CARD_WIDTH) - margins.left() - margins.right() - 8
 
     def _set_elided(self, label, text, reserve=0):
         """Long machine and user names end in '…' with the whole name as a tooltip."""
         text = str(text or "")
+        self._elided[label] = (text, reserve)
         width = max(40, self._text_width() - reserve)
         shown = QFontMetrics(label.font()).elidedText(text, Qt.TextElideMode.ElideRight, width)
         label.setText(shown)
         label.setToolTip(f"<p>{html.escape(text)}</p>" if shown != text else "")
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Cards widen with the page: show more of a long name when they do.
+        for label, (text, reserve) in list(self._elided.items()):
+            self._set_elided(label, text, reserve)
 
     def _restyle(self, colour):
         self.setStyleSheet(
@@ -471,6 +538,19 @@ class PCCard(QFrame):
         """
         self.current_data = dict(data or {})
         now = time.time() if now is None else now
+        if self.current_data.get("unreadable"):
+            # The file is there but could not be read (half-written, corrupt):
+            # the machine stays on the grid rather than vanishing.
+            self.state = fs.UNKNOWN
+            self.lbl_user.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-style: italic;")
+            self._set_elided(self.lbl_user, "Its status file could not be read")
+            self.lbl_disk.setText("")
+            self.lbl_version.hide()
+            self.lbl_status.setText("● Report unreadable")
+            self.lbl_status.setToolTip(fs.EXPLAIN[fs.UNKNOWN])
+            self.lbl_status.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-weight: {T.WEIGHT_STYLE_BOLD};")
+            self._restyle(Gate.TEXT_DIM)
+            return
         seen = fs.last_seen_of(self.current_data)
         if seen is None and delta is not None:
             try:
@@ -498,6 +578,17 @@ class PCCard(QFrame):
         self.lbl_disk.setText(disk_text)
         self.lbl_disk.setStyleSheet(f"color: {disk_colour(percent)}; font-size: 11px;")
 
+        # A machine on another Slate version than this one says so.
+        version = reported(self.current_data.get("client_version"))
+        mine = _this_version()
+        differs = bool(version and mine and version != mine)
+        self.lbl_version.setText(f"Slate {version}" if differs else "")
+        self.lbl_version.setVisible(differs)
+
+        # A restart / shut-down sent from here shows until the next report.
+        if self.requested and seen is not None and seen > self.requested[1]:
+            self.requested = None
+
         colour = status_colour(self.state)
         text = fs.label(self.state)
         if self.state == fs.NOT_RESPONDING:
@@ -507,9 +598,13 @@ class PCCard(QFrame):
             recent = seen is not None and now - seen < 86400
             when = fs.seen_at_text(seen) if recent else fs.age_text(seen, now)
             text += f" · last seen {when}"
+        elif self.state == fs.UNKNOWN:
+            text += " · report has no time"
+        if self.requested:
+            text += f" · {self.requested[0]} requested {fs.seen_at_text(self.requested[1])}"
         self.lbl_status.setText(f"● {text}")
-        self.lbl_status.setStyleSheet(
-            f"color: {colour}; font-weight: {T.WEIGHT_STYLE_BOLD}; font-size: 10px;")
+        self.lbl_status.setToolTip(fs.EXPLAIN.get(self.state, ""))
+        self.lbl_status.setStyleSheet(f"color: {colour}; font-weight: {T.WEIGHT_STYLE_BOLD};")
         self._restyle(colour)
 
     # -------------------------------------------------------------- actions
@@ -547,6 +642,10 @@ class PCCard(QFrame):
 
     def show_context(self, pos=None):
         menu, act_details, act_rst, act_off = self.build_menu()
+        act_remove = None
+        if not self.read_only and self.state in (fs.OFFLINE, fs.UNKNOWN):
+            menu.addSeparator()
+            act_remove = menu.addAction("Remove from Live Ops…")
         if pos is None:
             where = self.btn_menu.mapToGlobal(self.btn_menu.rect().bottomLeft())
         else:
@@ -561,6 +660,8 @@ class PCCard(QFrame):
             self.request_power("restart")
         elif act_off is not None and action == act_off:
             self.request_power("shutdown")
+        elif act_remove is not None and action == act_remove:
+            self.remove_from_live_ops()
 
     def request_power(self, command: str) -> bool:
         """
@@ -577,9 +678,43 @@ class PCCard(QFrame):
         if self.verify_callback and not self.verify_callback():
             return False
         self.hub.post_command(command, self.pc_name)
+        done = "Restart" if command == "restart" else "Shut-down"
         if callable(self.log_action):
-            done = "Restart" if command == "restart" else "Shut-down"
             self.log_action(f"{done} sent to {self.pc_name}")
+        # Say it went, and keep saying so on the card until the next report:
+        # the click used to give no sign at all, so people sent it again.
+        self.requested = (done.lower(), time.time())
+        if self.current_data:
+            self.update_data(self.current_data)
+        toast(self, f"{done} sent to {self.pc_name}", "success")
+        return True
+
+    def remove_from_live_ops(self) -> bool:
+        """
+        Take a retired machine off Live Ops: its status file moves to
+        LiveStatus/Retired (kept, not deleted). If the machine reports again
+        it simply comes back.
+        """
+        if self.read_only:
+            return False
+        if not confirm(self.window(), f"Remove {self.pc_name} from Live Ops?",
+                       "Use this for a machine that has been retired. Its last report is kept in "
+                       "the LiveStatus\\Retired folder, and it comes back if it reports again.",
+                       yes_label="Remove"):
+            return False
+        try:
+            status_dir = Path(self.hub.get_livestatus_dir())
+            retired = status_dir / "Retired"
+            retired.mkdir(exist_ok=True)
+            (status_dir / f"{self.pc_name}.json").replace(retired / f"{self.pc_name}.json")
+        except OSError as exc:
+            QMessageBox.warning(self, "Remove from Live Ops",
+                                f"{self.pc_name} could not be removed:\n{exc.strerror or exc}")
+            return False
+        if callable(self.log_action):
+            self.log_action(f"Removed {self.pc_name} from Live Ops")
+        if callable(self.on_removed):
+            self.on_removed(self.pc_name)
         return True
 
 
@@ -596,7 +731,7 @@ class _ResizeWatch(QObject):
         return False
 
 
-SORTS = (("Status", "status"), ("Name", "name"), ("Signed-in user", "user"))
+SORTS = (("Status (problems first)", "status"), ("Name", "name"), ("Signed-in user", "user"))
 FILTERS = (("All machines", ""), (fs.label(fs.ONLINE), fs.ONLINE),
            (fs.label(fs.NOT_RESPONDING), fs.NOT_RESPONDING),
            (fs.label(fs.OFFLINE), fs.OFFLINE), (fs.label(fs.UNKNOWN), fs.UNKNOWN))
@@ -616,6 +751,8 @@ class LiveDashboard(QWidget):
         self._is_cleaned = False
         self._records = {}
         self._columns = 0
+        self._last_read = None      # time of the last good read of the folder
+        self._read_error = ""
         self.setObjectName("LiveDashboard")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         # Scoped: a selector-less sheet here was inherited by every field and
@@ -636,14 +773,14 @@ class LiveDashboard(QWidget):
                             (fs.OFFLINE, "bad"), (fs.UNKNOWN, "idle")):
             self.summary_cards[state] = self.summary.add(
                 fs.label(state), 0, tone=tone,
-                on_click=lambda s=state: self.set_status_filter(s),
-                tooltip=f"Show only machines that are {fs.label(state).lower()}")
+                on_click=lambda s=state: self.toggle_status_filter(s),
+                tooltip=f"{fs.EXPLAIN[state]}.\nClick to show only these machines, click again for all.")
         bar_layout.addWidget(self.summary)
 
         self.toolbar = QHBoxLayout()
         self.toolbar.setSpacing(8)
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Search machine or user…")
+        self.search.setPlaceholderText("Search machine, user, IP or version…")
         self.search.setClearButtonEnabled(True)
         self.search.setMinimumWidth(220)
         self.search.setMaximumWidth(300)
@@ -677,6 +814,13 @@ class LiveDashboard(QWidget):
         self.lbl_updated.setStyleSheet(f"color: {Gate.TEXT_DIM};")
         self.toolbar.addWidget(self.lbl_updated)
         bar_layout.addLayout(self.toolbar)
+        # Said when the status folder could not be read: the cards are the
+        # last good read, not a fleet that vanished.
+        self.lbl_stale = _label("")
+        self.lbl_stale.setWordWrap(True)
+        self.lbl_stale.setStyleSheet(f"color: {Gate.WARN}; font-weight: {T.WEIGHT_STYLE_BOLD};")
+        self.lbl_stale.hide()
+        bar_layout.addWidget(self.lbl_stale)
         self.main_layout.addWidget(bar)
 
         # ---- the grid
@@ -688,7 +832,7 @@ class LiveDashboard(QWidget):
         self.grid_layout = QGridLayout(self.grid_widget)
         self.grid_layout.setContentsMargins(15, 10, 15, 15)
         self.grid_layout.setSpacing(self.GRID_SPACING)
-        self.grid_layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self.grid_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.grid_area.setWidget(self.grid_widget)
         self._resize_watch = _ResizeWatch(self._on_viewport_resized, self)
         self.grid_area.viewport().installEventFilter(self._resize_watch)
@@ -705,13 +849,27 @@ class LiveDashboard(QWidget):
         self.pc_widgets = {}
         self.worker = LiveStatusWorker(self.hub)
         self.worker.data_ready.connect(self.on_data_ready)
+        self.worker.failed.connect(self.on_read_failed)
         self.worker.finished.connect(self._on_worker_thread_done)
 
+        # Runs only while Live Ops is on screen (showEvent / hideEvent): it
+        # used to re-read every report over the share every 30 s for the
+        # rest of the session once the Admin Panel had been opened.
         self.auto_timer = QTimer(self)
         self.auto_timer.setInterval(30000)
         self.auto_timer.timeout.connect(self.refresh_grid)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._is_closing:
+            return
         self.auto_timer.start()
-        safe_single_shot(1000, self, self.refresh_grid)
+        if self._last_read is None or time.time() - self._last_read > 25:
+            safe_single_shot(0, self, self.refresh_grid)
+
+    def hideEvent(self, event):
+        self.auto_timer.stop()
+        super().hideEvent(event)
 
     def bind_worker_controller(self, controller):
         """Allow host module to inject standardized worker orchestration."""
@@ -765,7 +923,8 @@ class LiveDashboard(QWidget):
             card = self.pc_widgets.get(pc_name)
             if card is None:
                 card = PCCard(pc_name, self.hub, self.verify_callback,
-                              read_only=self.read_only, log_action=self.log_action)
+                              read_only=self.read_only, log_action=self.log_action,
+                              on_removed=lambda _name: self.refresh_grid())
                 self.pc_widgets[pc_name] = card
             # One bad report must not stop the cards after it from updating.
             try:
@@ -774,15 +933,46 @@ class LiveDashboard(QWidget):
                 logger.exception("Live Ops could not show the report of %s", pc_name)
 
         self._records = records
-        counts = fs.summarise(records.values(), now)
+        # Counted from the cards, so an unreadable report is counted where its
+        # card is shown (Unknown).
+        counts = {state: 0 for state in self.summary_cards}
+        for card in self.pc_widgets.values():
+            counts[card.state] = counts.get(card.state, 0) + 1
         for state, card in self.summary_cards.items():
             card.set_value(counts[state])
+        self._last_read = now
+        self._read_error = ""
+        self.lbl_stale.hide()
         self.lbl_updated.setText("Updated " + datetime.fromtimestamp(now).strftime("%H:%M:%S"))
+        self._relayout(force=True)
+
+    def on_read_failed(self, reason=""):
+        """
+        The LiveStatus folder could not be read (share dropped, permission,
+        timeout). The cards stay as they were and the page says so; this used
+        to delete every card and claim no machine had ever reported.
+        """
+        if self._is_closing:
+            return
+        self._read_error = str(reason or "") or "unknown error"
+        if self._last_read is not None:
+            when = datetime.fromtimestamp(self._last_read).strftime("%H:%M")
+            self.lbl_stale.setText("The status folder could not be read (is the server share "
+                                   f"reachable?) - showing the last good read from {when}.")
+        else:
+            self.lbl_stale.setText("The status folder could not be read (is the server share "
+                                   "reachable?). Slate tries again every 30 seconds.")
+        self.lbl_stale.setToolTip(self._read_error)
+        self.lbl_stale.show()
         self._relayout(force=True)
 
     def set_status_filter(self, state):
         index = self.status_filter.findData(state)
         self.status_filter.setCurrentIndex(max(0, index))
+
+    def toggle_status_filter(self, state):
+        """A summary tile filters to its machines; clicking it again shows all."""
+        self.set_status_filter("" if self.status_filter.currentData() == state else state)
 
     def clear_filters(self):
         self.search.clear()
@@ -797,9 +987,14 @@ class LiveDashboard(QWidget):
         for name, card in self.pc_widgets.items():
             if wanted and card.state != wanted:
                 continue
-            if text and text not in name.lower() \
-                    and text not in signed_in_user(card.current_data).lower():
-                continue
+            if text:
+                # IT looks a machine up by its IP too, or checks who still
+                # runs an old Slate.
+                data = card.current_data
+                haystack = " ".join([name, signed_in_user(data)] + [
+                    reported(data.get(k)) for k in ("IPAddress", "os_user", "client_version")])
+                if text not in haystack.lower():
+                    continue
             cards.append(card)
 
         def key(card):
@@ -816,7 +1011,11 @@ class LiveDashboard(QWidget):
     def column_count(self) -> int:
         """As many card columns as fit the page (it was always four)."""
         margins = self.grid_layout.contentsMargins()
-        width = self.grid_area.viewport().width() - margins.left() - margins.right()
+        # A hidden grid (the empty state is up) is not resized with the page,
+        # so its viewport's width is stale: measure the page instead.
+        visible = self.grid_area.isVisible()
+        width = (self.grid_area.viewport().width() if visible else self.fleet_stack.width()) \
+            - margins.left() - margins.right()
         step = PCCard.CARD_WIDTH + self.GRID_SPACING
         return max(1, (width + self.GRID_SPACING) // step)
 
@@ -837,10 +1036,17 @@ class LiveDashboard(QWidget):
         for card in self.pc_widgets.values():
             self.grid_layout.removeWidget(card)
             card.hide()
+        # The cards share the row's width, so the grid lines up with the
+        # summary strip above instead of leaving a band empty on the right.
+        for col in range(max(columns, self.grid_layout.columnCount())):
+            self.grid_layout.setColumnStretch(col, 1 if col < columns else 0)
         for index, card in enumerate(cards):
             row, col = divmod(index, columns)
             self.grid_layout.addWidget(card, row, col)
             card.show()
+        wanted = self.status_filter.currentData() or ""
+        for state, tile in self.summary_cards.items():
+            tile.set_active(state == wanted)
         self._update_fleet_placeholder(shown=len(cards), known=len(self.pc_widgets))
 
     def _update_fleet_placeholder(self, shown, known):
@@ -850,6 +1056,11 @@ class LiveDashboard(QWidget):
             return
         if known:
             self._fleet_empty.set_filtered(True, on_clear=self.clear_filters, noun="machines")
+        elif self._read_error:
+            self._fleet_empty.set_filtered(False)
+            self._fleet_empty.set_message(
+                "The status folder could not be read",
+                "Check that the server share is reachable. Slate tries again every 30 seconds.")
         else:
             self._fleet_empty.set_filtered(False)
             self._fleet_empty.set_message(

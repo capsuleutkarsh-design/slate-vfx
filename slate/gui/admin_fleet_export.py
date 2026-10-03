@@ -157,6 +157,9 @@ def export_fleet_xlsx(output_path, records, summary, skipped, columns=None, head
                 cell.font = make_font(status_styles.get(status, (col_unknown_bg, col_unknown_fg))[1], bold=True)
                 cell.alignment = Alignment(horizontal="center", vertical="center")
 
+            if key.endswith("_usage_pct") and isinstance(val, (int, float)):
+                cell.number_format = '0.0"%"'
+
             if key.endswith("_alert") and val in alert_fills:
                 cell.fill = alert_fills[val]
                 cell.font = alert_fonts[val]
@@ -174,6 +177,8 @@ def export_fleet_xlsx(output_path, records, summary, skipped, columns=None, head
         ws.column_dimensions[col_letter].width = min(max(max_len + 2, 10), 40)
 
     ws.freeze_panes = "B2"
-    ws.auto_filter.ref = f"A1:{get_column_letter(len(all_keys))}1"
+    # The whole table, not the header row only: Excel builds the filter
+    # lists from this range.
+    ws.auto_filter.ref = ws.dimensions
 
     wb.save(output_path)
