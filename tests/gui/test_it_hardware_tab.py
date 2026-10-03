@@ -279,6 +279,7 @@ def test_figure_filters_show_what_they_count_and_columns_read_well(db, app):
     assert tab.fig_repair.toolTip()
     ram = tab.grid.item(0, 6)
     assert ram.textAlignment() & Qt.AlignmentFlag.AlignRight
+    assert not tab.grid.item(0, 0).textAlignment() & Qt.AlignmentFlag.AlignRight     # names read left
 
 
 def test_delete_says_why_before_it_is_pressed_and_read_only_hides_changes(db, app):

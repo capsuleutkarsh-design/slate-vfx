@@ -605,7 +605,8 @@ class ItInventoryTab(QWidget):
             name = str(row.get('machine_name', ''))
             # Sorted by position in the repository's natural order: WS-COMP-2
             # before WS-COMP-10 when the header is clicked too.
-            item = make_item(name, key=name, tooltip=name, sort_value=r)
+            item = make_item(name, key=name, tooltip=name, sort_value=r,
+                             align=Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             self.grid.setItem(r, COL["Machine"], item)
 
             # The loan record only. A name typed before loans were tracked is
