@@ -396,6 +396,7 @@ class RecoveryView(QWidget):
         session = self._session()
         session.say = None
         key = self.key_field.text()
+        self.key_field.clear()
 
         def done(_):
             self.lbl_lock.setText("Unlocked for ten minutes.")

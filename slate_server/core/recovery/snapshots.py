@@ -244,7 +244,26 @@ def before_security_change(name: str, layout=None, *, db=None, dump_login=None,
 
     fs.write_json(folder / "manifest.json", manifest)
     logger.warning("Security snapshot %s taken before %r.", folder.name, name)
+    prune(layout)
     return folder
+
+
+KEEP = 100
+
+
+def prune(layout, keep: int = KEEP) -> int:
+    """Keep the newest ``keep`` snapshots (by number) and the very first one."""
+    items = list_snapshots(layout)
+    if len(items) <= keep + 1:
+        return 0
+    removed = 0
+    for folder in items[1:len(items) - keep]:
+        try:
+            shutil.rmtree(folder)
+            removed += 1
+        except OSError as exc:
+            logger.debug("Old snapshot %s not removed: %s", folder.name, exc)
+    return removed
 
 
 # ------------------------------------------------------------------ restore

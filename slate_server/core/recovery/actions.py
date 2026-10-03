@@ -255,11 +255,11 @@ def _write_setting(layout, key: str, value: str) -> Path:
 
 def workstation_instructions(new_password_hint: str = "the new password") -> List[str]:
     return [
-        "On EVERY workstation, Slate now needs %s:" % new_password_hint,
-        "  - installed PCs: open %LOCALAPPDATA%\\Slate\\config.json in Notepad and set",
-        '      "db_password": "<the new password>"   (or run setup.bat again);',
-        "  - a PC that cannot reach the database also offers Reconfigure on the",
-        "    sign-in screen.",
+        "On EVERY workstation, Slate now needs %s. On each one:" % new_password_hint,
+        "  - open Slate; on the sign-in screen click 'Reconfigure server / database'",
+        "    and type the new database password; or",
+        "  - open %LOCALAPPDATA%\\Slate\\config.json in Notepad and set",
+        '      "db_password": "<the new password>"   (or run setup.bat again).',
         "Until a workstation has it, that workstation cannot open Slate.",
         "Tip: if the workstations still have the OLD password and you only need them",
         "working again, set the database app password back to THAT value instead.",

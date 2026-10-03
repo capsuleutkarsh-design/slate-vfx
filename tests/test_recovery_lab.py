@@ -819,3 +819,15 @@ def test_the_health_check_runs_without_a_key_or_a_database(tmp_path, capsys):
     assert cli.main(["--data-dir", str(tmp_path / "nothing"), "health"]) == 0
     out = capsys.readouterr().out
     assert "[FAIL] This PC" in out
+
+
+def test_old_snapshots_are_pruned_but_the_first_is_kept(tmp_path, monkeypatch):
+    monkeypatch.setattr(fs, "RESTRICT_PERMISSIONS", False)
+    layout = ServerLayout(data_dir=tmp_path / "LocalDatabase")
+    for n in range(1, 106):
+        folder = layout.snapshots_dir / ("%04d_x_change" % n)
+        folder.mkdir(parents=True)
+        (folder / "manifest.json").write_text("{}", encoding="utf-8")
+    assert snapshots.prune(layout, keep=100) == 4
+    names = [p.name[:4] for p in snapshots.list_snapshots(layout)]
+    assert names[0] == "0001" and names[1] == "0006" and names[-1] == "0105" and len(names) == 101

@@ -281,8 +281,9 @@ def _check_address(layout, out):
                          "This PC's address changed: it was %s and is now %s."
                          % (", ".join(before), ", ".join(now)),
                          "Workstations that were set to the old address must be pointed at the "
-                         "new one (Reconfigure on their sign-in screen, or db_host in their "
-                         "config.json). Best: give the server a fixed address."))
+                         "new one: on each, click 'Reconfigure server / database' on the "
+                         "sign-in screen (or set db_host in their config.json). Best: give "
+                         "the server a fixed address (a DHCP reservation)."))
     else:
         out.append(Check("Network address", OK, "%s." % (", ".join(now) or "no network address")))
     for address in now:
