@@ -146,7 +146,7 @@ def test_generator_rules(panel_for, tmp_path, monkeypatch, qtbot):
         total, free = 200 * 1024 ** 3, 100 * 1024 ** 3
     monkeypatch.setattr(tp.shutil, "disk_usage", lambda p: Usage())
     ok, ask, message = tp.free_space_check(tmp_path, 10000 * 50 * 1024 * 1024)
-    assert not ok and "10%" in message
+    assert not ok and "does not fit" in message
     assert tp.free_space_check(tmp_path, 25 * 1024) == (True, False, "")
 
     artist.spin_count.setValue(3)
@@ -313,3 +313,24 @@ def test_free_space_rule_on_a_nearly_full_disk(monkeypatch, tmp_path):
     assert tp.free_space_check(tmp_path, 0)[0]
     assert tp.free_space_check(tmp_path, 1024 ** 2)[0]          # small run: does not cross anything
     assert not tp.free_space_check(tmp_path, 6 * 1024 ** 3)[0]  # does not fit
+
+
+def test_a_run_that_does_not_fit_says_so(monkeypatch, tmp_path):
+    class Usage:
+        total, free = 100 * 1024 ** 3, 5 * 1024 ** 3
+    monkeypatch.setattr(tp.shutil, "disk_usage", lambda p: Usage())
+    ok, _ask, message = tp.free_space_check(tmp_path, 6 * 1024 ** 3)
+    assert not ok and "does not fit" in message and "10%" not in message
+    assert "6.0 GB" in message and "5.0 GB" in message
+
+
+@pytest.fixture(autouse=True)
+def _closed_circuit_breaker():
+    """
+    The PostgreSQL circuit breaker is shared by every manager in the process. A
+    test elsewhere that reaches for an unconfigured database opens it, and the
+    tests here would then fail for two minutes for a reason that is not theirs.
+    """
+    from slate.core.infra.postgres_manager import PostgresManager
+    PostgresManager._circuit_breaker.reset()
+    yield

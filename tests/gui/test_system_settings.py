@@ -267,3 +267,15 @@ def test_studio_policy_edits_are_tracked_and_saved_by_the_bar(make_tab, qtbot, m
     monkeypatch.setattr(type(editor), "save", lambda self: saved.append(1) or (self._mark_clean() or True))
     editor.accrual.setValue(editor.accrual.value() + 0.25)
     assert tab.save_all() and saved == [1] and not tab.has_unsaved_changes()
+
+
+@pytest.fixture(autouse=True)
+def _closed_circuit_breaker():
+    """
+    The PostgreSQL circuit breaker is shared by every manager in the process. A
+    test elsewhere that reaches for an unconfigured database opens it, and the
+    tests here would then fail for two minutes for a reason that is not theirs.
+    """
+    from slate.core.infra.postgres_manager import PostgresManager
+    PostgresManager._circuit_breaker.reset()
+    yield
