@@ -97,7 +97,8 @@ class UpdateAvailableDialog(QDialog):
         titles = QVBoxLayout()
         title = QLabel("A new version of Slate is ready")
         title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {Gate.TEXT};")
-        version_lbl = QLabel(f"Version {manifest.get('version', 'unknown')}")
+        from slate.gui.login_dialog import version_text
+        version_lbl = QLabel(version_text(manifest.get('version', 'unknown')))
         version_lbl.setStyleSheet(f"font-size: 14px; color: {Gate.TEXT_2}; font-weight: 500;")
         titles.addWidget(title)
         titles.addWidget(version_lbl)
@@ -134,7 +135,7 @@ class UpdateAvailableDialog(QDialog):
         footer_layout.addStretch(1)
         self.btn_later = make_button("Remind me later", "secondary", on_click=self.remind_later,
                                      tooltip="Ask again tomorrow")
-        self.btn_update = make_button("Download & Install", "primary", on_click=self.accept)
+        self.btn_update = make_button("Download and install", "primary", on_click=self.accept)
         footer_layout.addWidget(self.btn_later)
         footer_layout.addWidget(self.btn_update)
         layout.addLayout(footer_layout)
@@ -143,7 +144,11 @@ class UpdateAvailableDialog(QDialog):
     def remind_later(self):
         """Close, and do not offer this version again for a day."""
         snooze(self.manifest.get("version", ""))
-        self.reject()
+        super().reject()
+
+    def reject(self):
+        # Esc puts it off like the close button: it came back on the next start.
+        self.remind_later()
 
     def _format_notes(self, raw_notes):
         return notes_html(raw_notes)

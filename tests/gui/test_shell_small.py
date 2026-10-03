@@ -75,7 +75,7 @@ def test_release_notes_are_text(qtbot):
     qtbot.addWidget(dialog)
     assert "<b>x</b>" in dialog.notes_area.toPlainText()
     assert "<img" not in dialog.notes_area.toHtml().replace("&lt;img", "")
-    assert dialog.btn_update.text() == "Download && Install"
+    assert dialog.btn_update.text() == "Download and install"
 
 
 def test_remind_me_later_waits_a_day(monkeypatch):

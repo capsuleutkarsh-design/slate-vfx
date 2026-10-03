@@ -46,8 +46,8 @@ def test_artist_is_not_offered_screens_they_lack(qtbot, mock_db):
     have = set(win._palette_tab_labels())
     labels = [row["label"] for row in win.palette_commands()]
     if "Timeline Viewer" not in have:
-        assert "Open Timeline Viewer" not in labels
         assert "Rebuild Timeline from Dashboard" not in labels
+    assert not any(label.startswith("Open ") and "Help" not in label for label in labels)
     assert "Clear temporary files (maintenance)" not in labels
     assert "Diagnostics (Ctrl+Shift+D)" in labels
 
@@ -92,9 +92,12 @@ def test_enter_never_starts_maintenance(admin_window, monkeypatch):
     monkeypatch.setattr(QDialog, "exec", lambda self: 0)
     labels = [row["label"] for row in admin_window.palette_commands()]
     assert "Clear temporary files (maintenance)" in labels
+    admin_window._omnibar_recent_entries = []
     admin_window.show_quick_search()
     results = admin_window._palette_dialog.findChild(QListWidget, "omnibarResults")
-    current = results.currentItem().data(Qt.ItemDataRole.UserRole)
-    assert not current.get("careful") and current["kind"] == "tab"
+    # Nothing typed and nothing recent: Enter runs nothing at all.
+    assert results.currentItem() is None
+    texts = [results.item(i).text() for i in range(results.count())]
+    assert texts.index("Go to Home") < texts.index("Go to Admin Panel")    # sidebar order
     assert Palette.palette_preselect([None, {"careful": True}, {"kind": "tab"}]) == 2
     assert Palette.palette_preselect([{"careful": True}]) is None

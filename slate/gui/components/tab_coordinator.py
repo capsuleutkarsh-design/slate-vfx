@@ -946,14 +946,13 @@ class TabCoordinator(QObject):
 
         self.content_stack.setCurrentWidget(self.stack_widget_for(widget))
 
-        # UX Polish: Force layout calculation to prevent "broken layout on first load" bugs.
-        # PySide6 sometimes delays layout math for complex widgets added to a QStackedWidget 
-        # until the user resizes the window. We explicitly force it here.
-        from PySide6.QtWidgets import QApplication
+        # The first time a page shows, its layout is worked out now and a resize
+        # posted, so it does not wait for the window to be resized. No
+        # processEvents here: it let a second click (or a timer) re-enter
+        # navigation while the first screen was still being built.
         from PySide6.QtGui import QResizeEvent
         from PySide6.QtCore import QCoreApplication
-        
-        QApplication.processEvents()
+
         if is_first_load:
             widget.updateGeometry()
             if widget.layout():

@@ -283,11 +283,21 @@ def test_a_second_punch_in_end_to_end_through_home(att, qtbot):
     reader = HomeLoaderWorker("asha", None, mode="ops", db=att.db)
     tab._read_todays_punch = reader.todays_punch
 
-    tab.do_punch("in")
+    from slate.gui.components import feedback
+    import pytest as _pytest
+    mp = _pytest.MonkeyPatch()
+    mp.setattr(feedback, "confirm", lambda *a, **k: True)      # "Punch out at 18:42?" - yes
+
+    def punch(action):
+        tab.do_punch(action)                                  # on a worker now
+        qtbot.waitUntil(lambda: not tab.punch_busy(), timeout=5000)
+
+    punch("in")
     assert host.said[-1][0] == "success" and not tab.btn_punch_in.isEnabled()
-    tab.do_punch("in")                                    # refused, with the rule
+    punch("in")                                           # refused, with the rule
     assert host.said[-1] == ("warning", host.said[-1][1]) and "Already punched in" in host.said[-1][1]
-    tab.do_punch("out")
+    punch("out")
+    mp.undo()
     assert tab.btn_punch_in.isEnabled() and not tab.btn_punch_out.isEnabled()
     # Make the first session clearly earlier, then come back from lunch.
     row = att._row("asha", att._server_now()[0])
@@ -295,7 +305,7 @@ def test_a_second_punch_in_end_to_end_through_home(att, qtbot):
     sessions[0]["in"], sessions[0]["out"] = "08:00:00", "08:30:00"
     att.db.execute_update("UPDATE attendance_log SET punch_in = %s, punch_out = %s, metadata = %s WHERE id = %s",
                           ("08:00:00", "08:30:00", __import__("json").dumps({"sessions": sessions}), row["id"]))
-    tab.do_punch("in")
+    punch("in")
     assert host.said[-1][0] == "success" and "session 2" in host.said[-1][1]
     status = reader.todays_punch()
     assert status["sessions"] == 2 and str(status["first_in"])[:5] == "08:00"

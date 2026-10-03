@@ -159,9 +159,6 @@ class MainWindowBuilderMixin:
             main_layout.setContentsMargins(0, 0, 0, 0)
             main_layout.setSpacing(0)
 
-            # A. Toolbar Removed (Moved to Header)
-            # self.create_toolbar()
-
             # B. Header
             self.header_widget = self.create_header()
             main_layout.addWidget(self.header_widget)
@@ -620,7 +617,8 @@ class MainWindowBuilderMixin:
             footer_widget = self.create_footer()
             main_layout.addWidget(footer_widget)
             suite_title = getattr(self, "suite_title", "Slate")
-            self.status_bar.showMessage(f"Ready - {suite_title} {APP_VERSION}", 5000)
+            from ..login_dialog import version_text
+            self.status_bar.showMessage(f"Ready - {suite_title} \u00b7 {version_text()}", 5000)
 
             # E. Running tasks: a name and percent, click for the list.
             try:
@@ -711,12 +709,6 @@ class MainWindowBuilderMixin:
         dock.raise_()
         return dock
 
-    def create_toolbar(self):
-            """Create application toolbar with workflow switching."""
-            # --- ARTIST CHECK: HIDE TOOLBAR ---
-            if self.user_role.lower() == "artist":  # Case-insensitive
-                return
-
     def create_header(self):
             """
             Create the application header.
@@ -750,11 +742,6 @@ class MainWindowBuilderMixin:
                     self.header_builder.insert_before_help(self.notification_center.bell)
                 except Exception as exc:
                     logging.warning("Notification centre not available: %s", exc)
-            if hasattr(self.header_builder, "health_label") and self.header_builder.health_label:
-                try:
-                    self.header_builder.health_label.clicked.connect(self.show_runtime_diagnostics)
-                except Exception as exc:
-                    logging.debug("Health label click bind skipped: %s", exc)
 
             return header_widget
 
