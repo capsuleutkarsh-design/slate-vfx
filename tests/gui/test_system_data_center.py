@@ -165,3 +165,15 @@ def test_bar_value_label_sits_above_the_bar():
     assert rect.bottom() <= 150
     top = dx.SimpleBarChart.value_label_rect(100, 50, 40, 50)
     assert top.top() >= 34
+
+
+@pytest.fixture(autouse=True)
+def _closed_circuit_breaker():
+    """
+    The PostgreSQL circuit breaker is shared by every manager in the process. A
+    test elsewhere that reaches for an unconfigured database opens it, and the
+    tests here would then fail for two minutes for a reason that is not theirs.
+    """
+    from slate.core.infra.postgres_manager import PostgresManager
+    PostgresManager._circuit_breaker.reset()
+    yield

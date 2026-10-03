@@ -146,7 +146,10 @@ def free_space_check(folder: Path, needed: int):
         return True, needed > CONFIRM_ABOVE_BYTES, ""
     limit = usage.total * KEEP_FREE_FRACTION
     crosses = usage.free >= limit and usage.free - needed < limit
-    if needed > usage.free or crosses:
+    if needed > usage.free:
+        return False, False, (f"This would write {human_size(needed)}, but the disk has only "
+                              f"{human_size(usage.free)} free - it does not fit. Make it smaller.")
+    if crosses:
         return False, False, (f"This would write {human_size(needed)}, leaving less than 10% of the "
                               f"disk free ({human_size(usage.free)} free now). Make it smaller.")
     return True, needed > CONFIRM_ABOVE_BYTES, ""
