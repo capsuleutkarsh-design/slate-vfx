@@ -73,6 +73,20 @@ class DeliveryReport:
     errors: int = 0
     reels: int = 0
 
+    @staticmethod
+    def distinct_shots(entries) -> int:
+        """
+        How many shots: one per destination (reel, shot). Two deliveries of
+        SH_050 (ScanA, ScanB) are two entries - two scan versions - but one
+        shot, the way the pre-flight, the result and the dashboard count.
+        """
+        return len({(str(e.get("reel", "")).lower(), str(e.get("shot", "")).lower())
+                    for e in entries or []})
+
+    @property
+    def shot_count(self) -> int:
+        return self.distinct_shots(self.shots)
+
     @property
     def real_sequences(self) -> List[Dict]:
         out = []
@@ -110,7 +124,7 @@ class DeliveryReport:
             parts.append("STOPPED before the end - incomplete")
         elif self.status == "failed":
             parts.append("FAILED - incomplete")
-        parts += [f"{len(self.shots)} shot(s) across {self.reels} reel(s)",
+        parts += [f"{self.shot_count} shot(s) across {self.reels} reel(s)",
                   f"{self.total_frames} frame(s)"]
         if self.single_files:
             parts.append(f"{self.single_files} single file(s)")
@@ -133,7 +147,8 @@ class DeliveryReport:
             "operation": self.operation,
             "status": self.status,
             "totals": {
-                "shots": len(self.shots),
+                "shots": self.shot_count,
+                "unchanged_shots": self.distinct_shots(self.unchanged),
                 "reels": self.reels,
                 "frames": self.total_frames,
                 "single_files": self.single_files,

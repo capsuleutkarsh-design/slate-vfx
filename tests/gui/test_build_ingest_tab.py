@@ -506,3 +506,19 @@ def test_stitch_merge_is_a_real_checkbox(qtbot):
     assert dialog.mapping() == {}
     item.setCheckState(0, Qt.CheckState.Checked)
     assert box.isChecked() and dialog.mapping()
+
+
+def test_preflight_counts_unchanged_shots_by_destination(qtbot, tmp_path):
+    """NEW-ingest-2 (round 3): a re-delivered shot already there is one shot, not two folders."""
+    from slate.core.domain.ingest_survey import survey_drive
+    drive = tmp_path / "d"
+    for tag in ("ScanA", "ScanB"):
+        folder = drive / "REEL_02" / f"SH_050_{tag}"
+        folder.mkdir(parents=True)
+        (folder / f"s.{tag}.1001.exr").write_bytes(b"x")
+    survey = survey_drive(drive)
+    for shot in survey.shots:
+        shot.unchanged_from, shot.skip = "v001", True
+    dialog = ipd.IngestPreflightDialog(survey, project_code="P", project_path=tmp_path / "P")
+    qtbot.addWidget(dialog)
+    assert any(n.startswith("1 shot(s) are already in the project") for n in dialog.notes())

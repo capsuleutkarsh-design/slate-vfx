@@ -1359,7 +1359,9 @@ class FolderCreatorTab(QWidget):
         if getattr(worker, "documents_filed", None):
             lines.append(f"Documents filed: {len(worker.documents_filed)}")
         if getattr(worker, "skipped_shots", None):
-            lines.append(f"Shots already in the project: {len(worker.skipped_shots)}")
+            from ...core.domain.delivery_report import DeliveryReport
+            lines.append(f"Shots already in the project: "
+                         f"{DeliveryReport.distinct_shots(worker.skipped_shots)}")
         new_folders = getattr(worker, "folders_created", 0)
         lines.append(f"New folders: {new_folders:,}")
         if report is not None and report.incomplete:

@@ -263,7 +263,8 @@ class IngestPreflightDialog(QDialog):
         if tidied:
             out.append(f"{len(tidied)} shot name(s) were tidied (e.g. '{tidied[0].base}' -> "
                        f"'{tidied[0].proposed}'); change them in the table if needed.")
-        unchanged = [s for s in survey.shots if s.unchanged_from]
+        unchanged = {(s.reel, survey.destination_of(s, self.stitch_mapping))
+                     for s in survey.shots if s.unchanged_from}
         if unchanged:
             out.append(f"{len(unchanged)} shot(s) are already in the project with exactly these files "
                        f"and are not copied again.")
