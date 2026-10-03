@@ -72,6 +72,43 @@ hiddenimports += collect_submodules('slate.gui.tabs.vfx_dashboard_pro')
 # image engine fell back to the OpenImageIO-only path on every workstation.
 hiddenimports += collect_submodules('imageio')
 
+
+def _every_slate_module():
+    """
+    Every module under slate/, named from its file.
+
+    collect_submodules() walks packages, and quietly skips any folder without
+    an __init__.py - core/infra/migrations is one (Alembic's layout), gui/core
+    and a dozen more are others. The migration registry imports its steps by
+    name and the window imports most screens by name when they are first
+    opened, so a module missed here builds without a word and is missing on
+    every workstation. Listing the files themselves cannot miss one.
+    Code that runs inside Nuke/Blender/Silhouette, Alembic's own env and
+    revision scripts, and loose maintenance scripts are left out.
+    """
+    skip_dirs = {
+        _os.path.join("slate", "plugins", "dcc"),
+        _os.path.join("slate", "core", "infra", "migrations", "versions"),
+        _os.path.join("slate", "scripts"),
+    }
+    skip_files = {_os.path.join("slate", "core", "infra", "migrations", "env.py")}
+    names = []
+    for folder, dirs, files in _os.walk(R("slate")):
+        rel = _os.path.relpath(folder, _root)
+        dirs[:] = [d for d in dirs if d != "__pycache__"
+                   and _os.path.join(rel, d) not in skip_dirs]
+        for name in files:
+            if not name.endswith(".py") or _os.path.join(rel, name) in skip_files:
+                continue
+            parts = rel.split(_os.sep) + [name[:-3]]
+            if parts[-1] == "__init__":
+                parts = parts[:-1]
+            names.append(".".join(parts))
+    return sorted(set(names))
+
+
+hiddenimports += _every_slate_module()
+
 datas_qasync, binaries_qasync, hiddenimports_qasync = collect_all('qasync')
 hiddenimports += hiddenimports_qasync
 
