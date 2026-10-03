@@ -37,9 +37,13 @@ SORT_CHOICES = (
     ("Name A–Z", "name"),
     ("Name Z–A", "name_desc"),
     ("Largest first", "size"),
-    ("Type", "type"),
-    ("Category", "category"),
+    ("Smallest first", "size_asc"),
+    ("Type A–Z", "type"),
+    ("Type Z–A", "type_desc"),
+    ("Category A–Z", "category"),
+    ("Category Z–A", "category_desc"),
 )
+# Every header order is in the box, so it always says the order shown (MED2-010).
 VISUAL_CHOICES = ("Any look", "Dark", "Bright", "Warm", "Cold", "Green Screen", "Blue Screen")
 
 # Card sizes. The thumbnails are made 320 px wide, so the cards stop there:
@@ -270,6 +274,12 @@ class StockGallery(QWidget):
         self._refit.setSingleShot(True)
         self._refit.setInterval(0)
         self._refit.timeout.connect(lambda: self._fit_cards())
+        # Fitted again after every batch of cards and whenever the scroll bar
+        # comes or goes: the columns are worked out from the viewport as it is
+        # then, not as it was before the cards arrived (MED2-008).
+        for signal in (self.proxy_model.rowsInserted, self.proxy_model.modelReset,
+                       self.asset_view.verticalScrollBar().rangeChanged):
+            signal.connect(lambda *_: self._refit.start())
         self.asset_view.viewport().installEventFilter(self)
         self.delegate = StockDelegate(self.asset_view)
         self.asset_view.setItemDelegate(self.delegate)
@@ -365,6 +375,7 @@ class StockGallery(QWidget):
         self.lbl_zoom = QLabel("Card size")
         self.lbl_zoom.setStyleSheet(f"color: {Gate.TEXT_DIM};")
         zoom_layout.addWidget(self.lbl_zoom)
+        zoom_layout.addSpacing(8)           # the label never touches the slider (MED2-032)
         self.zoom_slider = QSlider(Qt.Orientation.Horizontal)
         self.zoom_slider.setRange(ZOOM_MIN, ZOOM_MAX)
         self.zoom_slider.setValue(ZOOM_DEFAULT)
@@ -651,13 +662,15 @@ class StockGallery(QWidget):
 
     def clear_filters(self):
         """Search, visual, media type back to everything (the category is the sidebar's)."""
-        for widget in (self.search_bar, self.combo_visual):
-            widget.blockSignals(True)
+        # The search box is not muted: its own clear button has to hear the
+        # text go, or the × stays over an empty box (MED2-018). The caller
+        # reloads once, so the search's own delayed reload is called off.
         self.search_bar.clear()
+        self.search_timer.stop()
+        self.combo_visual.blockSignals(True)
         self.combo_visual.setCurrentIndex(0)
+        self.combo_visual.blockSignals(False)
         self.btn_all.setChecked(True)
-        for widget in (self.search_bar, self.combo_visual):
-            widget.blockSignals(False)
 
     # ------------------------------------------------------------ states
     def show_error(self, title, body, retry=None, details=""):
@@ -777,12 +790,15 @@ class StockGallery(QWidget):
         columns = max(1, viewport // minimum_cell)
         cell = viewport // columns
         card = cell - spacing
-        delegate.thumb_width = max(40, card - delegate.padding * 2 - 4)
-        delegate.thumb_height = int(delegate.thumb_width * 0.5625)
+        thumb_width = max(40, card - delegate.padding * 2 - 4)
+        thumb_height = int(thumb_width * 0.5625)
+        grid = QSize(cell, thumb_height + delegate.text_height + delegate.padding * 2 + 4 + spacing)
+        if grid == self.asset_view.gridSize() and thumb_width == delegate.thumb_width:
+            return              # already fitted to this width: nothing moves
+        delegate.thumb_width, delegate.thumb_height = thumb_width, thumb_height
         scrollbar = self.asset_view.verticalScrollBar()
         ratio = scrollbar.value() / max(scrollbar.maximum(), 1) if scrollbar.maximum() > 0 else 0
-        self.asset_view.setGridSize(QSize(cell, delegate.thumb_height + delegate.text_height
-                                          + delegate.padding * 2 + 4 + spacing))
+        self.asset_view.setGridSize(grid)
         self.asset_view.doItemsLayout()
         safe_single_shot(30, self.asset_view,
                          lambda: scrollbar.setValue(int(ratio * scrollbar.maximum())),

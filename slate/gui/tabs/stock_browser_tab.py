@@ -190,6 +190,14 @@ class StockBrowserTab(
         ic.status_updated.connect(sb.set_ingest_state)
         ic.progress_updated.connect(sb.set_ingest_progress)
         ic.ingest_started.connect(lambda: sb.set_ingest_running(True))
+        # The category counts follow a running ingest, every few seconds, so
+        # what is in already can be browsed (MED2-038).
+        self._category_refresh = QTimer(self)
+        self._category_refresh.setSingleShot(True)
+        self._category_refresh.setInterval(3000)
+        self._category_refresh.timeout.connect(self._refresh_categories)
+        ic.assets_ready.connect(lambda *_: self._category_refresh.isActive()
+                                or self._category_refresh.start())
         ic.ingest_finished.connect(self._on_ingest_finished)
         ic.ingest_summary.connect(self._on_ingest_summary)
         ic.notice.connect(lambda message, level: self._notify(message, level))
@@ -265,7 +273,9 @@ class StockBrowserTab(
         away; the Filters button brings it back.
         """
         width = max(1, int(width))
-        if width < 1400:
+        # A 1366 laptop keeps its categories, Favourites and Studio picks in
+        # view (MED2-035); only narrower windows fold the sidebar away.
+        if width < 1360:
             sidebar = 0
         else:
             sidebar = int(min(280, max(200, width * 0.16)))
@@ -480,10 +490,16 @@ class StockBrowserTab(
         message, level = summary_sentence(summary)
         self.sidebar.set_ingest_state(message, True)
         self.sidebar.set_ingest_progress(100, "")
-        details = ""
+        parts = []
         if summary.get("failed_names"):
-            details = "Could not be read:\n" + "\n".join(summary["failed_names"][:200])
-        self._notify(message, level, details=details)
+            parts.append("Could not be read:\n" + "\n".join(summary["failed_names"][:200]))
+        if summary.get("not_taken"):
+            parts.append("Left out, not a picture or movie:\n"
+                         + "\n".join(summary["not_taken"][:200]))
+        # The sidebar line and this toast; not a third copy in the status bar
+        # (MED2-033).
+        from ..components.feedback import raw_toast
+        raw_toast(self, message, level, details="\n\n".join(parts))
 
     def toggle_ingest_pause(self):
         is_paused = self.ingest_controller.toggle_pause()

@@ -285,20 +285,28 @@ class LibraryActionMixin:
             return
         if on is None:
             on = not all(a.get("is_pick") for a in assets)
+        done = []
         for asset in assets:
             if self.lib_manager.set_pick(asset["id"], on):
                 asset["is_pick"] = bool(on)
                 self.model.update_item({"id": asset["id"], "file_path": asset.get("file_path"),
                                         "is_pick": bool(on)})
+                done.append(asset)
         if self.inspector.current_asset and any(
-                str(a["id"]) == str(self.inspector.current_asset.get("id")) for a in assets):
+                str(a["id"]) == str(self.inspector.current_asset.get("id")) for a in done):
             self.inspector.set_pick(bool(on))
         self.proxy_model.invalidateFilter()
         self._refresh_categories()
         self.update_ui_counts()
-        noun = "asset" if len(assets) == 1 else "assets"
-        self._notify(f"{'Added' if on else 'Removed'} {len(assets)} {noun} "
-                     f"{'to' if on else 'from'} the studio picks.", "success")
+        # What really happened, counted (MED2-030); picks are shared, so they
+        # are confirmed.
+        from .....core.domain.olive_lineup import plural
+        if done:
+            self._notify(f"{'Added' if on else 'Removed'} {plural(len(done), 'asset')} "
+                         f"{'to' if on else 'from'} the studio picks.", "success")
+        if len(done) != len(assets):
+            self._notify(f"{plural(len(assets) - len(done), 'studio pick')} could not be saved.",
+                         "error")
 
     def edit_tags_of(self, asset=None):
         """Edit one asset's tags (MED-031)."""
@@ -314,7 +322,8 @@ class LibraryActionMixin:
         from .....core.domain.stock_search import real_tags
         current = real_tags(asset.get("tags"))
         dialog = TagEditDialog(self, current_tags=current,
-                               available_tags=self.lib_manager.get_all_tags())
+                               available_tags=self.lib_manager.get_all_tags(),
+                               asset_name=asset.get("name") or asset.get("file_name") or "")
         if not dialog.exec():
             return
         tags = dialog.get_tags()

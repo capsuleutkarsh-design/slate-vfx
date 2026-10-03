@@ -757,3 +757,59 @@ def test_an_unreadable_file_says_so(qtbot, library, tmp_path):
                     timeout=20000)
     assert tab.inspector.values["resolution"].text() == "Could not read this file"   # MED2-011
     assert tab.model.assets[0]["status"] == "corrupt"
+
+
+def test_the_sort_box_follows_the_header(qtbot, library, tmp_path):
+    _seed(library, tmp_path, count=3)
+    tab = _tab(qtbot, library)
+    tab.gallery.set_view_mode("list")
+    tab.gallery._on_header_clicked(4)                       # Size, smallest first
+    assert tab.gallery.sort_combo.currentData() == "size_asc"                       # MED2-010
+    assert tab.gallery.sort_combo.currentText() == "Smallest first"
+    tip = tab.model.headerData(2, Qt.Orientation.Horizontal, Qt.ItemDataRole.ToolTipRole)
+    assert "cannot be sorted" in tip
+
+
+def test_rows_without_a_picture_keep_the_icon_box(qtbot):
+    from slate.gui.stock_model import StockModel
+    model = StockModel([{"file_path": "C:/nowhere/camera_raw_A001.r3d"}])
+    icon = model.data(model.index(0, 0), Qt.ItemDataRole.DecorationRole)
+    assert icon is not None and not icon.isNull()                                    # MED2-017
+    model.cleanup()
+
+
+def test_clearing_filters_empties_the_search_box_properly(qtbot, library, tmp_path):
+    _seed(library, tmp_path, count=2)
+    tab = _tab(qtbot, library)
+    tab.gallery.search_bar.setText("clip")
+    seen = []
+    tab.gallery.search_bar.textChanged.connect(seen.append)
+    tab.clear_all_filters()
+    assert seen == [""] and not tab.gallery.search_timer.isActive()                  # MED2-018
+
+
+def test_a_laptop_keeps_the_sidebar(qtbot, library):
+    tab = _tab(qtbot, library, load=False)
+    assert tab.proportional_sizes(1366)[0] >= 200                                    # MED2-035
+
+
+def test_a_failed_pick_is_not_called_a_success(qtbot, library, tmp_path, monkeypatch):
+    _seed(library, tmp_path, count=2)
+    tab = _tab(qtbot, library)
+    said = []
+    monkeypatch.setattr(tab, "_notify", lambda msg, level="info", **k: said.append((msg, level)))
+    monkeypatch.setattr(tab.lib_manager, "set_pick", lambda *a, **k: False)
+    tab.toggle_pick(list(tab.model.assets), True)
+    assert said == [("2 studio picks could not be saved.", "error")]                 # MED2-030
+
+
+def test_the_tag_editor_names_its_asset_and_takes_delete(qtbot):
+    from slate.gui.widgets.tag_edit_dialog import TagEditDialog
+    dialog = TagEditDialog(None, current_tags=["warm", "square"], asset_name="warm_square.jpg")
+    qtbot.addWidget(dialog)
+    dialog.show()
+    assert dialog.windowTitle() == "Edit tags - warm_square.jpg"                    # MED2-039
+    dialog.list_tags.setCurrentRow(0)
+    dialog.list_tags.setFocus()
+    qtbot.keyClick(dialog.list_tags, Qt.Key.Key_Delete)
+    assert dialog.get_tags() == ["square"]
