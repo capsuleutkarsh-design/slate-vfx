@@ -149,7 +149,9 @@ def shot_artists(data: dict) -> set:
 def db_today(db=None) -> date:
     """Today by the database's clock - the one punches are written with."""
     db = db or database_manager
-    sql = "SELECT CURRENT_DATE AS d" if _is_postgres(db) else "SELECT date('now') AS d"
+    # Local date, as CentralAttendance writes it: date('now') alone is UTC, so from
+    # midnight to 05:30 IST Home read yesterday's punch and offered Punch In again.
+    sql = "SELECT CURRENT_DATE AS d" if _is_postgres(db) else "SELECT date('now','localtime') AS d"
     row = db.execute_query(sql, fetch="one")
     value = _value(row, "d")
     if isinstance(value, datetime):
