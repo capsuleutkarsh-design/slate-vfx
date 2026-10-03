@@ -201,6 +201,43 @@ class NotificationBell(QToolButton):
             self.badge.hide()
 
 
+# ------------------------------------------------------------------ targets
+# ponytail: the target is read from the notification's type and its words (a
+# shot name in "You have been assigned to SH010."). A target column written by
+# each sender is the upgrade, if the wording ever changes.
+_SHOT_PATTERNS = (r"assigned to (\S+?)(?: \(|\.?$)", r"^(\S+?)(?: \([^)]*\))? is now ",
+                  r"arrived for (\S+)$")
+
+
+def note_target(note):
+    """("shot", name) or ("screen", sidebar label) for a notification, or None."""
+    import re
+    kind = str(note.get("type") or "").strip().lower()
+    message = str(note.get("message") or "").strip()
+    if kind in ("assignment", "update", "scan"):
+        for pattern in _SHOT_PATTERNS:
+            found = re.search(pattern, message)
+            if found:
+                return ("shot", found.group(1))
+        return ("screen", "VFX Dashboard")
+    if kind == "licence":
+        return ("screen", "Licences")
+    if kind == "ticket" or "ticket #" in message:
+        return ("screen", "IT Support")
+    return None
+
+
+def open_target(window, target) -> bool:
+    if not target or window is None:
+        return False
+    what, value = target
+    if what == "shot" and hasattr(window, "_jump_to_shot_in_review"):
+        return bool(window._jump_to_shot_in_review(value))
+    if hasattr(window, "_switch_to_tab_label"):
+        return bool(window._switch_to_tab_label(value))
+    return False
+
+
 # ------------------------------------------------------------------ the list
 class NotificationsDialog(QDialog):
     """
@@ -209,13 +246,15 @@ class NotificationsDialog(QDialog):
     empty list says so in words instead of showing an empty table.
     """
 
-    def __init__(self, notes, on_mark_all=None, parent=None):
+    def __init__(self, notes, on_mark_all=None, parent=None, failed=False):
         super().__init__(parent)
         self.setWindowTitle("Notifications")
         self.setMinimumSize(420, 320)
         self.resize(520, 460)
         self.notes = list(notes or [])
         self._on_mark_all = on_mark_all
+        self.target = None          # what the person chose to open
+        self.retry = False
 
         Gate = _gate()
         layout = QVBoxLayout(self)
@@ -223,7 +262,8 @@ class NotificationsDialog(QDialog):
         layout.setSpacing(Gate.SPACE_3)
 
         unread = sum(1 for n in self.notes if not n.get("read"))
-        self.heading = QLabel(f"{unread} unread" if unread else "Nothing unread")
+        self.heading = QLabel("Notifications could not be loaded" if failed
+                              else f"{unread} unread" if unread else "Nothing unread")
         self.heading.setStyleSheet(
             f"color: {Gate.TEXT}; font-size: {Gate.SIZE_LG}px; font-weight: 600;")
         layout.addWidget(self.heading)
@@ -232,30 +272,51 @@ class NotificationsDialog(QDialog):
         self.list = QListWidget()
         self.list.setObjectName("notificationList")
         self.list.setWordWrap(True)
-        self.list.setSelectionMode(QListWidget.SelectionMode.NoSelection)
-        self.list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        # Double-click or Enter opens what a notification is about.
+        self.list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        self.list.itemActivated.connect(self._open_item)
         self.list.setStyleSheet(f"""
             QListWidget#notificationList {{
                 background: {Gate.PANEL}; border: 1px solid {Gate.LINE};
                 border-radius: {Gate.RADIUS_LG}px;
             }}
             QListWidget#notificationList::item {{
-                color: {Gate.TEXT}; padding: 8px 10px;
-                border-bottom: 1px solid {Gate.LINE_SOFT};
+                padding: 0px; border-bottom: 1px solid {Gate.LINE_SOFT};
             }}
+            QListWidget#notificationList::item:selected {{ background: {Gate.SELECTION}; }}
         """)
+        self._message_labels = []
         for note in self.notes:
             when = friendly_time(note.get("timestamp"))
             kind = str(note.get("type") or "").strip().capitalize()
             meta = " · ".join(part for part in (when, kind) if part)
-            item = QListWidgetItem(f"{note.get('message') or ''}\n{meta}")
-            font = item.font()
-            font.setBold(not note.get("read"))
-            item.setFont(font)
-            item.setToolTip(str(note.get("message") or ""))
+            # The message bold while unread; the time and type under it in the
+            # dim colour, never bold (they were one text in one font).
+            cell = QWidget()
+            box = QVBoxLayout(cell)
+            box.setContentsMargins(10, 8, 10, 8)
+            box.setSpacing(2)
+            text = QLabel(str(note.get("message") or ""))
+            text.setWordWrap(True)
+            text.setStyleSheet(f"color: {Gate.TEXT}; font-weight: {'700' if not note.get('read') else '400'};")
+            sub = QLabel(meta)
+            sub.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: {Gate.SIZE_SM}px;")
+            box.addWidget(text)
+            box.addWidget(sub)
+            self._message_labels.append(text)
+            item = QListWidgetItem()
+            target = note_target(note)
+            item.setData(Qt.ItemDataRole.UserRole, target)
+            item.setToolTip("Double-click to open" if target else "")
+            # ponytail: sized for the dialog's starting width (460 px of text).
+            item.setSizeHint(QSize(0, box.heightForWidth(460) if box.hasHeightForWidth()
+                                   else cell.sizeHint().height()))
             self.list.addItem(item)
+            self.list.setItemWidget(item, cell)
 
-        self.empty = QLabel("No notifications yet.\nAssignments, new scans and replies to "
+        self.empty = QLabel("Notifications could not be loaded. Try again in a moment."
+                            if failed else
+                            "No notifications yet.\nAssignments, new scans and replies to "
                             "your requests will appear here.")
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty.setWordWrap(True)
@@ -270,12 +331,26 @@ class NotificationsDialog(QDialog):
         self.mark_button = make_button("Mark all read", "secondary", on_click=self._mark_all)
         self.mark_button.setEnabled(unread > 0)
         self.mark_button.setVisible(bool(self.notes))
+        if failed:
+            # Saying "No notifications yet" when they could not be read told
+            # the person they had none while the bell said 4.
+            buttons.addWidget(make_button("Try again", "secondary", on_click=self._try_again))
         close = make_button("Close", "primary", on_click=self.accept)
         close.setDefault(True)
         buttons.addWidget(self.mark_button)
         buttons.addStretch(1)
         buttons.addWidget(close)
         layout.addLayout(buttons)
+
+    def _open_item(self, item):
+        target = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+        if target:
+            self.target = target
+            self.accept()
+
+    def _try_again(self):
+        self.retry = True
+        self.reject()
 
     def _mark_all(self):
         if self._on_mark_all is not None:
@@ -284,11 +359,8 @@ class NotificationsDialog(QDialog):
             except Exception as exc:
                 logger.warning("Could not mark notifications read: %s", exc)
                 return
-        for row in range(self.list.count()):
-            item = self.list.item(row)
-            font = item.font()
-            font.setBold(False)
-            item.setFont(font)
+        for label in self._message_labels:
+            label.setStyleSheet(label.styleSheet().replace("font-weight: 700", "font-weight: 400"))
         for note in self.notes:
             note["read"] = True
         self.heading.setText("Nothing unread")
@@ -397,17 +469,22 @@ class NotificationCenter(QObject):
         logger.debug("Notification count failed: %s", message)
 
     def open_dialog(self):
-        notes = []
-        try:
-            notes = self.manager().get_recent(self.username, *self.aliases, limit=50)
-        except Exception as exc:
-            logger.warning("Notifications could not be read: %s", exc)
-
         def mark_all():
             self.manager().mark_all_read(self.username, *self.aliases)
 
-        dialog = NotificationsDialog(notes, on_mark_all=mark_all, parent=self.window)
-        dialog.exec()
+        while True:
+            notes, failed = [], False
+            try:
+                notes = self.manager().get_recent(self.username, *self.aliases, limit=50)
+            except Exception as exc:
+                logger.warning("Notifications could not be read: %s", exc)
+                failed = True
+            dialog = NotificationsDialog(notes, on_mark_all=mark_all, parent=self.window,
+                                         failed=failed)
+            dialog.exec()
+            if not dialog.retry:
+                break
+        open_target(self.window, dialog.target)
         self.refresh()
         # A dialog shown by a test harness returns at once; count again later too.
         QTimer.singleShot(500, self.refresh)

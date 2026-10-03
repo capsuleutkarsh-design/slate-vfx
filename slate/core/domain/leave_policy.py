@@ -418,6 +418,12 @@ LIVE_STATUSES = PENDING_STATUSES + (STATUS_APPROVED, STATUS_CANCEL_REQUESTED)
 # Granted, and so spent from the balance.
 GRANTED_STATUSES = (STATUS_APPROVED, STATUS_CANCEL_REQUESTED)
 
+# What waits on each approval stage's decision.
+STAGE_DECIDES = {
+    "HR": (STATUS_PENDING_HR, STATUS_CANCEL_REQUESTED),
+    "Supervisor": (STATUS_PENDING_SUPERVISOR,),
+}
+
 
 def normalise_status(status: str) -> str:
     """

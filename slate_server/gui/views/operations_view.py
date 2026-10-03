@@ -82,6 +82,17 @@ def _button(text: str, kind: str = "secondary") -> QPushButton:
     return btn
 
 
+def every(days: int) -> str:
+    """'Every day', 'Every 7 days'."""
+    return "Every day" if int(days) == 1 else "Every %d days" % int(days)
+
+
+def age(days: int) -> str:
+    """'today', '1 day', '30 days'."""
+    days = int(days)
+    return "today" if days == 0 else "1 day" if days == 1 else "%d days" % days
+
+
 def _table(headers) -> QTableWidget:
     table = QTableWidget(0, len(headers))
     table.setHorizontalHeaderLabels(list(headers))
@@ -180,10 +191,6 @@ class OperationsView(QWidget):
         self.btn_backup.clicked.connect(self.backup_requested.emit)
         controls.addWidget(self.btn_backup)
 
-        self.btn_restore = _button("Restore from file...", "danger")
-        self.btn_restore.clicked.connect(self._pick_restore_file)
-        controls.addWidget(self.btn_restore)
-
         controls.addSpacing(20)
         keep_label = QLabel("Keep")
         keep_label.setStyleSheet(
@@ -216,6 +223,11 @@ class OperationsView(QWidget):
                                               self.spin_keep_least.value()))
         controls.addWidget(self.btn_prune)
         controls.addStretch()
+        # Replacing the whole database is not a neighbour of the routine
+        # backup: it sits at the far end, and asks for RESTORE to be typed.
+        self.btn_restore = _button("Restore from file\u2026", "danger")
+        self.btn_restore.clicked.connect(self._pick_restore_file)
+        controls.addWidget(self.btn_restore)
         layout.addLayout(controls)
 
         self.table_backups = _table(["Taken", "Age", "Database", "Size", "File"])
@@ -223,6 +235,10 @@ class OperationsView(QWidget):
         head = self.table_backups.horizontalHeader()
         head.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.table_backups)
+        self.lbl_no_backups = QLabel("No backups yet. Back up now makes the first one.")
+        self.lbl_no_backups.setStyleSheet(
+            f"color: {C.TEXT_SECONDARY}; background: transparent; border: none;")
+        layout.addWidget(self.lbl_no_backups)
 
         return panel
 
@@ -246,10 +262,12 @@ class OperationsView(QWidget):
         from slate_server.core.server_facts import human_size
 
         self.table_backups.setRowCount(len(self._backups))
+        self.table_backups.setVisible(bool(self._backups))
+        self.lbl_no_backups.setVisible(not self._backups)
         for r, row in enumerate(self._backups):
             cells = [
                 row["taken_at"].strftime("%Y-%m-%d %H:%M"),
-                "today" if row["age_days"] == 0 else "%d day(s)" % row["age_days"],
+                age(row["age_days"]),
                 row.get("database") or "-",
                 human_size(row["size_bytes"]),
                 row["name"],
@@ -269,9 +287,14 @@ class OperationsView(QWidget):
             "When each job last ran. \"Never\" means it has not run yet - check "
             "the schedule."))
 
-        self.table_jobs = _table(["Job", "Every", "Last run", "State", "What it does"])
+        # Last run and its state in one column ("Never run"); the job's name
+        # whole, and what it does wrapped in the rest.
+        self.table_jobs = _table(["Job", "Every", "Last run", "What it does"])
+        self.table_jobs.setWordWrap(True)
         head = self.table_jobs.horizontalHeader()
-        head.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        for column in (0, 1, 2):
+            head.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+        head.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         self.table_jobs.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         # There are four jobs and there always will be, so the table should show
         # four. Left to the layout it was given 51 pixels for 192 pixels of rows
@@ -307,16 +330,18 @@ class OperationsView(QWidget):
         self.table_jobs.setRowCount(len(rows))
         for r, row in enumerate(rows):
             when = row["last_at"]
+            state = str(row["state"] or "")
+            last = (when.strftime("%Y-%m-%d %H:%M") + (" - " + state if state else "")) if when \
+                else (state[:1].upper() + state[1:] if state else "Never run")
             cells = [
                 row["title"],
-                "%d day(s)" % row["every_days"],
-                when.strftime("%Y-%m-%d %H:%M") if when else "never",
-                row["state"],
+                every(row["every_days"]),
+                last,
                 row["why"],
             ]
             for c, text in enumerate(cells):
                 item = QTableWidgetItem(text)
-                if c == 3:
+                if c == 2:
                     if row["last_ok"] is False:
                         item.setForeground(Qt.GlobalColor.red)
                     elif row["overdue"]:
@@ -324,6 +349,7 @@ class OperationsView(QWidget):
                 if row["last_message"]:
                     item.setToolTip(row["last_message"])
                 self.table_jobs.setItem(r, c, item)
+        self.table_jobs.resizeRowsToContents()
 
     # ---------------------------------------------------------------------- log
     def _log_panel(self) -> QWidget:

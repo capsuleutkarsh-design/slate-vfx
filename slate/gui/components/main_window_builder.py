@@ -24,22 +24,16 @@ class MainWindowBuilderMixin:
         from PySide6.QtWidgets import QTabWidget
         from ..tabs.leave_approvals_view import LeaveApprovalsView
         from ..tabs.my_leave_view import MyLeaveView
-        from ...core.domain.access import can
-        from ...core.domain.workplace_access import manages_leave
+        from ...core.domain.workplace_access import leave_stage
 
-        roles = getattr(self, "user_roles", None)
         username = self._current_username()
 
         # HR own the final stage; a supervisor owns the first one. Who counts
         # as a supervisor here is the "approve_leave" ability, so a Comp
         # Supervisor or Team Lead gets the queue without a code change.
-        stage = None
-        if manages_leave(roles, self.allowed_tabs):
-            stage = "HR"
-        elif can(roles, "approve_leave"):
-            stage = "Supervisor"
+        stage = leave_stage(getattr(self, "user_roles", None), self.allowed_tabs)
 
-        if stage is None:
+        if not stage:
             return MyLeaveView(username)
 
         # An approver takes leave like anybody else. They used to get the queue
@@ -162,9 +156,6 @@ class MainWindowBuilderMixin:
             main_layout.setContentsMargins(0, 0, 0, 0)
             main_layout.setSpacing(0)
 
-            # A. Toolbar Removed (Moved to Header)
-            # self.create_toolbar()
-
             # B. Header
             self.header_widget = self.create_header()
             main_layout.addWidget(self.header_widget)
@@ -255,25 +246,28 @@ class MainWindowBuilderMixin:
 
             logging.info(f"[LAZY] Registering tab factories for mode='{mode}' (show_vfx={show_vfx}, show_ops={show_ops})...")
 
+            # Home, above every group heading: folding PRODUCTION used to hide
+            # it, and HR reached it under a heading they had nothing else in.
+            # In the full suite it is built from what this person has
+            # (production and operations); Operations has the punch panel.
+            self.tab_coordinator.register_tab_factory(
+                "Home",
+                lambda: HomeTab(
+                    user_data=self.user_data,
+                    app_context=self.app_context,
+                    main_window=self,
+                    mode=mode if mode in ("ops", "all") else "vfx"
+                ),
+                icon="🏠",
+                permission_key=None,  # Always allowed
+                user_role=self.user_role,
+                allowed_tabs=self.allowed_tabs,
+                tooltip=("Punch in and out, and quick links to your screens" if mode == "ops"
+                         else "Your shots, the studio's figures and quick links to your screens")
+            )
+
             if show_vfx:
                 self.tab_coordinator.add_category_header("PRODUCTION")
-
-                # Home. In the full suite it is built from what this person
-                # has (production and operations), not as the VFX Home.
-                self.tab_coordinator.register_tab_factory(
-                    "Home",
-                    lambda: HomeTab(
-                        user_data=self.user_data,
-                        app_context=self.app_context,
-                        main_window=self,
-                        mode="all" if mode == "all" else "vfx"
-                    ),
-                    icon="🏠",
-                    permission_key=None,  # Always allowed
-                    user_role=self.user_role,
-                    allowed_tabs=self.allowed_tabs,
-                    tooltip="Your shots, the studio's figures and quick links to your screens"
-                )
 
                 def create_folder_creator():
                     # Not wired to on_templates_refreshed: that reloads this
@@ -373,24 +367,9 @@ class MainWindowBuilderMixin:
                 )
 
             if show_ops:
-                self.tab_coordinator.add_category_header("OPERATIONS" if mode == "ops" else "HRMS")
-
-                # In Ops mode, register the dedicated Operations Home tab with Attendance!
-                if mode == "ops":
-                    self.tab_coordinator.register_tab_factory(
-                        "Home",
-                        lambda: HomeTab(
-                            user_data=self.user_data,
-                            app_context=self.app_context,
-                            main_window=self,
-                            mode="ops"
-                        ),
-                        icon="🏠",
-                        permission_key=None,  # Always allowed
-                        user_role=self.user_role,
-                        allowed_tabs=self.allowed_tabs,
-                        tooltip="Punch in and out, and quick links to your screens"
-                    )
+                # One plain name in both apps and in Help ("HRMS" and
+                # "OPERATIONS" before - jargon, and two names for one group).
+                self.tab_coordinator.add_category_header("PEOPLE")
 
                 # Attendance
                 self.tab_coordinator.register_tab_factory(
@@ -629,7 +608,8 @@ class MainWindowBuilderMixin:
             footer_widget = self.create_footer()
             main_layout.addWidget(footer_widget)
             suite_title = getattr(self, "suite_title", "Slate")
-            self.status_bar.showMessage(f"Ready - {suite_title} {APP_VERSION}", 5000)
+            from ..login_dialog import version_text
+            self.status_bar.showMessage(f"Ready - {suite_title} \u00b7 {version_text()}", 5000)
 
             # E. Running tasks: a name and percent, click for the list.
             try:
@@ -720,12 +700,6 @@ class MainWindowBuilderMixin:
         dock.raise_()
         return dock
 
-    def create_toolbar(self):
-            """Create application toolbar with workflow switching."""
-            # --- ARTIST CHECK: HIDE TOOLBAR ---
-            if self.user_role.lower() == "artist":  # Case-insensitive
-                return
-
     def create_header(self):
             """
             Create the application header.
@@ -759,11 +733,6 @@ class MainWindowBuilderMixin:
                     self.header_builder.insert_before_help(self.notification_center.bell)
                 except Exception as exc:
                     logging.warning("Notification centre not available: %s", exc)
-            if hasattr(self.header_builder, "health_label") and self.header_builder.health_label:
-                try:
-                    self.header_builder.health_label.clicked.connect(self.show_runtime_diagnostics)
-                except Exception as exc:
-                    logging.debug("Health label click bind skipped: %s", exc)
 
             return header_widget
 

@@ -74,10 +74,15 @@ class TestSeparatedHomeTabs:
         tab = OpsHomeTab(user_data=user_data)
         qtbot.addWidget(tab)
 
+        from slate.gui.components import feedback
+        tab._read_todays_punch = lambda: {}
         tab.do_punch("in")
+        qtbot.waitUntil(lambda: not tab.punch_busy(), timeout=5000)
         mock_log_action.assert_called_with("test_ops", "in")
 
-        tab.do_punch("out")
+        with patch.object(feedback, "confirm", lambda *a, **k: True):
+            tab.do_punch("out")
+            qtbot.waitUntil(lambda: not tab.punch_busy(), timeout=5000)
         mock_log_action.assert_called_with("test_ops", "out")
 
         logged = {call.args[0] for call in mock_log_action.call_args_list}

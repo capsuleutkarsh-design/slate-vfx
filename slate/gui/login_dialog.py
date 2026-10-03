@@ -42,13 +42,9 @@ class LoginAuthWorker(QThread):
             self.auth_result.emit(None, str(exc))
 
 
-def _database_unavailable():
-    """The error meaning the database is not there, or nothing if it cannot be imported."""
-    try:
-        from slate.core.infra.postgres_manager import DatabaseUnavailableError
-        return DatabaseUnavailableError
-    except Exception:                       # pragma: no cover - import guard
-        return ()
+# Said under the fields when Slate is working on this computer's own copy.
+OFFLINE_TEXT = ("Cannot reach the studio database, so Slate is working on this computer's copy. "
+                "Your changes are kept here and sent with Sync when the connection is back.")
 
 
 # What each application is called under the name on the sign-in window. The
@@ -89,26 +85,21 @@ def friendly_auth_error(error_text: str) -> str:
 
 
 class LoginDialog(QDialog):
+    # The studio database answered (or Slate settled on this computer's copy).
+    database_ready = Signal()
+
     def __init__(self, user_manager=None, app_context=None, app_mode: str = "all"):
         super().__init__()
         self.app_context = app_context or AppContext()
         self.app_mode = str(app_mode or "all").lower()
 
-        # Building the user manager runs the schema migration, which reads from
-        # the database. With the database down that raised here - inside the
-        # constructor of the first window the application opens - so there was
-        # no window to put a message in and the whole program died with a stack
-        # trace before anybody saw anything.
-        #
-        # The dialog is built either way now. Without a database it cannot
-        # authenticate, so it says so and offers Try again and Reconfigure.
+        # The window opens straight away and connects behind it. Connecting
+        # here, in the constructor, kept the first window of the application
+        # from appearing until the database answered or gave up - with the
+        # server down that was 214 s and then an uncaught error.
         self.database_unavailable = False
-        try:
-            self.user_manager = user_manager or self.app_context.user_manager()
-        except _database_unavailable() as exc:
-            logging.warning("Login: the database did not answer: %s", exc)
-            self.user_manager = None
-            self.database_unavailable = True
+        self.user_manager = user_manager
+        self._connect_worker = None
 
         self.user_data = None
         self.auth_worker = None
@@ -154,8 +145,8 @@ class LoginDialog(QDialog):
             }}
             QPushButton#SignInBtn:hover {{ background-color: {Gate.mix(Gate.ACCENT, Gate.TEXT, 0.15)}; }}
             QPushButton#SignInBtn:disabled {{
-                background-color: {Gate.RAISED}; color: {Gate.TEXT_DIM};
-                border: 1px solid {Gate.LINE};
+                background-color: {Gate.PANEL}; color: {Gate.TEXT_DIM};
+                border: none; font-weight: normal;
             }}
             QPushButton#RetryBtn {{
                 background: transparent; color: {Gate.ACCENT}; font-weight: bold;
@@ -280,9 +271,22 @@ class LoginDialog(QDialog):
         self.caps_hint = QLabel("Caps Lock is on")
         self.caps_hint.setObjectName("CapsHint")
         self.caps_hint.setVisible(False)
+        # Its line is kept while hidden, so the button below does not jump.
+        hint_policy = self.caps_hint.sizePolicy()
+        hint_policy.setRetainSizeWhenHidden(True)
+        self.caps_hint.setSizePolicy(hint_policy)
         frame_layout.addWidget(self.caps_hint)
         frame_layout.addSpacing(8)
 
+        self.btn_login = QPushButton("Sign in")
+        self.btn_login.setObjectName("SignInBtn")
+        self.btn_login.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_login.clicked.connect(self.handle_login)
+        frame_layout.addWidget(self.btn_login)
+
+        # Under the button: a message grows the window downward, and the
+        # button stays where the mouse is. Above it, every message moved Sign in
+        # 50-120 px and a second click landed on the link below.
         self.status_lbl = QLabel("")
         self.status_lbl.setObjectName("StatusBox")
         self.status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -290,13 +294,6 @@ class LoginDialog(QDialog):
         self.status_lbl.setVisible(False)
         self._set_status_state("info")
         frame_layout.addWidget(self.status_lbl)
-
-        self.btn_login = QPushButton("Sign in")
-        self.btn_login.setObjectName("SignInBtn")
-        self.btn_login.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_login.clicked.connect(self.handle_login)
-        frame_layout.addSpacing(6)
-        frame_layout.addWidget(self.btn_login)
 
         # Shown only while the database cannot be reached: try again without
         # quitting and starting Slate over.
@@ -320,8 +317,8 @@ class LoginDialog(QDialog):
 
         layout.addWidget(self.frame)
 
-        if self.database_unavailable:
-            self._say_the_database_is_down()
+        if self.user_manager is None:
+            self._connect()
 
     # ------------------------------------------------------------- helpers
     def _set_status_state(self, state: str):
@@ -333,6 +330,11 @@ class LoginDialog(QDialog):
 
     def _show_status(self, message: str, state: str = "info"):
         self._set_status_state(state)
+        # One line centred; a paragraph left-aligned (centred, it was ragged
+        # on both sides and hard to read).
+        one_line = self.status_lbl.fontMetrics().horizontalAdvance(message) <= self.frame.width() - 80
+        self.status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter if one_line
+                                     else Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.status_lbl.setText(message)
         self.status_lbl.setVisible(bool(message))
         self.adjustSize()
@@ -432,35 +434,77 @@ class LoginDialog(QDialog):
         except Exception as exc:
             logging.warning("Login: database reload failed: %s", exc)
 
-    def retry_database(self) -> bool:
+    def _open_user_manager(self, reload: bool):
         """
-        Try to reach the database again, without restarting Slate.
-        True when it answered and the fields are usable again.
+        (user manager, working on this computer's copy?, error) - on a worker
+        thread. The error is returned, not raised: the worker's error path
+        asks the database manager for context, which is what just failed.
         """
+        try:
+            if reload:
+                self._reload_database()
+            ctx = self.app_context
+            db = ctx.db_manager() if hasattr(ctx, "db_manager") else None
+            # The database manager first: it raises when the database is down
+            # and there is no local copy to fall back on. The user manager
+            # swallows that and would look ready.
+            local = bool(db.is_local_mode()) if db is not None else False
+            if hasattr(ctx, "apply_studio_policy"):
+                ctx.apply_studio_policy()       # deferred from AppContext() at start-up
+            return ctx.user_manager(), local, ""
+        except Exception as exc:
+            return None, False, str(exc) or type(exc).__name__
+
+    def _connect(self, reload: bool = False):
+        """Reach the database on a worker; the window stays usable meanwhile."""
+        from ..core.infra.db_worker import run_db_async
+        self.btn_login.setEnabled(False)
+        self.btn_login.setText("Connecting…")
+        self._show_status("Connecting to the studio database…", "info")
+        self._connect_worker = run_db_async(lambda: self._open_user_manager(reload),
+                                            on_success=self._on_connected,
+                                            on_error=self._on_connect_failed, owner=self)
+        return self._connect_worker
+
+    def retry_database(self):
+        """Try to reach the database again (on a worker), without restarting Slate."""
         self.retry_btn.setEnabled(False)
         self.retry_btn.setText("Trying…")
-        self.repaint()
-        try:
-            self._reload_database()
-            self.user_manager = self.app_context.user_manager()
-        except Exception as exc:
-            logging.warning("Login: the database still did not answer: %s", exc)
-            self.user_manager = None
-            self._say_the_database_is_down()
+        return self._connect(reload=True)
+
+    def is_connecting(self) -> bool:
+        return self._connect_worker is not None
+
+    def _on_connect_failed(self, error_text: str):
+        logging.warning("Login: the database did not answer: %s", error_text)
+        retried = self.retry_btn.isVisible()
+        self._connect_worker = None
+        self.user_manager = None
+        self._say_the_database_is_down()
+        if retried:
             self._show_status(
                 "Still cannot reach the studio database. Check that Slate Server "
                 "is running, then choose Try again.", "error")
-            return False
 
+    def _on_connected(self, result):
+        manager, local, error = result
+        if error:
+            self._on_connect_failed(error)
+            return
+        self._connect_worker = None
+        self.user_manager = manager
         self.database_unavailable = False
         self.retry_btn.setVisible(False)
         self.btn_login.setEnabled(True)
         self.btn_login.setText("Sign in")
         for field in (self.user_input, self.pass_input):
             field.setEnabled(True)
-        self._hide_status()
+        if local:
+            self._show_status(OFFLINE_TEXT, "info")
+        else:
+            self._hide_status()
         (self.pass_input if self.user_input.text().strip() else self.user_input).setFocus()
-        return True
+        self.database_ready.emit()
 
     # ------------------------------------------------------------- sign in
     def handle_login(self):
@@ -477,7 +521,9 @@ class LoginDialog(QDialog):
             logging.info(f"Attempting login for user: {username}")
 
             if self.user_manager is None:
-                self._say_the_database_is_down()
+                # Still connecting: Sign in is not offered yet, and Enter waits too.
+                if not self.is_connecting():
+                    self._say_the_database_is_down()
                 return
 
             if not username or not password.strip():
@@ -524,7 +570,7 @@ class LoginDialog(QDialog):
                 # text again, which is what a stray space used to break.
                 dialog = ChangePasswordDialog(self.user_manager, user.get("user_id") or username,
                                               forced=True, current_password=self._password_checked,
-                                              parent=self)
+                                              parent=self, display_name=user.get("display_name", ""))
                 if dialog.exec() != dialog.DialogCode.Accepted:
                     self.show_error("Choose your own password to sign in.")
                     self.pass_input.clear()
@@ -552,7 +598,7 @@ class LoginDialog(QDialog):
                 "Sign in as  admin  /  admin123  to create them, then change "
                 "that password from the Users tab.")
         else:
-            self.show_error("Invalid credentials. Please try again.")
+            self.show_error("That user name and password do not match. Try again.")
         self.pass_input.selectAll()
         self.shake_window()
 
@@ -601,6 +647,15 @@ class LoginDialog(QDialog):
 
         animation.start()
 
+    def keyPressEvent(self, event):
+        # Esc used to reject the window, and that quits Slate on the spot -
+        # pressed to clear a field, it threw the whole start-up away. The close
+        # button is the way out.
+        if event.key() == Qt.Key.Key_Escape:
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
     def mousePressEvent(self, event):
         self.oldPos = event.globalPosition().toPoint()
 
@@ -630,7 +685,7 @@ class LoginDialog(QDialog):
         self._reconfigure_in_progress = True
 
         try:
-            from ..gatekeeper_main import FirstRunSetupDialog
+            from .dialogs.first_run_dialog import FirstRunSetupDialog
             dlg = FirstRunSetupDialog(self)
             if dlg.exec() == QDialog.DialogCode.Accepted:
                 values = dlg.values()
@@ -649,9 +704,7 @@ class LoginDialog(QDialog):
 
                 # Use the new details straight away rather than asking for a
                 # restart.
-                if self.retry_database():
-                    self._show_status("Settings saved and the studio database answered. "
-                                      "You can sign in.", "info")
+                self.retry_database()
         except Exception as exc:
             logging.exception("Reconfigure dialog failed: %s", exc)
             QMessageBox.warning(self, "Reconfigure server / database",

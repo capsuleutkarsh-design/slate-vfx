@@ -35,7 +35,7 @@ def test_clearing_a_search_returns_to_the_page(qtbot):
 
 def test_groups_match_the_sidebar():
     names = [g for g, _ids in GROUPS]
-    for heading in ("Production", "HRMS", "IT & Infra", "Administration", "System"):
+    for heading in ("Production", "People", "IT & Infra", "Administration", "System"):
         assert heading in names
     admin = dict(GROUPS)["Administration"]
     assert "users_roles" in admin and "admin_panel" in admin

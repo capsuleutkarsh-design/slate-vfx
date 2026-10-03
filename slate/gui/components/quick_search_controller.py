@@ -85,85 +85,172 @@ class QuickSearchControllerMixin:
 
     @staticmethod
     def _extract_shot_query(text: str) -> str:
-        """Extract normalized shot query token from omnibar text."""
+        """
+        The shot part of what was typed: 'shot 042' -> '042', 'SH010' -> 'SH010'.
+        The word 'shot' used to be kept, so the placeholder's own example
+        ('shot 042') could never match SH042.
+        """
         raw = str(text or "").strip()
         if not raw:
             return ""
-        match = re.search(r"\bshot[\s_\-]*([a-zA-Z]*\d+[a-zA-Z]*)\b", raw, flags=re.IGNORECASE)
+        match = re.search(r"\bshot[\s_\-]*([a-zA-Z]*\d+\w*)", raw, flags=re.IGNORECASE)
         if match:
-            return f"shot {match.group(1)}"
+            return match.group(1)
         if re.search(r"\d", raw):
             return raw
         return ""
 
-    def _jump_to_shot_in_review(self, query_text: str) -> bool:
+    @classmethod
+    def rank_shot_names(cls, query: str, names) -> list:
         """
-        Find a shot and select it in the dashboard.
+        Shot names that match, best first: the exact name, then the same number
+        ('042' -> SH042), then a prefix ending where a number ends, then a
+        longer number (SH010 -> SH0100) and scattered letters. SH0100 used to
+        tie with SH010, and whichever came first in the list won.
+        """
+        q = str(query or "").strip().lower()
+        if not q:
+            return []
+        ranked = []
+        for name in names:
+            n = str(name or "").strip().lower()
+            if not n:
+                continue
+            numbers = [int(d) for d in re.findall(r"\d+", n)]
+            at = n.find(q)
+            cut_short = q[-1].isdigit() and at >= 0 and n[at + len(q):at + len(q) + 1].isdigit()
+            if n == q:
+                score = 0
+            elif q.isdigit() and int(q) in numbers:
+                score = 1
+            elif n.startswith(q) and not cut_short:
+                score = 2
+            elif cut_short:
+                score = 5
+            else:
+                fuzzy = cls._fuzzy_score(q, n)
+                if fuzzy is None:
+                    continue
+                score = 10 + fuzzy
+            ranked.append((score, str(name)))
+        ranked.sort(key=lambda item: (item[0], item[1].lower()))
+        return [name for _score, name in ranked]
 
-        This used to drive the Shot Checker's own list. The Shot Checker is
-        gone - reviewing happens in OpenRV - so the dashboard, which is where
-        every shot actually lives, is what gets jumped to.
+    def _dashboard_widget(self):
+        tab = self._get_tab_instance("VFX Dashboard", create=True)
+        return tab if hasattr(tab, "all_shots") else getattr(tab, "dashboard_widget", None)
+
+    def _open_dashboard_project(self, project_code: str) -> bool:
+        """
+        The VFX Dashboard, on this project. Goes through the project selector,
+        so unsaved changes to another project are asked about first.
         """
         if not self._switch_to_tab_label("VFX Dashboard"):
             self.show_feedback("The dashboard is not available for this user.",
                                level="warning", duration=3500)
             return False
-
-        tab = self._get_tab_instance("VFX Dashboard", create=True)
-        dashboard = tab if hasattr(tab, "all_shots") else getattr(
-            tab, "dashboard_widget", None)
+        dashboard = self._dashboard_widget()
         if dashboard is None:
-            self.show_feedback("The dashboard could not be opened.",
-                               level="error", duration=3500)
+            self.show_feedback("The dashboard could not be opened.", level="error", duration=3500)
             return False
+        current = getattr(dashboard, "current_project", None)
+        if current is not None and getattr(current, "code", None) == project_code:
+            return True
+        combo = getattr(dashboard, "project_combo", None)
+        index = combo.findData(project_code) if combo is not None else -1
+        if index < 0 and hasattr(dashboard, "load_projects"):
+            dashboard.load_projects()           # a project made since the dashboard opened
+            index = combo.findData(project_code) if combo is not None else -1
+        if index >= 0:
+            combo.setCurrentIndex(index)
+        elif hasattr(dashboard, "switch_project"):
+            dashboard.switch_project(project_code)
+        current = getattr(dashboard, "current_project", None)
+        return current is not None and getattr(current, "code", None) == project_code
 
-        shots = list(getattr(dashboard, "all_shots", None) or [])
-        if not shots:
-            self.show_feedback("No shots are loaded - pick a project first.",
-                               level="warning", duration=3500)
-            return False
+    def _shot_locations(self, query: str, project_code: str = ""):
+        """[(shot name, project code)] in active projects, best match first."""
+        from slate.core.infra.database_manager import database_manager
+        sql = ("SELECT s.shot_name, s.project_code FROM tracking_shots s "
+               "JOIN tracking_projects p ON p.code = s.project_code AND p.active = 1")
+        params = ()
+        if project_code:
+            sql += " WHERE s.project_code = %s"
+            params = (project_code,)
+        rows = database_manager.execute_query(sql, params or None, fetch="all") or []
+        pairs = []
+        for row in rows:
+            name = row["shot_name"] if isinstance(row, dict) else row[0]
+            code = row["project_code"] if isinstance(row, dict) else row[1]
+            if name:
+                pairs.append((str(name), str(code or "")))
+        best = self.rank_shot_names(query, {name for name, _code in pairs})
+        if not best:
+            return []
+        top = best[0].lower()
+        return [(name, code) for name, code in pairs if name.lower() == top]
 
+    def _jump_to_shot_in_review(self, query_text: str, project_code: str = "") -> bool:
+        """
+        Find a shot, open its project in the dashboard and select it.
+
+        The dashboard used to be searched as it stood - and right after
+        sign-in no project is open there, so every jump (from the palette or
+        from Home) ended on "No shots are loaded - pick a project first".
+        """
         query = self._extract_shot_query(query_text) or str(query_text or "").strip()
-
-        best_shot = None
-        best_score = None
-        for shot in shots:
-            name = str(getattr(shot, "shot_name", "") or "").strip()
-            if not name:
-                continue
-            score = self._fuzzy_score(query, name)
-            if score is None:
-                continue
-            if best_score is None or score < best_score:
-                best_score = score
-                best_shot = shot
-
-        if best_shot is None:
-            self.show_feedback(f"No shot match found for '{query}'.",
+        if not query:
+            return False
+        try:
+            found = self._shot_locations(query, project_code)
+        except Exception as exc:
+            logging.warning("Shot lookup failed: %s", exc)
+            self.show_feedback("Shots could not be looked up just now.", level="error",
+                               duration=4000, details=str(exc))
+            return False
+        if not found:
+            self.show_feedback(f"No shot matches '{query}' in the active projects.",
                                level="warning", duration=3500)
             return False
 
-        shot_name = str(getattr(best_shot, "shot_name", "") or "").strip()
-        selected = False
-        for method in ("select_shot_by_name", "focus_shot", "open_detail_dock"):
-            handler = getattr(dashboard, method, None)
-            if handler is None:
-                continue
-            try:
-                handler(shot_name if method != "open_detail_dock" else best_shot)
-                selected = True
-                break
-            except Exception as exc:
-                logging.debug("Dashboard %s failed: %s", method, exc)
+        name, code = found[0]
+        if len({c for _n, c in found}) > 1:
+            dashboard = self._dashboard_widget() if "VFX Dashboard" in self._palette_tab_labels() else None
+            open_code = getattr(getattr(dashboard, "current_project", None), "code", None)
+            here = [pair for pair in found if pair[1] == open_code]
+            if here:
+                name, code = here[0]
+            else:
+                from PySide6.QtWidgets import QInputDialog
+                choices = [f"{c} \u00b7 {n}" for n, c in found]
+                picked, ok = QInputDialog.getItem(
+                    self, "Which shot?", f"{found[0][0]} is in more than one project.",
+                    choices, 0, False)
+                if not ok:
+                    return False
+                name, code = found[choices.index(picked)]
 
-        self._remember_omnibar_shot(shot_name)
-        if selected:
-            self.show_feedback(f"Jumped to shot: {shot_name}",
-                               level="success", duration=2500)
-        else:
-            self.show_feedback(
-                f"Found {shot_name}, but the dashboard could not select it.",
-                level="warning", duration=3500)
+        if not self._open_dashboard_project(code):
+            return False
+        dashboard = self._dashboard_widget()
+        shot = next((s for s in list(getattr(dashboard, "all_shots", None) or [])
+                     if str(getattr(s, "shot_name", "") or "").strip().lower() == name.lower()), None)
+        if shot is None:
+            # Artists see only their own shots there.
+            self.show_feedback(f"{name} is in {code}, but not among the shots you can see there.",
+                               level="warning", duration=4000)
+            return False
+        try:
+            if hasattr(dashboard, "_select_shot_ids"):
+                dashboard._select_shot_ids([id(shot)])
+            dashboard.open_detail_dock(shot)
+        except Exception as exc:
+            logging.debug("Dashboard could not select %s: %s", name, exc)
+            self.show_feedback(f"Found {name}, but the dashboard could not select it.",
+                               level="warning", duration=3500)
+            return True
+        self._remember_omnibar_shot(name)
+        self.show_feedback(f"Opened {name} in {code}.", level="success", duration=2500)
         return True
 
     @staticmethod
@@ -300,13 +387,6 @@ class QuickSearchControllerMixin:
             ("Diagnostics (Ctrl+Shift+D)", self.show_runtime_diagnostics,
              "diagnostics version database support it", None),
             ("Refresh this screen (F5)", self.refresh_current_tab, "refresh reload update", None),
-            ("Open Settings (Ctrl+Shift+S)", self.show_settings_tab, "settings preferences options", "Settings"),
-            ("Open VFX Dashboard", lambda: self._open_named_tab("VFX Dashboard"),
-             "dashboard shots tracking", "VFX Dashboard"),
-            ("Open Timeline Viewer", lambda: self._open_named_tab("Timeline Viewer"),
-             "timeline lineup olive edit", "Timeline Viewer"),
-            ("Open Stock Viewer", lambda: self._open_named_tab("Stock Viewer"),
-             "stock library assets", "Stock Viewer"),
             ("Open Help (F1)", self.show_help_dialog, "help manual documentation", None),
             ("Keyboard shortcuts", getattr(self, "show_shortcuts", None), "keys shortcuts keyboard", None),
             ("Rebuild Timeline from Dashboard", self._rebuild_timeline_from_dashboard,
@@ -328,9 +408,11 @@ class QuickSearchControllerMixin:
             rows.append({"kind": "action", "label": label, "keywords": keywords, "callback": callback,
                          # Never the row Enter runs without the person choosing it.
                          "careful": needs == "__maintenance__"})
+        keys = {"Settings": " (Ctrl+Shift+S)"}
         for label in tabs:
-            rows.append({"kind": "tab", "label": f"Go to {label}",
-                         "keywords": f"go open {label}", "tab_label": label})
+            rows.append({"kind": "tab", "label": f"Go to {label}{keys.get(label, '')}",
+                         "keywords": f"go open {label} preferences options" if label == "Settings"
+                         else f"go open {label}", "tab_label": label})
         return rows
 
     @staticmethod
@@ -459,10 +541,10 @@ class QuickSearchControllerMixin:
     
         dialog = QDialog(self)
         dialog.setWindowTitle("Command Palette")
-        dialog.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+        # A popup: a click outside closes it, as palettes do (a modal frameless
+        # dialog swallowed the click and stayed).
+        dialog.setWindowFlags(Qt.WindowType.Popup)
         dialog.setMinimumSize(760, 520)
-        dialog.setModal(True)
-        dialog.setWindowFlag(Qt.WindowContextHelpButtonHint, False)
         # The rounded panel and its shadow margin are drawn on nothing: without
         # this the corners and margin were painted as an opaque square.
         dialog.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
@@ -643,7 +725,7 @@ class QuickSearchControllerMixin:
             if shot_query:
                 shot_row = {
                     "kind": "shot",
-                    "label": f"Jump to shot {shot_query}",
+                    "label": f"Jump to shot {shot_query.upper() if shot_query.isalnum() else shot_query}",
                     "shot_query": shot_query,
                 }
                 shot_score = self._fuzzy_score(q, f"jump shot {shot_query}")
@@ -678,8 +760,10 @@ class QuickSearchControllerMixin:
                         item.setData(Qt.ItemDataRole.UserRole, row)
                         results_list.addItem(item)
     
-            ranked_actions.sort(key=lambda x: (x[0], str(x[1].get("label", "")).lower()))
-            ranked_tabs.sort(key=lambda x: (x[0], str(x[1].get("label", "")).lower()))
+            if q:
+                ranked_actions.sort(key=lambda x: (x[0], str(x[1].get("label", "")).lower()))
+                ranked_tabs.sort(key=lambda x: (x[0], str(x[1].get("label", "")).lower()))
+            # Nothing typed: the sidebar's own order (they are already in it).
             ranked_shots.sort(key=lambda x: (x[0], str(x[1].get("label", "")).lower()))
     
             # Screens first: getting somewhere is what the palette is mostly for.
@@ -704,8 +788,17 @@ class QuickSearchControllerMixin:
                     item.setData(Qt.ItemDataRole.UserRole, row)
                     results_list.addItem(item)
     
-            preselect_row = self.palette_preselect([results_list.item(i).data(Qt.ItemDataRole.UserRole)
-                                                    for i in range(results_list.count())])
+            if q and results_list.count() == 0:
+                add_section(f'Nothing matches "{query.strip()}". Try a screen name, a command '
+                            "or a shot number.")
+            payloads = [results_list.item(i).data(Qt.ItemDataRole.UserRole)
+                        for i in range(results_list.count())]
+            # Ctrl+K, Enter used to open Admin Panel (first alphabetically).
+            # Empty, only a Recent row is offered to Enter.
+            if not q:
+                recent_first = results_list.count() and results_list.item(0).text() == "Recent"
+                payloads = payloads[:2] if recent_first else []
+            preselect_row = self.palette_preselect(payloads)
             if preselect_row is not None:
                 results_list.setCurrentRow(preselect_row)
     

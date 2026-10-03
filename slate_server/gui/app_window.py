@@ -155,6 +155,17 @@ class DBWorker(QThread):
                 if pooler is not None:
                     pooler.start(progress_callback=self.progress.emit,
                                  psql_exe=self.engine.bin_dir / "psql.exe")
+            elif self.action == "pool":
+                # Rewrite the pool's configuration and restart it (Restart pool).
+                pooler = self.engine.pooler
+                try:
+                    pooler.stop(progress_callback=self.progress.emit)
+                except Exception as exc:
+                    logging.debug("Pool stop reported: %s", exc)
+                psql = self.engine.bin_dir / "psql.exe"
+                pooler.write_config(psql if psql.exists() else None)
+                if not pooler.start(progress_callback=self.progress.emit):
+                    raise RuntimeError("The pool did not come up.")
             else:
                 pooler = getattr(self.engine, "pooler", None)
                 if pooler is not None:
@@ -198,7 +209,9 @@ class UTServerWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Slate Server")
-        self.setMinimumSize(900, 650)
+        # Analytics' three cards and Operations' backup row need this much;
+        # at 900 px they ran off the right edge behind a scroll bar.
+        self.setMinimumSize(1120, 650)
         self.setStyleSheet(GLOBAL_STYLESHEET)
         # Opened at the minimum, 220 of those 900 pixels went to the sidebar
         # and the dashboard was cut off at the right-hand edge. Open at a size
@@ -364,7 +377,8 @@ class UTServerWindow(QMainWindow):
         # buttons on the Dashboard.
         self.operations_view.force_kill_requested.connect(self._on_force_kill)
         self.settings_view.input_api_port.setText(str(self.api_port()))
-        self.dashboard.btn_api_dashboard.setToolTip("Opens %s" % self.dashboard_url())
+        self._set_running_controls(False)
+        self._show_configured_data_dir()
 
         # Setup Analytics Polling
         self.poll_timer = QTimer(self)
@@ -451,7 +465,7 @@ class UTServerWindow(QMainWindow):
                 newest = backups[0]
                 note = ("Last backup %s ago"
                         % ("less than a day" if newest["age_days"] == 0
-                           else "%d day(s)" % newest["age_days"]))
+                           else "1 day" if newest["age_days"] == 1 else "%d days" % newest["age_days"]))
                 overdue = newest["age_days"] > 1
             else:
                 note = "No backup has ever been taken"
@@ -528,15 +542,14 @@ class UTServerWindow(QMainWindow):
         facts = self._cluster_facts()
         target = facts.get("database") or "the database"
 
-        if QMessageBox.question(
+        from PySide6.QtWidgets import QInputDialog
+        typed, ok = QInputDialog.getText(
             self, "Restore over the live database",
-            "This replaces everything in '%s' with the contents of:\n\n%s\n\n"
+            "This replaces everything in '%s' with the contents of:\n%s\n\n"
             "The data directory is:\n%s\n\nEvery workstation must be closed "
-            "first, and this cannot be undone. Continue?"
-            % (target, path, facts.get("running_data_dir") or facts.get("data_dir") or "?"),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Cancel
-        ) != QMessageBox.StandardButton.Yes:
+            "first, and this cannot be undone. Type RESTORE to go on."
+            % (target, path, facts.get("running_data_dir") or facts.get("data_dir") or "?"))
+        if not ok or typed.strip().upper() != "RESTORE":
             return
 
         self._log("> Restoring from %s" % path)
@@ -702,8 +715,12 @@ class UTServerWindow(QMainWindow):
         sidebar_layout.setContentsMargins(0, 40, 0, 40)
         sidebar_layout.setSpacing(10)
 
-        lbl_logo = QLabel("Slate")
-        lbl_logo.setStyleSheet(f"font-size: 20px; font-weight: {T.WEIGHT_BOLD}; color: {C.TEXT_PRIMARY}; padding-left: 24px; border: none;")
+        # The product's own name, lined up with the menu text (24 px).
+        lbl_logo = QLabel("Slate Server")
+        lbl_logo.setStyleSheet(f"font-size: 20px; font-weight: {T.WEIGHT_BOLD}; color: {C.TEXT_PRIMARY}; "
+                               f"padding-left: 24px; margin: 0px; border: none;")
+        lbl_logo.setContentsMargins(0, 0, 0, 0)
+        lbl_logo.setIndent(0)
         sidebar_layout.addWidget(lbl_logo)
         sidebar_layout.addSpacing(30)
 
@@ -1027,6 +1044,31 @@ class UTServerWindow(QMainWindow):
         self.worker.finished.connect(self._handle_worker_finished)
         self.worker.start()
 
+    def _set_running_controls(self, running: bool):
+        """
+        Restart pool and Open web dashboard only while the server runs: with it
+        off, the pool was started in front of nothing and the browser opened a
+        page that could not load.
+        """
+        for button, off_tip, on_tip in (
+                (self.dashboard.btn_restart_pool, "Start the server first",
+                 "Rewrites the pool configuration and restarts it."),
+                (self.dashboard.btn_api_dashboard, "Start the server first",
+                 "Opens %s" % self.dashboard_url())):
+            button.setEnabled(bool(running) and (button is not self.dashboard.btn_api_dashboard
+                                                 or self.api_server is not None))
+            button.setToolTip(on_tip if button.isEnabled() else off_tip)
+
+    def _show_configured_data_dir(self):
+        """The data directory is known before the server starts: show it."""
+        try:
+            path = str(self._data_dir())
+        except Exception:
+            return
+        exists = os.path.exists(os.path.join(path, "PG_VERSION"))
+        note = "" if exists else (" (not created yet)" if os.path.isdir(path) else " (not reachable)")
+        self.dashboard.card_data_dir.set_value(path + note)
+
     def _on_worker_progress(self, msg):
         self._log(f"  {msg}")
 
@@ -1057,13 +1099,14 @@ class UTServerWindow(QMainWindow):
                     self.api_server = ApiServer(port=self.api_port())
                     if self.api_server.start() and self.api_server.wait_until_ready(10):
                         self._log("> Web API is running.")
-                        self.dashboard.btn_api_dashboard.setEnabled(True)
                     else:
                         self._log("> Web API did NOT start."
                                   + (f" {self.api_server.error}" if self.api_server.error else ""))
-                        self.dashboard.btn_api_dashboard.setEnabled(False)
+                        self.api_server = None
                 except Exception as e:
+                    self.api_server = None
                     self._log(f"> Failed to start the web API: {e}")
+                self._set_running_controls(True)
 
                 self.poll_timer.start(3000)
             else:
@@ -1079,7 +1122,8 @@ class UTServerWindow(QMainWindow):
                     self.api_server.stop()
                     self.api_server = None
                     self._log("> Web API stopped.")
-                self.dashboard.btn_api_dashboard.setEnabled(False)
+                self._set_running_controls(False)
+                self._show_configured_data_dir()
 
                 self.poll_timer.stop()
         else:
@@ -1122,22 +1166,25 @@ class UTServerWindow(QMainWindow):
                                     "This server is not running a connection pool.")
             return
 
-        self._log("> Restarting the connection pool...")
-        QApplication.setOverrideCursor(Qt.CursorShape.BusyCursor)
-        try:
-            try:
-                pooler.stop(progress_callback=self._log)
-            except Exception as exc:
-                logging.debug("Pool stop reported: %s", exc)
-            psql = self._pg_bin() / "psql.exe"
-            pooler.write_config(psql if psql.exists() else None)
-            started = pooler.start(progress_callback=self._log)
-        except Exception as exc:
-            started = False
-            self._log("> Pool restart failed: %s" % exc)
-        finally:
-            QApplication.restoreOverrideCursor()
+        if not self.server_running():
+            QMessageBox.information(self, "Restart pool", "Start the server first: the pool "
+                                    "sits in front of the database.")
+            return
+        self._log("> Restarting the connection pool\u2026")
+        self.dashboard.btn_restart_pool.setEnabled(False)
+        self.dashboard.btn_restart_pool.setText("Restarting the pool\u2026")
+        self._pool_worker = DBWorker(engine, "pool")
+        self._pool_worker.progress.connect(self._on_worker_progress)
+        self._pool_worker.finished.connect(self._on_pool_restarted)
+        self._pool_worker.start()
+        return self._pool_worker
 
+    def _on_pool_restarted(self, started, error_msg):
+        self.dashboard.btn_restart_pool.setText("Restart pool")
+        self._set_running_controls(self.server_running())
+        if error_msg:
+            self._log("> Pool restart failed: %s" % error_msg)
+        pooler = getattr(getattr(self, "db_engine", None), "pooler", None)
         from slate_server.core.server_facts import pool as pool_facts
         facts = pool_facts(pooler)
         if started and facts.get("agrees") is not False:
@@ -1149,7 +1196,7 @@ class UTServerWindow(QMainWindow):
             QMessageBox.warning(
                 self, "Pool still disagrees",
                 "The pool publishes '%s' but clients ask for '%s'. Check the "
-                "Database Name in Settings, then restart the pool again."
+                "database name in Settings, then restart the pool again."
                 % (facts.get("publishes"), facts.get("expects")))
         else:
             QMessageBox.warning(self, "Pool did not start",
@@ -1396,18 +1443,20 @@ class UTServerWindow(QMainWindow):
         if dashboard is not None and hasattr(dashboard, "append_log"):
             dashboard.append_log(message)
 
+    def _who_is_connected(self) -> str:
+        count = int(getattr(self, "_client_count", 0) or 0)
+        if count == 1:
+            return "1 workstation is connected"
+        if count:
+            return "%d workstations are connected" % count
+        return "Workstations may be connected"
+
     def ask_before_closing(self) -> str:
         """
         'stop', 'tray' or 'cancel'. One click on X used to stop the studio
         database with no question, taking every workstation offline.
         """
-        count = int(getattr(self, "_client_count", 0) or 0)
-        if count == 1:
-            who = "1 workstation is connected"
-        elif count:
-            who = "%d workstations are connected" % count
-        else:
-            who = "Workstations may be connected"
+        who = self._who_is_connected()
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Warning)
         box.setWindowTitle("Close Slate Server")
@@ -1473,6 +1522,18 @@ class UTServerWindow(QMainWindow):
                 self._log("> Window closed; the server keeps running in the tray.")
                 return
         self._save_window_geometry()
+        if self.server_running() and not getattr(self, "_stopped_for_close", False):
+            # pg_ctl stop can take seconds: on the worker, and the window
+            # closes when it reports back (it froze, its log unpainted).
+            self.dashboard.status_badge.set_status("Stopping the database\u2026", "warning")
+            self._log("> Stopping the database\u2026")
+            self.setEnabled(False)
+            self.worker = DBWorker(self.db_engine, "stop")
+            self.worker.progress.connect(self._on_worker_progress)
+            self.worker.finished.connect(self._close_after_stop)
+            self.worker.start()
+            event.ignore()
+            return
         # The pool goes down with the database. It used to be left running:
         # the next start found it "already running", kept it, and every
         # workstation was refused until somebody ended pgbouncer.exe by hand.
@@ -1503,15 +1564,25 @@ class UTServerWindow(QMainWindow):
 
         event.accept()
 
+    def _close_after_stop(self, _ok, error_msg):
+        if error_msg:
+            logging.warning("Stopping on close reported: %s", error_msg)
+        self._stopped_for_close = True
+        self._closing_confirmed = True
+        self.dashboard.toggle_power.blockSignals(True)
+        self.dashboard.toggle_power.setChecked(False)
+        self.dashboard.toggle_power.blockSignals(False)
+        self.close()
+
     # --- UPDATE FLOW ---
     def _on_check_update(self):
         if self.sidecar_engine and hasattr(self.sidecar_engine, 'temp_updater'):
             self._apply_staged_update()
             return
 
-        self.settings_view.btn_check_update.setText("Checking...")
+        self.settings_view.btn_check_update.setText("Checking\u2026")
         self.settings_view.btn_check_update.setEnabled(False)
-        self.settings_view.lbl_update_status.setText("Looking for updates...")
+        self.settings_view.lbl_update_status.setText("Looking for updates\u2026")
 
         if self.update_checker:
             self.update_checker.stop()
@@ -1524,14 +1595,14 @@ class UTServerWindow(QMainWindow):
 
         def cleanup():
             self.settings_view.btn_check_update.setEnabled(True)
-            if self.settings_view.btn_check_update.text() == "Checking...":
-                self.settings_view.btn_check_update.setText("Check for Updates")
+            if self.settings_view.btn_check_update.text() == "Checking\u2026":
+                self.settings_view.btn_check_update.setText("Check for updates")
         self.update_checker.finished.connect(cleanup)
         self.update_checker.start()
 
     def on_update_found(self, manifest):
-        self.settings_view.btn_check_update.setText("Check for Updates")
-        self.settings_view.lbl_update_status.setText(f"Update Found: v{manifest.get('version')}")
+        self.settings_view.btn_check_update.setText("Check for updates")
+        self.settings_view.lbl_update_status.setText(f"Update found: {manifest.get('version')}")
         from slate.gui.dialogs.update_available_dialog import UpdateAvailableDialog
         dlg = UpdateAvailableDialog(manifest, self)
         if dlg.exec():
@@ -1556,11 +1627,11 @@ class UTServerWindow(QMainWindow):
     def _on_update_staged(self, success):
         self.settings_view.btn_check_update.setEnabled(True)
         if success:
-            self.settings_view.btn_check_update.setText("Restart to Apply")
+            self.settings_view.btn_check_update.setText("Restart to apply")
             self.settings_view.lbl_update_status.setText("Update downloaded and checked. Restart to apply it.")
-            QMessageBox.information(self, "Update ready", "The update is downloaded and checked. Choose 'Restart to Apply'.")
+            QMessageBox.information(self, "Update ready", "The update is downloaded and checked. Choose 'Restart to apply'.")
         else:
-            self.settings_view.btn_check_update.setText("Check for Updates")
+            self.settings_view.btn_check_update.setText("Check for updates")
             self.settings_view.lbl_update_status.setText("The update could not be downloaded.")
             QMessageBox.warning(self, "Update not downloaded",
                                 "The update could not be downloaded or checked. The server log says why.")
@@ -1569,9 +1640,19 @@ class UTServerWindow(QMainWindow):
         if not self.sidecar_engine:
             return
 
-        reply = QMessageBox.question(self, "Apply Update", "The server will now restart to apply the update. Continue?",
-                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        if reply == QMessageBox.StandardButton.Yes:
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Apply the update")
+        box.setText("Restart Slate Server to apply the update?")
+        box.setInformativeText(
+            "%s. Restarting stops the studio database, so every workstation "
+            "goes offline until it is back." % self._who_is_connected())
+        now = box.addButton("Restart now", QMessageBox.ButtonRole.DestructiveRole)
+        later = box.addButton("Later", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(later)
+        box.setEscapeButton(later)
+        box.exec()
+        if box.clickedButton() is now:
             if self.dashboard.toggle_power.isChecked():
                 pooler = getattr(self.db_engine, "pooler", None)
                 if pooler is not None:
@@ -1581,7 +1662,7 @@ class UTServerWindow(QMainWindow):
             QApplication.quit()
 
     def on_no_update(self, current_ver):
-        self.settings_view.btn_check_update.setText("Check for Updates")
+        self.settings_view.btn_check_update.setText("Check for updates")
         reason = ""
         if self.update_checker:
             reason = str(getattr(self.update_checker, "last_result_reason", "") or "")

@@ -138,7 +138,10 @@ class Toast(QFrame):
         self.setObjectName("slateToast")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setProperty("level", self.level)
-        self._action = action
+        # One action, or a list of them: Undo and the Details of an error both
+        # fit on one toast (Details used to be dropped when there was an action).
+        actions = list(action) if isinstance(action, list) else ([action] if action else [])
+        self._action = actions[0] if actions else None
 
         Gate = _gate()
         edge = getattr(Gate, _LEVEL_COLOURS[self.level])
@@ -177,13 +180,13 @@ class Toast(QFrame):
         row.addWidget(self.label, 1)
 
         self.action_button = None
-        if action:
-            text, _callback = action
-            self.action_button = QPushButton(str(text).replace("&", "&&"))
-            self.action_button.setObjectName("toastAction")
-            self.action_button.setCursor(Qt.CursorShape.PointingHandCursor)
-            self.action_button.clicked.connect(self._run_action)
-            row.addWidget(self.action_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        for text, callback in actions:
+            button = QPushButton(str(text).replace("&", "&&"))
+            button.setObjectName("toastAction")
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.clicked.connect(lambda _=False, cb=callback: self._run_action(cb))
+            row.addWidget(button, 0, Qt.AlignmentFlag.AlignVCenter)
+            self.action_button = self.action_button or button
 
         close = QPushButton("×")
         close.setObjectName("toastClose")
@@ -206,8 +209,8 @@ class Toast(QFrame):
         if self._duration > 0:
             self._timer.start(self._duration)
 
-    def _run_action(self):
-        _text, callback = self._action
+    def _run_action(self, callback=None):
+        callback = callback or self._action[1]
         self.dismiss()
         try:
             callback()
@@ -358,8 +361,9 @@ def raw_toast(parent, message, level="info", action=None, duration=None, details
     if parent is None:
         logger.info("[%s] %s", level.upper(), message)
         return None
-    if details and not action:
-        action = ("Details", lambda: show_details(parent, message, details, level))
+    if details:
+        more = ("Details", lambda: show_details(parent, message, details, level))
+        action = [action, more] if action else more
     try:
         return ToastHost.for_window(parent).show(message, level, action, duration)
     except (RuntimeError, ValueError) as exc:

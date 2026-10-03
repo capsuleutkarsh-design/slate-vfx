@@ -574,6 +574,8 @@ class UserManager:
                 "avatar": user_row.get('profile_pic_path', ''),
                 # Imported with a shared first password: choose a new one now.
                 "must_change_password": bool(user_row.get('must_change_password') or 0),
+                # Not a person (admin, tester): no automatic punch, no punch panel.
+                "is_service": bool(user_row.get('is_service') or 0) or uid.lower() in ("admin", "tester"),
             }
         else:
             logging.warning(f"Authentication failed: Invalid password for user '{uid}'")

@@ -19,8 +19,9 @@ from slate.core.infra.gate import Gate
 # A navigation entry and a category rule. They used to be the same height, 50px
 # each, so twenty entries and five headers wanted 1250px of a window that is
 # routinely 1000px tall - the last entries were clipped mid-word.
-NAV_ROW_HEIGHT = 38
-HEADER_ROW_HEIGHT = 30
+NAV_ROW_HEIGHT = 34
+HEADER_ROW_HEIGHT = 26
+RAIL_HEADER_HEIGHT = 16
 
 
 # What a sidebar entry gets when it has no drawn icon (a plugin with a letter
@@ -189,9 +190,11 @@ class CategoryHeaderWidget(QWidget):
         # Folded to icons: how many screens are folded away here.
         self.count_label = QLabel("")
         self.count_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # An outline in the dim text colour: the filled teal pill was the
+        # unread badge's look ("3 waiting").
         self.count_label.setStyleSheet(
-            f"color: {Gate.TEXT_ON_ACCENT}; background: {Gate.ACCENT}; border-radius: 7px; "
-            "font-size: 10px; font-weight: 700; padding: 0 4px;")
+            f"color: {Gate.TEXT_DIM}; background: transparent; border: 1px solid {Gate.TEXT_DIM}; "
+            "border-radius: 7px; font-size: 10px; font-weight: 700; padding: 0 4px;")
         self.count_label.setFixedHeight(14)
         self.count_label.hide()
 
@@ -206,6 +209,13 @@ class CategoryHeaderWidget(QWidget):
         spacing = "0.5px" if tight else "1.5px"
         return (f"color: {Gate.ACCENT}; font-size: 11px; font-weight: 800; letter-spacing: {spacing}; "
                 "background: transparent; padding: 0px; margin: 0px;")
+
+    def set_holds_current(self, holds: bool):
+        """Folded over the screen that is open: the heading is marked, so where you are stays visible."""
+        if bool(holds) != getattr(self, "_holds_current", False):
+            self._holds_current = bool(holds)
+            self.setStyleSheet(f"CategoryHeaderWidget {{ background: {Gate.SELECTION}; border-radius: 4px; }}"
+                               if self._holds_current else "")
 
     def _restyle(self):
         from ..core.icons import pixmap
@@ -243,10 +253,14 @@ class CategoryHeaderWidget(QWidget):
             text = QFontMetrics(self.lbl.font()).elidedText(text, Qt.TextElideMode.ElideRight, room)
         self.lbl.setText(text)
 
+    def display_name(self) -> str:
+        """'IT & INFRA' -> 'IT & Infra': short words (IT) keep their capitals."""
+        return " ".join(w if len(w) <= 2 else w.capitalize() for w in self.label_text.split())
+
     def _update_tooltip(self):
         state = "click to show them" if self._folded else "click to fold them away"
         count = f"{self.count} screen{'s' if self.count != 1 else ''}"
-        self.setToolTip(f"{self.label_text.title()} ({count}) - {state}")
+        self.setToolTip(f"{self.display_name()} ({count}) - {state}")
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -263,7 +277,8 @@ class CategoryHeaderWidget(QWidget):
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        self.setStyleSheet("")
+        self.setStyleSheet(f"CategoryHeaderWidget {{ background: {Gate.SELECTION}; border-radius: 4px; }}"
+                           if getattr(self, "_holds_current", False) else "")
         super().leaveEvent(event)
 
     def set_folded(self, folded: bool, count=None):
@@ -439,7 +454,8 @@ class TabCoordinator(QObject):
             label: Display label for the header
         """
         item = QListWidgetItem("")
-        item.setSizeHint(QSize(0, HEADER_ROW_HEIGHT))
+        item.setSizeHint(QSize(0, RAIL_HEADER_HEIGHT if getattr(self, "sidebar_collapsed", False)
+                               else HEADER_ROW_HEIGHT))
         
         # Not an entry: not selectable, and "disabled" so the sidebar sheet
         # can give it no item padding (QListWidget::item:disabled). With the
@@ -508,6 +524,9 @@ class TabCoordinator(QObject):
                     widget = self.sidebar_nav.itemWidget(item)
                     if widget and hasattr(widget, 'set_collapsed'):
                         widget.set_collapsed(collapsed)
+                    # In the icon rail a heading is only a rule (or a chevron
+                    # when folded): 16 px, so an admin's list fits the height.
+                    item.setSizeHint(QSize(0, RAIL_HEADER_HEIGHT if collapsed else HEADER_ROW_HEIGHT))
                     continue # Do not modify headers
                 
                 factory_data = self.tab_factories.get(label, {})
@@ -559,6 +578,8 @@ class TabCoordinator(QObject):
         widget = group.get('widget')
         if widget is not None and hasattr(widget, 'set_folded'):
             widget.set_folded(group['folded'], permitted_rows)
+        if widget is not None and hasattr(widget, 'set_holds_current'):
+            widget.set_holds_current(group['folded'] and self.sidebar_nav.currentRow() in group['rows'])
 
     def set_group_folded(self, label, folded):
         for group in self.groups:
@@ -930,6 +951,16 @@ class TabCoordinator(QObject):
 
         # Lazy load tab on demand.
         widget = self.get_or_create_tab(row)
+        label = self.tab_labels[row] if row < len(self.tab_labels) else ""
+        if widget is None and label in self.tab_factories and label not in self.tab_instances:
+            # It failed (the box with Try again has been shown). The sidebar
+            # goes back to the screen that is actually showing: it stayed on
+            # the failed one, and clicking it again did nothing.
+            showing = self.content_stack.currentIndex()
+            self.sidebar_nav.blockSignals(True)
+            self.sidebar_nav.setCurrentRow(showing if showing != row else -1)
+            self.sidebar_nav.blockSignals(False)
+            return
 
         # Fallback for eagerly-registered/plugin tabs that are already attached.
         if not widget:
@@ -946,14 +977,13 @@ class TabCoordinator(QObject):
 
         self.content_stack.setCurrentWidget(self.stack_widget_for(widget))
 
-        # UX Polish: Force layout calculation to prevent "broken layout on first load" bugs.
-        # PySide6 sometimes delays layout math for complex widgets added to a QStackedWidget 
-        # until the user resizes the window. We explicitly force it here.
-        from PySide6.QtWidgets import QApplication
+        # The first time a page shows, its layout is worked out now and a resize
+        # posted, so it does not wait for the window to be resized. No
+        # processEvents here: it let a second click (or a timer) re-enter
+        # navigation while the first screen was still being built.
         from PySide6.QtGui import QResizeEvent
         from PySide6.QtCore import QCoreApplication
-        
-        QApplication.processEvents()
+
         if is_first_load:
             widget.updateGeometry()
             if widget.layout():
@@ -965,6 +995,11 @@ class TabCoordinator(QObject):
         # Nothing folds by itself any more: the sidebar used to fold whole
         # groups away on every click so the list fitted the window, and the
         # navigation jumped about. A list taller than the window scrolls.
+
+        for group in self.groups:
+            widget_ = group.get('widget')
+            if widget_ is not None and hasattr(widget_, 'set_holds_current'):
+                widget_.set_holds_current(group['folded'] and row in group['rows'])
 
         # The screen's name - the item's text is blank when folded to icons.
         if 0 <= row < len(self.tab_labels):

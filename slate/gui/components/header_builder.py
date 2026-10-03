@@ -120,10 +120,7 @@ class HeaderBuilder:
         self.profile_text_widget = None
         self.header_layout = None
         self.branding_widget = None
-        self.db_mode_label = None
         self.local_mode_label = None
-        self.health_label = None
-        self.show_runtime_badges = False
     
     def create_header(self):
         """
@@ -198,24 +195,6 @@ class HeaderBuilder:
         self.db_speed_indicator = DBSpeedIndicatorCompact()
         header_layout.addWidget(self.db_speed_indicator)
         
-        # 3c. DB MODE INDICATOR (sqlite/postgres/fallback)
-        self.db_mode_label = QLabel("DB: --")
-        self.db_mode_label.setStyleSheet(
-            f"""
-            QLabel {{
-                color: {Gate.INFO};
-                font-size: 11px;
-                font-weight: 600;
-                background: {Gate.tint(Gate.PANEL, 0.65)};
-                border: 1px solid {Gate.tint(Gate.TEXT_DIM, 0.35)};
-                border-radius: 4px;
-                padding: 2px 8px;
-            }}
-            """
-        )
-        self.db_mode_label.setToolTip("Database runtime mode")
-        header_layout.addWidget(self.db_mode_label)
-
         # 3d. LOCAL MODE BADGE (always visible in fallback mode)
         self.local_mode_label = QLabel("LOCAL MODE")
         self.local_mode_label.setStyleSheet(
@@ -238,31 +217,10 @@ class HeaderBuilder:
         self.local_mode_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         header_layout.addWidget(self.local_mode_label, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        # 3e. SYSTEM HEALTH STRIP
-        self.health_label = ClickableLabel("Health: --")
-        self.health_label.setStyleSheet(
-            f"""
-            QLabel {{
-                color: {Gate.INFO};
-                font-size: 10px;
-                font-weight: 600;
-                background: {Gate.tint(Gate.GROUND, 0.75)};
-                border: 1px solid {Gate.tint(Gate.TEXT_DIM, 0.45)};
-                border-radius: 4px;
-                padding: 2px 8px;
-            }}
-            """
-        )
-        self.health_label.setToolTip("Runtime health summary")
-        self.health_label.setCursor(Qt.CursorShape.PointingHandCursor)
-        header_layout.addWidget(self.health_label)
-
-        # The DB and health badges live in Settings and Diagnostics. LOCAL
-        # MODE is different: it shows whenever Slate works on its local copy,
-        # because Help and several screens point at it "in the header".
-        self.db_mode_label.setVisible(False)
+        # Which database and the shared folder are in Settings and
+        # Diagnostics. LOCAL MODE shows whenever Slate works on its local
+        # copy, because Help and several screens point at it "in the header".
         self.local_mode_label.setVisible(False)
-        self.health_label.setVisible(False)
         self.local_mode_label.setToolTip(
             "LOCAL MODE: the studio database cannot be reached, so Slate is working on "
             "this machine's copy.\nTeam views, fleet monitoring and remote actions are "
@@ -275,13 +233,6 @@ class HeaderBuilder:
         # Apply initial responsive layout state.
         self.update_responsive_layout(self.parent.width())
         return header_widget
-
-    def _create_db_indicator(self):
-        """Create a small led indicator for DB status."""
-        lbl = QLabel("●")
-        lbl.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: 14px; margin-right: 10px;")
-        lbl.setToolTip("Checking connection...")
-        return lbl
 
     def update_db_status(self, is_connected, latency_ms):
         """The DatabaseMonitor's reading (taken on its own thread) for the latency dot."""
@@ -315,82 +266,11 @@ class HeaderBuilder:
             )
 
     def set_db_runtime_status(self, active_mode: str, fallback_used: bool = False):
-        """Update DB mode indicator text and style."""
+        """LOCAL MODE in the header while Slate works on this machine's copy."""
         self._local_mode = bool(fallback_used)
         if self.local_mode_label:
             self.local_mode_label.setVisible(self._local_mode)
-        if not self.db_mode_label or not self.show_runtime_badges:
-            return
-        mode = str(active_mode or "unknown").strip().lower()
-        label_mode = "Postgres" if mode == "postgres" else "SQLite" if mode == "sqlite" else mode.title()
-        suffix = " (Fallback)" if fallback_used else ""
-        self.db_mode_label.setText(f"DB: {label_mode}{suffix}")
 
-        if mode == "postgres" and not fallback_used:
-            color = Gate.OK
-            border = Gate.tint(Gate.OK, 0.45)
-        elif fallback_used:
-            color = Gate.WARN
-            border = Gate.tint(Gate.WARN, 0.45)
-        else:
-            color = Gate.ACCENT
-            border = Gate.tint(Gate.ACCENT, 0.45)
-
-        self.db_mode_label.setStyleSheet(
-            f"""
-            QLabel {{
-                color: {color};
-                font-size: 11px;
-                font-weight: 700;
-                background: {Gate.tint(Gate.PANEL, 0.65)};
-                border: 1px solid {border};
-                border-radius: 4px;
-                padding: 2px 8px;
-            }}
-            """
-        )
-        if self.local_mode_label:
-            self.local_mode_label.setVisible(bool(fallback_used))
-
-    def set_system_health_status(
-        self,
-        server_root_ok: bool,
-        exr_enabled: bool,
-        sync_enabled: bool,
-    ):
-        """Update compact runtime health strip in header."""
-        if not self.health_label or not self.show_runtime_badges:
-            return
-
-        server_state = "Server OK" if server_root_ok else "Server Unreachable"
-        exr_state = "EXR ON" if exr_enabled else "EXR OFF"
-        sync_state = "Sync ON" if sync_enabled else "Sync Limited"
-        self.health_label.setText(f"Health: {server_state} | {exr_state} | {sync_state}")
-
-        if server_root_ok and sync_enabled:
-            color = Gate.OK
-            border = Gate.tint(Gate.OK, 0.45)
-        elif not server_root_ok:
-            color = Gate.BAD
-            border = Gate.tint(Gate.BAD, 0.45)
-        else:
-            color = Gate.WARN
-            border = Gate.tint(Gate.WARN, 0.45)
-
-        self.health_label.setStyleSheet(
-            f"""
-            QLabel {{
-                color: {color};
-                font-size: 10px;
-                font-weight: 700;
-                background: {Gate.tint(Gate.GROUND, 0.75)};
-                border: 1px solid {border};
-                border-radius: 4px;
-                padding: 2px 8px;
-            }}
-            """
-        )
-    
     def _create_branding(self):
         """Create the Slate branding section."""
         self.mark_label = None
@@ -727,7 +607,8 @@ class HeaderBuilder:
         shortcuts = getattr(self.parent, "show_shortcuts", None)
         if callable(shortcuts):
             actions.append(("Keyboard shortcuts", shortcuts))
-        actions.append(("About Slate", self._show_about))
+        from ..login_dialog import version_text
+        actions.append((f"About Slate \u00b7 {version_text()}", self._show_about))
         logout = getattr(self.parent, "logout_user", None)
         if callable(logout):
             actions.append(None)
@@ -748,7 +629,7 @@ class HeaderBuilder:
         menu.popup(anchor.mapToGlobal(anchor.rect().bottomLeft()))
 
     def _show_about(self):
-        """The version, then the Credits screen (licence section 5, unchanged)."""
+        """The Credits screen (licence section 5, unchanged); the version is on the menu entry."""
         from slate import licence
         licence.show_credits(self.parent)
 
@@ -759,7 +640,8 @@ class HeaderBuilder:
         manager = getattr(self.parent, "user_manager", None)
         if not (username and manager):
             return
-        dialog = ChangePasswordDialog(manager, username, parent=self.parent)
+        dialog = ChangePasswordDialog(manager, username, parent=self.parent,
+                                      display_name=self.user_data.get("display_name", ""))
         if dialog.exec() == dialog.DialogCode.Accepted:
             from .feedback import toast
             toast(self.parent, "Password changed. Use it the next time you sign in.", "success")
@@ -834,5 +716,4 @@ class HeaderBuilder:
         if self.local_mode_label:
             self.local_mode_label.setVisible(bool(getattr(self, "_local_mode", False)))
 
-        if self.health_label and self.show_runtime_badges:
-            self.health_label.setVisible(window_width >= 1200)
+

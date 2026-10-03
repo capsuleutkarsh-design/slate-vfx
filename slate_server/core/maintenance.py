@@ -118,7 +118,8 @@ class MaintenanceLog:
             elif last["ok"] is False:
                 state = "failed"
             elif overdue:
-                state = "%d day(s) late" % max(0, age_days - expected_days)
+                late = max(0, age_days - expected_days)
+                state = "1 day late" if late == 1 else "%d days late" % late
             else:
                 state = "up to date"
 
@@ -220,7 +221,7 @@ class Maintenance:
             if progress:
                 progress("Reviewing the attendance record...")
             result = CompOffService().run()
-            message = "Credited %d of %d qualifying day(s)." % (
+            message = "Credited %d of %d qualifying days." % (
                 result.get("credited", 0), result.get("found", 0))
             self.log.record("comp_off", True, message)
             return {"ok": True, "message": message}

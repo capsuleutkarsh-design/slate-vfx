@@ -103,7 +103,7 @@ class SessionManagerMixin:
             logging.info("Application closing - cleaning up resources...")
 
             # Stop periodic timers first.
-            for timer_name in ("cleanup_timer", "idle_timer"):
+            for timer_name in ("cleanup_timer",):
                 timer_obj = getattr(self, timer_name, None)
                 if timer_obj:
                     try:

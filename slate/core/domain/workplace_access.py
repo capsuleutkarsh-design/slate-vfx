@@ -56,6 +56,18 @@ def manages_leave(roles=None, allowed_tabs=None) -> bool:
     return can(_names(roles), "manage_leave")
 
 
+def leave_stage(roles=None, allowed_tabs=None) -> str:
+    """
+    The leave decision this person makes: "HR" (the final stage), "Supervisor"
+    (the first, for their own reports - the approve_leave ability) or "".
+    The Leave screen's queue and Home's leave panel both ask this.
+    """
+    if manages_leave(roles, allowed_tabs):
+        return "HR"
+    from .access import can
+    return "Supervisor" if can(_as_list(roles), "approve_leave") else ""
+
+
 def manages_it(roles=None, allowed_tabs=None) -> bool:
     """
     True for the people who work the IT queue (and the IT half of joining

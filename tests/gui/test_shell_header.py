@@ -72,7 +72,8 @@ def test_initials_keep_whole_characters():
 def test_the_account_menu(qtbot, monkeypatch):
     parent, builder, _header_w = _header(qtbot)
     labels = [entry[0] if entry else None for entry in builder.account_actions()]
-    assert labels == ["Change password…", "Keyboard shortcuts", "About Slate", None, "Sign out"]
+    assert labels[:2] == ["Change password…", "Keyboard shortcuts"] and labels[3:] == [None, "Sign out"]
+    assert labels[2].startswith("About Slate") and "Version" in labels[2]     # the version, on the entry
     builder._show_account_menu(builder.profile_widget)
     menu = builder.account_menu
     actions = [a.text() for a in menu.actions() if not a.isSeparator()]
@@ -94,7 +95,7 @@ def test_search_opens_the_palette(qtbot):
 
 def test_local_mode_badge_shows_without_runtime_badges(qtbot):
     _parent, builder, header = _header(qtbot)
-    assert builder.show_runtime_badges is False
+    assert not hasattr(builder, "health_label")          # the hidden badges are gone
     builder.set_db_runtime_status("sqlite", True)
     assert builder.local_mode_label.isVisibleTo(header)
     builder.set_db_runtime_status("postgres", False)

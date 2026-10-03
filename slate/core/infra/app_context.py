@@ -28,13 +28,14 @@ class AppContext:
         # before anything reads them. Without this the policy is the shipped
         # default and a studio's changed start time is ignored until restart -
         # or, as it was, for ever.
-        try:
-            from slate.core.infra.studio_policy import load_into_domain
-            load_into_domain()
-        except Exception as exc:  # pragma: no cover - never block start up
-            import logging
-            logging.getLogger(__name__).warning(
-                "Could not apply the studio policy: %s", exc)
+        #
+        # Only when the database is already connected: at start-up this
+        # context is made before any window, and reading the policy here made
+        # Slate wait on the network (or a dead server) with nothing on screen.
+        # The sign-in window applies it once it has connected, on its worker.
+        from .database_manager import is_connected
+        if is_connected():
+            self.apply_studio_policy()
 
         self._user_manager = user_manager
         self._config_manager = config_manager
@@ -43,6 +44,16 @@ class AppContext:
         self._attendance = attendance
         self._library_manager = library_manager
         self._asset_api = None
+
+    @staticmethod
+    def apply_studio_policy() -> None:
+        try:
+            from slate.core.infra.studio_policy import load_into_domain
+            load_into_domain()
+        except Exception as exc:  # pragma: no cover - never block start up
+            import logging
+            logging.getLogger(__name__).warning(
+                "Could not apply the studio policy: %s", exc)
 
     # ------------------------------------------------------ signed-in user
     # Who is signed in, so any screen built from this context can ask

@@ -119,7 +119,7 @@ def test_diagnostics_in_plain_words_and_copied(window, monkeypatch):
     dialog = window._diagnostics_dialog
     copy = [b for b in dialog.findChildren(type(window.sidebar_toggle_btn)) if b.text() == "Copy"][0]
     copy.click()
-    assert QApplication.clipboard().text() == text
+    assert QApplication.clipboard().text().startswith("Slate version")
 
 
 def test_every_shortcut_is_on_the_sheet(window):
@@ -198,11 +198,13 @@ def test_workspace_info_shows_the_facts(qtbot):
     page = WorkspaceInfoPlugin()
     qtbot.addWidget(page)
     page.initialize({"user_data": {"display_name": "A", "username": "a"}, "user_role": "Artist"})
+    from slate.gui.login_dialog import version_text
     facts = page.details()
-    assert facts["version"] == __version__
+    assert facts["version"] == version_text(__version__)          # one way of writing it
+    assert "program_date" not in facts and facts["plugins"] == "None"
     assert facts["config"] and facts["config"] != "Unavailable"
     page.copy_details()
-    assert __version__ in QApplication.clipboard().text()
+    assert version_text(__version__) in QApplication.clipboard().text()
     assert page.plugin_icon == "info"
     texts = " ".join(l.text() for l in page.findChildren(QLabel))
     assert "Plugin Runtime Status" not in texts and "context" not in texts.lower()

@@ -75,7 +75,7 @@ def test_release_notes_are_text(qtbot):
     qtbot.addWidget(dialog)
     assert "<b>x</b>" in dialog.notes_area.toPlainText()
     assert "<img" not in dialog.notes_area.toHtml().replace("&lt;img", "")
-    assert dialog.btn_update.text() == "Download && Install"
+    assert dialog.btn_update.text() == "Download and install"
 
 
 def test_remind_me_later_waits_a_day(monkeypatch):
@@ -145,10 +145,47 @@ def test_first_run_test_connection(qtbot, gatekeeper):
     dialog = gatekeeper.FirstRunSetupDialog()
     qtbot.addWidget(dialog)
     labels = " ".join(label.text() for label in dialog.findChildren(QLabel))
-    assert "Server address" in labels and "DB Host" not in labels
+    assert "Server address" in labels and "DB Host" not in labels and "Server root" in labels
     worker = dialog.test_connection(connect=refuse)
     qtbot.waitUntil(lambda: dialog.test_result.text().startswith("Not connected"), timeout=5000)
     worker.wait(1000)
+
+
+def test_first_run_find_server_is_a_worker_and_a_missing_folder_is_questioned(qtbot, monkeypatch, tmp_path):
+    import slate.core.infra.network_discovery as nd
+    from slate.gui.dialogs import first_run_dialog as module
+    monkeypatch.setattr(nd, "discover_server_details",
+                        lambda timeout=2.0: {"host": "10.0.0.5", "db_port": 5440})
+    dialog = module.FirstRunSetupDialog()
+    qtbot.addWidget(dialog)
+    intro = " ".join(label.text() for label in dialog.findChildren(QLabel))
+    assert "Paths & Connections" not in intro and "Server, database and branding" in intro
+    assert "credential setup" not in dialog.db_password_input.placeholderText()
+    dialog._find_server()
+    assert dialog.find_button.text() == "Looking…"        # busy, and the window still paints
+    qtbot.waitUntil(lambda: dialog.db_host_input.text() == "10.0.0.5", timeout=3000)
+    assert dialog.find_button.isEnabled()
+
+    asked = []
+    monkeypatch.setattr(module.QMessageBox, "question",
+                        staticmethod(lambda *a, **k: asked.append(a[2]) or module.QMessageBox.StandardButton.Cancel))
+    dialog.server_root_input.setText(str(tmp_path / "no_such_share"))
+    dialog.db_name_input.setText("ut_vfx")
+    dialog.db_user_input.setText("postgres")
+    dialog._validate_and_accept()
+    assert asked and "cannot be reached" in asked[0] and dialog.result() == 0
+    dialog.server_root_input.setText(str(tmp_path))
+    dialog._validate_and_accept()
+    assert dialog.result() == 1
+
+
+def test_the_first_run_window_has_no_import_side_effects():
+    import subprocess
+    code = ("import logging, slate.gui.dialogs.first_run_dialog; "
+            "import sys; print('gatekeeper' in ' '.join(sys.modules))")
+    out = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True,
+                         env=dict(os.environ, QT_QPA_PLATFORM="offscreen"))
+    assert out.stdout.strip() == "False", out.stderr[-500:]
 
 
 def test_a_failed_start_exits_non_zero(gatekeeper, monkeypatch):

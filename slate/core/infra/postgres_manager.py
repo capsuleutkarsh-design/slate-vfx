@@ -543,7 +543,7 @@ class PostgresManager:
             application_name=_client_identity(),
         )
 
-    def _create_pool_once(self, host: str, port: int):
+    def _create_pool_once(self, host: str, port: int, timeout: int = 5):
         """
         One attempt, no waiting and no retries.
 
@@ -561,14 +561,16 @@ class PostgresManager:
             password=self.password,
             dbname=self.dbname,
             port=int(port),
-            connect_timeout=5,
+            connect_timeout=timeout,
             application_name=_client_identity(),
         )
 
-    def _init_pool(self):
+    def _init_pool(self, retry: bool = True):
         """
         Initialize connection pool with lazy loading and thread-safety.
         Pool is created on first database access with automatic retry.
+        retry=False tries each address once (start-up: the sign-in window
+        offers Try again, so waiting half a minute on a refused port helps nobody).
         """
         self._ensure_not_shutting_down()
         if self._connection_pool is None:
@@ -611,11 +613,13 @@ class PostgresManager:
                                         # Only the last option is worth waiting
                                         # and retrying for; the others have
                                         # somewhere to fall through to.
-                                        candidate_pool = (
-                                            self._create_pool_with_retry(host=host, port=try_port)
-                                            if is_last else
-                                            self._create_pool_once(host, try_port)
-                                        )
+                                        if is_last and retry:
+                                            candidate_pool = self._create_pool_with_retry(host=host, port=try_port)
+                                        elif is_last:
+                                            # Same patience per attempt as the retry path, for slow links.
+                                            candidate_pool = self._create_pool_once(host, try_port, timeout=30)
+                                        else:
+                                            candidate_pool = self._create_pool_once(host, try_port)
                                         if self.__class__._is_shutting_down:
                                             try:
                                                 candidate_pool.closeall()

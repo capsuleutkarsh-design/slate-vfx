@@ -85,7 +85,7 @@ class SettingsView(QWidget):
             "database to adopt it; point it at an empty folder and the server "
             "builds a new one there.")
 
-        lbl_db_path = QLabel("Database Root Path:")
+        lbl_db_path = QLabel("Database folder")
         lbl_db_path.setStyleSheet(f"font-size: 14px; font-weight: {T.WEIGHT_SEMI}; color: {C.TEXT_SECONDARY};")
 
         form_layout.addRow(lbl_db_path, self.input_db_path)
@@ -96,7 +96,7 @@ class SettingsView(QWidget):
         # Every port field the same width (the pool port was full width).
         self.input_port.setFixedWidth(self.PORT_WIDTH)
 
-        lbl_port = QLabel("PostgreSQL Port:")
+        lbl_port = QLabel("PostgreSQL port")
         lbl_port.setStyleSheet(f"font-size: 14px; font-weight: {T.WEIGHT_SEMI}; color: {C.TEXT_SECONDARY};")
 
         form_layout.addRow(lbl_port, self.input_port)
@@ -108,7 +108,7 @@ class SettingsView(QWidget):
         self.input_pooler_port.setPlaceholderText("6432")
         self.input_pooler_port.setText("6432")
         self.input_pooler_port.setFixedWidth(self.PORT_WIDTH)
-        lbl_pooler = QLabel("Connection Pool Port:")
+        lbl_pooler = QLabel("Connection pool port")
         lbl_pooler.setStyleSheet(lbl_port.styleSheet())
         form_layout.addRow(lbl_pooler, self.input_pooler_port)
 
@@ -119,7 +119,7 @@ class SettingsView(QWidget):
             "PostgreSQL answers a request for a name that does not exist by "
             "creating an empty one rather than complaining - so a typo here is "
             "how a studio ends up with two databases and its work in the other.")
-        lbl_db_name = QLabel("Database Name:")
+        lbl_db_name = QLabel("Database name")
         lbl_db_name.setStyleSheet(lbl_port.styleSheet())
         form_layout.addRow(lbl_db_name, self.input_db_name)
 
@@ -134,7 +134,7 @@ class SettingsView(QWidget):
             "The password the database is created with, and the one every "
             "workstation uses. It has to match what the clients were installed "
             "with, or they will reach the server and be turned away.")
-        lbl_db_password = QLabel("Database Password:")
+        lbl_db_password = QLabel("Database password")
         lbl_db_password.setStyleSheet(lbl_port.styleSheet())
         form_layout.addRow(lbl_db_password, self.input_db_password)
 
@@ -144,7 +144,7 @@ class SettingsView(QWidget):
             "How many connections PostgreSQL itself accepts. With the pool in "
             "front of it this rarely needs raising; the pool's own size is what "
             "a hundred and fifty workstations actually consume.")
-        lbl_max_conn = QLabel("Max Connections:")
+        lbl_max_conn = QLabel("Most connections")
         lbl_max_conn.setStyleSheet(lbl_port.styleSheet())
         form_layout.addRow(lbl_max_conn, self.input_max_conn)
 
@@ -156,7 +156,7 @@ class SettingsView(QWidget):
         self.input_api_port.setFixedWidth(self.PORT_WIDTH)
         self.input_api_port.setToolTip("The port the web API and its dashboard listen on. "
                                        "Restart the server to apply a change.")
-        lbl_api_port = QLabel("Web API Port:")
+        lbl_api_port = QLabel("Web API port")
         lbl_api_port.setStyleSheet(lbl_port.styleSheet())
         form_layout.addRow(lbl_api_port, self.input_api_port)
 
@@ -175,7 +175,8 @@ class SettingsView(QWidget):
         # carries three file paths. Full width, on its own, wrapping into real
         # space.
         self.lbl_config_source = QLabel("-")
-        self.lbl_config_source.setWordWrap(True)
+        # A path breaks at its separators, never in the middle of a word.
+        self.lbl_config_source.setWordWrap(False)
         self.lbl_config_source.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse)
         self.lbl_config_source.setStyleSheet(
@@ -249,7 +250,7 @@ class SettingsView(QWidget):
         self.lbl_update_status = QLabel("Ready to check for updates.")
         self.lbl_update_status.setStyleSheet(f"font-size: 14px; color: {C.TEXT_SECONDARY}; border: none;")
 
-        self.btn_check_update = QPushButton("Check for Updates")
+        self.btn_check_update = QPushButton("Check for updates")
         self.btn_check_update.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_check_update.setMinimumWidth(160)
         self.btn_check_update.setFixedHeight(40)

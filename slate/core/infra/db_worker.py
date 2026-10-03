@@ -78,7 +78,12 @@ class DatabaseWorker(QRunnable):
                 if not _is_owner_valid(self.signals):
                     return
                 try:
-                    context = database_manager.runtime_context_summary()
+                    try:
+                        context = database_manager.runtime_context_summary()
+                    except Exception:
+                        # No database manager at all (the database is down):
+                        # asking for one here raised and the error was never sent.
+                        context = "database unavailable"
                     self.signals.error.emit(f"{e} [{context}]")
                 except RuntimeError as emit_exc:
                     msg = str(emit_exc).lower()

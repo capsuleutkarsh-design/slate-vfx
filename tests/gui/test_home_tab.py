@@ -67,12 +67,13 @@ def test_open_tickets_whatever_the_casing():
 
 def test_upcoming_leave_is_after_today_and_within_two_weeks(monkeypatch):
     monkeypatch.setattr(home_tab, "db_today", lambda db=None: date(2026, 10, 2))
-    db = FakeDB({"FROM leave_requests": {"c": 1}})
-    worker = HomeLoaderWorker("x", None, figures=("upcoming_leave",), db=db)
+    rows = [{"id": 1, "user_id": "a", "status": "Approved", "start_date": "2026-10-02", "end_date": "2026-10-03"},
+            {"id": 2, "user_id": "b", "status": "Approved", "start_date": "2026-10-10", "end_date": "2026-10-11"},
+            {"id": 3, "user_id": "c", "status": "Approved", "start_date": "2026-10-30", "end_date": "2026-10-31"},
+            {"id": 4, "user_id": "d", "status": "Rejected", "start_date": "2026-10-05", "end_date": "2026-10-05"}]
+    db = FakeDB({"FROM leave_requests": rows})
+    worker = HomeLoaderWorker("x", None, figures=("upcoming_leave",), db=db, leave_stage="HR")
     assert worker.telemetry() == {"upcoming_leave": 1}
-    sql, params = db.queries[-1]
-    assert "start_date > %s AND start_date <= %s" in sql
-    assert params == ("2026-10-02", "2026-10-16")
 
 
 def test_people_online_counts_fresh_named_workstations(tmp_path):
