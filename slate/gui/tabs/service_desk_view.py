@@ -442,16 +442,19 @@ class ServiceDeskView(QWidget):
 
     def _matches_search(self, row, needle) -> bool:
         number = str(row.get("id") or "")
-        if needle.lstrip("#").isdigit() and needle.lstrip("#") == number:
+        # "#12" is that ticket and no other ("#1" used to find 10 and 11 as
+        # well, through '#10' in the text searched). A bare "12" finds ticket
+        # 12, and also tickets that mention 12.
+        if needle.startswith("#") and needle[1:].strip().isdigit():
+            return needle[1:].strip() == number
+        if needle.isdigit() and needle == number:
             return True
         # People's names as well as their logins: the table shows names,
-        # so that is what somebody types; and the ticket number, with or
-        # without its '#'.
+        # so that is what somebody types.
         haystack = " ".join(
             [str(row.get(k) or "") for k in ("description", "submitted_by", "category", "assigned_to")]
             + [people.display_name(row.get("submitted_by")),
-               people.display_name(row.get("assigned_to")),
-               "#" + number]).lower()
+               people.display_name(row.get("assigned_to"))]).lower()
         return needle in haystack
 
     def _apply_filters(self):

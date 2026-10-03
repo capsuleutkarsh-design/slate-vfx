@@ -264,3 +264,12 @@ def test_the_legacy_licence_table_is_copied_once_without_its_key(repo):
     assert len(rows) == 1
     assert rows[0]["total_seats"] == 3 and str(rows[0]["expiration_date"])[:10] == "2027-01-31"
     assert "SECRET" not in repr(rows[0])
+
+
+def test_two_contracts_are_told_apart_by_the_seats_the_server_issued():
+    """IT-062 (round 3): lmstat says 20 issued; only one Nuke contract has 20 seats."""
+    studio = {"id": 1, "software_name": "Nuke", "total_seats": 20}
+    project = {"id": 2, "software_name": "Nuke", "total_seats": 5}
+    assert report.match_licence("nuke_i", [studio, project], total=20) is studio
+    assert report.match_licence("nuke_i", [studio, project], total=7) is None
+    assert report.match_licence("nuke_i", [studio, dict(studio, id=3)], total=20) is None
