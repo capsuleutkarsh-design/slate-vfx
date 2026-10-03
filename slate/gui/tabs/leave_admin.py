@@ -832,6 +832,18 @@ class GrantProjectRestDialog(QDialog):
         self.person.person_changed.connect(lambda *_: self._recost())
         self._recost()
 
+        self.note = QLabel("")
+        self.note.setWordWrap(True)
+        self.note.setStyleSheet(f"color: {Gate.WARN}; font-size: 12.5px;")
+        self.note.hide()
+        root.addWidget(self.note)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        buttons.addWidget(make_button("Cancel", "ghost", on_click=self.reject))
+        buttons.addWidget(make_button("Grant", "primary", on_click=self._grant))
+        root.addLayout(buttons)
+
     @on_database_error
     def _recost(self):
         """The working days the dates cover, against the person's own holidays."""
@@ -844,18 +856,6 @@ class GrantProjectRestDialog(QDialog):
             "Those dates hold no working days." if not working else
             "%s of project rest. Not taken from the paid leave balance."
             % people.plural(working, "working day"))
-
-        self.note = QLabel("")
-        self.note.setWordWrap(True)
-        self.note.setStyleSheet(f"color: {Gate.WARN}; font-size: 12.5px;")
-        self.note.hide()
-        root.addWidget(self.note)
-
-        buttons = QHBoxLayout()
-        buttons.addStretch(1)
-        buttons.addWidget(make_button("Cancel", "ghost", on_click=self.reject))
-        buttons.addWidget(make_button("Grant", "primary", on_click=self._grant))
-        root.addLayout(buttons)
 
     def _grant(self):
         who = self.person.username()
