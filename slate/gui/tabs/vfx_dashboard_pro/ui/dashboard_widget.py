@@ -1687,6 +1687,9 @@ class DashboardWidget(
         if not getattr(self, "current_project", None):
             self._notify("Pick a project first.", "warning")
             return
+        if self._is_artist_scope():
+            self._notify("Deliveries are kept by production.", "info")
+            return
         from slate.gui.tabs.vfx_dashboard_pro.ui.delivery_batches_dialog import DeliveryBatchesDialog
         DeliveryBatchesDialog(
             project_code=self.current_project.code,

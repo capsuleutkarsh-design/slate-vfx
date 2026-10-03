@@ -143,8 +143,8 @@ class TestDeliveryEdgeCases:
                 "exist; the note would list a blank row"
             )
 
-    def test_two_deliveries_can_share_a_name(self, mock_db):
-        """If names repeat, the second must not be mistaken for the first."""
+    def test_a_second_package_of_the_same_name_is_refused(self, mock_db):
+        """DSH2-080: two packages called the same could only be told apart by id."""
         vs = VersionStore(db=mock_db)
         v1 = vs.add_version("PRJ", "SH010")
         v2 = vs.add_version("PRJ", "SH020")
@@ -153,6 +153,6 @@ class TestDeliveryEdgeCases:
         first = ds.create_delivery("PRJ", "Delivery 07", [v1.id])
         second = ds.create_delivery("PRJ", "Delivery 07", [v2.id])
 
-        assert first is not None and second is not None
-        assert first.id != second.id, "the second delivery reused the first's id"
-        assert [i.shot_name for i in second.items] == ["SH020"]
+        assert first is not None and second is None
+        assert "already" in ds.last_error
+        assert [i.shot_name for i in ds.get_delivery(first.id).items] == ["SH010"]

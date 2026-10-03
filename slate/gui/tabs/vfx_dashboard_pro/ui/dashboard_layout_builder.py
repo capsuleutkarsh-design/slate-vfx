@@ -228,8 +228,10 @@ def build_dashboard_ui(widget):
     widget.reports_menu = QMenu(widget)
     review_action = widget.reports_menu.addAction("Review queue", widget.review_queue_click)
     review_action.setToolTip("Versions submitted and still waiting for a verdict")
-    delivery_action = widget.reports_menu.addAction("Delivery batches", widget.open_delivery_batches_dialog)
+    delivery_action = widget.reports_menu.addAction("Deliveries", widget.open_delivery_batches_dialog)
     delivery_action.setToolTip("Outgoing delivery packages")
+    # Packages list every shot of the show; an artist sees only their own shots.
+    delivery_action.setVisible(not widget._is_artist_scope())
     summary_action = widget.reports_menu.addAction("Production summary", widget.production_summary_click)
     summary_action.setToolTip("Progress, load and overdue shots")
     widget.reports_btn = _menu_button("Reports", widget.reports_menu, "Review queue, deliveries and the production summary")
