@@ -127,3 +127,26 @@ def test_each_action_follows_the_selected_account(um):
     panel.grid.selectRow(rows["admin"])
     assert not panel.deactivate_btn.isEnabled() and not panel.delete_btn.isEnabled()
     assert panel.edit_btn.isEnabled()
+
+
+@pytest.mark.parametrize("height", [591, 639])          # 1280x720 and 1366x768 page frames
+def test_the_page_never_scrolls_and_the_buttons_stay_in_view(um, monkeypatch, height):
+    """Final re-check: two scrollbars, Save / Delete below the fold at 1280x720."""
+    import slate.gui.tabs.admin_users_tab as module
+    from slate.gui.components.tab_coordinator import PageScroll
+    monkeypatch.setattr(module, "UserManager", lambda: um)
+    tab = module.AdminUsersTab(user_role="Developer",
+                               user_data={"user_id": "admin", "roles": ["Developer"]})
+    frame = PageScroll(tab)
+    frame.resize(1176, height)
+    frame.show()
+    for index in range(tab.tabs.count()):
+        tab.tabs.setCurrentIndex(index)
+        if tab.role_editor is not None:
+            tab.role_editor.refresh_roles(select="Artist")
+        QApplication.processEvents()
+        assert frame.verticalScrollBar().maximum() == 0, "only the inner table or list scrolls"
+    editor = tab.role_editor
+    for button in (editor.btn_save, editor.btn_delete, editor.btn_rename):
+        bottom = button.mapTo(frame.viewport(), button.rect().bottomLeft()).y()
+        assert bottom <= frame.viewport().height()
