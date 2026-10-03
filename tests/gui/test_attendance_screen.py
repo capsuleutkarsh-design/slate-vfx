@@ -164,7 +164,6 @@ def test_a_long_name_does_not_take_the_grid(studio):
 # ----------------------------------------------------------------- HR-015
 
 def test_search_and_location_filter(studio):
-    from PySide6.QtTest import QTest
     tab = _tab(studio, "hr.meera", ["HR"])
     reads = []
     real = tab.attendance.get_full_month_data
@@ -172,11 +171,14 @@ def test_search_and_location_filter(studio):
     tab.team_search.setText("a")
     tab.team_search.setText("aarav")
     assert _names(tab) != ["Aarav Sharma"], "the search waits for the typing to stop (HR2-020)"
-    QTest.qWait(400)
+    assert tab._search_timer.isActive() and tab._search_timer.interval() == 300
+    tab._search_timer.stop()
+    tab._search_timer.timeout.emit()              # the pause after the last key
     assert _names(tab) == ["Aarav Sharma"]
     assert reads == [], "the people already read are filtered, not read again"
     tab.team_search.setText("")
-    QTest.qWait(400)
+    tab._search_timer.stop()
+    tab._search_timer.timeout.emit()
     tab.filter_location.setCurrentIndex(tab.filter_location.findData("Chennai"))
     assert sorted(_names(tab)) == sorted(["Diya Nair", LONG])
 
