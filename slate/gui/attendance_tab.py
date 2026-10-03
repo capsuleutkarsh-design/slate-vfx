@@ -748,12 +748,9 @@ class AttendanceTab(QWidget):
 
         ah_layout = QHBoxLayout()
         ah_layout.setContentsMargins(5, 0, 5, 0)
-        title = "Team overview" if self.is_admin() else "My team"
-        lbl_adm = QLabel(title)
-        lbl_adm.setStyleSheet(f"color: {Gate.TEXT}; font-weight: 700; font-size: 14px;")
+        # The tab names the section; only when it was read is said here.
         self.lbl_last_refresh = QLabel("Updated -")
         self.lbl_last_refresh.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: 11px;")
-        ah_layout.addWidget(lbl_adm)
         ah_layout.addWidget(self.lbl_last_refresh)
         ah_layout.addStretch()
 
@@ -864,7 +861,9 @@ class AttendanceTab(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         try:
-            self._arrange_cards(4 if self.width() >= 1400 else 2)
+            # One row from 1100 px: two rows made the hero 150 px tall and
+            # left the tables a few rows at 1280x720.
+            self._arrange_cards(4 if self.width() >= 1100 else 2)
         except Exception:
             pass
 
