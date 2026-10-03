@@ -47,7 +47,8 @@ def hub(tmp_path):
 def dashboard(qtbot, hub):
     from slate.gui.admin_widgets import LiveDashboard
     board = LiveDashboard(hub)
-    board.auto_timer.stop()
+    # No real read of the (empty) folder racing the data a test feeds in.
+    board.refresh_grid = lambda *a: None
     qtbot.addWidget(board)
     board.resize(1600, 900)
     board.show()
@@ -204,7 +205,8 @@ def test_details_dialog_fits_storage_first_and_reloads_quietly(monkeypatch, qtbo
     for name in ("information", "warning", "critical"):
         monkeypatch.setattr(QMessageBox, name, lambda *a, **k: boxes.append(a))
     data = _report("COMP-01", 5, Drives=[{"Root": "C:\\", "Label": "System", "Usage": "97%"},
-                                          {"Root": "D:\\", "Label": "Work", "Usage": "56%"}])
+                                          {"Root": "D:\\", "Label": "Work", "Usage": "56%"}],
+                   WindowsVersion="23H2", SerialNo="SN1", os_user="rahul")
     dlg = admin_widgets.PCDetailsDialog(data, hub=hub, pc_name="COMP-01")
     qtbot.addWidget(dlg)
     screen = dlg.screen().availableGeometry()
@@ -268,22 +270,71 @@ def test_admin_sees_every_page(panel_for):
     assert panel.live_dashboard.styleSheet().strip().startswith("QWidget#LiveDashboard")
 
 
-def test_api_gateway_opens_this_computer_when_it_started_it(panel_for, monkeypatch):
+def test_api_gateway_opens_this_computer_when_it_started_it(panel_for, monkeypatch, qtbot):
     from slate.gui import admin_panel
     panel = panel_for(["Developer"])
     opened = []
     monkeypatch.setattr(admin_panel.QDesktopServices, "openUrl", lambda url: opened.append(url.toString()))
 
-    class Proc:
-        def poll(self):
-            return None
-    monkeypatch.setattr(admin_panel.subprocess, "Popen", lambda *a, **k: Proc())
-    panel._on_api_probe_done(None)          # nothing answered: start it here
-    assert panel.btn_api.text() == "Open API dashboard"
+    from slate.api import in_process
+
+    class FakeServer:
+        error = ""
+
+        def __init__(self, port=8000, host="0.0.0.0"):
+            self.running = False
+
+        def start(self):
+            self.running = True
+            return True
+
+        def wait_until_ready(self, timeout=10):
+            return True
+
+        def is_running(self):
+            return self.running
+
+        def stop(self, timeout=5.0):
+            self.running = False
+    monkeypatch.setattr(in_process, "ApiServer", FakeServer)
+    monkeypatch.setattr(admin_panel, "toast", lambda *a, **k: None)
+    panel._on_api_probe_done(None)          # nothing answered: start it here, in-process
+    qtbot.waitUntil(lambda: panel.btn_api.text() == "Open API dashboard", timeout=5000)
     assert panel.btn_api.styleSheet() == admin_panel.make_button("x", "secondary").styleSheet()
     panel.start_api_server()                 # ours is running: open it, no probe
     assert opened == ["http://127.0.0.1:8000/admin"]
-    panel.api_process = None
+
+
+def test_api_gateway_that_does_not_answer_says_so(panel_for, monkeypatch, qtbot):
+    """SYS2-016: 'starting' is only said once the port answers."""
+    from slate.gui import admin_panel
+    from slate.api import in_process
+    panel = panel_for(["Developer"])
+    errors = []
+    monkeypatch.setattr(admin_panel.QMessageBox, "critical", lambda *a, **k: errors.append(a[2]))
+
+    class DeadServer:
+        error = "port 8000 is in use"
+
+        def __init__(self, *a, **k):
+            pass
+
+        def start(self):
+            return True
+
+        def wait_until_ready(self, timeout=10):
+            return False
+
+        def is_running(self):
+            return False
+
+        def stop(self, timeout=5.0):
+            pass
+    monkeypatch.setattr(in_process, "ApiServer", DeadServer)
+    panel._on_api_probe_done(None)
+    qtbot.waitUntil(lambda: bool(errors), timeout=5000)
+    assert "port 8000 is in use" in errors[0]
+    assert panel.btn_api.text() == "Start API gateway" and panel.api_server is None
 
 
 def test_api_probe_names_the_host_that_answered(monkeypatch):
@@ -325,3 +376,157 @@ def _closed_circuit_breaker():
     from slate.core.infra.postgres_manager import PostgresManager
     PostgresManager._circuit_breaker.reset()
     yield
+
+
+# ------------------------------------------------------------- round 2
+def test_share_hiccup_keeps_the_cards(dashboard):
+    """SYS2-001: a failed read keeps the last good read and says so."""
+    now = time.time()
+    dashboard.on_data_ready([_report("A", 5, now), _report("B", 5, now)], now=now)
+    updated = dashboard.lbl_updated.text()
+    dashboard.on_read_failed("[WinError 53] The network path was not found")
+    assert set(dashboard.pc_widgets) == {"A", "B"}
+    assert dashboard.summary_cards[fs.ONLINE].value_text() == "2"
+    assert dashboard.lbl_updated.text() == updated
+    assert not dashboard.lbl_stale.isHidden() and "last good read" in dashboard.lbl_stale.text()
+    dashboard.on_data_ready([_report("A", 5, now)], now=now)
+    assert dashboard.lbl_stale.isHidden()
+
+
+def test_worker_reports_a_missing_folder_as_a_failure(qtbot, tmp_path):
+    from slate.core.workers.admin_workers import LiveStatusWorker
+
+    class GoneHub:
+        def get_livestatus_dir(self):
+            return tmp_path / "unplugged"
+    worker = LiveStatusWorker(GoneHub())
+    failed, ready = [], []
+    worker.failed.connect(failed.append)
+    worker.data_ready.connect(ready.append)
+    worker.run()
+    assert failed and not ready
+
+
+def test_unreadable_report_stays_as_a_card(qtbot, hub):
+    """SYS2-041: a broken file shows as 'Report unreadable', logged once."""
+    from slate.core.workers.admin_workers import LiveStatusWorker
+    folder = hub.get_livestatus_dir()
+    (folder / "GOOD.json").write_text(json.dumps(_report("GOOD", 1)), encoding="utf-8")
+    (folder / "BROKEN.json").write_text("{half", encoding="utf-8")
+    worker = LiveStatusWorker(hub)
+    got = []
+    worker.data_ready.connect(got.append)
+    worker.run()
+    worker.run()
+    names = {d["pc_name"]: d for d in got[-1]}
+    assert names["BROKEN"].get("unreadable") and "_file_mtime" in names["GOOD"]
+    assert len(worker._warned) == 1
+    from slate.gui.admin_widgets import PCCard
+    card = PCCard("BROKEN", hub)
+    qtbot.addWidget(card)
+    card.update_data(names["BROKEN"])
+    assert card.state == fs.UNKNOWN and "unreadable" in card.lbl_status.text()
+
+
+def test_file_time_beats_a_fast_clock():
+    """SYS2-006: the share's file time decides freshness, not the client's clock."""
+    now = 1_000_000.0
+    ahead = {"last_seen": now + 3600, "_file_mtime": now - 900}
+    assert fs.status_for(fs.last_seen_of(ahead), now) == fs.OFFLINE
+    assert fs.last_seen_of({"last_seen": now}) == now
+
+
+def test_problems_first_and_tiles_toggle(dashboard):
+    """SYS2-005 / SYS2-023."""
+    now = time.time()
+    dashboard.on_data_ready([_report("A-OK", 5, now), _report("Z-DOWN", 900, now),
+                             _report("M-QUIET", 120, now)], now=now)
+    assert [c.pc_name for c in dashboard.visible_cards()] == ["Z-DOWN", "M-QUIET", "A-OK"]
+    dashboard.toggle_status_filter(fs.OFFLINE)
+    assert [c.pc_name for c in dashboard.visible_cards()] == ["Z-DOWN"]
+    assert dashboard.summary_cards[fs.OFFLINE]._active
+    dashboard.toggle_status_filter(fs.OFFLINE)
+    assert len(dashboard.visible_cards()) == 3 and not dashboard.summary_cards[fs.OFFLINE]._active
+    assert "report" in dashboard.summary_cards[fs.UNKNOWN].toolTip().lower()
+
+
+def test_search_finds_ip_and_version(dashboard):
+    """SYS2-039."""
+    now = time.time()
+    dashboard.on_data_ready([_report("A", 5, now, IPAddress="10.0.0.7", client_version="1.9"),
+                             _report("B", 5, now, IPAddress="10.0.0.8")], now=now)
+    dashboard.search.setText("10.0.0.7")
+    assert [c.pc_name for c in dashboard.visible_cards()] == ["A"]
+    dashboard.search.setText("1.9")
+    assert [c.pc_name for c in dashboard.visible_cards()] == ["A"]
+    assert dashboard.pc_widgets["A"].lbl_version.text() == "Slate 1.9"
+
+
+def test_cards_share_the_row_width(dashboard):
+    """SYS2-021: no empty band right of the grid."""
+    now = time.time()
+    dashboard.on_data_ready([_report(f"PC-{i}", 5, now) for i in range(12)], now=now)
+    QApplication.processEvents()
+    card = dashboard.pc_widgets["PC-0"]
+    assert card.width() > card.CARD_WIDTH
+
+
+def test_timer_runs_only_while_shown(dashboard):
+    """SYS2-007."""
+    assert dashboard.auto_timer.isActive()
+    dashboard.hide()
+    assert not dashboard.auto_timer.isActive()
+
+
+def test_restart_is_confirmed_on_the_card(monkeypatch, qtbot, hub):
+    """SYS2-009."""
+    from slate.gui import admin_widgets
+    monkeypatch.setattr(admin_widgets, "confirm", lambda *a, **k: True)
+    toasts = []
+    monkeypatch.setattr(admin_widgets, "toast", lambda parent, msg, *a, **k: toasts.append(msg))
+    card = admin_widgets.PCCard("COMP-01", hub, verify_callback=lambda: True)
+    qtbot.addWidget(card)
+    now = time.time()
+    card.update_data(_report("COMP-01", 5, now))
+    assert card.request_power("restart")
+    assert toasts == ["Restart sent to COMP-01"] and "restart requested" in card.lbl_status.text()
+    card.update_data(_report("COMP-01", -5, time.time()))
+    assert "requested" not in card.lbl_status.text()
+
+
+def test_remove_from_live_ops_keeps_the_file(monkeypatch, qtbot, hub):
+    """SYS2-019."""
+    from slate.gui import admin_widgets
+    monkeypatch.setattr(admin_widgets, "confirm", lambda *a, **k: True)
+    (hub.get_livestatus_dir() / "OLD-PC.json").write_text("{}", encoding="utf-8")
+    removed = []
+    card = admin_widgets.PCCard("OLD-PC", hub, on_removed=removed.append)
+    qtbot.addWidget(card)
+    assert card.remove_from_live_ops()
+    assert not (hub.get_livestatus_dir() / "OLD-PC.json").exists()
+    assert (hub.get_livestatus_dir() / "Retired" / "OLD-PC.json").exists() and removed == ["OLD-PC"]
+
+
+def test_specs_values_and_pdf_failure(monkeypatch, qtbot, hub, tmp_path):
+    """SYS2-008 / SYS2-024 / SYS2-040."""
+    from slate.gui import admin_widgets
+    from PySide6.QtWidgets import QMessageBox
+    assert admin_widgets._value({"IPAddress": "Unknown"}, "IPAddress") == "Not reported"
+    assert admin_widgets._value({"RAM_GB": "32 GB"}, "RAM_GB") == "32 GB"
+    assert admin_widgets.ram_gb(32.0) == 32
+    dlg = admin_widgets.PCDetailsDialog(_report("PC", 5, IPAddress="10.1.1.1"), hub=hub, pc_name="PC")
+    qtbot.addWidget(dlg)
+    labels = [w.text() for w in dlg.findChildren(QLabel)]
+    assert "Manufacturer" not in labels             # never sent by this client
+    ip = next(w for w in dlg.findChildren(QLabel) if w.text() == "10.1.1.1")
+    assert "font-family" in ip.styleSheet()
+    shown = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: shown.append(("warn", a[2])))
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: shown.append(("info", a[2])))
+    folder = tmp_path / "ro.pdf"
+    folder.mkdir()                                   # a folder: cannot be written as a file
+    monkeypatch.setattr(admin_widgets.QFileDialog, "getSaveFileName", lambda *a, **k: (str(folder), ""))
+    assert dlg.export_to_pdf() is False and shown[0][0] == "warn"
+    good = tmp_path / "ok.pdf"
+    monkeypatch.setattr(admin_widgets.QFileDialog, "getSaveFileName", lambda *a, **k: (str(good), ""))
+    assert dlg.export_to_pdf() is True and good.stat().st_size > 0

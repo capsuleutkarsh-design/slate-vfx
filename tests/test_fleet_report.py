@@ -2,6 +2,7 @@
 
 import csv
 import json
+import os
 import time
 from pathlib import Path
 
@@ -12,7 +13,11 @@ from slate.gui import admin_fleet_report_service as svc
 
 def _write(folder: Path, name, **data):
     folder.mkdir(parents=True, exist_ok=True)
-    (folder / f"{name}.json").write_text(json.dumps(dict(pc_name=name, **data)), encoding="utf-8")
+    path = folder / f"{name}.json"
+    path.write_text(json.dumps(dict(pc_name=name, **data)), encoding="utf-8")
+    if "last_seen" in data:
+        # The file's own time is what freshness is judged by (SYS2-006).
+        os.utime(path, (data["last_seen"], data["last_seen"]))
 
 
 @pytest.fixture
@@ -24,7 +29,7 @@ def reports(tmp_path):
     _write(folder, "COMP-02", last_seen=now - 120, user="",
            Drives=[{"Root": None, "Label": None, "Usage": None}])
     _write(folder, "COMP-03", last_seen=now - 900)
-    _write(folder, "COMP-04")                       # never said when
+    _write(folder, "COMP-04")                       # never said when: the file is fresh
     (folder / "broken.json").write_text("{not json", encoding="utf-8")
     return folder, now
 
@@ -50,9 +55,10 @@ def test_summary_adds_up_and_reads_as_a_sentence(reports):
     assert skipped == 1
     assert summary["online"] + summary["not_responding"] + summary["offline"] + summary["unknown"] \
         == len(records) == 4
-    assert [r["status"] for r in records] == ["Online", "Not responding", "Offline", "Unknown"]
+    # Problems first (SYS2-005); a report without last_seen whose file is fresh is online.
+    assert [r["status"] for r in records] == ["Offline", "Not responding", "Online", "Online"]
     text = svc.summary_sentence(records, summary, skipped)
-    assert text.startswith("4 machines: 1 online, 1 not responding, 1 offline, 1 unknown.")
+    assert text.startswith("4 machines: 2 online, 1 not responding, 1 offline, 0 unknown.")
 
 
 def test_null_drive_root_does_not_crash(reports):
@@ -67,7 +73,8 @@ def test_json_keeps_ut_user(reports, tmp_path):
     svc.write_report(out, sorted(folder.glob("*.json")), now=now)
     data = json.loads(out.read_text())
     assert "ut_user" in data["workstations"][0]
-    assert data["summary"]["unknown"] == 1
+    assert data["summary"]["unknown"] == 0
+    assert "last_seen_age" not in data["workstations"][0]
 
 
 def test_xlsx_has_no_divider_rows(reports, tmp_path):
@@ -79,7 +86,13 @@ def test_xlsx_has_no_divider_rows(reports, tmp_path):
     ws = openpyxl.load_workbook(out)["Fleet Data"]
     header = [c.value for c in ws[1]]
     assert header[:2] == ["Machine", "Status"] and "Slate user" in header
-    assert ws.cell(row=2, column=1).value == "COMP-01"
+    assert ws.cell(row=2, column=1).value == "COMP-03"
+    # The filter covers the data, not the header only; usage is a number (SYS2-010).
+    assert ws.auto_filter.ref == ws.dimensions
+    used = header.index("C: used %") + 1
+    cell = next(c for c in ws.iter_rows(min_row=2, min_col=used, max_col=used) if c[0].value != None)[0]
+    assert isinstance(cell.value, (int, float)) and cell.number_format == '0.0"%"'
+    assert "Age" not in header and "Age (s)" in header
     for row in ws.iter_rows(min_row=2, values_only=True):
         assert not str(row[0] or "").startswith("  ")
 
@@ -144,3 +157,25 @@ def test_a_drive_without_a_letter_does_not_overwrite_x():
     assert record["drive_x_label"] == "Archive"
     assert record["drive_noletter1_label"] == "Mystery" and record["drive_noletter2_label"] == "Other"
     assert svc.header_for("drive_noletter1_usage_pct") == "Drive without a letter 1: used %"
+
+
+def test_unknown_words_and_ram_are_cleaned(tmp_path):
+    """SYS2-040: 'Unknown' is not reported, RAM '32 GB' is the number 32."""
+    record = svc.record_for({"pc_name": "A", "IPAddress": "Unknown", "RAM_GB": "32 GB",
+                             "Manufacturer": "N/A", "CPU": "i9"}, "A", time.time())
+    assert record["ip_address"] == "" and record["manufacturer"] == ""
+    assert record["ram_gb"] == 32 and record["cpu"] == "i9"
+
+
+def test_open_file_says_close_it_in_excel(reports, monkeypatch, tmp_path):
+    """SYS2-025: a PermissionError is said in words."""
+    folder, _now = reports
+
+    def refuse(*_a, **_k):
+        raise PermissionError(13, "Permission denied")
+    monkeypatch.setattr(svc, "write_report", refuse)
+    worker = svc.FleetReportWorker(tmp_path / "x.xlsx", [])
+    got = []
+    worker.done.connect(got.append)
+    worker.run()
+    assert not got[0]["ok"] and "close it" in got[0]["message"]
