@@ -715,7 +715,8 @@ class DetailsPanel(QFrame):
 
     def show_request(self, row, balance, charge, away):
         esc = self._esc
-        self.title.setText("%s - %s" % (people.display_name(row.get("user_id")), kind_text(row)))
+        # The same dash as the Joining & Leaving heading.
+        self.title.setText("%s – %s" % (people.display_name(row.get("user_id")), kind_text(row)))
         lines = ["<b>%s to %s</b>" % (esc(format_date(row.get("start_date"), weekday=True)),
                                       esc(format_date(row.get("end_date"), weekday=True)))]
         if charge:
