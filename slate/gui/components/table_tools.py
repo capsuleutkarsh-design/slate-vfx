@@ -491,6 +491,14 @@ class TableFilter(QObject):
         self.apply()
 
 
+def row_count(visible: int, total: int, noun: str = "") -> str:
+    """'41 of 42 machines', '6 licences', '' for none - one wording for every screen."""
+    if not total:
+        return ""
+    words = (" %s%s" % (noun, "" if total == 1 else "s")) if noun else ""
+    return ("%d of %d%s" % (visible, total, words)) if visible != total else ("%d%s" % (total, words))
+
+
 class TableToolbar(QWidget):
     """
     Search, filters and Refresh above a table, with "12 of 40" beside them.
@@ -501,8 +509,9 @@ class TableToolbar(QWidget):
 
     def __init__(self, table: QTableWidget, placeholder: str = "Search…",
                  columns: Iterable[int] = None, on_refresh: Callable = None,
-                 parent=None):
+                 parent=None, noun: str = ""):
         super().__init__(parent)
+        self.noun = noun
         from slate.core.infra.gate import Gate
         from slate.gui.core.controls import make_button
         self.table = table
@@ -553,9 +562,4 @@ class TableToolbar(QWidget):
         return combo
 
     def _show_count(self, visible: int, total: int):
-        if total and visible != total:
-            self.count_label.setText(f"{visible} of {total}")
-        elif total:
-            self.count_label.setText(f"{total}")
-        else:
-            self.count_label.setText("")
+        self.count_label.setText(row_count(visible, total, self.noun))

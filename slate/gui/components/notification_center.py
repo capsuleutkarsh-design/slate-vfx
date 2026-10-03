@@ -365,6 +365,11 @@ class NotificationCenter(QObject):
         username, aliases = self.username, self.aliases
 
         def work():
+            # Licence renewal reminders ride on the bell's poll: once per
+            # licence per threshold (kept in the database), at most hourly per
+            # process, never raising. Two screens' refreshes used to send them.
+            from slate.core.infra.licence_repository import LicenceRepository
+            LicenceRepository().send_renewal_reminders()
             return self.manager().unread_count(username, *aliases)
 
         try:

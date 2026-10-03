@@ -18,6 +18,10 @@ What it adds, and why:
     it_tickets.raised_by
                         who logged a ticket on somebody else's behalf (a phone
                         call or a walk-up at the desk)
+    it_tickets.sla_from when the promises are measured from, once IT raised
+                        the priority (empty: from when it was raised)
+    hardware_events     status changes and renames of a machine, for its
+                        History beside the loans
     software_licenses.annual_cost / currency / vendor / contract_ref / notes
                         what a renewal is decided on besides the seat count
     licence_readings.source / recorded_by
@@ -55,6 +59,7 @@ COLUMNS = [
     ("it_tickets", "resolution_met", "BOOLEAN", "INTEGER"),
     ("it_tickets", "resolution_hours", "NUMERIC(10,2)", "REAL"),
     ("it_tickets", "raised_by", "VARCHAR(80)", "TEXT"),
+    ("it_tickets", "sla_from", "TIMESTAMP", "TIMESTAMP"),
     # Money as an exact decimal on PostgreSQL; as text on SQLite, whose
     # NUMERIC would turn it into a float. Read through money.to_decimal.
     ("software_licenses", "annual_cost", "NUMERIC(15,2)", "TEXT"),
@@ -86,6 +91,14 @@ TABLES_PG = {
             sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE (licence_id, threshold, expiry)
         )""",
+    "hardware_events": """
+        CREATE TABLE IF NOT EXISTS hardware_events (
+            id SERIAL PRIMARY KEY,
+            machine_name VARCHAR(255) NOT NULL,
+            happened_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            done_by VARCHAR(80),
+            what TEXT
+        )""",
 }
 
 TABLES_SQLITE = {
@@ -98,11 +111,20 @@ TABLES_SQLITE = {
             sent_at TEXT DEFAULT (datetime('now')),
             UNIQUE (licence_id, threshold, expiry)
         )""",
+    "hardware_events": """
+        CREATE TABLE IF NOT EXISTS hardware_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            machine_name TEXT NOT NULL,
+            happened_at TIMESTAMP,
+            done_by TEXT,
+            what TEXT
+        )""",
 }
 
 INDEXES = [
     ("idx_ticket_comments_ticket", "it_ticket_comments (ticket_id)"),
     ("idx_deployments_machine", "it_deployments (target_machine)"),
+    ("idx_hardware_events_machine", "hardware_events (machine_name)"),
 ]
 
 
@@ -259,3 +281,42 @@ def adopt_legacy_licences(db) -> bool:
             copied += 1
     logger.info("Legacy licences copied into software_licenses: %d.", copied)
     return "copied %d" % copied
+
+
+def legacy_owners_to_loans(db) -> bool:
+    """
+    One rule for who holds a machine: the loan ledger. A person typed into
+    hardware_inventory.assigned_to before loans were tracked, on a machine in
+    service with no open loan, becomes an open loan - so Hardware, its figures
+    and the leaving checklist all see them. A name Slate does not know stays
+    as it was (shown as a note); the machine is then nobody's, Available.
+    """
+    if not (_table_exists(db, "hardware_inventory") and _table_exists(db, "asset_assignments")):
+        return True
+    rows = db.execute_query(
+        "SELECT h.machine_name, h.status, u.username FROM hardware_inventory h "
+        "LEFT JOIN ut_users u ON LOWER(u.username) = LOWER(TRIM(h.assigned_to)) "
+        "WHERE TRIM(COALESCE(h.assigned_to, '')) <> '' AND NOT EXISTS ("
+        "  SELECT 1 FROM asset_assignments a WHERE LOWER(a.machine_name) = LOWER(h.machine_name) "
+        "  AND a.returned_on IS NULL)", fetch="all")
+    if rows is None:
+        return False
+    from datetime import date
+    from slate.core.domain import hardware as hw
+    moved = 0
+    for row in rows:
+        row = dict(row)
+        status = hw.normalise_status(row.get("status"))
+        if status not in (hw.ACTIVE, hw.AVAILABLE, ""):
+            continue                     # in repair or at the end of its life
+        if row.get("username"):
+            db.execute_update(
+                "INSERT INTO asset_assignments (machine_name, user_id, issued_on, issued_by, note) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (row["machine_name"], row["username"], date.today(), "upgrade",
+                 "Recorded as the owner before loans were tracked."))
+            moved += 1
+        db.execute_update("UPDATE hardware_inventory SET status = %s WHERE machine_name = %s",
+                          (hw.status_for_service(bool(row.get("username"))), row["machine_name"]))
+    logger.info("Legacy machine owners moved onto the loan ledger: %d.", moved)
+    return "moved %d" % moved

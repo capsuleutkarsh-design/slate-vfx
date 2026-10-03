@@ -42,6 +42,7 @@ from slate.gui.core.data_display import export_table_dialog
 from slate.gui.components import feedback
 from slate.gui.components.state_notice import clear_state, show_load_error
 from slate.core.domain import people
+from slate.core.domain.dates import MISSING
 
 logger = logging.getLogger(__name__)
 
@@ -114,13 +115,17 @@ class SetStatusDialog(_Form):
         self._validate()
 
     def _validate(self, *_):
-        needs_note = self.status.currentData() in sd.CLOSED_STATUSES
+        status = self.status.currentData()
+        waiting = status == sd.WAITING
+        needs_note = status in sd.CLOSED_STATUSES or waiting
         self.note.setPlaceholderText(
-            "What was done - the person who raised it reads this." if needs_note
+            "What do you need from them? They read this as a message." if waiting
+            else "What was done - the person who raised it reads this." if needs_note
             else "Optional - shown in the conversation.")
         missing = needs_note and not self.note.toPlainText().strip()
         self.ok_btn.setEnabled(not missing)
-        self.ok_btn.setToolTip("Say what was done first." if missing else "")
+        self.ok_btn.setToolTip(("Say what you need from them first." if waiting
+                                else "Say what was done first.") if missing else "")
 
     def values(self):
         return self.status.currentData(), self.note.toPlainText().strip()
@@ -129,8 +134,9 @@ class SetStatusDialog(_Form):
 class PriorityDialog(_Form):
     """IT re-prioritise, with a reason that is kept on the ticket."""
 
-    def __init__(self, ticket, parent=None):
+    def __init__(self, ticket, parent=None, calendar: sd.BusinessCalendar = None):
         super().__init__("Change priority", "Change", parent)
+        self._calendar = calendar
         self.priority = QComboBox()
         for code in sd.PRIORITIES:
             self.priority.addItem(PRIORITY_LABEL[code], code)
@@ -138,6 +144,8 @@ class PriorityDialog(_Form):
         self.form.addRow("Priority", self.priority)
         self.reason = QLineEdit()
         self.reason.setPlaceholderText("Why - e.g. blocks a delivery tomorrow")
+        from slate.core.infra.ticket_repository import REASON_MAX
+        self.reason.setMaxLength(REASON_MAX)
         self.form.addRow("Reason", self.reason)
         self.reason.textChanged.connect(self._validate)
         self.priority.currentIndexChanged.connect(self._validate)
@@ -145,8 +153,20 @@ class PriorityDialog(_Form):
         self._validate()
 
     def _validate(self, *_):
-        ok = bool(self.reason.text().strip()) and self.priority.currentData() != self._original
-        self.ok_btn.setEnabled(ok)
+        new = self.priority.currentData()
+        missing = ("Choose a different priority first." if new == self._original
+                   else "Give a reason first." if not self.reason.text().strip() else "")
+        self.ok_btn.setEnabled(not missing)
+        self.ok_btn.setToolTip(missing)
+        # What the change does to the clock, before it is made.
+        if new != self._original and sd.priority_rank(new) < sd.priority_rank(self._original):
+            self.hint.setText("The new promise starts now: %s"
+                              % sd.describe_promise(new, self._calendar).split(" - ", 1)[-1])
+        elif new != self._original:
+            self.hint.setText("Still measured from when it was raised: %s"
+                              % sd.describe_promise(new, self._calendar).split(" - ", 1)[-1])
+        else:
+            self.hint.setText("")
 
     def values(self):
         return self.priority.currentData(), self.reason.text().strip()
@@ -178,7 +198,7 @@ class AssignDialog(_Form):
 class SlaReportDialog(QDialog):
     """Per month and priority: tickets resolved and how many kept their promise."""
 
-    def __init__(self, tickets, parent=None, today: date = None):
+    def __init__(self, tickets, parent=None, today: date = None, calendar: sd.BusinessCalendar = None):
         super().__init__(parent)
         self.setWindowTitle("SLA report")
         self.setMinimumSize(560, 320)
@@ -187,14 +207,17 @@ class SlaReportDialog(QDialog):
         root = QVBoxLayout(self)
         root.setContentsMargins(Gate.SPACE_4, Gate.SPACE_4, Gate.SPACE_4, Gate.SPACE_4)
         root.setSpacing(Gate.SPACE_3)
+        self.calendar = calendar
         self.month = QComboBox()
         today = today or date.today()
         year, month = today.year, today.month
-        for _ in range(12):
-            self.month.addItem(date(year, month, 1).strftime("%B %Y"), (year, month))
+        self.month.addItem("Last 12 months", (year, month, 12))
+        for _ in range(24):
+            self.month.addItem(date(year, month, 1).strftime("%B %Y"), (year, month, 1))
             month -= 1
             if month == 0:
                 year, month = year - 1, 12
+        self.month.setCurrentIndex(1)
         self.month.currentIndexChanged.connect(self._fill)
         root.addWidget(self.month)
         self.table = QTableWidget(0, 5)
@@ -204,12 +227,13 @@ class SlaReportDialog(QDialog):
                                  "Response kept": "numeric", "Fix kept": "numeric",
                                  "Median time to fix": "contents"})
         root.addWidget(self.table, 1)
-        self.note = QLabel("Times are working hours (a P1 counts every hour). Only tickets "
-                           "resolved since this report existed carry a result.")
+        self.note = QLabel("Times are working hours; a P1 counts every hour.")
         self.note.setWordWrap(True)
         self.note.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: {Gate.SIZE_SM}px;")
         root.addWidget(self.note)
         row = QHBoxLayout()
+        row.addWidget(make_button("Export…", "ghost",
+                                  on_click=lambda: export_table_dialog(self, self.table, "sla_report")))
         row.addStretch(1)
         row.addWidget(make_button("Close", "ghost", on_click=self.accept))
         root.addLayout(row)
@@ -217,17 +241,50 @@ class SlaReportDialog(QDialog):
 
     def _fill(self, *_):
         from slate.gui.components.table_tools import make_item
-        year, month = self.month.currentData()
-        lines = sd.sla_report(self.tickets, year, month)
+        year, month, months = self.month.currentData()
+        lines = sd.sla_report(self.tickets, year, month, months, self.calendar)
         self.table.setRowCount(len(lines))
         for r, line in enumerate(lines):
-            pct = lambda v: "-" if v is None else "%d%%" % v
+            pct = lambda v: MISSING if v is None else "%d%%" % v
+            median = line["median_hours"]
             cells = [PRIORITY_LABEL[line["priority"]], str(line["count"]),
                      pct(line["response_pct"]), pct(line["resolution_pct"]),
-                     "-" if line["median_hours"] is None else "%g h" % line["median_hours"]]
+                     MISSING if median is None else sd.format_duration(
+                         median, sd.around_the_clock(line["priority"]), self.calendar)]
             for c, text in enumerate(cells):
                 self.table.setItem(r, c, make_item(text))
         self.lines = lines
+
+
+# ------------------------------------------------------------------- the pages
+
+def desk_pages(queue, mine):
+    """
+    IT's two pages - the queue, and their own tickets - switched from the page
+    header beside the title, so the title stays where Hardware, Licences and
+    Deployment have it. A framed tab widget pushed it 35 px down and drew a box
+    round the page. Both views keep their header row as .header.
+    """
+    from PySide6.QtWidgets import QTabBar, QTabWidget
+    pages = QTabWidget()
+    pages.setDocumentMode(True)
+    pages.tabBar().hide()
+    names = ("Queue", "My tickets")
+    views = (queue, mine)
+    for view, name in zip(views, names):
+        pages.addTab(view, name)
+    for index, view in enumerate(views):
+        bar = QTabBar()
+        bar.setDocumentMode(True)
+        bar.setDrawBase(False)
+        bar.setExpanding(False)
+        for name in names:
+            bar.addTab(name)
+        bar.setCurrentIndex(index)
+        bar.currentChanged.connect(pages.setCurrentIndex)
+        pages.currentChanged.connect(bar.setCurrentIndex)
+        view.header.insertWidget(1, bar, 0, Qt.AlignmentFlag.AlignVCenter)
+    return pages
 
 
 # ------------------------------------------------------------------- the queue
@@ -253,7 +310,7 @@ class ServiceDeskView(QWidget):
         root.setContentsMargins(Gate.SPACE_5, Gate.SPACE_4, Gate.SPACE_5, Gate.SPACE_4)
         root.setSpacing(Gate.SPACE_3)
 
-        header = QHBoxLayout()
+        header = self.header = QHBoxLayout()
         header.addWidget(page_title(
             "IT Support", "Service desk - sorted by what is closest to breaching, not by what is newest"), 1)
         header.addStretch(1)
@@ -288,7 +345,7 @@ class ServiceDeskView(QWidget):
         controls.setSpacing(Gate.SPACE_2)
 
         self.filter_status = QComboBox()
-        self.filter_status.addItem("Open tickets", "open")
+        self.filter_status.addItem("Unresolved", "open")
         self.filter_status.addItem("Everything", "all")
         for s in STATUSES:
             self.filter_status.addItem(sd.display_status(s, "it"), s)
@@ -323,6 +380,14 @@ class ServiceDeskView(QWidget):
         self._search_timer.timeout.connect(self._apply_filters)
         self.search.textChanged.connect(lambda _t: self._search_timer.start())
         controls.addWidget(self.search, 1)
+        # Which figure the queue is filtered by - the combos cannot show it.
+        self.card_chip = make_button("", "secondary", on_click=self.clear_card,
+                                     tooltip="Showing what this figure counts - click to show everything again")
+        self.card_chip.hide()
+        controls.addWidget(self.card_chip)
+        self.count_label = QLabel("")
+        self.count_label.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: {Gate.SIZE_SM}px;")
+        controls.addWidget(self.count_label)
 
         # Headers sort (by value); this puts the queue back in SLA order.
         self.btn_worst_first = make_button(
@@ -337,7 +402,8 @@ class ServiceDeskView(QWidget):
                                     tooltip="Read the ticket and reply (Enter, or double-click)")
         self.btn_take = make_button("Assign to me", "secondary", on_click=self.take)
         self.btn_status = make_button("Set status…", "secondary", on_click=self.change_status)
-        self.btn_more = make_button("More", "ghost")
+        self.btn_more = make_button("More ▾", "ghost",
+                                    tooltip="Assign to…, Unassign, Change priority…, Responded by phone")
         more = QMenu(self.btn_more)
         self.act_assign = more.addAction("Assign to…", self.assign_to)
         self.act_unassign = more.addAction("Unassign", self.unassign)
@@ -359,13 +425,15 @@ class ServiceDeskView(QWidget):
         # -------------------------------------------------------------- queue
         self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels(
-            ["#", "Summary", "Raised by", "Category", "Priority", "Status", "Owner", "SLA"])
+            ["#", "Summary", "Requester", "Category", "Priority", "Status", "Owner", "SLA"])
         # The shared table style: readable text with cell padding (it was ~10 px
-        # and touched the grid lines), one selection colour.
+        # and touched the grid lines), one selection colour. People's names
+        # start at a fixed width and end in "..." (full name on the tooltip):
+        # one long name sized to its contents squeezed Summary to a few words.
         style_table(self.table, {
-            "#": "numeric", "Summary": "stretch", "Raised by": "contents",
+            "#": "numeric", "Summary": "stretch", "Requester": ("interactive", 150),
             "Category": "contents", "Priority": "contents", "Status": "contents",
-            "Owner": "contents", "SLA": "contents",
+            "Owner": ("interactive", 140), "SLA": "contents",
         })
         # One line per ticket: a long summary is cut with "..." and read in
         # full on the tooltip (it wrapped into two cramped lines).
@@ -411,14 +479,23 @@ class ServiceDeskView(QWidget):
             r["_sla"] = sla_state(r, now, self._calendar)
         self._paint_stats(self._all)
         self._apply_filters()
-        # Licence renewal reminders reach IT through the bell; the queue is
-        # the screen IT open every day, so the (hourly, once-per-threshold)
-        # check runs from here as well as from Licences.
-        from slate.core.infra.licence_repository import LicenceRepository
-        LicenceRepository(self.db).send_renewal_reminders()
 
     def _filters_changed(self, *_):
-        self._card_filter = ""
+        self._show_card(None)
+        self._apply_filters()
+
+    def _show_card(self, card, label=""):
+        """The figure the queue is filtered by: highlighted, and named in a chip."""
+        self._active_card = card
+        for each in self.stats.cards:
+            each.set_selected(each is card)
+        if card is None:
+            self._card_filter = ""
+        self.card_chip.setText("%s  ×" % label)
+        self.card_chip.setVisible(bool(self._card_filter))
+
+    def clear_card(self):
+        self._show_card(None)
         self._apply_filters()
 
     def _apply_card(self, which):
@@ -438,6 +515,8 @@ class ServiceDeskView(QWidget):
             self.filter_mine.blockSignals(False)
             which = ""
         self._card_filter = which
+        cards = {"breached": self.card_breached, "at risk": self.card_risk}
+        self._show_card(cards.get(which), which.capitalize())
         self._apply_filters()
 
     def _matches_search(self, row, needle) -> bool:
@@ -451,10 +530,15 @@ class ServiceDeskView(QWidget):
             return True
         # People's names as well as their logins: the table shows names,
         # so that is what somebody types.
+        # And the words the Status, Priority and SLA columns show ('Paused',
+        # 'overdue', 'Waiting'): what you see is what you can search for.
         haystack = " ".join(
             [str(row.get(k) or "") for k in ("description", "submitted_by", "category", "assigned_to")]
             + [people.display_name(row.get("submitted_by")),
-               people.display_name(row.get("assigned_to"))]).lower()
+               people.display_name(row.get("assigned_to")),
+               sd.display_status(row.get("status"), "it"),
+               PRIORITY_LABEL[sd.normalise_priority(row.get("priority"))],
+               self._sla_cell(row)[0]]).lower()
         return needle in haystack
 
     def _apply_filters(self):
@@ -504,12 +588,14 @@ class ServiceDeskView(QWidget):
                     or bool(self._card_filter) or wanted not in ("open", "all", None))
         self.empty.set_filtered(narrowed and bool(self._all), on_clear=self.clear_filters,
                                 noun="tickets")
+        from slate.gui.components.table_tools import row_count
+        self.count_label.setText(row_count(len(rows), len(self._all), "ticket"))
         self.empty.refresh()
         self._sync_buttons()
 
     def clear_filters(self):
         """Back to the default view: open tickets, anyone's, no search."""
-        self._card_filter = ""
+        self._show_card(None)
         combos = (self.filter_status, self.filter_mine, self.filter_priority, self.filter_category)
         for combo in combos:
             combo.blockSignals(True)
@@ -569,7 +655,7 @@ class ServiceDeskView(QWidget):
         # Closed: whether the promise was kept, recorded when it was resolved.
         met = row.get("resolution_met")
         if met is None:
-            return "-", "", "IDLE"
+            return MISSING, "", "IDLE"
         kept = sd._truthy(met)
         hours = row.get("resolution_hours")
         tip = "Fixed in %s of working time" % sd.format_duration(
@@ -593,7 +679,7 @@ class ServiceDeskView(QWidget):
                 row.get("category") or "",
                 PRIORITY_LABEL[priority],
                 sd.display_status(status, "it"),
-                people.display_name(row.get("assigned_to"), empty="-"),
+                people.display_name(row.get("assigned_to"), empty=MISSING),
                 sla_text,
             ]
             hours = row["_sla"]["hours_left"]
@@ -608,12 +694,20 @@ class ServiceDeskView(QWidget):
                 if c == 1:
                     item.setToolTip(summary if not sd.body_of(row.get("description"))
                                     else "%s\n\n%s" % (summary, sd.body_of(row.get("description"))[:400]))
+                elif c == 2:
+                    # Who it is for; who logged it, when IT logged it for them.
+                    tip = people.label(row.get("submitted_by"))
+                    if row.get("raised_by"):
+                        tip += "\nLogged by %s" % people.display_name(row.get("raised_by"))
+                    item.setToolTip(tip)
                 elif c == 4:
                     item.setForeground(QColor(_tone(priority_tone(priority))))
                 elif c == 5:
                     item.setForeground(QColor(_tone(status_tone(status))))
-                elif c == 6 and not (row.get("assigned_to") or "").strip():
+                elif c == 6 and not (row.get("assigned_to") or "").strip() and is_open(status):
                     item.setForeground(QColor(Gate.WARN))
+                elif c == 6:
+                    item.setToolTip(text)
                 elif c == 7:
                     item.setForeground(QColor(_tone(sla_colour)))
                     if sla_tip:
@@ -630,12 +724,21 @@ class ServiceDeskView(QWidget):
 
     def _sync_buttons(self, *_):
         picked = self._selected()
-        for b in (self.btn_open, self.btn_take, self.btn_status, self.btn_more):
+        for b in (self.btn_open, self.btn_status, self.btn_more):
             b.setEnabled(bool(picked))
-        one = len(picked) == 1
-        self.act_priority.setEnabled(one)
-        self.act_responded.setEnabled(any(not r.get("first_response_at") for r in picked))
-        self.act_unassign.setEnabled(any((r.get("assigned_to") or "").strip() for r in picked))
+        # Owning and responding are for tickets still open: assigning a closed
+        # one told its requester it "was picked up".
+        live = self._open_only(picked)
+        self.btn_take.setEnabled(bool(live))
+        self.btn_take.setToolTip("" if live or not picked else "Resolved and closed tickets cannot be assigned")
+        self.act_assign.setEnabled(bool(live))
+        self.act_priority.setEnabled(len(picked) == 1 and bool(live))
+        self.act_responded.setEnabled(any(not r.get("first_response_at") for r in live))
+        self.act_unassign.setEnabled(any((r.get("assigned_to") or "").strip() for r in live))
+
+    @staticmethod
+    def _open_only(rows):
+        return [r for r in rows if is_open(r.get("status"))]
 
     def _each(self, title, picked, action):
         """Run an action on each picked ticket; say what failed, never claim success for it."""
@@ -662,7 +765,7 @@ class ServiceDeskView(QWidget):
         # Picking a ticket up IS responding to it (the repository stops the
         # response clock). Taking one that a colleague owns asks first - it
         # used to move silently.
-        picked = self._selected()
+        picked = self._open_only(self._selected())
         owned = [r for r in picked if (r.get("assigned_to") or "").strip()
                  and r.get("assigned_to").strip().lower() != self.username.lower()]
         if owned:
@@ -683,7 +786,7 @@ class ServiceDeskView(QWidget):
                            "success")
 
     def assign_to(self):
-        picked = self._selected()
+        picked = self._open_only(self._selected())
         if not picked:
             return
         dialog = AssignDialog(self.repo.it_staff(), self)
@@ -694,17 +797,18 @@ class ServiceDeskView(QWidget):
             feedback.toast(self, "Assigned to %s." % people.display_name(who), "success")
 
     def unassign(self):
-        picked = [r for r in self._selected() if (r.get("assigned_to") or "").strip()]
+        picked = [r for r in self._open_only(self._selected()) if (r.get("assigned_to") or "").strip()]
         if picked and self._each("Unassign", picked, lambda r: self.repo.assign(r, None, self.username)):
             feedback.toast(self, "Unassigned.", "success")
 
     def mark_responded(self):
         # For a phone call or a visit: replying in writing and picking a
         # ticket up already stop the response clock.
-        picked = [r for r in self._selected() if not r.get("first_response_at")]
-        if picked:
-            self._each("Responded by phone", picked,
-                       lambda r: self.repo.mark_responded(r, self.username))
+        picked = [r for r in self._open_only(self._selected()) if not r.get("first_response_at")]
+        if picked and self._each("Responded by phone", picked,
+                                 lambda r: self.repo.mark_responded(r, self.username)):
+            feedback.toast(self, "Response recorded for %s." % ", ".join(
+                "#%s" % r.get("id") for r in picked), "success")
 
     def change_status(self):
         picked = self._selected()
@@ -724,12 +828,14 @@ class ServiceDeskView(QWidget):
         picked = self._selected()
         if len(picked) != 1:
             return
-        dialog = PriorityDialog(picked[0], self)
+        dialog = PriorityDialog(picked[0], self, calendar=self._calendar)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         priority, reason = dialog.values()
-        self._each("Change priority", picked,
-                   lambda r: self.repo.change_priority(r, priority, reason, self.username))
+        if self._each("Change priority", picked,
+                      lambda r: self.repo.change_priority(r, priority, reason, self.username)):
+            feedback.toast(self, "Ticket #%s is now %s." % (picked[0].get("id"), PRIORITY_LABEL[priority]),
+                           "success")
 
     def new_ticket(self):
         """A ticket for somebody else: a phone call, or a walk-up at the desk."""
@@ -760,7 +866,7 @@ class ServiceDeskView(QWidget):
         self.changed.emit()
 
     def show_report(self):
-        SlaReportDialog(self._all, self).exec()
+        SlaReportDialog(self._all, self, calendar=self._calendar).exec()
 
     def open_selected(self, *_):
         picked = self._selected()
