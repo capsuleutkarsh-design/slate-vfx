@@ -401,7 +401,7 @@ def rewrite_html(manifest_path) -> Optional[Path]:
     try:
         manifest_path = Path(manifest_path)
         data = json.loads(manifest_path.read_text(encoding="utf-8"))
-        html_path = manifest_path.with_name(manifest_path.name.replace("manifest_", "delivery_", 1))
+        html_path = manifest_path.with_name(manifest_path.name.replace("manifest_", "delivery_", 1)).with_suffix(".html")
         html_path.write_text(_render_html(DeliveryReport.from_manifest(data)), encoding="utf-8")
         return html_path
     except Exception as exc:

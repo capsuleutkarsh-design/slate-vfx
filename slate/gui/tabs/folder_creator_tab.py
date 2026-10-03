@@ -1469,7 +1469,6 @@ class FolderCreatorTab(QWidget):
             return False
 
     def _take_lock(self, project_path: Path) -> bool:
-        import socket
         from slate.core.domain.ingest_lock import IngestLock, IngestLocked, clear_lock
         from slate.gui.components.feedback import confirm, warn
         try:
@@ -1478,14 +1477,15 @@ class FolderCreatorTab(QWidget):
             return True
         except IngestLocked as exc:
             info = exc.info
-            mine = bool((info.holder and info.holder == self._holder())
-                        or (info.machine and info.machine.lower() == socket.gethostname().lower()))
+            # The same Slate user: on a shared workstation another person's
+            # lock on this machine is still theirs.
+            mine = bool(info.holder and info.holder == self._holder())
             # The person (or machine) holding it, an admin, or anyone once
             # nobody has touched it for hours - always asked, never silent.
             if mine or info.stale or self._is_admin():
                 if mine:
-                    why = ("The lock is yours (this user or this computer) - left behind if Slate crashed "
-                           "or was closed during a run.")
+                    why = ("The lock is yours - left behind if Slate crashed or was closed during a run "
+                           f"(on {info.machine or 'a machine'}).")
                 elif info.stale:
                     why = (f"Nobody has touched it for hours - the run on {info.machine or 'that machine'} "
                            "has probably stopped.")

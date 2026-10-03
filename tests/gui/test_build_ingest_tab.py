@@ -223,7 +223,8 @@ def test_a_bad_project_code_is_refused_not_changed(tab, tmp_path):
     _fill(tab, tmp_path, code="PRJ:01*?")
     assert tab.project_name_input.text() == "PRJ:01*?"
     assert not tab.create_btn.isEnabled()
-    assert tab.project_error.isVisibleTo(tab) and "cannot contain" in tab.project_error.text()
+    assert tab.project_error.isVisibleTo(tab) and "can only use" in tab.project_error.text()
+    assert tab.progress_label.text() == fct.NOT_READY          # ING2-038: never 'Ready' beside a problem
     tab.start_creation_process()
     assert tab.folder_creation_thread is None and tab._phase == "idle"
 
@@ -521,4 +522,6 @@ def test_preflight_counts_unchanged_shots_by_destination(qtbot, tmp_path):
         shot.unchanged_from, shot.skip = "v001", True
     dialog = ipd.IngestPreflightDialog(survey, project_code="P", project_path=tmp_path / "P")
     qtbot.addWidget(dialog)
-    assert any(n.startswith("1 shot(s) are already in the project") for n in dialog.notes())
+    # ING2-033: nothing to copy - the headline says so and the one button closes.
+    assert "all 1 shot(s) are already in P" in dialog.headline.text()
+    assert dialog.go_btn.text() == "Close"
