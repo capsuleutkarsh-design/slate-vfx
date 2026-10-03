@@ -108,11 +108,18 @@ class RecoverySession:
                              say=self.say) as window:
                 conn = window.connect()
                 if snapshot:
-                    from slate.core.security.dbapi import ConnectionDB
-                    folder = snapshots.before_security_change(
-                        "recovery-" + name, self.layout, db=ConnectionDB(window.connect()),
-                        dump_login=("postgres", None))
-                    lines.append("Kept a snapshot first: %s" % folder.name)
+                    # Worth having, never worth being stuck for: a snapshot
+                    # that cannot be written does not stop the repair.
+                    try:
+                        from slate.core.security.dbapi import ConnectionDB
+                        folder = snapshots.before_security_change(
+                            "recovery-" + name, self.layout,
+                            db=ConnectionDB(window.connect()), dump_login=("postgres", None))
+                        lines.append("Kept a snapshot first: %s" % folder.name)
+                    except Exception as exc:
+                        logger.warning("Snapshot before %s failed: %s", name, exc)
+                        lines.append("A snapshot could not be kept first (%s); carrying on."
+                                     % (str(exc).splitlines()[0] if str(exc) else exc))
                 lines += list(work(conn) or [])
         except Exception as exc:
             self._log(name, False, str(exc).splitlines()[0][:200] if str(exc) else
