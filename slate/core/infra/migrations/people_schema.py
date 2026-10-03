@@ -24,6 +24,10 @@ data repairs are separate functions the registry runs once (registry.py).
                         a cancelled comp-off day goes back where it came from.
     onboarding_workflows.completed_by / completed_at
                         who ticked "Final settlement processed", and when.
+    onboarding_workflows.cycle
+                        which joining (or leaving) list a line belongs to: a
+                        freelancer back for the next show gets a new list, and
+                        the finished one stays as it was. NULL is the first.
 """
 
 from __future__ import annotations
@@ -47,6 +51,7 @@ COLUMNS = (
     ("leave_requests", "cancelled_at", "TIMESTAMP", "TIMESTAMP"),
     ("onboarding_workflows", "completed_by", "VARCHAR(80)", "TEXT"),
     ("onboarding_workflows", "completed_at", "TIMESTAMP", "TIMESTAMP"),
+    ("onboarding_workflows", "cycle", "INTEGER", "INTEGER"),
 )
 
 SPENDS_PG = """

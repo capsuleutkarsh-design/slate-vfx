@@ -65,7 +65,7 @@ class MachinePickerDialog(QDialog):
         root = QVBoxLayout(self)
         root.addWidget(QLabel("Which machine goes to %s?" % person_label))
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Search machines...")
+        self.search.setPlaceholderText("Search machines…")
         self.search.textChanged.connect(self._filter)
         root.addWidget(self.search)
         self.table = QTableWidget(len(self.machines), len(self.COLUMNS))
@@ -118,10 +118,18 @@ class StartPersonDialog(QDialog):
         # editable combo it replaces took the still-selected item whatever was
         # typed, so a typo started a checklist for somebody else.
         from slate.gui.components.person_picker import PersonPicker
+        # Leaving also offers people who have already gone (marked "left"):
+        # their kit still has to come back.
         self.person = PersonPicker(
-            placeholder="Type a name…", allow_empty=False,
+            placeholder="Type a name…", allow_empty=False, include_inactive=not joining,
             order=self._joining_order(service) if joining else None)
+        if not joining:
+            self._mark_leavers()
         self.person.person_changed.connect(self._sync_start)
+        # Text that names nobody changes no username, so person_changed never
+        # fired and the 'No such person' hint never showed.
+        self.person.lineEdit().textChanged.connect(
+            lambda _text: self._sync_start(self.person.username()))
         form.addRow("Person", self.person)
         self.person_hint = QLabel("")
         self.person_hint.setWordWrap(True)
@@ -136,6 +144,9 @@ class StartPersonDialog(QDialog):
         for value in EMPLOYMENT_TYPES:
             self.employment.addItem("Freelance (per project)" if value == "Freelance" else value,
                                     value)
+        if not joining:
+            self.employment.setToolTip("Decides which lines apply (freelancers skip payroll). "
+                                       "Leaving does not change it on their record.")
         form.addRow("Employment", self.employment)
 
         # The same department list as Users & Roles; typing a new one is still
@@ -219,8 +230,41 @@ class StartPersonDialog(QDialog):
             return (0, age, display.casefold())
         return key
 
+    def _mark_leavers(self):
+        """'(left)' after everybody in the leaving picker who has already gone."""
+        self._inactive_named("")
+        texts = []
+        for i in range(self.person.count()):
+            if str(self.person.itemData(i)).lower() in self._inactive_users:
+                self.person.setItemText(i, self.person.itemText(i) + " (left)")
+            texts.append(self.person.itemText(i))
+        self.person.completer().model().setStringList(texts)
+
+    def _prefill(self, username):
+        """Employment and department from the person's record - it always showed Staff."""
+        try:
+            record = self.service.person(username)
+        except DatabaseUnavailableError:
+            raise
+        except Exception:
+            record = {}
+        index = self.employment.findData(str(record.get("employment") or ""))
+        if index >= 0:
+            self.employment.setCurrentIndex(index)
+        if record.get("job_title"):
+            self.department.setCurrentText(str(record["job_title"]))
+        # A last day before they joined is not a last day.
+        joined = _as_date(record.get("joined_on"))
+        if self.direction == LEAVING:
+            self.effective.setMinimumDate(QDate(joined.year, joined.month, joined.day)
+                                          if joined else QDate(1900, 1, 1))
+        self._record = record
+
     def _sync_start(self, username):
         text = self.person.currentText().strip()
+        if username and username != getattr(self, "_prefilled", None):
+            self._prefilled = username
+            self._prefill(username)
         if username and self.direction == JOINING:
             joined = None
             try:
@@ -233,7 +277,11 @@ class StartPersonDialog(QDialog):
             self.existing.setVisible(bool(joined))
             if joined:
                 self.existing.setText("Joining date on record: %s." % format_date(joined))
-        if username:
+        if username and self.direction == LEAVING and username.lower() in getattr(
+                self, "_inactive_users", set()):
+            self.person_hint.setText("%s has already left; the list chases what they still have."
+                                     % html.escape(people.display_name(username)))
+        elif username:
             self.person_hint.setText("")
         elif text and self._inactive_named(text):
             self.person_hint.setText(
@@ -263,9 +311,11 @@ class StartPersonDialog(QDialog):
         if not hasattr(self, "_inactive"):
             from slate.gui.components.person_picker import label_for, people
             self._inactive = {}
+            self._inactive_users = set()
             for username, display, record in people(include_inactive=True):
                 if record.get("active", True):
                     continue
+                self._inactive_users.add(str(username).lower())
                 for name in (username, display, label_for(username, display)):
                     self._inactive[str(name).casefold()] = username
         return self._inactive.get(text.strip().casefold(), "")
@@ -286,6 +336,16 @@ class StartPersonDialog(QDialog):
             if answer == QMessageBox.StandardButton.Cancel:
                 return
             self.overwrite_joined = answer == QMessageBox.StandardButton.Yes
+        # A last day in the past switches the account off at once.
+        if self.direction == LEAVING and chosen < date.today() and \
+                self.person.username().lower() not in getattr(self, "_inactive_users", set()):
+            if QMessageBox.question(
+                    self, "Start leaving",
+                    "%s is in the past. This switches %s's account off now. Start leaving?"
+                    % (format_date(chosen), people.display_name(self.person.username())),
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+                return
         super().accept()
 
     def payload(self):
@@ -398,7 +458,8 @@ class JoiningLeavingView(QWidget):
         # --- right: what
         right = QWidget()
         right_box = QVBoxLayout(right)
-        right_box.setContentsMargins(0, 0, 0, 0)
+        # Clear of the splitter handle: the heading started right at it.
+        right_box.setContentsMargins(Gate.SPACE_3, 0, 0, 0)
         right_box.setSpacing(Gate.SPACE_2)
 
         # One empty state until somebody is chosen, instead of an empty table
@@ -438,7 +499,7 @@ class JoiningLeavingView(QWidget):
         actions = QHBoxLayout()
         actions.setSpacing(Gate.SPACE_2)
         self.btn_done = make_button("Mark done", "primary", on_click=lambda: self._tick(True))
-        self.btn_undo = make_button("Reopen", "ghost", on_click=lambda: self._tick(False))
+        self.btn_undo = make_button("Reopen", "secondary", on_click=lambda: self._tick(False))
         actions.addWidget(self.btn_done)
         actions.addWidget(self.btn_undo)
         actions.addStretch(1)
@@ -515,13 +576,16 @@ class JoiningLeavingView(QWidget):
         rows.sort(key=lambda r: (0 if r["mine"] else 1, r["date"] or date.max, r["name"].casefold()))
         self._people = rows
 
-        self._paint_figures(outstanding)
-        self._paint_people(rows)
-
         keys = {(r["user_id"].lower(), r["direction"]) for r in rows}
         if self._selected_person and (self._selected_person[0].lower(),
                                       self._selected_person[1]) not in keys:
             self._selected_person = None
+        # Nothing chosen: the first row (yours first), not an empty half-screen.
+        if self._selected_person is None and rows:
+            self._selected_person = (rows[0]["user_id"], rows[0]["direction"])
+
+        self._paint_figures(outstanding)
+        self._paint_people(rows)
         self._paint_tasks()
         self.people_empty.refresh()
         self._sync_buttons()
@@ -665,7 +729,7 @@ class JoiningLeavingView(QWidget):
             made = self.service.start(username, direction, employment, department,
                                       effective_date=effective,
                                       overwrite_joined=getattr(dialog, "overwrite_joined", False))
-        except UnknownPerson as missing:
+        except ValueError as missing:            # UnknownPerson, or a last day before joining
             QMessageBox.warning(self, "Start joining" if direction == JOINING else "Start leaving",
                                 str(missing))
             return
@@ -701,8 +765,8 @@ class JoiningLeavingView(QWidget):
         removed = self.service.cancel_checklist(person, direction, self.username,
                                                 clear_last_day=clear)
         from slate.gui.components.feedback import toast
-        toast(self, "%s's %s checklist cancelled (%d line%s removed)." % (
-            name, kind, removed, "" if removed == 1 else "s"), "success")
+        toast(self, "%s's %s checklist cancelled (%s removed)." % (
+            name, kind, people.plural(removed, "line")), "success")
         self._selected_person = None
         people.refresh()
         self.refresh()
@@ -716,9 +780,9 @@ class JoiningLeavingView(QWidget):
         failed = [t for t in picked
                   if not self.service.complete(t.get("id"), done, by=self.username)]
         if failed:
-            QMessageBox.warning(self, "Checklist", "%d line(s) could not be saved - "
+            QMessageBox.warning(self, "Checklist", "%s could not be saved - "
                                 "somebody may have removed them. The list has been refreshed."
-                                % len(failed))
+                                % people.plural(len(failed), "line"))
         self.refresh()
         self.changed.emit()
 

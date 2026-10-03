@@ -370,3 +370,134 @@ def test_waiting_on_names_the_person(repo):
     day = _future_monday()
     sent = repo.submit("jo", "Casual", day, day, False, "a")
     assert repo.waiting_on(repo.request(sent.request_id)) == "Sam"
+
+
+# ------------------------------------------------------------ round 2 (HR2-0xx)
+
+def test_leave_cannot_be_asked_for_in_a_closed_year(repo):
+    """HR2-036: a retrospective request behind the year-end line cost nothing."""
+    _person(repo, "hr.meera", roles=("HR",))
+    _person(repo, "vihaan", joined_on="2024-01-01")
+    assert repo.close_year(2025, "hr.meera", today=date(2026, 3, 1))["closed"] == 1
+    outcome = repo.submit("vihaan", "Casual", date(2025, 12, 15), date(2025, 12, 17), False, "late")
+    assert not outcome and outcome.code == "dates" and "closed 2025" in outcome.reason
+    assert repo.request_window("vihaan")[0] == date(2026, 1, 1)
+    assert repo.submit("vihaan", "Casual", date(2026, 1, 5), date(2026, 1, 5), False, "ok")
+
+
+def test_leave_cannot_fall_outside_the_job(repo):
+    """HR2-040: leave before the joining date, or after the last day, was accepted."""
+    _person(repo, "hr.meera", roles=("HR",))
+    _person(repo, "pari", joined_on="2026-09-14", last_day="2026-12-31")
+    before = repo.submit("pari", "Casual", date(2026, 8, 3), date(2026, 8, 4), False, "x")
+    assert not before and "joining date" in before.reason
+    after = repo.submit("pari", "Casual", date(2026, 12, 30), date(2027, 1, 4), False, "x")
+    assert not after and "last working day" in after.reason
+    rest = repo.grant_project_rest("pari", date(2026, 8, 3), date(2026, 8, 4), "hr.meera", "x")
+    assert not rest and rest.code == "dates"
+    assert repo.request_window("pari") == (date(2026, 9, 14), date(2026, 12, 31))
+
+
+def test_a_half_day_does_not_pull_in_the_days_off_around_it():
+    """HR2-041: half of a Saturday between a holiday Friday and a Sunday cost 2.5 days."""
+    friday, saturday = date(2026, 10, 2), date(2026, 10, 3)
+    charge = lp.days_charged(saturday, saturday, {friday}, half_day=True)
+    assert charge["total"] == 0.5 and charge["sandwich_days"] == []
+    assert lp.days_charged(saturday, saturday, {friday})["total"] == 3
+
+
+def test_a_holiday_place_is_matched_whatever_the_case(repo):
+    """HR2-046: 'mumbai' was added beside 'Mumbai' on the same date."""
+    _person(repo, "jo", location="Mumbai")
+    day = date(2026, 9, 14)
+    assert repo.add_holiday(day, "Ganesh Chaturthi", "Mumbai")
+    assert not repo.add_holiday(day, "Test lower", "mumbai")
+    assert repo.known_location("mumbai") == "Mumbai"
+    assert repo.known_location("Pune") == ""
+    assert repo.known_location("") == "All"
+    other = date(2026, 9, 15)
+    assert repo.add_holiday(other, "Something", "MUMBAI")
+    rows = {r["name"]: r for r in repo.holiday_rows(2026)}
+    assert rows["Something"]["location"] == "Mumbai", "snapped to the studio's spelling"
+    assert not repo.update_holiday(rows["Something"]["id"], day, "Something", "mumbai")
+
+
+def test_comp_off_cannot_be_approved_beyond_the_ledger(repo):
+    """HR2-049: two Comp Off requests against one earned day were both approved."""
+    lp.set_overrides({"comp_off_enabled": True})
+    _team(repo)
+    repo.credit_comp_off("jo", date.today() - timedelta(days=3), 1.0, "Sunday")
+    day = _future_monday()
+    first = repo.submit("jo", "Comp Off", day, day, False, "one")
+    # The second is sent another way than the dialog, which would refuse it.
+    second = repo.submit("jo", "Comp Off", day + timedelta(days=1), day + timedelta(days=1),
+                         False, "two")
+    assert repo.decide(first.request_id, "HR", True, "hr.meera")
+    refused = repo.decide(second.request_id, "HR", True, "hr.meera")
+    assert not refused and refused.code == "comp_off_short"
+    assert "Unpaid" in refused.reason
+    assert _status(repo, second.request_id) == lp.STATUS_PENDING_SUPERVISOR
+    # A supervisor's yes is not the final one, so it still moves on.
+    assert repo.decide(second.request_id, "Supervisor", True, "sam")
+
+
+def test_taken_counts_only_leave_that_has_started(repo):
+    """HR2-056: 'Taken in 2026' counted approved leave still to come."""
+    _team(repo)
+    day = _future_monday()
+    if day.year != date.today().year:
+        pytest.skip("the future Monday is next year")
+    sent = repo.submit("jo", "Casual", day, day, False, "a")
+    repo.decide(sent.request_id, "HR", True, "hr.meera")
+    assert repo.taken_by_type("jo").get("Casual", 0) == 0
+
+
+def test_waiting_on_is_read_once_for_the_whole_queue(repo):
+    """HR2-044: every row read ut_users twice and the roles once."""
+    _team(repo)
+    _person(repo, "sai")                                   # no manager -> straight to HR
+    day = _future_monday()
+    rows = []
+    for offset in range(4):
+        for who in ("jo", "alex"):
+            sent = repo.submit(who, "Casual", day + timedelta(days=offset),
+                               day + timedelta(days=offset), False, "x")
+            rows.append(repo.request(sent.request_id))
+    stuck = repo.request(repo.submit("sai", "Casual", day, day, False, "x").request_id)
+    stuck["status"] = lp.STATUS_PENDING_SUPERVISOR         # e.g. the supervisor left
+    rows.append(stuck)
+
+    reads = []
+    original = repo.db.execute_query
+    repo.db.execute_query = lambda sql, *a, **k: reads.append(sql) or original(sql, *a, **k)
+    try:
+        waiting = repo.waiting_on_all(rows)
+    finally:
+        repo.db.execute_query = original
+    assert waiting[:-1] == ["Sam"] * 8
+    assert waiting[-1] == "No approver set - contact HR"
+    # One read for the queue, one for the cached name directory - not two a row.
+    assert sum("FROM ut_users" in sql for sql in reads) <= 2
+
+
+def _attendance(repo, user, day, t_in, t_out=None, meta=None):
+    import json
+    repo.db.execute_update(
+        "INSERT INTO attendance_log (user_id, day_date, punch_in, punch_out, pc_name, metadata) "
+        "VALUES (%s, %s, %s, %s, %s, %s)",
+        (user, day.isoformat(), t_in, t_out, "TEST", json.dumps(meta or {})))
+
+
+def test_an_open_or_short_sunday_earns_no_comp_off(repo):
+    """HR2-039: a Sunday punch-in with no punch-out (0 hours) was a full comp-off day."""
+    from slate.core.domain.comp_off_service import CompOffService
+    lp.set_overrides({"comp_off_enabled": True})
+    _team(repo)
+    _person(repo, "riya", reports_to="sam")
+    sunday = date.today() - timedelta(days=date.today().weekday() + 8)
+    assert sunday.weekday() == 6
+    _attendance(repo, "jo", sunday, "10:00:00")                       # never punched out
+    _attendance(repo, "alex", sunday, "10:00:00", "11:30:00")         # 1.5 hours
+    _attendance(repo, "riya", sunday, "10:00:00", "17:00:00")         # a real day
+    found = CompOffService(repo.db, repo).review(sunday - timedelta(days=1))
+    assert [(e["user_id"], e["days"]) for e in found] == [("riya", 1.0)]
