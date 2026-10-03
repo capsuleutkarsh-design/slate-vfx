@@ -15,7 +15,8 @@ from PySide6.QtCore import Qt, Signal, QTimer
 
 from ...core.domain.asset_api import create_asset_api
 from ...core.infra.design_tokens import ColorTokens as C
-from ..stock_model import StockModel, asset_path, can_preview
+from ...core.infra.stock_repository import REMOVED
+from ..stock_model import StockModel, asset_path, can_preview, preview_source
 from .stock_browser.widgets import AssetSortFilterProxyModel
 from ..components.qt_safety import safe_single_shot
 
@@ -167,6 +168,7 @@ class StockBrowserTab(
         g.files_dropped.connect(self._on_files_dropped)
         g.scroll_bottom_reached.connect(self.load_more_assets)
         g.delete_requested.connect(self.delete_selected_assets)
+        g.restore_requested.connect(self.restore_selected_assets)
         g.sidebar_expand_requested.connect(self.toggle_sidebar)
         g.preview_requested.connect(self.open_quick_look)
         g.play_requested.connect(self.play_current)
@@ -188,6 +190,14 @@ class StockBrowserTab(
         ic.status_updated.connect(sb.set_ingest_state)
         ic.progress_updated.connect(sb.set_ingest_progress)
         ic.ingest_started.connect(lambda: sb.set_ingest_running(True))
+        # The category counts follow a running ingest, every few seconds, so
+        # what is in already can be browsed (MED2-038).
+        self._category_refresh = QTimer(self)
+        self._category_refresh.setSingleShot(True)
+        self._category_refresh.setInterval(3000)
+        self._category_refresh.timeout.connect(self._refresh_categories)
+        ic.assets_ready.connect(lambda *_: self._category_refresh.isActive()
+                                or self._category_refresh.start())
         ic.ingest_finished.connect(self._on_ingest_finished)
         ic.ingest_summary.connect(self._on_ingest_summary)
         ic.notice.connect(lambda message, level: self._notify(message, level))
@@ -263,10 +273,14 @@ class StockBrowserTab(
         away; the Filters button brings it back.
         """
         width = max(1, int(width))
-        if width < 1400:
+        # Laptops down to a 1280 window (the tab is ~100 px narrower) keep their
+        # categories, Favourites and Studio picks in view (MED2-035); only
+        # narrower ones fold the sidebar away.
+        if width < 1150:
             sidebar = 0
         else:
-            sidebar = int(min(280, max(200, width * 0.16)))
+            # 230 at least: Export and Import side by side keep their words.
+            sidebar = int(min(280, max(230, width * 0.16)))
         inspector = int(min(420, max(280, width * 0.24)))
         gallery = max(380, width - sidebar - inspector)
         return [sidebar, gallery, inspector]
@@ -309,13 +323,19 @@ class StockBrowserTab(
         self.apply_filters()
 
     def update_ui_counts(self):
+        """
+        '350 assets' when nothing narrows the list - the rest of a long list
+        loads as you scroll, it is not hidden (MED2-009) - and 'Showing 40 of
+        350 assets' when a search, filter or category does.
+        """
         visible = self.proxy_model.rowCount()
         loaded = self.model.rowCount()
-        total = int(getattr(self, "db_total", 0) or 0)
-        # What is shown out of what matches: rows hidden on screen since the
-        # last load come off the total too.
-        total = max(visible, total - (loaded - visible))
-        self.gallery.update_count(total, visible)
+        # What matches: rows hidden on screen since the last load come off it.
+        matches = max(visible, int(getattr(self, "db_total", 0) or 0) - (loaded - visible))
+        category = getattr(self, "current_category", "All") or "All"
+        narrowed = self.gallery.filters_active() or category not in ("All", REMOVED)
+        library = int(getattr(self.sidebar, "library_total", 0) or 0)
+        self.gallery.update_count(max(library, matches) if narrowed else matches, matches)
 
     # ------------------------------------------------------------ selection
     def current_asset(self):
@@ -368,8 +388,9 @@ class StockBrowserTab(
             return
         from ..widgets.quick_look import QuickLookDialog
         self.inspector.player.stop_media()
+        target, options = preview_source(asset)
         dialog = QuickLookDialog(self, asset_name=asset.get("name") or "Preview",
-                                 asset_path=self._preview_path(asset),
+                                 asset_path=target, load_options=options,
                                  navigator=self._quick_look_step)
         self._quick_look = dialog
         dialog.exec()
@@ -378,20 +399,15 @@ class StockBrowserTab(
         self.inspector.current_asset = None
         self.on_selection_changed()
 
-    def _preview_path(self, asset):
-        proxy = asset.get("proxy_path")
-        from ...core.domain.proxy_manager import ProxyManager
-        return proxy if proxy and ProxyManager.exists(proxy) else asset_path(asset)
-
     def _quick_look_step(self, step):
-        """Move the selection and hand Quick Look what to show next (name, path) or None."""
+        """Move the selection and hand Quick Look what to show next (name, path, options) or None."""
         row = self.gallery.current_index().row()
         count = self.proxy_model.rowCount()
         for candidate in range(row + step, count if step > 0 else -1, step):
             asset = self.proxy_model.index(candidate, 0).data(Qt.ItemDataRole.UserRole)
             if asset and can_preview(asset) and not asset.get('_missing'):
                 self.gallery.select_row(candidate)
-                return asset.get("name") or "", self._preview_path(asset)
+                return (asset.get("name") or "",) + preview_source(asset)
         return None
 
     def _on_card_star(self, proxy_index):
@@ -476,10 +492,16 @@ class StockBrowserTab(
         message, level = summary_sentence(summary)
         self.sidebar.set_ingest_state(message, True)
         self.sidebar.set_ingest_progress(100, "")
-        details = ""
+        parts = []
         if summary.get("failed_names"):
-            details = "Could not be read:\n" + "\n".join(summary["failed_names"][:200])
-        self._notify(message, level, details=details)
+            parts.append("Could not be read:\n" + "\n".join(summary["failed_names"][:200]))
+        if summary.get("not_taken"):
+            parts.append("Left out, not a picture or movie:\n"
+                         + "\n".join(summary["not_taken"][:200]))
+        # The sidebar line and this toast; not a third copy in the status bar
+        # (MED2-033).
+        from ..components.feedback import raw_toast
+        raw_toast(self, message, level, details="\n\n".join(parts))
 
     def toggle_ingest_pause(self):
         is_paused = self.ingest_controller.toggle_pause()

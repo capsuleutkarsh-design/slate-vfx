@@ -78,8 +78,8 @@ def test_the_count_is_the_library_total(qtbot, library, tmp_path):
     assert tab.db_total == 320
     loaded = tab.model.rowCount()
     assert loaded in (300, 320)
-    expected = "320 assets" if loaded == 320 else "Showing 300 of 320 assets"
-    assert tab.gallery.lbl_count.text() == expected                         # MED-006, MED-069
+    # The rest loads on scroll; nothing is filtered, so no "300 of 320" (MED2-009).
+    assert tab.gallery.lbl_count.text() == "320 assets"                     # MED-006, MED-069
 
 
 def test_count_text_reads_well():
@@ -210,9 +210,9 @@ def test_clear_library_needs_the_word(qtbot):
     assert "434" in words and "cannot be undone" in words and "everybody" in words  # MED-014
     assert not dialog.btn_clear.isEnabled()
     assert dialog.btn_cancel.isDefault()
-    dialog.edit.setText("clear")
+    dialog.edit.setText("clea")
     assert not dialog.btn_clear.isEnabled()
-    dialog.edit.setText("CLEAR")
+    dialog.edit.setText("clear")                     # any case (MED2-034)
     assert dialog.btn_clear.isEnabled()
 
 
@@ -445,7 +445,20 @@ def test_cards_fill_the_row(qtbot, library, tmp_path):
     cell = g.asset_view.gridSize().width()
     width = g.asset_view.viewport().width()
     # Whole columns fill the row: what is left over is less than the margin kept back.
-    assert 0 <= width - (width // cell) * cell <= 4 + (width // cell)               # MED-046
+    keep = g.asset_view.spacing() * 2 + 4          # the first column's inset and a margin
+    assert 0 <= width - (width // cell) * cell <= keep + (width // cell)            # MED-046
+    # ...and the view really lays out that many in a row: no empty column-wide
+    # band at the right (MED2-008).
+    for w in (900, 1115, 1240):
+        g.asset_view.resize(w, 600)
+        qtbot.wait(20)
+        g._fit_cards()
+        g.asset_view.doItemsLayout()
+        cell = g.asset_view.gridSize().width()
+        top = g.asset_view.visualRect(tab.proxy_model.index(0, 0)).top()
+        in_row = sum(1 for r in range(tab.proxy_model.rowCount())
+                     if g.asset_view.visualRect(tab.proxy_model.index(r, 0)).top() == top)
+        assert g.asset_view.viewport().width() - in_row * cell < cell, (w, in_row, cell)
 
 
 def test_media_pills_keep_their_words(qtbot, library):
@@ -466,7 +479,8 @@ def test_the_sidebar_reads_cleanly(qtbot, library):
 def test_side_panels_follow_the_window(qtbot, library):
     tab = _tab(qtbot, library, load=False)
     sizes = tab.proportional_sizes(1280)
-    assert sizes[0] == 0 and sizes[1] >= 0.6 * 1280 - 1                            # MED-061
+    assert sizes[0] >= 200 and sizes[1] >= 0.55 * 1280                              # MED-061, MED2-035
+    assert tab.proportional_sizes(1100)[0] == 0
     wide = tab.proportional_sizes(1920)
     assert wide[0] > 0 and wide[1] > wide[2]
 
@@ -649,7 +663,7 @@ def test_cards_are_fitted_again_when_the_viewport_settles(qtbot, library, tmp_pa
     qtbot.waitUntil(lambda: g.asset_view.viewport().width() == g._fitted_width, timeout=3000)
     cell = g.asset_view.gridSize().width()
     width = g.asset_view.viewport().width()
-    assert width - (width // cell) * cell <= 4 + (width // cell)
+    assert width - (width // cell) * cell <= g.asset_view.spacing() * 2 + 4 + (width // cell)
 
 
 def test_the_inspector_never_scrolls_sideways(qtbot, library):
@@ -681,3 +695,136 @@ def test_the_thumbnail_loader_lets_go_of_the_file(qtbot, tmp_path):
         assert not thumb.exists()
     finally:
         loader.stop()
+
+
+# ------------------------------------------------------------------ round 2
+
+def test_the_inspector_stays_in_step_with_the_list(qtbot, library, tmp_path):
+    _seed(library, tmp_path, count=3, folder="Stock/Fire", category="Fire")
+    _seed(library, tmp_path, count=2, folder="Stock/Smoke", category="Smoke")
+    tab = _tab(qtbot, library)
+    row = next(r for r in range(tab.proxy_model.rowCount())
+               if tab.proxy_model.index(r, 0).data(Qt.ItemDataRole.UserRole)["category"] == "Fire")
+    _select(tab, [row])
+    shown = tab.inspector.current_asset["file_path"]
+    tab.load_library_from_server()                          # Reload keeps it selected
+    _wait(qtbot, tab)
+    assert tab.inspector.current_asset["file_path"] == shown                       # MED2-001
+    assert tab.gallery.selected_assets()[0]["file_path"] == shown
+    assert tab.sidebar.btn_delete_selected.isEnabled()
+    tab.on_category_changed("Smoke")                        # not in the list any more
+    _wait(qtbot, tab)
+    assert tab.inspector.current_asset is None
+
+
+def test_removed_assets_can_be_restored(qtbot, library, tmp_path, monkeypatch):
+    _seed(library, tmp_path, count=3)
+    tab = _tab(qtbot, library)
+    monkeypatch.setattr(tab, "_confirm_delete", lambda *a: True)
+    monkeypatch.setattr(tab, "_notify", lambda *a, **k: None)
+    _select(tab, [0])
+    tab.delete_selected_assets()
+    tab._refresh_categories()
+    assert "Removed" in tab.sidebar.category_texts()                               # MED2-028
+    tab.on_category_changed("Removed")
+    tab.sidebar.current_category = "Removed"
+    _wait(qtbot, tab)
+    assert tab.model.rowCount() == 1
+    _select(tab, [0])
+    assert tab.sidebar.btn_delete_selected.text() == "Restore"
+    menu = tab.gallery.build_context_menu(tab.proxy_model.index(0, 0))
+    assert any("Restore" in a.text() for a in menu.actions())
+    assert not any("Delete" in a.text() for a in menu.actions())
+    tab.delete_selected_assets()                            # the same button restores
+    _wait(qtbot, tab)
+    assert library.get_total_count() == 3 and library.get_removed_count() == 0
+
+
+def test_library_actions_need_something_to_act_on(qtbot, library, tmp_path):
+    tab = _tab(qtbot, library)
+    assert not tab.sidebar.btn_clear.isEnabled()                                    # MED2-020
+    assert not tab.sidebar.btn_export.isEnabled()
+    assert not tab.sidebar.btn_rescan.isEnabled()
+    assert "empty" in tab.sidebar.btn_clear.toolTip()
+    _seed(library, tmp_path, count=2)
+    library.remember_root(str(tmp_path / "Stock"))
+    tab.load_library_from_server()
+    _wait(qtbot, tab)
+    assert tab.sidebar.btn_clear.isEnabled() and tab.sidebar.btn_export.isEnabled()
+    assert tab.sidebar.btn_rescan.isEnabled()
+    assert artist_sees_no_removed(qtbot, library)
+
+
+def artist_sees_no_removed(qtbot, library):
+    tab = _tab(qtbot, library, roles=ARTIST, user="sam")
+    return "Removed" not in tab.sidebar.category_texts()
+
+
+def test_an_unreadable_file_says_so(qtbot, library, tmp_path):
+    broken = tmp_path / "Stock" / "broken_download.mp4"
+    broken.parent.mkdir(parents=True)
+    broken.write_bytes(b"0" * 1024)
+    library.add_assets_batch([{"file_path": str(broken), "metadata": {}}])
+    tab = _tab(qtbot, library)
+    _select(tab, [0])
+    qtbot.waitUntil(lambda: tab.inspector.values["resolution"].text() != "Analysing…",
+                    timeout=20000)
+    assert tab.inspector.values["resolution"].text() == "Could not read this file"   # MED2-011
+    assert tab.model.assets[0]["status"] == "corrupt"
+
+
+def test_the_sort_box_follows_the_header(qtbot, library, tmp_path):
+    _seed(library, tmp_path, count=3)
+    tab = _tab(qtbot, library)
+    tab.gallery.set_view_mode("list")
+    tab.gallery._on_header_clicked(4)                       # Size, smallest first
+    assert tab.gallery.sort_combo.currentData() == "size_asc"                       # MED2-010
+    assert tab.gallery.sort_combo.currentText() == "Smallest first"
+    tip = tab.model.headerData(2, Qt.Orientation.Horizontal, Qt.ItemDataRole.ToolTipRole)
+    assert "cannot be sorted" in tip
+
+
+def test_rows_without_a_picture_keep_the_icon_box(qtbot):
+    from slate.gui.stock_model import StockModel
+    model = StockModel([{"file_path": "C:/nowhere/camera_raw_A001.r3d"}])
+    icon = model.data(model.index(0, 0), Qt.ItemDataRole.DecorationRole)
+    assert icon is not None and not icon.isNull()                                    # MED2-017
+    model.cleanup()
+
+
+def test_clearing_filters_empties_the_search_box_properly(qtbot, library, tmp_path):
+    _seed(library, tmp_path, count=2)
+    tab = _tab(qtbot, library)
+    tab.gallery.search_bar.setText("clip")
+    seen = []
+    tab.gallery.search_bar.textChanged.connect(seen.append)
+    tab.clear_all_filters()
+    assert seen == [""] and not tab.gallery.search_timer.isActive()                  # MED2-018
+
+
+def test_a_laptop_keeps_the_sidebar(qtbot, library):
+    tab = _tab(qtbot, library, load=False)
+    assert tab.proportional_sizes(1300)[0] >= 200          # a 1366 window   # MED2-035
+    assert tab.proportional_sizes(1184)[0] >= 200          # a 1280 window
+
+
+def test_a_failed_pick_is_not_called_a_success(qtbot, library, tmp_path, monkeypatch):
+    _seed(library, tmp_path, count=2)
+    tab = _tab(qtbot, library)
+    said = []
+    monkeypatch.setattr(tab, "_notify", lambda msg, level="info", **k: said.append((msg, level)))
+    monkeypatch.setattr(tab.lib_manager, "set_pick", lambda *a, **k: False)
+    tab.toggle_pick(list(tab.model.assets), True)
+    assert said == [("2 studio picks could not be saved.", "error")]                 # MED2-030
+
+
+def test_the_tag_editor_names_its_asset_and_takes_delete(qtbot):
+    from slate.gui.widgets.tag_edit_dialog import TagEditDialog
+    dialog = TagEditDialog(None, current_tags=["warm", "square"], asset_name="warm_square.jpg")
+    qtbot.addWidget(dialog)
+    dialog.show()
+    assert dialog.windowTitle() == "Edit tags - warm_square.jpg"                    # MED2-039
+    dialog.list_tags.setCurrentRow(0)
+    dialog.list_tags.setFocus()
+    qtbot.keyClick(dialog.list_tags, Qt.Key.Key_Delete)
+    assert dialog.get_tags() == ["square"]

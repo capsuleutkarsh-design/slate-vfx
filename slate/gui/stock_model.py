@@ -3,7 +3,7 @@ The Stock Viewer's list of assets, and how a card and a row are drawn.
 
 One model serves both views: the grid reads column 0 (its card delegate draws
 the thumbnail, a type badge, the length, the resolution class, a favourite
-star and a "missing" mark), and the List view is a real table over the same
+star; a missing file shows "File not found"), and the List view is a real table over the same
 rows with Name, Type, Resolution, Length, Size, Added and Category columns
 (MED-049). Both views share one selection.
 
@@ -121,8 +121,8 @@ def length_text(asset, compact=False) -> str:
     if not duration:
         return "" if compact else DASH
     if compact:
-        whole = int(round(float(duration)))
-        return f"{whole // 60}:{whole % 60:02d}"
+        # m:ss, or h:mm:ss past an hour - never '65:00' (MED2-031).
+        return timecode(duration, 0)
     return timecode(duration, meta.get("fps") or 0)
 
 
@@ -188,12 +188,11 @@ def tooltip_text(asset) -> str:
 
 
 def badge_labels(asset) -> dict:
-    """What the card shows over its thumbnail: kind, length, resolution, missing, pick."""
+    """What the card shows over its thumbnail: kind, length, resolution, pick."""
     return {
         "kind": asset_kind(asset),
         "length": length_text(asset, compact=True),
         "resolution": resolution_badge(asset),
-        "missing": "Missing" if asset.get("_missing") else "",
         "pick": "Pick" if asset.get("is_pick") else "",
         "favorite": bool(asset.get("is_favorite")),
     }
@@ -201,6 +200,30 @@ def badge_labels(asset) -> dict:
 
 def can_preview(asset) -> bool:
     return asset_kind(asset) in ("SEQ", "MOV", "IMG")
+
+
+def preview_source(asset):
+    """
+    (file to play, AdvancedPlayer.load options) for an asset - one answer for
+    the inspector and Quick Look.
+
+    Movies and sequences play their proxy when there is one, with the
+    original as the sound source (MED2-003) and a sequence's first frame
+    number (MED2-015). A still is one frame: it always shows the original,
+    so an EXR keeps its colourspace and view controls instead of an 8-bit
+    JPG (MED2-004).
+    """
+    path = asset_path(asset)
+    proxy = asset.get("proxy_path")
+    if not proxy or asset_kind(asset) not in ("MOV", "SEQ"):
+        return path, {}
+    from slate.core.domain.proxy_manager import ProxyManager
+    if not ProxyManager.exists(proxy):
+        return path, {}
+    options = {"audio_source": path}
+    if asset.get("is_sequence"):
+        options["first_frame"] = int(asset.get("frame_first") or 0) or None
+    return proxy, options
 
 
 # ------------------------------------------------------------ thumbnails
@@ -353,6 +376,13 @@ class StockModel(QAbstractTableModel):
         if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
             if 0 <= section < len(COLUMNS):
                 return COLUMNS[section]
+        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.ToolTipRole:
+            # A header that cannot sort says so, instead of a click doing
+            # nothing (MED2-010).
+            if COLUMN_SORTS.get(section) is None and 0 <= section < len(COLUMNS):
+                return (f"{COLUMNS[section]} cannot be sorted. Search for it instead "
+                        "(4K, 1920, 24fps).")
+            return "Click to sort the whole library by this column"
         return super().headerData(section, orientation, role)
 
     # ---- data
@@ -400,7 +430,8 @@ class StockModel(QAbstractTableModel):
             if column != 0:
                 return None
             pixmap = self._pixmap_for(asset)
-            return self._row_icon(pixmap) if pixmap is not None else None
+            # Rows without a picture keep the same box, so names line up (MED2-017).
+            return self._row_icon(pixmap) if pixmap is not None else self._blank_icon()
         if role == Qt.ItemDataRole.ForegroundRole and asset.get('_missing'):
             return QColor(Gate.BAD)
         if role in (Qt.ItemDataRole.DisplayRole, SORT_ROLE):
@@ -423,6 +454,14 @@ class StockModel(QAbstractTableModel):
         return None
 
     ROW_ICON = QSize(48, 27)
+
+    def _blank_icon(self):
+        icon = self.__dict__.get("_blank")
+        if icon is None:
+            box = QPixmap(self.ROW_ICON)
+            box.fill(Qt.GlobalColor.transparent)
+            icon = self._blank = QIcon(box)
+        return icon
 
     def _row_icon(self, pixmap):
         """The List view's thumbnail: fitted, centred in one fixed box so names line up."""
@@ -736,7 +775,9 @@ class StockDelegate(QStyledItemDelegate):
         painter.drawRoundedRect(card_rect, 6, 6)
 
         thumb_rect = self._thumb_rect(card_rect)
-        if pixmap:
+        # A missing file shows the "File not found" state in place of its old
+        # picture, rather than a Missing badge over the resolution (MED2-016).
+        if pixmap and not asset.get('_missing'):
             painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
             rect_ratio = thumb_rect.width() / max(1, thumb_rect.height())
             pix_ratio = pixmap.width() / pixmap.height() if pixmap.height() > 0 else 1
@@ -775,9 +816,6 @@ class StockDelegate(QStyledItemDelegate):
         self._badge(painter, badges["kind"], thumb_rect, "top-left")
         self._badge(painter, badges["length"], thumb_rect, "bottom-left")
         self._badge(painter, badges["resolution"], thumb_rect, "bottom-right")
-        if badges["missing"]:
-            self._badge(painter, badges["missing"], thumb_rect, "top-right" if not self.allow_favorites
-                        else "bottom-right", fill=QColor(Gate.BAD), colour=QColor(Gate.TEXT_ON_BAD))
         if badges["pick"]:
             self._badge(painter, badges["pick"], QRect(thumb_rect.x(), thumb_rect.y() + 18,
                                                        thumb_rect.width(), thumb_rect.height() - 18),

@@ -19,12 +19,17 @@ class TestFfmpegIsAllowedToExplainItself:
         return inspect.getsource(stream_engine)
 
     def test_its_messages_are_no_longer_discarded(self, source):
-        launch = source.split("def _launch_ffmpeg")[1].split("\n    def ")[0]
+        # Movies and sequences start ffmpeg through one launcher (MED2-058).
+        launch = source.split("def _popen")[1].split("\n    def ")[0]
 
         assert "stderr=subprocess.DEVNULL" not in launch, (
             "throwing the error away is why a failing file just went blank"
         )
-        assert "stderr=subprocess.PIPE" in launch
+        assert "stderr=err_write" in launch
+        assert "return self._popen(cmd)" in source.split("def _launch_ffmpeg")[1]
+        from slate.gui.widgets.media_engines import sequence_engine
+        sequence = inspect.getsource(sequence_engine)
+        assert "DEVNULL" not in sequence and "self._popen(cmd)" in sequence
 
     def test_the_pipe_is_emptied_on_its_own_thread(self, source):
         """A full pipe stops ffmpeg dead, which would be a worse bug."""
@@ -37,7 +42,7 @@ class TestFfmpegIsAllowedToExplainItself:
 
     def test_a_fresh_process_starts_with_no_stale_message(self, source):
         """Otherwise the previous file's error is reported against this one."""
-        launch = source.split("def _launch_ffmpeg")[1].split("\n    def ")[0]
+        launch = source.split("def _popen")[1].split("\n    def ")[0]
 
         assert 'self._last_error = ""' in launch
 

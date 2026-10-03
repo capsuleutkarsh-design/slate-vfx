@@ -171,7 +171,8 @@ class AdvancedPlayer(QWidget):
     snapshot_saved = Signal(str)
     _snapshot_done = Signal(str, str)  # path, error (from the snapshot thread)
 
-    SPEEDS = ("0.5x", "1x", "2x")
+    # Slow and fast enough to check an element or a sound (MED2-065).
+    SPEEDS = ("0.25x", "0.5x", "1x", "2x", "4x")
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -219,11 +220,24 @@ class AdvancedPlayer(QWidget):
         self._load_timer.timeout.connect(self._perform_load)
         self._pending_load_path = None
         self._pending_audio_path = None
+        self._pending_first_frame = None
+        self._error_details = ""
 
         self._snapshot_done.connect(self._on_snapshot_done)
         self.setup_ui()
 
     # ------------------------------------------------------------- layout
+    def set_context(self, noun: str, play_keys: str = ""):
+        """
+        What the host calls the things Previous / Next move between, and the
+        keys it offers for play: 'Next asset (Page Down)' in Quick Look, 'Next
+        shot' in the Timeline - not the gallery's words everywhere (MED2-056).
+        """
+        self.btn_prev.setToolTip(f"Previous {noun}".strip())
+        self.btn_next.setToolTip(f"Next {noun}".strip())
+        keys = ", ".join(k for k in (play_keys, "K pauses, L plays") if k)
+        self.btn_play.setToolTip(f"Play / pause ({keys})")
+
     def set_controls_visible(self, visible: bool):
         """Show/Hide internal controls (for embedding)."""
         if hasattr(self, 'controls_widget'):
@@ -322,17 +336,18 @@ class AdvancedPlayer(QWidget):
         # Row 2: transport, sound
         row_transport = QHBoxLayout()
         row_transport.setSpacing(4)
-        self.btn_prev = self._icon_button("skip-previous", "Previous asset")
+        self.btn_prev = self._icon_button("skip-previous", "Previous")
         self.btn_prev.clicked.connect(self.prev_requested.emit)
-        self.btn_step_back = self._icon_button("step-back", "Back one frame (← or J)")
+        # , and . step from wherever the keys come (the gallery passes them
+        # on, where ← → move between cards) - MED2-007.
+        self.btn_step_back = self._icon_button("step-back", "Back one frame (, or J)")
         self.btn_step_back.clicked.connect(lambda: self.step_active(-1))
-        self.btn_play = self._icon_button("play", "Play / pause (Space in Quick Look, Enter in "
-                                                  "the gallery, K pauses, L plays)", width=40)
+        self.btn_play = self._icon_button("play", "Play / pause (K pauses, L plays)", width=40)
         self.btn_play.setObjectName("PlayerPlay")
         self.btn_play.clicked.connect(self.toggle_play)
-        self.btn_step_forward = self._icon_button("step-forward", "Forward one frame (→)")
+        self.btn_step_forward = self._icon_button("step-forward", "Forward one frame (.)")
         self.btn_step_forward.clicked.connect(lambda: self.step_active(1))
-        self.btn_next = self._icon_button("skip-next", "Next asset")
+        self.btn_next = self._icon_button("skip-next", "Next")
         self.btn_next.clicked.connect(self.next_requested.emit)
 
         row_transport.addStretch(1)
@@ -381,7 +396,7 @@ class AdvancedPlayer(QWidget):
         row_tools.setSpacing(6)
         self.combo_speed = QComboBox()
         self.combo_speed.addItems(self.SPEEDS)
-        self.combo_speed.setCurrentIndex(1)
+        self.combo_speed.setCurrentText("1x")
         self.combo_speed.setToolTip("Playback speed")
         self.combo_speed.setMinimumWidth(70)
         self.combo_speed.currentIndexChanged.connect(self.change_speed)
@@ -400,6 +415,15 @@ class AdvancedPlayer(QWidget):
         self.btn_snap.customContextMenuRequested.connect(self._snapshot_menu)
         self.btn_fullscreen = self._icon_button("expand", "Full screen (F)")
         self.btn_fullscreen.clicked.connect(self.toggle_fullscreen)
+        # Why a file would not play, in ffmpeg's words - for whoever asks
+        # (MED2-012). Only there after an error.
+        self.btn_details = QPushButton("Details")
+        self.btn_details.setObjectName("PlayerButton")
+        self.btn_details.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_details.setToolTip("What the decoder said")
+        self.btn_details.clicked.connect(self._show_error_details)
+        self.btn_details.hide()
+        row_tools.addWidget(self.btn_details)
         row_tools.addWidget(self.btn_loop)
         row_tools.addWidget(self.btn_snap)
         row_tools.addWidget(self.btn_fullscreen)
@@ -437,7 +461,9 @@ class AdvancedPlayer(QWidget):
         self.playing_changed.emit(bool(playing))
 
     def _on_audio_available(self, has_audio: bool):
-        movie = self.media_kind == "stream"
+        # Sound, or "No sound", only for a real movie: a picture-only source
+        # (a sequence, a plate, their proxies) never has any (MED2-057).
+        movie = self.media_kind == "stream" and getattr(self, "_sound_expected", False)
         self.btn_mute.setVisible(movie and has_audio)
         self.volume_slider.setVisible(movie and has_audio)
         self.lbl_no_audio.setVisible(movie and not has_audio)
@@ -470,8 +496,15 @@ class AdvancedPlayer(QWidget):
         self._on_audio_available(self.audio.has_audio)
 
     # ------------------------------------------------------------- loading
-    def load(self, path, audio_source=None):
-        """Load a file (debounced). audio_source: where the sound is, when path is a silent proxy."""
+    def load(self, path, audio_source=None, first_frame=None):
+        """
+        Load a file (debounced).
+
+        When path is a proxy: audio_source is the original (where the sound
+        is, and what a snapshot is named after), and first_frame the original
+        sequence's first frame number, so the readout counts 1001 / 1024 and
+        not 1 / 24 (MED2-015, MED2-047).
+        """
         str_path = str(path)
         if getattr(self, 'current_path', None) == str_path:
             if self._pending_autoplay and not self.is_playing() and self.active_engine:
@@ -479,9 +512,11 @@ class AdvancedPlayer(QWidget):
                 self.active_engine.play()
             return
         self.stop_media()
+        self.btn_details.hide()
         self.current_path = str_path
         self._pending_load_path = str_path
         self._pending_audio_path = str(audio_source) if audio_source else str_path
+        self._pending_first_frame = first_frame
         self.screen.set_text("Loading…")
         self._load_timer.start(200)
 
@@ -512,7 +547,9 @@ class AdvancedPlayer(QWidget):
                 engine_key = 'image'
 
         self._activate_engine(engine_key)
-        self.frame_offset = seq.start if seq is not None else 0
+        self.frame_offset = seq.start if seq is not None else int(self._pending_first_frame or 0)
+        sound = self._pending_audio_path or path
+        self._sound_expected = engine_key == 'stream' and is_video(Path(sound).suffix.lower())
         size = self.screen.size()
         self.active_engine.set_pixel_ratio(self.devicePixelRatio())
         self.active_engine.set_target_size(size)
@@ -521,8 +558,8 @@ class AdvancedPlayer(QWidget):
             self.active_engine.load(str(path))
             self._fill_colour_combos()
             self._configure_for(engine_key)
-            if engine_key == 'stream':
-                self.audio.load(self._pending_audio_path or path)
+            if self._sound_expected:
+                self.audio.load(sound)
             else:
                 self.audio.clear()
             # Selecting shows the first frame; it plays only when asked.
@@ -621,10 +658,16 @@ class AdvancedPlayer(QWidget):
         if self._is_closing:
             return
         logging.error(f"Engine Error: {message}")
-        self.stop_media()
-        self.screen.set_text(f"This file could not be played.\n{message}")
+        from .media_engines.stream_engine import FFMPEG_MISSING
+        if message == FFMPEG_MISSING:
+            self.show_message(message)
+            return
+        # A sentence on the picture, the decoder's own words behind Details,
+        # and no transport left that cannot do anything (MED2-012).
+        self.show_message("This file could not be played - it may be damaged or in a format "
+                          "this machine cannot read.", details=message)
 
-    def show_message(self, text):
+    def show_message(self, text, details=""):
         """
         Stop and show only a sentence: no transport or colour controls left
         over from the clip before (NEW-media-3).
@@ -632,6 +675,12 @@ class AdvancedPlayer(QWidget):
         self.stop_media()
         self._configure_for(None)
         self.screen.set_text(text)
+        self._error_details = details
+        self.btn_details.setVisible(bool(details))
+
+    def _show_error_details(self):
+        from ..components.feedback import show_details
+        show_details(self, "This file could not be played.", self._error_details)
 
     def stop_media(self):
         if self.active_engine:
@@ -751,11 +800,10 @@ class AdvancedPlayer(QWidget):
         frame = max(0, int(frame or 0))
         last = max(0, self.total_frames - 1)
         if self.show_timecode and self.current_fps > 0:
-            def tc(f):
-                secs = int(f / self.current_fps)
-                rate = max(1, int(round(self.current_fps)))
-                return f"{secs // 60:02d}:{secs % 60:02d}:{int(f % rate):02d}"
-            return f"{tc(frame)} / {tc(last)}"
+            # The same h:mm:ss:ff as the Stock Viewer's facts (MED2-031).
+            from ..stock_model import timecode
+            fps = self.current_fps
+            return f"{timecode(frame / fps, fps)} / {timecode(last / fps, fps)}"
         if self.frame_offset:
             return f"{self.frame_offset + frame} / {self.frame_offset + last}"
         return f"{frame + 1} / {last + 1}"
@@ -799,14 +847,17 @@ class AdvancedPlayer(QWidget):
         from, and named after, the original (NEW-media-4).
         """
         original = self._pending_audio_path
-        if original and original != self.current_path:
+        # A movie or a still; a sequence's proxy is snapshotted from the proxy
+        # (its "original" is the first frame file, which cannot be seeked).
+        usable = self.media_kind == "image" or is_video(Path(str(original)).suffix.lower())
+        if original and original != self.current_path and usable:
             from slate.core.domain.proxy_manager import ProxyManager
             if ProxyManager.exists(original):
                 return original
         return None
 
     def _snapshot_name(self) -> str:
-        stem = Path(self._snapshot_source() or self.current_path or "frame").stem or "frame"
+        stem = Path(self._pending_audio_path or self.current_path or "frame").stem or "frame"
         return f"{stem}_f{self.slider.value() + max(self.frame_offset, 1)}_{datetime.now():%Y%m%d_%H%M%S}.png"
 
     def take_snapshot(self, path: str = None):

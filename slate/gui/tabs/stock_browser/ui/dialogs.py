@@ -24,15 +24,15 @@ class ClearLibraryDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
 
-        noun = "asset" if count == 1 else "assets"
-        heading = QLabel(f"Remove all {count:,} {noun} from the stock library?")
+        heading = QLabel("Remove the only asset from the stock library?" if count == 1 else
+                         f"Remove all {count:,} assets from the stock library?")
         heading.setStyleSheet(f"font-size: 15px; font-weight: 600; color: {Gate.TEXT};")
         heading.setWordWrap(True)
         layout.addWidget(heading)
         body = QLabel(
             "This empties the library for everybody in the studio, with the thumbnails and "
-            "proxies it made. Favourites and studio picks go too. The source files stay where "
-            "they are.\n\nThis cannot be undone.")
+            "proxies it made. Favourites, studio picks and the folders Rescan looks in go "
+            "too. The source files stay where they are.\n\nThis cannot be undone.")
         body.setWordWrap(True)
         body.setStyleSheet(f"color: {Gate.TEXT_2};")
         layout.addWidget(body)
@@ -55,7 +55,9 @@ class ClearLibraryDialog(QDialog):
         self._update()
 
     def confirmed(self) -> bool:
-        return self.edit.text().strip() == CONFIRM_WORD
+        # The word, however it is typed: "clear" left the button grey with
+        # no hint why (MED2-034).
+        return self.edit.text().strip().upper() == CONFIRM_WORD
 
     def _update(self):
         self.btn_clear.setEnabled(self.confirmed())

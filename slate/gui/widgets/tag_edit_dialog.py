@@ -14,9 +14,10 @@ from slate.gui.core.controls import make_button, set_default_button
 
 
 class TagEditDialog(QDialog):
-    def __init__(self, parent=None, current_tags=None, available_tags=None):
+    def __init__(self, parent=None, current_tags=None, available_tags=None, asset_name=""):
         super().__init__(parent)
-        self.setWindowTitle("Edit tags")
+        # Which asset: the window said only "Edit tags" (MED2-039).
+        self.setWindowTitle(f"Edit tags - {asset_name}" if asset_name else "Edit tags")
         self.setMinimumWidth(400)
         from slate.core.domain.stock_search import normalise_tags
         self.tags = normalise_tags(list(current_tags or []))
@@ -33,10 +34,12 @@ class TagEditDialog(QDialog):
         self.list_tags = QListWidget()
         self.list_tags.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self.list_tags.itemSelectionChanged.connect(self._update_buttons)
+        # Delete removes the selected tags, like the button.
+        self.list_tags.installEventFilter(self)
         layout.addWidget(self.list_tags)
 
         self.btn_remove = make_button("Remove selected", "secondary", icon="minus",
-                                      on_click=self.remove_tag)
+                                      on_click=self.remove_tag, tooltip="Delete")
         layout.addWidget(self.btn_remove, 0, Qt.AlignmentFlag.AlignLeft)
 
         layout.addSpacing(6)
@@ -68,10 +71,14 @@ class TagEditDialog(QDialog):
 
     def eventFilter(self, obj, event):
         from PySide6.QtCore import QEvent
-        if (obj is self.txt_input and event.type() == QEvent.Type.KeyPress
+        if (obj is getattr(self, "txt_input", None) and event.type() == QEvent.Type.KeyPress
                 and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
                 and self.txt_input.text().strip()):
             self.add_tag()
+            return True
+        if (obj is self.list_tags and event.type() == QEvent.Type.KeyPress
+                and event.key() == Qt.Key.Key_Delete and self.list_tags.selectedItems()):
+            self.remove_tag()
             return True
         return super().eventFilter(obj, event)
 

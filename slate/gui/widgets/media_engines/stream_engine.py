@@ -13,6 +13,8 @@ from .base_engine import BaseMediaEngine
 from ....utils.resource_manager import ResourcePathManager
 from ....utils.process_manager import subprocess_tracker
 
+FFMPEG_MISSING = "Previews need FFmpeg, which is missing on this machine - tell IT."
+
 
 def fit_decode_size(native_w, native_h, target_w, target_h, cap_w=1920):
     """
@@ -77,7 +79,14 @@ class StreamEngine(BaseMediaEngine):
         self.seek_request = -1.0
         self.ff_path = self._find_ffmpeg()
 
+        # The frame on screen. _shown says whether it has been shown yet: after
+        # a load or a seek the next frame out of ffmpeg IS current_frame;
+        # after that each one is the frame after it (MED2-006).
         self.current_frame = 0
+        self._shown = False
+        # Bumped by every seek; frames decoded before it are dropped, so a
+        # seek never shows a frame from the old place under the new number.
+        self._gen = 0
         self.total_frames = 1
         self.fps = 24.0
         self.native_size = (0, 0)
@@ -173,17 +182,17 @@ class StreamEngine(BaseMediaEngine):
         self._wants_play = False
         self.paused = True
         self.current_frame = 0
+        self._shown = False
 
         if not self.ff_path:
             try:
                 checked_path = ResourcePathManager.describe_tool_search("ffmpeg")
             except Exception:
                 checked_path = "Unknown"
-            self.error_occurred.emit(
-                "FFmpeg not found.\n"
-                f"Checked: {checked_path}\n"
-                "Also searched system PATH and Slate_FFMPEG_PATH."
-            )
+            # Where it was looked for is for IT: in the log (MED2-059).
+            logging.error("FFmpeg not found. Checked: %s; also PATH and Slate_FFMPEG_PATH.",
+                          checked_path)
+            self.error_occurred.emit(FFMPEG_MISSING)
             return
 
         self.fps = 24.0
@@ -208,6 +217,11 @@ class StreamEngine(BaseMediaEngine):
             except Exception as exc:
                 logging.debug("Async metadata probe failed for %s: %s", source_path, exc)
                 info = {"fps": 24.0, "frames": 0, "width": 0, "height": 0}
+            if token != self._load_token:
+                # Stopped or another file loaded meanwhile: nothing to say. An
+                # emit into an engine being torn down could take the program
+                # down with it (a native crash in the test run).
+                return
             try:
                 self.metadata_resolved.emit(float(info["fps"]), int(info["frames"]),
                                             int(info["width"]), int(info["height"]), int(token))
@@ -232,6 +246,7 @@ class StreamEngine(BaseMediaEngine):
             return
         self._ready = True
         self.current_frame = 0
+        self._shown = False
         self._start_producer(0)
         if self._wants_play:
             self.paused = False
@@ -267,7 +282,10 @@ class StreamEngine(BaseMediaEngine):
             '-f', 'rawvideo', '-pix_fmt', 'rgba',
             '-'
         ])
+        return self._popen(cmd)
 
+    def _popen(self, cmd):
+        """Start ffmpeg with its picture on stdout and what it says kept (shared with sequences)."""
         startupinfo = None
         creationflags = 0
         if sys.platform == 'win32':
@@ -352,10 +370,12 @@ class StreamEngine(BaseMediaEngine):
 
         frame_size = render_w * render_h * 4
         consecutive_restarts = 0
+        gen = self._gen
 
         while self.running and self.process:
             # 1. Handle Seek Request
             if self.seek_request >= 0:
+                gen = self._gen
                 with self.frame_queue.mutex:
                     self.frame_queue.queue.clear()
                 self._restart_ffmpeg_at(self.seek_request)
@@ -382,7 +402,7 @@ class StreamEngine(BaseMediaEngine):
                     short = self.total_frames > 0 and self.current_frame < (self.total_frames - 2)
                     broke = (exit_code not in (0, None)) or (short and reason)
 
-                    if self.current_frame == 0 and self.frame_queue.empty():
+                    if self.current_frame == 0 and not self._shown and self.frame_queue.empty():
                         self.error_occurred.emit(
                             reason or "This file produced no picture. It may be an "
                                       "unsupported format, or unreadable from here."
@@ -417,7 +437,7 @@ class StreamEngine(BaseMediaEngine):
 
                 while self.running:
                     try:
-                        self.frame_queue.put(img, timeout=0.1)
+                        self.frame_queue.put((gen, img), timeout=0.1)
                         break
                     except queue.Full:
                         if self.seek_request >= 0:
@@ -440,6 +460,7 @@ class StreamEngine(BaseMediaEngine):
 
     def stop(self):
         was_playing = self.is_playing()
+        self._load_token += 1          # a probe still running is for nothing now
         self.running = False
         self.paused = True
         self._wants_play = False
@@ -468,26 +489,47 @@ class StreamEngine(BaseMediaEngine):
                 self.finished.emit()
             return
 
-        try:
-            img = self.frame_queue.get_nowait()
-            self.frame_ready.emit(img)
-            self.position_changed.emit(self.current_frame)
-            self.current_frame += 1
-            if self.loop and self.total_frames > 0 and self.current_frame >= self.total_frames:
+        img = self._take()
+        if img is not None:
+            self._show(img)
+
+    def _take(self):
+        """The next decoded frame of the current place, or None (older ones are dropped)."""
+        while True:
+            try:
+                gen, img = self.frame_queue.get_nowait()
+            except queue.Empty:
+                return None
+            if gen == self._gen:
+                return img
+
+    def _show(self, img):
+        """
+        Put the next decoded frame on screen and count it.
+
+        current_frame is the frame on screen, so step, seek, the readout and a
+        snapshot all mean the same frame (MED2-006). It never passes the last
+        frame: ffmpeg can hand over a frame or two beyond the probed length,
+        which read '148 / 144' (MED2-055).
+        """
+        if self._shown:
+            last = max(0, self.total_frames - 1)
+            if self.current_frame >= last and self.loop and self.total_frames > 1:
                 self.current_frame = 0
                 self.looped.emit()
-
-        except queue.Empty:
-            pass
+            else:
+                self.current_frame = min(self.current_frame + 1, last)
+        self._shown = True
+        self.frame_ready.emit(img)
+        self.position_changed.emit(self.current_frame)
 
     def _force_frame_pull(self, attempts: int = 60):
         """Forces the consumer to grab a single frame even if paused (e.g. for seeking/stepping)."""
         try:
-            img = self.frame_queue.get_nowait()
-            self.frame_ready.emit(img)
-            self.position_changed.emit(self.current_frame)
-        except queue.Empty:
-            if self.running and attempts > 0:
+            img = self._take()
+            if img is not None:
+                self._show(img)
+            elif self.running and attempts > 0:
                 # Buffer empty, check again shortly. Tied to this engine, so a
                 # retry never fires after the player has been closed.
                 QTimer.singleShot(50, self, lambda: self._force_frame_pull(attempts - 1))
@@ -497,8 +539,14 @@ class StreamEngine(BaseMediaEngine):
     def seek(self, frame_num):
         if self.fps > 0:
             frame_num = max(0, min(int(frame_num), max(0, self.total_frames - 1)))
+            # The new place first, then the request: the producer tags what it
+            # decodes after the request with the place it read.
+            self._gen += 1
+            with self.frame_queue.mutex:
+                self.frame_queue.queue.clear()
+            self.current_frame = frame_num   # the next frame out is this one
+            self._shown = False
             self.seek_request = frame_num / self.fps
-            self.current_frame = frame_num # Immediate UI update prediction
             if not self.producer_thread or not self.producer_thread.is_alive():
                 if self.source and self._ready:
                     self._start_producer(frame_num)
@@ -508,16 +556,11 @@ class StreamEngine(BaseMediaEngine):
     def step(self, frames):
         if frames > 0 and not self.frame_queue.empty():
             # Forward step: consume next frame from existing buffer (no FFmpeg restart)
-            try:
-                for _ in range(frames):
-                    if self.frame_queue.empty():
-                        break
-                    img = self.frame_queue.get_nowait()
-                    self.frame_ready.emit(img)
-                    self.current_frame += 1
-                self.position_changed.emit(self.current_frame)
-            except queue.Empty:
-                pass
+            for _ in range(frames):
+                img = self._take()
+                if img is None:
+                    break
+                self._show(img)
             self.pause()
         else:
             # Backward step: must seek (unavoidable with streams)
@@ -545,10 +588,12 @@ class StreamEngine(BaseMediaEngine):
         # If producer thread is not active, restart from current frame or beginning
         if not self.producer_thread or not self.producer_thread.is_alive():
             if self.source:
-                start_frame = self.current_frame
-                if self.total_frames > 0 and start_frame >= self.total_frames:
+                # On from the frame after the one shown; from the top at the end.
+                start_frame = self.current_frame + (1 if self._shown else 0)
+                if start_frame >= self.total_frames:
                     start_frame = 0
-                    self.current_frame = 0
+                self.current_frame = start_frame
+                self._shown = False
                 self._start_producer(start_frame)
         if not self.playback_timer.isActive():
             interval = max(1, int((1000 / self.fps) / self.playback_speed))

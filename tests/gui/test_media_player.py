@@ -79,7 +79,9 @@ def test_icons_and_keys_in_tooltips(player):
     for button in (player.btn_prev, player.btn_step_back, player.btn_play,
                    player.btn_step_forward, player.btn_next, player.btn_fullscreen):
         assert not button.icon().isNull() and button.text() == ""                   # MED-114
-    assert "←" in player.btn_step_back.toolTip() and "(F)" in player.btn_fullscreen.toolTip()  # MED-117
+    # , and . - the keys that step from the gallery too (MED-117, MED2-007).
+    assert "(," in player.btn_step_back.toolTip() and "(.)" in player.btn_step_forward.toolTip()
+    assert "(F)" in player.btn_fullscreen.toolTip()
 
 
 def test_long_messages_wrap(player):
@@ -252,3 +254,110 @@ def test_exr_colour_combos_show_whole_names_or_ellipsis(qtbot, width):
         if width >= 360:
             assert shown == text, (width, shown, combo.width())
         assert text in combo.toolTip()
+
+
+# ------------------------------------------------------------------ round 2
+
+@needs_ffmpeg
+def test_the_frame_counted_is_the_frame_shown(qtbot, player, tmp_path):
+    clip = _movie(tmp_path / "count.mp4", 160, 90, seconds=2)
+    _load(qtbot, player, clip)
+    engine = player.active_engine
+    qtbot.waitUntil(lambda: engine._ready, timeout=10000)
+    player.play()
+    qtbot.waitUntil(lambda: player.slider.value() >= 5, timeout=10000)
+    player.pause()
+    qtbot.wait(100)
+    # What the engine counts is what is on screen (MED2-006).
+    assert engine.current_frame == player.slider.value()
+    shown = player.slider.value()
+    player.step_active(-1)
+    qtbot.waitUntil(lambda: player.slider.value() == shown - 1, timeout=5000)
+    assert engine.current_frame == shown - 1
+
+
+@needs_ffmpeg
+def test_playing_to_the_end_stops_on_the_last_frame(qtbot, player, tmp_path):
+    clip = _movie(tmp_path / "end.mp4", 160, 90, seconds=1)
+    _load(qtbot, player, clip)
+    engine = player.active_engine
+    qtbot.waitUntil(lambda: engine._ready, timeout=10000)
+    player.btn_loop.setChecked(False)
+    finished = []
+    player.media_finished.connect(lambda: finished.append(1))
+    player.play()
+    qtbot.waitUntil(lambda: bool(finished), timeout=10000)
+    last = engine.total_frames - 1
+    assert engine.current_frame == last and player.slider.value() == last            # MED2-055
+    assert player.lbl_time.text() == f"{last + 1} / {last + 1}"
+
+
+@needs_ffmpeg
+def test_an_unplayable_file_says_so_plainly(qtbot, player, tmp_path):
+    broken = tmp_path / "broken_download.mp4"
+    broken.write_bytes(b"\x00" * 4096)
+    player.load(str(broken))
+    qtbot.waitUntil(lambda: player.btn_details.isVisibleTo(player), timeout=15000)
+    assert player.screen.text().startswith("This file could not be played - it may be")  # MED2-012
+    assert "Invalid" not in player.screen.text() and player._error_details
+    assert not player.btn_play.isVisible() and not player.slider.isVisible()
+
+
+@needs_ffmpeg
+def test_a_sequence_proxy_counts_its_frames_and_has_no_sound_line(qtbot, player, tmp_path):
+    proxy = _movie(tmp_path / "abc_proxy.mp4", 160, 90, seconds=1)
+    first = _picture(tmp_path / "muzzle_flash.1001.png")
+    _load(qtbot, player, proxy, audio_source=str(first), first_frame=1001)
+    qtbot.waitUntil(lambda: player.active_engine._ready, timeout=10000)
+    qtbot.wait(300)
+    assert player.time_text(0).startswith("1001 / ")                                # MED2-015
+    assert not player.lbl_no_audio.isVisible()                                       # MED2-057
+    assert "_f1001_" in player._snapshot_name()
+
+
+def test_more_speeds_and_one_timecode(player):
+    assert [player.combo_speed.itemText(i) for i in range(player.combo_speed.count())] == \
+        ["0.25x", "0.5x", "1x", "2x", "4x"] and player.get_current_speed() == 1.0   # MED2-065
+    from slate.gui.stock_model import length_text
+    clip = {"file_path": "x/long_reference_65min.mp4",
+            "metadata": {"duration_sec": 3900, "fps": 24}}
+    assert length_text(clip, compact=True) == "1:05:00"                              # MED2-031
+    assert length_text(clip) == "1:05:00:00"
+    player.set_duration(3900 * 24)
+    player.current_fps = 24.0
+    player.show_timecode = True
+    assert player.time_text(3900 * 24 - 1).endswith("1:04:59:23")
+
+
+def test_the_host_names_what_previous_and_next_move_between(player):
+    assert player.btn_next.toolTip() == "Next" and "gallery" not in player.btn_play.toolTip()
+    player.set_context("shot")
+    assert player.btn_next.toolTip() == "Next shot"                                 # MED2-056
+
+
+def test_the_preview_source(tmp_path):
+    from slate.gui.stock_model import preview_source
+    exr, proxy = tmp_path / "plate_linear.exr", tmp_path / "p_proxy.jpg"
+    exr.write_bytes(b"x")
+    proxy.write_bytes(b"x")
+    assert preview_source({"file_path": str(exr), "proxy_path": str(proxy)}) == (str(exr), {})  # MED2-004
+    mov, mp4 = tmp_path / "boom.mov", tmp_path / "b_proxy.mp4"
+    mov.write_bytes(b"x")
+    mp4.write_bytes(b"x")
+    assert preview_source({"file_path": str(mov), "proxy_path": str(mp4)}) == \
+        (str(mp4), {"audio_source": str(mov)})                                        # MED2-003
+    seq = {"file_path": str(tmp_path / "m.1001.png"), "proxy_path": str(mp4),
+           "is_sequence": True, "frame_first": 1001}
+    assert preview_source(seq)[1]["first_frame"] == 1001
+
+
+def test_quick_look_passes_the_sound_on(qtbot, tmp_path):
+    from slate.gui.widgets.quick_look import QuickLookDialog
+    a, b = _picture(tmp_path / "a.png"), _picture(tmp_path / "b.png")
+    dialog = QuickLookDialog(None, "a", str(a), load_options={"audio_source": str(b)},
+                             navigator=lambda s: ("b", str(b), {"audio_source": str(a)}))
+    qtbot.addWidget(dialog)
+    assert dialog.player._pending_audio_path == str(b)                               # MED2-003
+    dialog.step(1)
+    assert dialog.player._pending_audio_path == str(a)
+    assert "↑ ↓" in dialog.hint.text() and "← →" in dialog.hint.text()               # MED2-060

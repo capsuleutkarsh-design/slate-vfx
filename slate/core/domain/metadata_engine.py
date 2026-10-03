@@ -34,52 +34,56 @@ class SmartMetadataManager:
     _FFPROBE_TIMEOUT_SEC = max(10, int(os.getenv("Slate_FFPROBE_TIMEOUT", "15")))
     _FFMPEG_FALLBACK_TIMEOUT_SEC = max(5, int(os.getenv("Slate_FFMPEG_PROBE_TIMEOUT", "12")))
 
+    # Category rules, the specific ones first: "fire_explosion" is an
+    # explosion (MED2-005). Keywords match whole words of the file name and its
+    # folder. One of four letters or more also matches the start of a word
+    # ("fireball", "sparkles", "explosions"); shorter ones only a whole word,
+    # so "ao" is not found in "chaos", "tex" in "vertex" or "arc" in "search".
+    CATEGORY_RULES = (
+        ("Textures", ("albedo", "diffuse", "specular", "roughness", "normal", "bump",
+                      "displacement", "ao", "ambient", "texture", "tex", "matlib", "material")),
+        ("HDRI", ("hdri", "env", "pano", "panorama", "skydome", "lightprobe", "latlong",
+                  "equirect")),
+        ("Explosions", ("explosion", "blast", "detonation", "pyro", "bomb")),
+        ("Muzzle Flashes", ("muzzle", "gunshot", "flash", "weapon")),
+        ("Blood", ("blood", "gore", "splatter", "wound")),
+        ("Sparks", ("spark", "ember", "arc", "electric")),
+        ("Fire", ("fire", "flame", "torch", "ignite", "burn")),
+        ("Smoke", ("smoke", "steam", "wisps", "fume")),
+        ("Atmosphere", ("cloud", "fog", "mist", "haze", "atmosphere")),
+        ("Particles", ("debris", "dust", "shatter", "gravel", "dirt", "ground")),
+        ("Liquids", ("water", "splash", "liquid", "rain", "ocean")),
+        ("Magic/Sci-Fi", ("magic", "energy", "beam", "laser", "scifi", "sci")),
+        ("Stock Elements", ("element", "stock", "vfx", "footage")),
+        ("References", ("ref", "reference", "plate", "raw", "dailies", "scan", "photo")),
+    )
+
+    @staticmethod
+    def _rule_matches(keywords, words) -> bool:
+        for word in words:
+            for key in keywords:
+                if word == key or (len(key) >= 4 and word.startswith(key)):
+                    return True
+        return False
+
     @staticmethod
     def classify_category(file_path: Path):
         """
-        Determines the Asset Category based on filename/path keywords using Regex.
-        Returns 'Uncategorized' if no match found, or the matched category.
+        The category from the words of the file name and its folder; the
+        folder's own name when no rule fits.
         """
-        name = file_path.name.lower()
-        parent = file_path.parent.name.lower()
-        full_str = f"{parent}/{name}"
-
-        # 1. TEXTURES & MATERIALS
-        if re.search(r'(albedo|diffuse|specular|roughness|normal|bump|displacement|ao|ambient|texture|tex|matlib|material)', full_str):
-            return "Textures"
-        
-        # 2. HDRI / LIGHTING
-        img_ext = file_path.suffix.lower()
-        if re.search(r'(hdri|env|pano|skydome|lightprobe|exr|hdr)', full_str) and img_ext in IMAGE_EXTENSIONS:
-             return "HDRI"
-             
-        # 3. STOCK FOOTAGE - DETAILED CATEGORIZATION
-        if re.search(r'(fire|flame|torch|ignite|burn)', full_str): return "Fire"
-        if re.search(r'(smoke|steam|wisps|fume)', full_str): return "Smoke"
-        if re.search(r'(explosion|blast|detonation|pyro|bomb)', full_str): return "Explosions"
-        if re.search(r'(muzzle|gunshot|flash|weapon)', full_str): return "Muzzle Flashes"
-        if re.search(r'(spark|ember|arc|electric)', full_str): return "Sparks"
-        if re.search(r'(cloud|fog|mist|haze|atmosphere)', full_str): return "Atmosphere"
-        if re.search(r'(blood|gore|splatter|wound)', full_str): return "Blood"
-        if re.search(r'(debris|dust|shatter|gravel|dirt|ground)', full_str): return "Particles"
-        if re.search(r'(water|splash|liquid|rain|ocean)', full_str): return "Liquids"
-        if re.search(r'(magic|energy|beam|laser|sci-fi)', full_str): return "Magic/Sci-Fi"
-        
-        # Generic Fallback
-        if re.search(r'(element|stock|vfx|footage)', full_str):
-            return "Stock Elements"
-            
-        # 4. REFERENCE
-        if re.search(r'(ref|reference|plate|raw|dailies|scan|photo)', full_str):
-            return "References"
-
-        # 5. 3D MODELS
-        if file_path.suffix.lower() in ['.fbx', '.obj', '.abc', '.usd', '.usda', '.usdc']:
-            return "3D Models"
-            
-        # 6. AUDIO
-        if file_path.suffix.lower() in ['.wav', '.mp3', '.ogg', '.flac']:
-             return "Sound FX"
+        from .stock_search import name_words
+        words = name_words(file_path.stem) + name_words(file_path.parent.name)
+        is_picture = file_path.suffix.lower() in IMAGE_EXTENSIONS
+        for category, keywords in SmartMetadataManager.CATEGORY_RULES:
+            if category == "HDRI":
+                # The words only, never the extension: every .exr plate was
+                # "HDRI" (MED2-005). A Radiance .hdr is an HDRI by its kind.
+                if is_picture and (file_path.suffix.lower() == ".hdr"
+                                   or SmartMetadataManager._rule_matches(keywords, words)):
+                    return category
+            elif SmartMetadataManager._rule_matches(keywords, words):
+                return category
 
         # Fallback to the folder's own name, as it is written ("LibB" stays
         # "LibB"; underscores read as spaces) - capitalize() made it "Libb"
@@ -89,31 +93,23 @@ class SmartMetadataManager:
 
     @staticmethod
     def get_smart_tags(file_path: Path):
-        # FIX: Ignore macOS resource fork files
+        """
+        (category, tags): the tags are the telling words of the file name.
+
+        Not every word: "with", "for", "file" and "min" matched half the
+        library (MED2-014). Not the category either - it has its own place
+        and is not a tag to edit (MED2-037).
+        """
         if file_path.name.startswith("._"):
             return "Uncategorized", []
-
-        # Use new classifier
-        primary_category = SmartMetadataManager.classify_category(file_path)
-        
-        tags = set()
-        tags.add(primary_category)
-        
-        clean_name = file_path.stem.replace('_', ' ').replace('.', ' ').replace('-', ' ')
-        # Split by typical separators and CamelCase
-        words = re.findall(r'[A-Z]?[a-z]+|[A-Z]+(?=[A-Z]|$)|[0-9]+', clean_name)
-            
-        for w in words:
-            w = w.strip()
-            if len(w) > 2 and not w.isdigit():
-                tags.add(w)
-                
-        tag_list = list(tags)
-        # Ensure category is first
-        if primary_category in tag_list:
-            tag_list.remove(primary_category)
-        tag_list.insert(0, primary_category)
-        return primary_category, tag_list
+        from .stock_search import STOP_WORDS, name_words
+        category = SmartMetadataManager.classify_category(file_path)
+        tags = []
+        for word in name_words(file_path.stem):
+            if (len(word) > 2 and word.isalpha() and word not in STOP_WORDS
+                    and word != category.lower() and word not in tags):
+                tags.append(word)
+        return category, tags
 
     # Single pictures whose size Qt can read straight from the file header.
     # Running ffprobe - a separate process - on each of them made an ingest of

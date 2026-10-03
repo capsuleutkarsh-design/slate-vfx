@@ -21,6 +21,7 @@ from PySide6.QtGui import QPainter, QColor, QDrag, QKeySequence, QPen
 from pathlib import Path
 import logging
 from slate.core.infra.gate import Gate
+from slate.core.infra.stock_repository import ALL, FAVORITES, REMOVED, STUDIO_PICKS
 
 
 class PyToggle(QCheckBox):
@@ -131,11 +132,11 @@ class AssetSortFilterProxyModel(QSortFilterProxyModel):
             return False
 
         category = self.filter_category
-        if category == "Favorites":
+        if category == FAVORITES:
             return bool(asset.get('is_favorite'))
-        if category == "Studio picks":
+        if category == STUDIO_PICKS:
             return bool(asset.get('is_pick'))
-        if category not in ("All", "") and asset.get('category') != category:
+        if category not in (ALL, REMOVED, "") and asset.get('category') != category:
             return False
 
         if self.media_type_filter != "All" and asset.get('status') == 'ingesting':
@@ -149,7 +150,7 @@ class AssetSortFilterProxyModel(QSortFilterProxyModel):
 class AssetKeys:
     """The gallery keys, shared by the grid and the table (MED-033, MED-056, MED-117)."""
 
-    PLAYER_KEYS = (Qt.Key.Key_J, Qt.Key.Key_K, Qt.Key.Key_L, Qt.Key.Key_F,
+    PLAYER_KEYS = (Qt.Key.Key_J, Qt.Key.Key_K, Qt.Key.Key_L, Qt.Key.Key_F, Qt.Key.Key_M,
                    Qt.Key.Key_Home, Qt.Key.Key_End, Qt.Key.Key_Comma, Qt.Key.Key_Period)
 
     @staticmethod
@@ -187,7 +188,7 @@ class DraggableListView(QListView):
     delete_requested = Signal()       # Delete
     favorite_requested = Signal()     # Ctrl+D
     copy_requested = Signal()         # Ctrl+C
-    player_key = Signal(object)       # J K L F Home End , . for the inspector's player
+    player_key = Signal(object)       # J K L M F Home End , . for the inspector player
     zoom_step = Signal(int)           # Ctrl + wheel
 
     def __init__(self, parent=None):

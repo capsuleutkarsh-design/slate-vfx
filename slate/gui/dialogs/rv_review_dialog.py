@@ -8,7 +8,7 @@ checking the prep under it, comparing a de-age against the original.
 So the dialog asks. Only departments that have actually rendered something are
 listed: offering one that has not just opens RV on nothing. Each row reads the
 same way - layer, version, frame range or file - with a visible tick box, and
-Select all / Select none (MED-122).
+Tick all / Untick all (MED-122).
 """
 
 from PySide6.QtCore import Qt
@@ -56,8 +56,9 @@ class RVReviewDialog(QDialog):
         self.list = self.table
 
         buttons = QHBoxLayout()
-        self.btn_all = make_button("Select all", "ghost", on_click=lambda: self._tick_all(True))
-        self.btn_none = make_button("Select none", "ghost", on_click=lambda: self._tick_all(False))
+        # The same words as the Timeline Viewer's list (MED2-052).
+        self.btn_all = make_button("Tick all", "ghost", on_click=lambda: self._tick_all(True))
+        self.btn_none = make_button("Untick all", "ghost", on_click=lambda: self._tick_all(False))
         buttons.addWidget(self.btn_all)
         buttons.addWidget(self.btn_none)
         buttons.addStretch()
@@ -128,9 +129,10 @@ class RVReviewDialog(QDialog):
             return
         paths = self.request.media_paths(keys)
         if not launch(paths, launcher=self._launcher):
-            warn(self, "Open in RV", "OpenRV could not be started.",
-                 "Check that it is installed alongside Slate, or set RV_PATH to the folder "
-                 "holding rv.exe.")
+            # No environment variables for a supervisor; the reason is in the
+            # log for IT (MED2-063).
+            warn(self, "Open in RV", "RV is not installed on this machine, or could not start "
+                                     "- tell IT.")
             return
         self.accept()
 

@@ -18,12 +18,14 @@ from .advanced_player import AdvancedPlayer
 
 class QuickLookDialog(QDialog):
     """
-    navigator: optional callable(step) -> (name, path) | None. step is -1 or 1.
-    It moves the caller's own selection and says what to show next.
+    navigator: optional callable(step) -> (name, path, load_options) | None.
+    step is -1 or 1. It moves the caller's own selection and says what to show
+    next. load_options go to AdvancedPlayer.load: the original as the sound
+    source when path is a silent proxy (MED2-003), a sequence's first frame.
     """
 
     def __init__(self, parent=None, asset_name="Asset", asset_path=None, navigator=None,
-                 autoplay=True):
+                 autoplay=True, load_options=None):
         super().__init__(parent)
         self.setWindowTitle(asset_name or "Preview")
         self.setModal(True)
@@ -39,10 +41,14 @@ class QuickLookDialog(QDialog):
         self.player.next_requested.connect(lambda: self.step(1))
         self.player.btn_prev.setVisible(navigator is not None)
         self.player.btn_next.setVisible(navigator is not None)
+        self.player.set_context("asset", "Space")
+        self.player.btn_prev.setToolTip("Previous asset (Page Up)")
+        self.player.btn_next.setToolTip("Next asset (Page Down)")
 
-        hint = "Space plays and pauses  ·  ← → step a frame  ·  Esc closes"
+        # Every key it has, the asset keys too (MED2-060).
+        hint = "Space play  ·  ← → frame  ·  Esc close"
         if navigator is not None:
-            hint = "Space plays and pauses  ·  Page Up / Page Down: previous / next  ·  Esc closes"
+            hint = "Space play  ·  ← → frame  ·  ↑ ↓ or Page Up / Page Down asset  ·  Esc close"
         self.hint = QLabel(hint)
         self.hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.hint.setStyleSheet(f"color: {Gate.TEXT_DIM}; padding: 4px; background: {Gate.PANEL};")
@@ -53,7 +59,7 @@ class QuickLookDialog(QDialog):
 
         if asset_path:
             self.player._pending_autoplay = bool(autoplay)
-            self.player.load(asset_path)
+            self.player.load(asset_path, **(load_options or {}))
 
     def step(self, direction):
         """Show the previous or next asset of the caller's list."""
@@ -62,10 +68,10 @@ class QuickLookDialog(QDialog):
         nxt = self.navigator(direction)
         if not nxt:
             return False
-        name, path = nxt
+        name, path, options = (tuple(nxt) + ({},))[:3]
         self.setWindowTitle(name or "Preview")
         self.player._pending_autoplay = True
-        self.player.load(path)
+        self.player.load(path, **(options or {}))
         return True
 
     def keyPressEvent(self, event):

@@ -175,8 +175,49 @@ def repaired_row(row: dict) -> dict:
     return changes
 
 
+def reworded_row(row: dict) -> dict:
+    """
+    The category, tags and search text an ingest gives a row now (no file access).
+
+    Categories matched inside words ('grain' was Liquids, every .exr HDRI),
+    tags held filler words and the category, and search matched inside words
+    (MED2-005, MED2-014, MED2-026, MED2-037). Tags a person added are kept;
+    only the category and filler words come out of them.
+    """
+    from slate.core.domain.metadata_engine import SmartMetadataManager
+    from slate.core.domain.stock_search import STOP_WORDS, build_search_text, real_tags, tags_text
+
+    changes = {}
+    path_text = str(row.get("file_path") or "")
+    if path_text:
+        category = SmartMetadataManager.classify_category(Path(path_text))
+        if category != (row.get("category") or ""):
+            changes["category"] = category
+    dropped = {str(row.get("category") or "").lower(),
+               str(changes.get("category", "")).lower()} | STOP_WORDS
+    tags = [t for t in real_tags(row.get("tags")) if t.lower() not in dropped]
+    if tags_text(tags) != (row.get("tags") or ""):
+        changes["tags"] = tags_text(tags)
+    merged = dict(row)
+    merged.update(changes)
+    search = build_search_text(merged)
+    if search != (row.get("search_text") or ""):
+        changes["search_text"] = search
+    return changes
+
+
+def reword_stock_library(db) -> bool:
+    """One-off: today's categories, tags and search words for every row."""
+    return _mend(db, reworded_row, "reword")
+
+
 def repair_stock_library(db) -> bool:
     """One-off: mend rows written before the fixes above."""
+    return _mend(db, repaired_row, "repair")
+
+
+def _mend(db, fix, label):
+    """Apply fix(row) -> changed columns to every stock row, in batches."""
     if db is None or not _table_exists(db, "stock_library"):
         return True
     if not _column_exists(db, "stock_library", "search_text"):
@@ -192,9 +233,9 @@ def repair_stock_library(db) -> bool:
     for raw in rows:
         row = dict(raw)
         try:
-            changes = repaired_row(row)
+            changes = fix(row)
         except Exception as exc:
-            logger.debug("Stock row %s not repaired: %s", row.get("id"), exc)
+            logger.debug("Stock row %s not mended (%s): %s", row.get("id"), label, exc)
             continue
         if changes:
             batch.append((row["id"], changes))
@@ -208,5 +249,5 @@ def repair_stock_library(db) -> bool:
                          % ", ".join(f"{c} = %s" for c in columns),
                          tuple(changes[c] for c in columns) + (row_id,))
         fixed += len(chunk)
-    logger.info("Stock library repair: %d of %d rows mended.", fixed, len(rows))
+    logger.info("Stock library %s: %d of %d rows mended.", label, fixed, len(rows))
     return json.dumps({"rows": len(rows), "mended": fixed})

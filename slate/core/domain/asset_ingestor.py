@@ -122,6 +122,13 @@ VALID_EXTENSIONS = frozenset({
 # Camera raw: stored and searchable, but nothing in Slate can decode them.
 RAW_EXTENSIONS = frozenset({'.r3d', '.ari'})
 
+# Found in stock folders but not taken: named in the summary rather than
+# left out without a word (MED2-013).
+NOT_TAKEN_EXTENSIONS = frozenset({
+    '.wav', '.mp3', '.aif', '.aiff', '.flac', '.ogg', '.m4a',
+    '.fbx', '.obj', '.abc', '.usd', '.usda', '.usdc', '.blend',
+})
+
 from .sequence_rules import MIN_COVERAGE, is_real_sequence  # noqa: F401 (shared with the player)
 
 
@@ -192,7 +199,8 @@ class IngestWorker(QThread):
         self._update_buffer = []
         self._last_progress = 0.0
         self.summary = {"found": 0, "added": 0, "refreshed": 0, "skipped": 0,
-                        "failed": 0, "failed_names": [], "stopped": False, "roots": []}
+                        "failed": 0, "failed_names": [], "stopped": False, "roots": [],
+                        "removed": 0, "not_taken": []}
         self.lib_manager = create_asset_api(db_manager=database_manager)
         if self.username and hasattr(self.lib_manager, "set_user"):
             try:
@@ -298,7 +306,9 @@ class IngestWorker(QThread):
                         return None
                     if f.name.startswith("._"):
                         continue
-                    if f.suffix.lower() in VALID_EXTENSIONS:
+                    if f.suffix.lower() in NOT_TAKEN_EXTENSIONS:
+                        self.summary["not_taken"].append(f.name)
+                    elif f.suffix.lower() in VALID_EXTENSIONS:
                         found.append(f)
                         if len(found) % 50 == 0:
                             # The bar has nothing to measure yet: say how many
@@ -363,8 +373,7 @@ class IngestWorker(QThread):
             if not self.is_running:
                 break
             known = self.existing_map.get(_normalise_path(f))
-            if known is not None and self._healthy(known):
-                self.summary["skipped"] += 1
+            if self._leave_out(known, f):
                 continue
             asset = self._create_basic_asset(f, is_sequence=False)
             asset['ingest_root'] = self._root_of(f)
@@ -380,8 +389,7 @@ class IngestWorker(QThread):
             # Same spelling as the map was built with, or no sequence would
             # ever match and every one would be ingested again on every run.
             known = self.existing_map.get(_normalise_path(first_frame))
-            if known is not None and self._healthy(known):
-                self.summary["skipped"] += 1
+            if self._leave_out(known, first_frame):
                 continue
             asset = self._create_basic_asset(first_frame, is_sequence=True,
                                              display_name=sequence_display_name(seq))
@@ -412,6 +420,34 @@ class IngestWorker(QThread):
         logging.info("Ingest finished (%s). %s", describe_memory(), self.summary)
         return self._finish(not stopped, "Stopped." if stopped else "Ingest complete.",
                             stopped=stopped)
+
+    def _leave_out(self, known, path) -> bool:
+        """
+        Whether a file the library already knows is left alone, and counted.
+
+        Deleted from the library: stays deleted, whatever the folder still
+        holds (MED2-002). Read before and could not be: not tried again on
+        every Rescan unless the file changed (MED2-019).
+        """
+        if known is None:
+            return False
+        if known.get('deleted_at'):
+            self.summary["removed"] += 1
+            return True
+        if self._healthy(known) or self._still_unreadable(known, path):
+            self.summary["skipped"] += 1
+            return True
+        return False
+
+    @staticmethod
+    def _still_unreadable(known, path) -> bool:
+        from .stock_search import _metadata
+        if not _metadata(known.get('metadata')).get('unreadable'):
+            return False
+        try:
+            return Path(path).stat().st_size == int(known.get('file_size') or -1)
+        except OSError:
+            return False
 
     @staticmethod
     def _healthy(known) -> bool:
@@ -615,6 +651,11 @@ class IngestWorker(QThread):
             if thumb_success and thumb_path:
                 visual = SmartMetadataManager.extract_visual_tags(str(thumb_path))
 
+            readable = bool(thumb_success or meta.get('width'))
+            if not readable:
+                # Kept in the metadata, so the card says "Could not read"
+                # after a reload too (MED2-019).
+                meta['unreadable'] = True
             asset.update({
                 'thumb_path': str(thumb_path) if thumb_path else None,
                 'proxy_path': str(proxy_path) if proxy_path else None,
@@ -622,12 +663,13 @@ class IngestWorker(QThread):
                 'tags': tags,
                 'visual_tags': visual,
                 'category': asset.get('category') or primary_cat,
-                'status': 'ready' if (thumb_success or meta.get('width')) else 'corrupt',
+                'status': 'ready' if readable else 'corrupt',
             })
             return asset
         except Exception as e:
             logging.exception(f"Deep Analysis Critical Fail {f_path}: {e}")
             asset['status'] = 'corrupt'
+            asset['metadata'] = {'unreadable': True}
             return asset
 
 
@@ -652,14 +694,28 @@ class ImportLibWorker(QThread):
         self.is_running = True
         self.lib_manager = create_asset_api(db_manager=database_manager)
 
+    # What an export carries and an import takes: what is true on any server.
+    # Not the database id, this person's favourites or this machine's cache
+    # paths (MED2-022).
+    PORTABLE_KEYS = ('file_path', 'name', 'display_name', 'category', 'tags', 'visual_tags',
+                     'metadata', 'is_sequence', 'frame_first', 'frame_last', 'frame_count',
+                     'pattern', 'added_by', 'ingest_date')
+
+    @staticmethod
+    def _path_of(entry):
+        path = entry.get('file_path') or entry.get('path') if isinstance(entry, dict) else None
+        return path.strip() if isinstance(path, str) and path.strip() else None
+
     @staticmethod
     def validate(data):
-        """(entries, error). entries are the dicts with a path; error is a sentence or ''."""
+        """
+        (entries, error). entries are the dicts with a usable path; error is a
+        sentence or ''. The ones left out are counted as invalid by run().
+        """
         if not isinstance(data, list):
             return [], ("This file is not a Slate library export. An export is a list of "
                         "assets; this file holds something else.")
-        entries = [d for d in data if isinstance(d, dict)
-                   and (d.get('file_path') or d.get('path'))]
+        entries = [d for d in data if ImportLibWorker._path_of(d)]
         if data and not entries:
             return [], ("This file is not a Slate library export: none of its entries "
                         "has a file path.")
@@ -672,25 +728,33 @@ class ImportLibWorker(QThread):
             self.finished_signal.emit(False, error)
             return
         total = len(entries)
-        imported = missing = 0
+        # Said apart (MED2-021): new, already there, not on disk, unreadable.
+        invalid = len(self.data) - total
+        known = set()
+        try:
+            known = {_normalise_path(a.get('file_path')) for a in self.lib_manager.list_known_paths()
+                     if a.get('file_path') and not a.get('deleted_at')}
+        except Exception as exc:
+            logging.warning("Import: the library's paths could not be read: %s", exc)
+        imported = existing = missing = 0
         batch = []
         for i, entry in enumerate(entries, start=1):
             if not self.is_running:
                 break
-            path = Path(str(entry.get('file_path') or entry.get('path')))
+            path = Path(self._path_of(entry))
             if not path.exists():
                 missing += 1
             else:
-                record = {k: v for k, v in entry.items()
-                          if k in ('thumb_path', 'proxy_path', 'tags', 'metadata', 'category',
-                                   'display_name', 'name', 'visual_tags', 'is_sequence',
-                                   'frame_first', 'frame_last', 'frame_count', 'pattern')}
+                record = {k: v for k, v in entry.items() if k in self.PORTABLE_KEYS}
                 record['file_path'] = str(path)
                 record['added_by'] = entry.get('added_by') or self.username
                 if not record.get('category'):
                     record['category'] = SmartMetadataManager.classify_category(path)
                 batch.append(record)
-                imported += 1
+                if _normalise_path(path) in known:
+                    existing += 1
+                else:
+                    imported += 1
             if len(batch) >= 200:
                 self.lib_manager.add_assets_batch(batch)
                 batch = []
@@ -698,8 +762,8 @@ class ImportLibWorker(QThread):
                 self.progress_signal.emit(int(i * 100 / max(1, total)), f"Importing {i:,} of {total:,}")
         if batch:
             self.lib_manager.add_assets_batch(batch)
-        summary = {"imported": imported, "missing": missing, "error": "",
-                   "stopped": not self.is_running}
+        summary = {"imported": imported, "existing": existing, "missing": missing,
+                   "invalid": invalid, "error": "", "stopped": not self.is_running}
         self.summary_ready.emit(summary)
         self.finished_signal.emit(True, f"Imported {imported:,}")
 

@@ -20,11 +20,14 @@ from .....core.domain.asset_ingestor import IngestWorker
 
 def summary_sentence(summary: dict) -> tuple:
     """(message, level) for what an ingest did."""
+    from .....core.domain.olive_lineup import plural
     summary = summary or {}
     added = int(summary.get("added") or 0)
     refreshed = int(summary.get("refreshed") or 0)
     skipped = int(summary.get("skipped") or 0)
     failed = int(summary.get("failed") or 0)
+    removed = int(summary.get("removed") or 0)
+    not_taken = len(summary.get("not_taken") or [])
     parts = []
     if added:
         parts.append(f"Added {added:,}")
@@ -34,6 +37,11 @@ def summary_sentence(summary: dict) -> tuple:
         parts.append(f"{skipped:,} already in the library")
     if failed:
         parts.append(f"{failed:,} could not be read")
+    if removed:
+        # Deleted earlier: left out, and where to get them back (MED2-002).
+        parts.append(f"{plural(removed, 'deleted asset')} left out (restore from Removed)")
+    if not_taken:
+        parts.append(f"{plural(not_taken, 'file')} left out: not a picture or movie")
     if summary.get("stopped"):
         text = "Ingest stopped. " + (", ".join(parts) + "." if parts else "Nothing was added.")
         return text, "warning"
@@ -41,7 +49,7 @@ def summary_sentence(summary: dict) -> tuple:
         return summary.get("message") or "Nothing new to add.", "info"
     text = ", ".join(parts)
     text = text[0].upper() + text[1:] + "."
-    return text, ("warning" if failed else "success")
+    return text, ("warning" if failed or not_taken else "success")
 
 
 class StockIngestController(QObject):
@@ -164,8 +172,9 @@ class StockIngestController(QObject):
         reachable = [r for r in roots if Path(r).is_dir()]
         unreachable = [r for r in roots if r not in reachable]
         if unreachable:
-            self.notice.emit(f"{len(unreachable)} ingest folder(s) could not be reached and were "
-                             "skipped.", "warning")
+            from .....core.domain.olive_lineup import plural
+            self.notice.emit(f"{plural(len(unreachable), 'ingest folder')} could not be reached "
+                             "and left out.", "warning")
         if not reachable:
             return False
         return self.start_ingest(reachable, fast_mode)

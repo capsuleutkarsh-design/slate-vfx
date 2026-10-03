@@ -63,8 +63,8 @@ _NUMBERS = re.compile(r"(\d+)")
 
 
 def plural(count: int, singular: str, plural_form: str = "") -> str:
-    """'1 shot', '2 shots', '1 proxy', '3 proxies'."""
-    return f"{count} {singular if count == 1 else (plural_form or singular + 's')}"
+    """'1 shot', '2 shots', '1 proxy', '3 proxies', '1,200 shots'."""
+    return f"{count:,} {singular if count == 1 else (plural_form or singular + 's')}"
 
 
 def natural_key(text: str) -> tuple:
@@ -103,10 +103,10 @@ class LineupShot:
         return FALLBACK_DURATION
 
     def frames_text(self) -> str:
-        """'48' or '~100 (length unknown)'."""
+        """'48' or 'length unknown' - never the placeholder number (MED2-046)."""
         if self.length_known:
             return f"{self.get_frame_count()}"
-        return f"~{FALLBACK_DURATION} (length unknown)"
+        return "length unknown"
 
     @property
     def layers(self) -> List[str]:
@@ -122,13 +122,43 @@ def _sort_key(shot) -> tuple:
     return (natural_key(reel), 0 if has_number else 1, natural_key(name))
 
 
-def _frame_range(shot, clip: Optional[MediaClip]) -> Optional[Tuple[int, int]]:
+# A sequence has no rate of its own. The dashboard and the project keep no
+# rate either, so frames play at the studio's usual 24.
+# ponytail: one rate for every sequence; read a project rate here once projects store one.
+SEQUENCE_FPS = 24.0
+
+
+def plate_facts(clip: Optional[MediaClip]) -> Tuple[float, int]:
+    """
+    (rate, frame count) read from a movie plate - (SEQUENCE_FPS, 0) for a
+    sequence or when the file cannot be read. Every shot used to be listed
+    and written at 24 because the rate was asked of a dashboard field that
+    does not exist (MED2-041), and a movie plate's length was never read
+    (MED2-042). Runs on the Timeline's scan thread.
+    """
+    if clip is None or clip.is_sequence:
+        return SEQUENCE_FPS, 0
+    try:
+        from slate.core.domain.metadata_engine import SmartMetadataManager
+        meta = SmartMetadataManager.extract_tech_metadata(str(clip.path)) or {}
+        fps = float(meta.get("fps") or 0)
+        duration = float(meta.get("duration_sec") or 0)
+    except Exception as exc:
+        logger.debug("Plate not probed (%s): %s", clip.path, exc)
+        return SEQUENCE_FPS, 0
+    if fps <= 0:
+        return SEQUENCE_FPS, 0
+    return fps, int(round(duration * fps))
+
+
+def _frame_range(shot, clip: Optional[MediaClip], movie_frames: int = 0
+                 ) -> Optional[Tuple[int, int]]:
     """
     How long this shot runs.
 
-    The plate on disk is the truth: it has real first and last frames. The
-    dashboard's edit_frames is a count typed by a person and is used only when
-    there are no frames to count.
+    The plate on disk is the truth: a sequence's real first and last frames,
+    or a movie's own length. The dashboard's edit_frames is a count typed by
+    a person and is used only when there are no frames to count.
     """
     if clip is not None and clip.is_sequence and clip.frame_count:
         return (clip.first_frame, clip.last_frame)
@@ -137,6 +167,9 @@ def _frame_range(shot, clip: Optional[MediaClip]) -> Optional[Tuple[int, int]]:
     last = int(getattr(shot, "last_frame", 0) or 0)
     if last and last >= first:
         return (first, last)
+
+    if movie_frames > 0:
+        return (1, movie_frames)
 
     try:
         counted = int(float(getattr(shot, "edit_frames", 0) or 0))
@@ -166,11 +199,12 @@ def build_lineup_shot(shot, project_root=None, folder_resolver=None
             paths[key] = clip.path
             clips[key] = clip
 
+    fps, movie_frames = plate_facts(scan)
     return LineupShot(
         name=str(getattr(shot, "shot_name", "") or "shot"),
         reel=str(getattr(shot, "reel_episode", "") or ""),
-        fps=float(getattr(shot, "fps", 24.0) or 24.0),
-        frame_range=_frame_range(shot, scan),
+        fps=fps,
+        frame_range=_frame_range(shot, scan, movie_frames),
         paths=paths,
         clips=clips,
         scan_version=getattr(scan, "scan_version", "") or "",
@@ -318,8 +352,11 @@ def generate_timelines(shots, output_dir, project_name="Lineup",
     if lineup is None:
         lineup = build_lineup(all_shots, project_root, folder_resolver)
     result.shot_count = len(lineup)
-    with_scan = {entry.name for entry in build_lineup(all_shots, project_root, folder_resolver)} \
-        if all_shots else set()
+    # Which shots have a plate: the folders only - no need to probe every
+    # movie again here.
+    with_scan = {str(getattr(shot, "shot_name", "") or "") for shot in all_shots
+                 if available_media(shot, project_root,
+                                    folder_resolver=folder_resolver).get("scan") is not None}
     result.skipped = [
         str(getattr(shot, "shot_name", "") or "")
         for shot in all_shots

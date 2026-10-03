@@ -1,5 +1,3 @@
-import sys
-import subprocess
 from pathlib import Path
 
 from .stream_engine import StreamEngine
@@ -66,18 +64,6 @@ class SequenceEngine(StreamEngine):
             '-f', 'rawvideo', '-pix_fmt', 'rgba',
             '-'
         ]
-
-        startupinfo = None
-        creationflags = 0
-        if sys.platform == 'win32':
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            creationflags = subprocess.CREATE_NO_WINDOW
-
-        proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            bufsize=self.render_w * self.render_h * 4 * 4,
-            startupinfo=startupinfo, creationflags=creationflags
-        )
-        from ....utils.process_manager import subprocess_tracker
-        return subprocess_tracker.register(proc)
+        # The movie's own launcher: ffmpeg's error is kept, not thrown
+        # away, so a missing frame or a bad EXR says why (MED2-058).
+        return self._popen(cmd)

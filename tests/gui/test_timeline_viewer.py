@@ -47,7 +47,7 @@ def test_it_starts_empty_and_says_what_to_do(editor):
     assert "No shots loaded" in editor.status_label.text()                         # MED-086
     assert not editor.btn_sync.isEnabled()
     assert not editor.btn_launch.isEnabled()                                        # MED-094, 095
-    assert "setup.bat" in editor.btn_launch.toolTip()
+    assert "ask IT to install" in editor.btn_launch.toolTip()                       # MED2-048
 
 
 def test_shots_without_scans_are_listed_and_counted(qtbot, editor, tmp_path):
@@ -55,7 +55,7 @@ def test_shots_without_scans_are_listed_and_counted(qtbot, editor, tmp_path):
              _shot(tmp_path, "SH030", scan=False)]
     _load(qtbot, editor, tmp_path, shots)
     assert editor.table.rowCount() == 3                                             # MED-087
-    assert "2 without scans" in editor.status_label.text()
+    assert "2 shots without a scan" in editor.status_label.text()                    # MED2-050
     assert editor.table.item(1, 3).text() == "no scan yet"
     assert editor.btn_sync.isEnabled()
 
@@ -263,3 +263,95 @@ def test_shot_names_stay_readable_at_1280(qtbot, editor, tmp_path):
     metrics = editor.preview.strip.fontMetrics()
     assert strip_label(metrics, "SEQ010_SH010", 1000) == "SEQ010_SH010"
     assert strip_label(metrics, "SEQ010_SH010", metrics.horizontalAdvance("SH010") + 2) == "SH010"
+
+
+# ------------------------------------------------------------------ round 2
+
+def test_another_project_does_not_launch_the_last_ones_timeline(qtbot, editor, tmp_path):
+    _load(qtbot, editor, tmp_path, [_shot(tmp_path, "SH010")])
+    editor.output_path = tmp_path / "AUDIT2_All_Reels.ovexml"
+    editor.output_path.write_text("x")
+    other = tmp_path / "other"
+    editor.set_project_context("OTHER")
+    editor.set_project_source(other)
+    editor.set_shots([_shot(other, "SH900")])
+    qtbot.waitUntil(lambda: editor._scan_job is None, timeout=10000)
+    assert editor.output_path is None and editor.sync_time_label.text() == "Not synced yet"  # MED2-040
+
+
+def test_a_movie_plate_gives_its_rate_and_length(tmp_path):
+    from pathlib import Path
+    from slate.core.domain import olive_lineup
+    from slate.core.domain.shot_media import MediaClip
+    clip = MediaClip(path=Path(tmp_path / "SH010_scan.mov"), department="scan")
+    fake = {"fps": 25.0, "duration_sec": 2.0, "width": 1920, "height": 1080}
+    from slate.core.domain.metadata_engine import SmartMetadataManager
+    import unittest.mock as mock
+    with mock.patch.object(SmartMetadataManager, "extract_tech_metadata", return_value=fake):
+        assert olive_lineup.plate_facts(clip) == (25.0, 50)                          # MED2-041/042
+    shot = Shot(shot_name="SH010")
+    assert olive_lineup._frame_range(shot, clip, 50) == (1, 50)
+    seq = MediaClip(path=Path("x.%04d.exr"), is_sequence=True, first_frame=1001, last_frame=1008)
+    assert olive_lineup.plate_facts(seq) == (24.0, 0)
+
+
+def test_ticking_keeps_the_shot_being_watched(qtbot, editor, tmp_path):
+    shots = [_shot(tmp_path, f"SH0{i}0") for i in range(1, 5)]
+    _load(qtbot, editor, tmp_path, shots)
+    preview = editor.preview
+    preview.show_shot(2)
+    editor.table.item(0, 0).setCheckState(Qt.CheckState.Unchecked)                 # untick SH010
+    assert preview.entries[preview.index].name == "SH030"                           # MED2-043
+
+
+def test_a_new_layer_keeps_play_lineup_playing(qtbot, editor, tmp_path):
+    _load(qtbot, editor, tmp_path, [_shot(tmp_path, "SH010")])
+    preview = editor.preview
+    asked = []
+    preview.show_shot = lambda index, autoplay=False: asked.append(autoplay)
+    preview.continuous = True
+    preview.combo_layer.addItem("Comp", "comp")
+    preview.combo_layer.setCurrentIndex(preview.combo_layer.count() - 1)
+    assert asked == [True]                                                            # MED2-044
+
+
+def test_an_unreadable_share_is_not_an_empty_project(qtbot, editor):
+    editor._on_rows(None, OSError("share down"))
+    assert "could not be read" in editor.status_label.text()                         # MED2-045
+    assert "No shots loaded" not in editor.status_label.text()
+
+
+def test_the_strip_does_not_inflate_unknown_lengths(qtbot):
+    from slate.core.domain.olive_lineup import LineupShot
+    from slate.gui.tabs.shot_review.lineup_preview import LineupStrip
+    strip = LineupStrip()
+    qtbot.addWidget(strip)
+    strip.resize(400, 30)
+    strip.set_entries([LineupShot("A", frame_range=(1, 8)), LineupShot("B"),
+                       LineupShot("C", frame_range=(1, 8))])
+    widths = [rect.width() for _i, _e, rect in strip._blocks()]
+    assert abs(widths[1] - widths[0]) < 2                                             # MED2-046
+    assert LineupShot("B").frames_text() == "length unknown"
+
+
+def test_renders_show_their_version_and_rv_words(qtbot, tmp_path):
+    from pathlib import Path
+    from slate.core.domain.rv_review import ReviewOption, ReviewRequest
+    from slate.core.domain.shot_media import MediaClip
+    from slate.gui.dialogs.rv_review_dialog import RVReviewDialog
+    comp = ReviewOption("comp", "Comp", MediaClip(path=Path("C:/s/SEQ010_SH020_comp_v002.mov"),
+                                                  department="comp"))
+    assert comp.version == "v002"                                                     # MED2-062
+    dialog = RVReviewDialog(ReviewRequest("SH020", [comp]), launcher=object())
+    qtbot.addWidget(dialog)
+    assert (dialog.btn_all.text(), dialog.btn_none.text()) == ("Tick all", "Untick all")  # MED2-052
+    import inspect as _inspect
+    assert "RV_PATH" not in _inspect.getsource(RVReviewDialog.open_in_rv)            # MED2-063
+
+
+def test_the_preview_is_clear_of_the_splitter_and_talks_about_shots(qtbot):
+    from slate.gui.tabs.shot_review.lineup_preview import LineupPreview
+    preview = LineupPreview()
+    qtbot.addWidget(preview)
+    assert preview.layout().contentsMargins().left() >= 8                            # MED2-051
+    assert preview.player.btn_next.toolTip() == "Next shot"                         # MED2-056

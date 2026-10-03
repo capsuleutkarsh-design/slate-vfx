@@ -245,12 +245,14 @@ def test_delete_can_be_undone(lib, tmp_path):
     assert gone == [int(a["id"])]
     assert [x["file_name"] for x in lib.search_library()] == ["b.jpg"]
     assert lib.get_total_count() == 1
-    assert all(p["file_path"] != a["file_path"] for p in lib.list_known_paths())
+    # Still known to the ingest, as deleted, so a Rescan leaves it out (MED2-002).
+    known = {p["file_path"]: p for p in lib.list_known_paths()}
+    assert known[a["file_path"]]["deleted_at"]
     assert lib.restore_assets(gone) == 1
     assert lib.get_total_count() == 2
 
 
-def test_purge_removes_the_rows_and_their_cache(lib, db, tmp_path):
+def test_purge_removes_the_cache_and_keeps_the_deletion(lib, db, tmp_path):
     thumb = tmp_path / "cache" / "a_thumb.jpg"
     thumb.parent.mkdir()
     thumb.write_bytes(b"jpg")
@@ -263,9 +265,14 @@ def test_purge_removes_the_rows_and_their_cache(lib, db, tmp_path):
     assert thumb.exists()
     assert lib.purge_deleted(older_than=datetime.now() + timedelta(minutes=1)) == 1
     assert not thumb.exists()
-    assert db.execute_query("SELECT id FROM stock_library") in ([], None) or \
-        len(db.execute_query("SELECT id FROM stock_library")) == 0
+    # The row stays, deleted, so a Rescan does not add the file again (MED2-002),
+    # and Removed can still restore it (MED2-028).
+    rows = [dict(r) for r in db.execute_query("SELECT thumb_path, deleted_at FROM stock_library")]
+    assert len(rows) == 1 and rows[0]["deleted_at"] and not rows[0]["thumb_path"]
+    assert lib.purge_deleted(older_than=datetime.now() + timedelta(minutes=1)) == 0
     assert lib.list_favorites() == set()
+    assert lib.get_removed_count() == 1
+    assert [x["file_name"] for x in lib.search_library(category="Removed")] == ["a.jpg"]
 
 
 def test_reingesting_a_deleted_file_brings_it_back(lib, tmp_path):
@@ -306,6 +313,48 @@ def test_old_damaged_rows_are_repaired(db):
         "SELECT tags, category, display_name, search_text FROM stock_library", fetch="one"))
     assert row["category"] == "Fire"
     assert "Pending" not in row["tags"] and "P,e" not in row["tags"]
-    assert "Fire" in row["tags"].split(",")
+    # The words of the name; the category is not a tag (MED2-037).
+    assert row["tags"].split(",") == ["flame", "burst"]
     assert row["display_name"] == "flame_burst.mov"
     assert "fire" in row["search_text"].split()
+
+
+# ------------------------------------------------- words (MED2-005/014/026/037)
+
+def test_search_matches_the_start_of_words(lib, tmp_path):
+    _seed(lib, tmp_path, ["uhd_4k_clip.mp4", "hd_plate.mov", "FireballLoop.mov"])
+    lib.update_assets_batch([{"file_path": str(tmp_path / "hd_plate.mov"),
+                              "metadata": {"width": 1920, "height": 1080, "duration_sec": 2,
+                                           "fps": 23.976}}])
+    names = lambda q: sorted(a["file_name"] for a in lib.search_library(query=q))
+    assert names("HD") == ["hd_plate.mov"]                 # not inside "uhd"
+    assert names("movie") == ["hd_plate.mov"]              # the Type column's word
+    assert names("loop") == ["FireballLoop.mov"]
+    assert names("23.976fps") == ["hd_plate.mov"]
+    assert names("4k_clip") == ["uhd_4k_clip.mp4"]
+
+
+def test_tags_are_the_telling_words():
+    from pathlib import Path
+    from slate.core.domain.metadata_engine import SmartMetadataManager as M
+    category, tags = M.get_smart_tags(Path(
+        "S/long_descriptive_element_name_for_tests_extremely_with_file.mov"))
+    assert not {"with", "for", "name", "file", "tests"} & set(tags)
+    assert M.get_smart_tags(Path("S/long_reference_65min.mp4"))[1] == ["long", "reference"]
+    category, tags = M.get_smart_tags(Path("S/smoke_plume.mov"))
+    assert category == "Smoke" and "smoke" not in tags and tags == ["plume"]
+
+
+def test_old_rows_get_todays_words(db):
+    from slate.core.infra.migrations.media_schema import reword_stock_library
+    db.execute_update(
+        "INSERT INTO stock_library (file_path, file_name, file_type, tags, metadata, category, "
+        "search_text) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+        ("C:/stock/Plates/film_grain_35mm.exr", "film_grain_35mm.exr", ".exr",
+         "HDRI,film,grain,with,MyOwnTag", "{}", "HDRI", "film grain"))
+    assert reword_stock_library(db) is not False
+    row = dict(db.execute_query("SELECT tags, category, search_text FROM stock_library",
+                                fetch="one"))
+    assert row["category"] == "References"          # "plates", not HDRI for an .exr
+    assert row["tags"] == "film,grain,MyOwnTag"
+    assert "exr" in row["search_text"].split() and "image" not in row["search_text"].split()

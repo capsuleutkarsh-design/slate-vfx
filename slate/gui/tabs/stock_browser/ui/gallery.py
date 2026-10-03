@@ -23,6 +23,7 @@ from ....stock_model import (
 )
 from ....components.qt_safety import safe_single_shot
 from .....core.infra.design_tokens import TypographyTokens as T
+from .....core.infra.stock_repository import FAVORITES, REMOVED, STUDIO_PICKS
 from ....widgets.styled_buttons import StyledComboBox
 from ....core.controls import make_button, style_button
 from ....core.empty_state import EmptyState
@@ -36,9 +37,13 @@ SORT_CHOICES = (
     ("Name A–Z", "name"),
     ("Name Z–A", "name_desc"),
     ("Largest first", "size"),
-    ("Type", "type"),
-    ("Category", "category"),
+    ("Smallest first", "size_asc"),
+    ("Type A–Z", "type"),
+    ("Type Z–A", "type_desc"),
+    ("Category A–Z", "category"),
+    ("Category Z–A", "category_desc"),
 )
+# Every header order is in the box, so it always says the order shown (MED2-010).
 VISUAL_CHOICES = ("Any look", "Dark", "Bright", "Warm", "Cold", "Green Screen", "Blue Screen")
 
 # Card sizes. The thumbnails are made 320 px wide, so the cards stop there:
@@ -148,6 +153,7 @@ class StockGallery(QWidget):
     tags_requested = Signal()
     ingest_requested = Signal()
     clear_filters_requested = Signal()
+    restore_requested = Signal()             # Removed: bring the selection back
 
     def __init__(self, model, proxy_model, can_manage_assets=False, parent=None):
         super().__init__(parent)
@@ -268,6 +274,12 @@ class StockGallery(QWidget):
         self._refit.setSingleShot(True)
         self._refit.setInterval(0)
         self._refit.timeout.connect(lambda: self._fit_cards())
+        # Fitted again after every batch of cards and whenever the scroll bar
+        # comes or goes: the columns are worked out from the viewport as it is
+        # then, not as it was before the cards arrived (MED2-008).
+        for signal in (self.proxy_model.rowsInserted, self.proxy_model.modelReset,
+                       self.asset_view.verticalScrollBar().rangeChanged):
+            signal.connect(lambda *_: self._refit.start())
         self.asset_view.viewport().installEventFilter(self)
         self.delegate = StockDelegate(self.asset_view)
         self.asset_view.setItemDelegate(self.delegate)
@@ -363,6 +375,7 @@ class StockGallery(QWidget):
         self.lbl_zoom = QLabel("Card size")
         self.lbl_zoom.setStyleSheet(f"color: {Gate.TEXT_DIM};")
         zoom_layout.addWidget(self.lbl_zoom)
+        zoom_layout.addSpacing(8)           # the label never touches the slider (MED2-032)
         self.zoom_slider = QSlider(Qt.Orientation.Horizontal)
         self.zoom_slider.setRange(ZOOM_MIN, ZOOM_MAX)
         self.zoom_slider.setValue(ZOOM_DEFAULT)
@@ -445,7 +458,7 @@ class StockGallery(QWidget):
         super().keyPressEvent(event)
 
     def _delete_from_keyboard(self):
-        if self.can_manage_assets:
+        if self.can_manage_assets and self.category != REMOVED:
             self.delete_requested.emit()
 
     # ------------------------------------------------------------ views
@@ -530,6 +543,14 @@ class StockGallery(QWidget):
         menu = QMenu(self)
         if can_preview(asset):
             menu.addAction(draw_icon("eye"), "Preview\tSpace", self.preview_requested.emit)
+        if self.category == REMOVED:
+            # Deleted assets: bring them back, or look at them (MED2-028).
+            if self.can_manage_assets:
+                menu.addAction(draw_icon("undo"), "Restore to the library" if count == 1
+                               else f"Restore {count} to the library", self.restore_requested.emit)
+            menu.addSeparator()
+            self._add_copy_actions(menu, index, count)
+            return menu
         if asset.get("is_favorite"):
             menu.addAction(draw_icon("star"), "Remove from favourites\tCtrl+D",
                            self.favorite_requested.emit)
@@ -543,16 +564,19 @@ class StockGallery(QWidget):
             if count == 1:
                 menu.addAction(draw_icon("tag"), "Edit tags…", self.tags_requested.emit)
         menu.addSeparator()
-        menu.addAction(draw_icon("copy"), "Copy path" if count == 1 else f"Copy {count} paths",
-                       self.copy_selection)
-        menu.addAction(draw_icon("copy"), "Copy name", lambda: self._copy_name(index))
-        menu.addAction(draw_icon("folder"), "Show in Explorer", lambda: self._reveal_in_explorer(index))
+        self._add_copy_actions(menu, index, count)
         if self.can_manage_assets:
             menu.addSeparator()
             menu.addAction(draw_icon("trash"),
                            "Delete from library…" if count == 1 else f"Delete {count} from library…",
                            self.delete_requested.emit)
         return menu
+
+    def _add_copy_actions(self, menu, index, count):
+        menu.addAction(draw_icon("copy"), "Copy path" if count == 1 else f"Copy {count} paths",
+                       self.copy_selection)
+        menu.addAction(draw_icon("copy"), "Copy name", lambda: self._copy_name(index))
+        menu.addAction(draw_icon("folder"), "Show in Explorer", lambda: self._reveal_in_explorer(index))
 
     def copy_selection(self):
         return copy_paths([self.proxy_model.index(r, 0) for r in self.selected_rows()])
@@ -638,13 +662,15 @@ class StockGallery(QWidget):
 
     def clear_filters(self):
         """Search, visual, media type back to everything (the category is the sidebar's)."""
-        for widget in (self.search_bar, self.combo_visual):
-            widget.blockSignals(True)
+        # The search box is not muted: its own clear button has to hear the
+        # text go, or the × stays over an empty box (MED2-018). The caller
+        # reloads once, so the search's own delayed reload is called off.
         self.search_bar.clear()
+        self.search_timer.stop()
+        self.combo_visual.blockSignals(True)
         self.combo_visual.setCurrentIndex(0)
+        self.combo_visual.blockSignals(False)
         self.btn_all.setChecked(True)
-        for widget in (self.search_bar, self.combo_visual):
-            widget.blockSignals(False)
 
     # ------------------------------------------------------------ states
     def show_error(self, title, body, retry=None, details=""):
@@ -675,13 +701,19 @@ class StockGallery(QWidget):
 
     def set_empty_message(self):
         """What an empty gallery says depends on who is looking and what is selected."""
-        if self.category == "Favorites":
+        if self.category == REMOVED:
+            self.empty_state.set_message(
+                "Nothing deleted",
+                "Assets deleted from the library wait here, so they can be restored. "
+                "A Rescan leaves them out.")
+            self._empty_ingest.hide()
+        elif self.category == FAVORITES:
             self.empty_state.set_message(
                 "No favourites yet",
                 "Star assets to keep them here: click the star on a card, or press Ctrl+D. "
                 "Your favourites are yours alone.")
             self._empty_ingest.hide()
-        elif self.category == "Studio picks":
+        elif self.category == STUDIO_PICKS:
             self.empty_state.set_message(
                 "No studio picks yet",
                 "Leads and supervisors mark the studio's picks from a card's right-click menu."
@@ -710,10 +742,10 @@ class StockGallery(QWidget):
         if self.is_loading_state:
             self.stack.setCurrentWidget(self.skeleton_state)
             return
-        if visible:
+        if self.proxy_model.rowCount():
             self.stack.setCurrentWidget(self.active_view())
             return
-        special = self.category in ("Favorites", "Studio picks")
+        special = self.category in (FAVORITES, STUDIO_PICKS, REMOVED)
         narrowed = self.filters_active() or (self.category not in ("All", "") and not special)
         if narrowed:
             # Something is narrowing the list: say so, and offer to clear it.
@@ -729,8 +761,7 @@ class StockGallery(QWidget):
             self.skeleton_state.start()
             return
         self.skeleton_state.stop()
-        self.update_count(max(self._last_total_count, self.proxy_model.rowCount()),
-                          self.proxy_model.rowCount())
+        self.update_count(self._last_total_count, self._last_visible_count)
 
     def set_sidebar_collapsed(self, collapsed: bool):
         self.btn_show_filters.setVisible(bool(collapsed))
@@ -752,19 +783,24 @@ class StockGallery(QWidget):
     def _fit_cards(self):
         delegate = self.delegate
         spacing = self.asset_view.spacing()
-        # A little is kept back so the last column never wraps by a pixel.
+        # QListView starts the first column one spacing in, so that and a
+        # little more are kept back: without it the last column wrapped when
+        # the cells rounded up, leaving a whole column's band empty (MED2-008).
         self._fitted_width = self.asset_view.viewport().width()
-        viewport = max(1, self._fitted_width - 4)
+        viewport = max(1, self._fitted_width - spacing * 2 - 4)
         minimum_cell = self._zoom + delegate.padding * 2 + 4 + spacing
         columns = max(1, viewport // minimum_cell)
         cell = viewport // columns
         card = cell - spacing
-        delegate.thumb_width = max(40, card - delegate.padding * 2 - 4)
-        delegate.thumb_height = int(delegate.thumb_width * 0.5625)
+        thumb_width = max(40, card - delegate.padding * 2 - 4)
+        thumb_height = int(thumb_width * 0.5625)
+        grid = QSize(cell, thumb_height + delegate.text_height + delegate.padding * 2 + 4 + spacing)
+        if grid == self.asset_view.gridSize() and thumb_width == delegate.thumb_width:
+            return              # already fitted to this width: nothing moves
+        delegate.thumb_width, delegate.thumb_height = thumb_width, thumb_height
         scrollbar = self.asset_view.verticalScrollBar()
         ratio = scrollbar.value() / max(scrollbar.maximum(), 1) if scrollbar.maximum() > 0 else 0
-        self.asset_view.setGridSize(QSize(cell, delegate.thumb_height + delegate.text_height
-                                          + delegate.padding * 2 + 4 + spacing))
+        self.asset_view.setGridSize(grid)
         self.asset_view.doItemsLayout()
         safe_single_shot(30, self.asset_view,
                          lambda: scrollbar.setValue(int(ratio * scrollbar.maximum())),

@@ -20,12 +20,12 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from ..infra.global_config import GlobalConfig
-from ..infra.stock_repository import ALL, STUDIO_PICKS, StockRepository
+from ..infra.stock_repository import ALL, REMOVED, STUDIO_PICKS, StockRepository
 
 logger = logging.getLogger(__name__)
 
-# How long a deleted asset can still be brought back. The Undo on the toast is
-# the quick way; the rows also survive a restart of Slate for this long.
+# How long a deleted asset keeps its cached pictures. The Undo on the toast is
+# the quick way back; "Removed" restores it at any time after (MED2-028).
 UNDO_WINDOW = timedelta(hours=24)
 
 
@@ -181,7 +181,9 @@ class LibraryManager:
                 "added_by": row.get('added_by') or "",
                 "is_favorite": int(row_id) in favourites if row_id is not None else False,
                 "is_pick": int(row_id) in picks if row_id is not None else False,
-                "status": "ready",
+                # A file the analysis could not read says so after a reload
+                # too, instead of "No preview" (MED2-019).
+                "status": "corrupt" if metadata.get("unreadable") else "ready",
             }
             legacy_assets.append(asset)
         return legacy_assets
@@ -216,6 +218,13 @@ class LibraryManager:
     def get_pick_count(self):
         try:
             return self.repo.count_stock_assets(category=STUDIO_PICKS)
+        except Exception:
+            return 0
+
+    def get_removed_count(self):
+        """Deleted assets that "Removed" can bring back (MED2-028)."""
+        try:
+            return self.repo.count_stock_assets(category=REMOVED)
         except Exception:
             return 0
 
@@ -434,7 +443,7 @@ class LibraryManager:
         return self.repo.restore(asset_ids)
 
     def purge_deleted(self, older_than=None, asset_ids=None) -> int:
-        """Remove deleted assets for good, with their cached files."""
+        """Remove the cached files of assets deleted longer ago than the Undo time."""
         if older_than is None and asset_ids is None:
             older_than = datetime.now() - UNDO_WINDOW
         rows = self.repo.purge_deleted(older_than=older_than, asset_ids=asset_ids)
