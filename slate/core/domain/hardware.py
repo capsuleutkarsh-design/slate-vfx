@@ -32,6 +32,9 @@ IN_SERVICE = "In service"
 EDIT_STATUSES = (IN_SERVICE, REPAIR, RETIRED, LOST, DISPOSED)
 
 TYPES = ("Workstation", "Render node", "Laptop", "Monitor", "Tablet", "Other")
+# Kit with no network name and no specification to speak of: known by a name
+# like 'Dell U2723QE #3' (and its asset tag), not by a hostname.
+PERIPHERALS = ("Monitor", "Tablet")
 
 # Status -> table tone (slate.gui.core.table_style.set_cell_status kinds).
 # Colour by meaning: in use is fine, free is information, repair needs
@@ -80,6 +83,16 @@ def issuable_sql(column: str = "status") -> str:
     return "LOWER(TRIM(COALESCE(%s, ''))) NOT IN (%s)" % (column, words)
 
 
+def not_on_loan_sql(column: str = "machine_name") -> str:
+    """
+    "Nobody holds it" as a WHERE fragment: no open loan on the ledger. The one
+    rule for who holds a machine - never the old assigned_to copy. `column` is
+    the qualified machine name of the outer query.
+    """
+    return ("NOT EXISTS (SELECT 1 FROM asset_assignments loan "
+            "WHERE LOWER(loan.machine_name) = LOWER(%s) AND loan.returned_on IS NULL)" % column)
+
+
 def status_for_service(held: bool) -> str:
     """In service: Active when somebody holds it on the ledger, else Available."""
     return ACTIVE if held else AVAILABLE
@@ -103,13 +116,22 @@ def blank_to_none(value) -> Optional[str]:
     return text
 
 
-def name_problem(name) -> str:
-    """Why this machine name cannot be used, or '' when it can."""
+def is_peripheral(kind) -> bool:
+    return str(kind or "").strip() in PERIPHERALS
+
+
+def name_problem(name, kind: str = None) -> str:
+    """
+    Why this machine name cannot be used, or '' when it can. A computer needs
+    the name it has on the network; a monitor or tablet only a name.
+    """
     text = str(name or "").strip()
     if not text:
         return "Give the machine a name."
     if len(text) > NAME_MAX:
         return "A machine name is at most %d characters." % NAME_MAX
+    if is_peripheral(kind):
+        return ""
     if not _NAME_RE.match(text):
         return ("Use letters, digits, '-', '_' or '.' only - the name the machine "
                 "has on the network.")
@@ -132,6 +154,14 @@ def gb_text(value) -> str:
     if number <= 0:
         return ""
     return "%d GB" % round(number) if abs(number - round(number)) < 0.05 else "%.1f GB" % number
+
+
+def size_text(text) -> str:
+    """A stored size as people read it: '9.1 TB' from '9315 GB'; smaller sizes as stored."""
+    gb = gb_value(text)
+    if gb < 1024:
+        return cell(text)
+    return "%.1f TB" % (gb / 1024.0)
 
 
 def gb_value(text) -> int:

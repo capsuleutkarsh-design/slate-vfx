@@ -17,7 +17,7 @@ import logging
 from PySide6.QtCore import QDate, QRegularExpression, Qt
 from PySide6.QtGui import QColor, QRegularExpressionValidator
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDateEdit, QDialog, QFormLayout, QHBoxLayout, QLabel,
+    QCheckBox, QComboBox, QCompleter, QDateEdit, QDialog, QFormLayout, QHBoxLayout, QLabel,
     QLineEdit, QSpinBox, QTableWidget, QVBoxLayout, QWidget,
 )
 
@@ -49,8 +49,10 @@ except ImportError:                                  # pragma: no cover
     class DatabaseUnavailableError(ConnectionError):
         """Fallback when the manager cannot be imported."""
 
+# Serial number and asset tag are hidden columns: the search finds them (the
+# sticker on a machine is what IT type), the screen leaves them out.
 COLUMNS = ["Machine", "Assigned to", "Type", "Location", "CPU", "GPU", "RAM", "Storage",
-           "Warranty", "Status"]
+           "Warranty", "Status", "Serial number", "Asset tag"]
 COL = {name: i for i, name in enumerate(COLUMNS)}
 
 
@@ -88,10 +90,12 @@ def _gb_spin(text):
 class AddPCDialog(QDialog):
     """Add a machine, or change one (Edit). Who has it is Issue to... / Collect."""
 
-    def __init__(self, parent=None, hub=None, edit_data=None, repo: HardwareRepository = None):
+    def __init__(self, parent=None, hub=None, edit_data=None, repo: HardwareRepository = None,
+                 locations=(), by: str = ""):
         super().__init__(parent)
         self.hub = hub
         self.repo = repo
+        self.by = by
         self.edit_data = edit_data
         self.renamed_to = None
         data = edit_data or {}
@@ -109,8 +113,9 @@ class AddPCDialog(QDialog):
         # The name a machine has on the network: letters, digits, '-', '_', '.'.
         self.inp_name = QLineEdit()
         self.inp_name.setMaxLength(hw.NAME_MAX)
-        self.inp_name.setValidator(QRegularExpressionValidator(
-            QRegularExpression(r"[A-Za-z0-9][A-Za-z0-9._\-]*"), self.inp_name))
+        self._hostname = QRegularExpressionValidator(
+            QRegularExpression(r"[A-Za-z0-9][A-Za-z0-9._\-]*"), self.inp_name)
+        self.inp_name.setValidator(self._hostname)
         self.inp_name.setPlaceholderText("e.g. WS-COMP-07")
         self.inp_type = QComboBox()
         for kind in hw.TYPES:
@@ -124,6 +129,13 @@ class AddPCDialog(QDialog):
         self.inp_ram = _gb_spin(data.get("ram"))
         self.inp_storage = _gb_spin(data.get("storage"))
         self.inp_location = QLineEdit(str(data.get("location") or ""))
+        # The locations already in use, so 'Comp Floor 2' is not typed three ways.
+        known = sorted({str(l).strip() for l in locations if str(l or "").strip()}, key=str.lower)
+        if known:
+            places = QCompleter(known, self.inp_location)
+            places.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+            places.setFilterMode(Qt.MatchFlag.MatchContains)
+            self.inp_location.setCompleter(places)
         self.inp_cpu.setPlaceholderText("e.g. Threadripper 7960X")
         self.inp_gpu.setPlaceholderText("e.g. RTX 4090")
         self.inp_location.setPlaceholderText("e.g. Comp bay 2")
@@ -163,7 +175,15 @@ class AddPCDialog(QDialog):
                 self.inp_type.addItem(kind)
             self.inp_type.setCurrentText(kind or "Workstation")
         else:
-            form.addRow("Machine name", self.inp_name)
+            # Auto-fill sits beside the name it reads (it was a full-width bar
+            # under the footnote that looked like a second Save).
+            name_row = QHBoxLayout()
+            name_row.setSpacing(Gate.SPACE_2)
+            name_row.addWidget(self.inp_name, 1)
+            name_row.addWidget(make_button(
+                "Auto-fill", "ghost", on_click=self.auto_fill,
+                tooltip="Read CPU, GPU, RAM and storage from this machine's Live Ops report"))
+            form.addRow("Machine name", name_row)
         form.addRow("Type", self.inp_type)
         form.addRow("Serial number", self.inp_serial)
         form.addRow("Asset tag", self.inp_tag)
@@ -176,10 +196,12 @@ class AddPCDialog(QDialog):
         form.addRow("Warranty until", self.inp_warranty)
         form.addRow("Status", self.inp_status)
         layout.addLayout(form)
+        self.form = form
 
         self.name_hint = QLabel("")
         self.name_hint.setWordWrap(True)
         self.name_hint.setStyleSheet(f"color: {Gate.WARN}; font-size: {Gate.SIZE_SM}px;")
+        self.name_hint.hide()          # only Add says something here
         layout.addWidget(self.name_hint)
 
         owner_note = QLabel(
@@ -188,32 +210,36 @@ class AddPCDialog(QDialog):
         owner_note.setStyleSheet(f"color: {Gate.TEXT_DIM}; font-size: {Gate.SIZE_SM}px;")
         layout.addWidget(owner_note)
 
-        # Enter saves. The auto-fill button used to be the dialog's default,
-        # so Enter in any field went scanning the Live Ops share instead.
-        if not edit_data:
-            btn_scan = make_button("Auto-fill from Live Ops", "secondary",
-                                   tooltip="Read CPU, GPU, RAM and storage from this machine's Live Ops report",
-                                   on_click=self.auto_fill)
-            layout.addWidget(btn_scan)
-
+        # Enter saves (Auto-fill is never the default).
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
-        self.cancel_btn = make_button("Cancel", on_click=self.reject)
+        self.cancel_btn = make_button("Cancel", "ghost", on_click=self.reject)
         self.ok_btn = make_button("Save", "primary", on_click=self._save)
         btn_layout.addWidget(self.cancel_btn)
         btn_layout.addWidget(self.ok_btn)
         layout.addLayout(btn_layout)
 
         self.inp_name.textChanged.connect(self._validate)
-        self._validate()
+        self.inp_type.currentTextChanged.connect(self._type_changed)
+        self._type_changed()
 
     # ----------------------------------------------------------- checks
+    def _type_changed(self, *_):
+        """A monitor or tablet: any name, and no CPU / GPU / RAM / storage to fill in."""
+        peripheral = hw.is_peripheral(self.inp_type.currentText())
+        self.inp_name.setValidator(None if peripheral else self._hostname)
+        self.inp_name.setPlaceholderText("e.g. Dell U2723QE #3" if peripheral else "e.g. WS-COMP-07")
+        for field in (self.inp_cpu, self.inp_gpu, self.inp_ram, self.inp_storage):
+            self.form.setRowVisible(field, not peripheral)
+        self._validate()
+
     def _validate(self, *_):
         """Save stays off until there is a usable name - nothing typed is thrown away."""
         if self.edit_data:
             self.ok_btn.setEnabled(True)
             return
-        problem = hw.name_problem(self.inp_name.text()) if self.inp_name.text() else "Give the machine a name."
+        problem = (hw.name_problem(self.inp_name.text(), self.inp_type.currentText())
+                   if self.inp_name.text() else "Give the machine a name.")
         self.ok_btn.setEnabled(not problem)
         self.ok_btn.setToolTip(problem)
         self.name_hint.setText(problem if self.inp_name.text() else "")
@@ -225,6 +251,8 @@ class AddPCDialog(QDialog):
 
     def values(self) -> dict:
         ram, storage = self.inp_ram.value(), self.inp_storage.value()
+        if hw.is_peripheral(self.inp_type.currentText()):
+            ram = storage = 0
         return {
             "type": self.inp_type.currentText(),
             "serial_number": self.inp_serial.text(),
@@ -253,7 +281,7 @@ class AddPCDialog(QDialog):
         if not new or new == old:
             return
         try:
-            self.repo.rename(old, new)
+            self.repo.rename(old, new, by=self.by)
         except DatabaseUnavailableError:
             raise
         except Exception as exc:
@@ -296,7 +324,7 @@ class AddPCDialog(QDialog):
 
 
 class IssueDialog(QDialog):
-    """Who gets the machine: a searchable list of people by name."""
+    """Who gets the machine (a searchable list of people by name), from when, and a note."""
 
     def __init__(self, machine: str, parent=None):
         super().__init__(parent)
@@ -310,6 +338,15 @@ class IssueDialog(QDialog):
         # Active people by name, alphabetical, no leavers, no service accounts.
         self.person = PersonPicker(placeholder="Type a name…", allow_empty=False)
         form.addRow("Issue to", self.person)
+        # Handed over last Friday is recorded as last Friday, with what went with it.
+        self.issued_on = setup_date_edit(QDateEdit())
+        self.issued_on.setDate(QDate.currentDate())
+        self.issued_on.setMaximumDate(QDate.currentDate())
+        form.addRow("Issued on", self.issued_on)
+        self.note = QLineEdit()
+        self.note.setMaxLength(200)
+        self.note.setPlaceholderText("Optional - e.g. with charger and Wacom")
+        form.addRow("Note", self.note)
         root.addLayout(form)
         note = QLabel("The loan is recorded, so the leaving checklist will ask for it back.")
         note.setWordWrap(True)
@@ -327,31 +364,55 @@ class IssueDialog(QDialog):
     def username(self) -> str:
         return self.person.username()
 
+    def values(self) -> dict:
+        return {"issued_on": from_qdate(self.issued_on.date()), "note": self.note.text().strip()}
+
 
 class HistoryDialog(QDialog):
-    """Who had this machine, and when."""
+    """
+    Everything that happened to this machine, newest first: who had it and
+    when (with the note given when it was issued), and its status changes and
+    renames, with who made them.
+    """
 
-    def __init__(self, machine: str, loans: list, parent=None):
+    def __init__(self, machine: str, loans: list, parent=None, events=()):
         super().__init__(parent)
         self.setWindowTitle("History - %s" % machine)
-        self.setMinimumSize(560, 340)
+        self.setMinimumSize(620, 360)
         root = QVBoxLayout(self)
         root.setContentsMargins(Gate.SPACE_4, Gate.SPACE_4, Gate.SPACE_4, Gate.SPACE_4)
-        self.table = QTableWidget(len(loans), 4)
-        self.table.setHorizontalHeaderLabels(["Issued to", "Issued on", "Issued by", "Returned on"])
-        style_table(self.table, {"Issued to": "stretch", "Issued on": "contents",
-                                 "Issued by": "contents", "Returned on": "contents"})
-        for r, loan in enumerate(loans):
-            self.table.setItem(r, 0, make_item(people.label(loan.get("user_id"))))
-            self.table.setItem(r, 1, date_item(loan.get("issued_on")))
-            self.table.setItem(r, 2, make_item(people.display_name(loan.get("issued_by"), empty="-")))
-            returned = date_item(loan.get("returned_on"), empty="Still out")
-            if not loan.get("returned_on"):
-                set_cell_status(returned, "info", background=False)
-            self.table.setItem(r, 3, returned)
+        root.setSpacing(Gate.SPACE_3)
+        heading = QLabel(machine)
+        heading.setStyleSheet(f"color: {Gate.TEXT}; font-size: {Gate.SIZE_LG}px; font-weight: 600;")
+        root.addWidget(heading)
+        lines = []
+        for loan in loans:
+            what = "Issued to %s" % people.label(loan.get("user_id"))
+            if loan.get("note"):
+                what += " - %s" % loan.get("note")
+            lines.append((loan.get("issued_on"), what, loan.get("issued_by")))
+            if loan.get("returned_on"):
+                lines.append((loan.get("returned_on"), "Returned by %s"
+                              % people.display_name(loan.get("user_id")), None))
+        lines += [(e.get("happened_at"), e.get("what") or "", e.get("done_by")) for e in events]
+        from slate.core.domain.dates import parse_date
+        lines.sort(key=lambda line: str(line[0] or ""), reverse=True)
+        self.table = QTableWidget(len(lines), 3)
+        self.table.setHorizontalHeaderLabels(["When", "What", "By"])
+        style_table(self.table, {"When": "contents", "What": "stretch", "By": "contents"})
+        for r, (when, what, by) in enumerate(lines):
+            self.table.setItem(r, 0, date_item(parse_date(when)))
+            self.table.setItem(r, 1, make_item(what, tooltip=what))
+            self.table.setItem(r, 2, make_item(people.display_name(by, empty=hw.MISSING)))
         root.addWidget(self.table, 1)
-        if not loans:
-            EmptyState.over(self.table, "Never issued", "This machine has not been handed to anybody yet.")
+        held = next((loan for loan in loans if not loan.get("returned_on")), None)
+        if held:
+            note = QLabel("Out with %s since %s." % (people.display_name(held.get("user_id")),
+                                                    format_date(held.get("issued_on"))))
+            note.setStyleSheet(f"color: {Gate.INFO}; font-size: {Gate.SIZE_SM}px;")
+            root.addWidget(note)
+        if not lines:
+            EmptyState.over(self.table, "Nothing yet", "This machine has not been issued or changed yet.")
         row = QHBoxLayout()
         row.addStretch(1)
         row.addWidget(make_button("Close", "ghost", on_click=self.accept))
@@ -359,8 +420,12 @@ class HistoryDialog(QDialog):
 
 
 class ItInventoryTab(QWidget):
-    def __init__(self, user_data=None, parent=None):
+    def __init__(self, user_data=None, parent=None, read_only: bool = False):
         super().__init__(parent)
+        # Changing anything needs manage_it; the IT tab key alone reads.
+        self.read_only = bool(read_only)
+        self._figure = ""
+        self._figures = {}
         # Who is issuing a machine gets recorded on the loan, so the tab needs
         # to know who is using it.
         self.user_data = user_data or {}
@@ -378,20 +443,26 @@ class ItInventoryTab(QWidget):
         self.build_ui(main_layout)
 
     def build_ui(self, main_layout):
-        main_layout.addWidget(page_title('Hardware', 'Machines the studio owns, who has them, and their state'))
+        main_layout.addWidget(page_title(
+            'Hardware', 'Machines the studio owns, who has them, and their state'
+            + (' - read only' if self.read_only else '')))
 
-        # The figures, each a filter.
+        # The figures, each a filter that shows exactly what it counts
+        # (HardwareRepository.figure): together they add up to Machines.
         self.stats = StatStrip(compact=True)
         self.fig_total = self.stats.add("Machines", 0, tone="neutral",
-                                        on_click=lambda: self._filter_status(""),
-                                        tooltip="Every machine in service")
+                                        on_click=lambda: self._filter_figure(""),
+                                        tooltip="Every machine not retired, lost or disposed")
         self.fig_available = self.stats.add("Available", 0, tone="info",
-                                            on_click=lambda: self._filter_status(hw.AVAILABLE),
+                                            on_click=lambda: self._filter_figure("available"),
                                             tooltip="Free to issue")
-        self.fig_repair = self.stats.add("In repair", 0, on_click=lambda: self._filter_status(hw.REPAIR))
+        self.fig_repair = self.stats.add("In repair", 0, on_click=lambda: self._filter_figure("repair"),
+                                         tooltip="In for repair, and nobody has it")
         self.fig_loan = self.stats.add("Out on loan", 0, tone="ok",
-                                       on_click=lambda: self._filter_status(hw.ACTIVE),
+                                       on_click=lambda: self._filter_figure("on_loan"),
                                        tooltip="Issued to somebody (the loan record)")
+        self._figure_cards = {"available": self.fig_available, "repair": self.fig_repair,
+                              "on_loan": self.fig_loan}
         main_layout.addWidget(self.stats)
 
         controls = QHBoxLayout()
@@ -407,12 +478,13 @@ class ItInventoryTab(QWidget):
                                        on_click=self.show_history)
         self.delete_btn = make_button("Delete", "danger", on_click=self.delete_workstation,
                                       tooltip="For a machine added by mistake. Retire one that has been used.")
+        self.sync_btn = make_button("Sync from Live Ops",
+                                    tooltip="Add machines Live Ops has seen and refresh their specs",
+                                    on_click=self.sync_from_live_ops)
         for b in (self.add_btn, self.edit_btn, self.issue_btn, self.collect_btn, self.history_btn,
-                  self.delete_btn):
+                  self.delete_btn, self.sync_btn):
             controls.addWidget(b)
-        controls.addWidget(make_button("Sync from Live Ops",
-                                       tooltip="Add machines Live Ops has seen and refresh their specs",
-                                       on_click=self.sync_from_live_ops))
+            b.setVisible(b is self.history_btn or not self.read_only)
         controls.addWidget(make_button("Export…", "ghost", tooltip="Save the machines shown as CSV or Excel",
                                        on_click=lambda: export_table_dialog(self, self.grid, "hardware")))
         main_layout.addLayout(controls)
@@ -424,14 +496,22 @@ class ItInventoryTab(QWidget):
         # Read-only (typing into a cell saved nothing), one machine at a time
         # (every action is per machine), sortable headers; double-click edits.
         setup_table(self.grid, multi_select=False)
-        self.grid.doubleClicked.connect(lambda _index: self.edit_workstation())
+        self.grid.doubleClicked.connect(
+            lambda _index: self.show_history() if self.read_only else self.edit_workstation())
+        for column in ("Serial number", "Asset tag"):
+            self.grid.hideColumn(COL[column])
 
-        # Search by name, person, location, CPU or GPU; filter by status.
+        # Search by name, person, location, CPU, GPU, serial number or asset
+        # tag; filter by status.
         self.toolbar = TableToolbar(
-            self.grid, placeholder="Search machine, person, location, CPU or GPU…",
-            columns=(0, 1, 2, 3, 4, 5, 9), on_refresh=self.load_data)
+            self.grid, placeholder="Search machine, person, location, CPU, GPU or asset tag…",
+            columns=(0, 1, 2, 3, 4, 5, 9, COL["Serial number"], COL["Asset tag"]),
+            on_refresh=self.load_data, noun="machine")
         self.filter_cb = self.toolbar.add_filter(
             "Status", [("All statuses", "")] + [(s, s) for s in hw.STATUSES], column=COL["Status"])
+        self.filter_cb.currentIndexChanged.connect(lambda _i: self._show_figure(""))
+        self.toolbar.filter.add_predicate(
+            lambda row: not self._figure or self._figures.get(self._key(row)) == self._figure)
         self.show_retired = QCheckBox("Show retired")
         self.show_retired.setToolTip("Include machines that are Retired, Lost or Disposed")
         self.toolbar._filters_row.addWidget(self.show_retired)
@@ -473,9 +553,22 @@ class ItInventoryTab(QWidget):
         item = self.grid.item(row, COL["Status"])
         return not (item is not None and hw.is_end_of_life(item.text()))
 
-    def _filter_status(self, status):
-        index = self.filter_cb.findData(status)
-        self.filter_cb.setCurrentIndex(max(0, index))
+    def _key(self, row):
+        item = self.grid.item(row, COL["Machine"])
+        return item.text() if item is not None else None
+
+    def _filter_figure(self, figure):
+        """A figure was clicked: show exactly the machines it counted."""
+        self.filter_cb.blockSignals(True)
+        self.filter_cb.setCurrentIndex(0)
+        self.filter_cb.blockSignals(False)
+        self._show_figure(figure)
+        self.toolbar.filter.apply()
+
+    def _show_figure(self, figure):
+        self._figure = figure
+        for key, card in self._figure_cards.items():
+            card.set_selected(key == figure)
 
     @on_database_error
     def load_data(self, *_):
@@ -497,6 +590,7 @@ class ItInventoryTab(QWidget):
         self.fig_repair.set_value(counts["repair"])
         self.fig_repair.set_tone("warn" if counts["repair"] else "idle")
         self.fig_loan.set_value(counts["on_loan"])
+        self._figures = {str(r.get("machine_name") or ""): self.repo.figure(r) for r in self.hardware_data}
         self.show_retired.setText("Show retired (%d)" % counts["retired"] if counts["retired"] else "Show retired")
 
         # The selection follows the machine, not the row number, across the
@@ -509,21 +603,33 @@ class ItInventoryTab(QWidget):
         self.grid.setRowCount(len(rows))
         for r, row in enumerate(rows):
             name = str(row.get('machine_name', ''))
-            item = make_item(name, key=name, tooltip=name)
+            # Sorted by position in the repository's natural order: WS-COMP-2
+            # before WS-COMP-10 when the header is clicked too.
+            item = make_item(name, key=name, tooltip=name, sort_value=r)
             self.grid.setItem(r, COL["Machine"], item)
 
-            holder = row.get("holder") or row.get("assigned_to")
+            # The loan record only. A name typed before loans were tracked is
+            # a note on the tooltip, not an owner.
+            holder = row.get("holder")
+            legacy = str(row.get("assigned_to") or "").strip()
             assigned = row.get('display_name') or holder
-            assigned_item = make_item(assigned or "Unassigned", tooltip=people.label(holder) if holder else "")
+            tip = people.label(holder) if holder else ""
+            if legacy and not holder:
+                tip = "Recorded as %s before loans were tracked" % legacy
+            assigned_item = make_item(assigned or "Unassigned", tooltip=tip)
             if not assigned:
                 dim_cell(assigned_item)        # a placeholder, not a name
             self.grid.setItem(r, COL["Assigned to"], assigned_item)
 
+            right = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
             for column, key in (("Type", "type"), ("Location", "location"), ("CPU", "cpu"),
-                                ("GPU", "gpu"), ("RAM", "ram"), ("Storage", "storage")):
-                text = hw.cell(row.get(key))
+                                ("GPU", "gpu"), ("RAM", "ram"), ("Storage", "storage"),
+                                ("Serial number", "serial_number"), ("Asset tag", "asset_tag")):
+                sized = key in ("ram", "storage")
+                text = hw.size_text(row.get(key)) if sized else hw.cell(row.get(key))
                 cell = make_item(text, tooltip=text if text != hw.MISSING else "",
-                                 sort_value=hw.gb_value(text) if key in ("ram", "storage") and text != hw.MISSING else None)
+                                 sort_value=hw.gb_value(row.get(key)) if sized and text != hw.MISSING else None,
+                                 align=right if sized else None)
                 if text == hw.MISSING:
                     dim_cell(cell)
                 self.grid.setItem(r, COL[column], cell)
@@ -566,6 +672,12 @@ class ItInventoryTab(QWidget):
         held = bool(row and row.get("holder"))
         self.issue_btn.setEnabled(bool(row) and not held and hw.can_be_issued(row.get("status")))
         self.collect_btn.setEnabled(held)
+        # Delete is only for a machine added by mistake - say so before it is pressed.
+        used = bool(row) and (held or int(row.get("loans") or 0) > 0)
+        self.delete_btn.setEnabled(bool(row) and not used)
+        self.delete_btn.setToolTip(
+            "Issued before - use Edit > Retired to keep its history" if used
+            else "For a machine added by mistake. Retire one that has been used.")
 
     def _service(self):
         return self.repo.service
@@ -576,7 +688,10 @@ class ItInventoryTab(QWidget):
 
     # ------------------------------------------------------------ actions
     def add_workstation(self):
-        dialog = AddPCDialog(self, self.hub, repo=self.repo)
+        if self.read_only:
+            return
+        dialog = AddPCDialog(self, self.hub, repo=self.repo, locations=self._locations(),
+                             by=self._by_whom())
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         name = dialog.inp_name.text().strip()
@@ -602,7 +717,10 @@ class ItInventoryTab(QWidget):
             feedback.warn(self, "Edit machine", "Select the machine to edit.")
             return
 
-        dialog = AddPCDialog(self, self.hub, edit_data=edit_data, repo=self.repo)
+        if self.read_only:
+            return
+        dialog = AddPCDialog(self, self.hub, edit_data=edit_data, repo=self.repo,
+                             locations=self._locations(), by=self._by_whom())
         accepted = dialog.exec() == QDialog.DialogCode.Accepted
         name = dialog.renamed_to or edit_data.get('machine_name')
         if not accepted:
@@ -627,6 +745,9 @@ class ItInventoryTab(QWidget):
         else:
             feedback.toast(self, "%s saved." % name, "success")
         self.load_data()
+
+    def _locations(self):
+        return [r.get("location") for r in self.hardware_data or []]
 
     def _apply_status(self, name, choice):
         """Repair or end of life on an issued machine: collect it first (asked)."""
@@ -688,7 +809,9 @@ class ItInventoryTab(QWidget):
                     yes_label="Issue anyway", no_label="Cancel"):
                 return
             override = True
-        if service.issue_machine(machine, who, self._by_whom(), override=override):
+        given = dialog.values()
+        if service.issue_machine(machine, who, self._by_whom(), note=given["note"], override=override,
+                                 issued_on=given["issued_on"]):
             feedback.toast(self, "%s is now with %s. When they leave, the leaving checklist will ask "
                                  "for it back." % (machine, people.display_name(who)), "success")
         else:
@@ -729,7 +852,7 @@ class ItInventoryTab(QWidget):
         if row is None:
             return
         machine = row.get("machine_name")
-        HistoryDialog(machine, self.repo.history(machine), self).exec()
+        HistoryDialog(machine, self.repo.history(machine), self, events=self.repo.events(machine)).exec()
 
     def delete_workstation(self):
         row = self._selected_row()
@@ -777,11 +900,17 @@ class ItInventoryTab(QWidget):
             summary["updated"], "" if summary["updated"] == 1 else "s")]
         if summary["failed"]:
             lines.append("%d could not be saved - see the log." % summary["failed"])
+        def listed(names):
+            return ", ".join(names[:6]) + ("" if len(names) <= 6 else " and %d more" % (len(names) - 6))
+
         if summary["unreadable"]:
-            names = ", ".join(summary["unreadable"][:6])
-            more = "" if len(summary["unreadable"]) <= 6 else " and %d more" % (len(summary["unreadable"]) - 6)
-            lines.append("%d report%s could not be read: %s%s." % (
-                len(summary["unreadable"]), "" if len(summary["unreadable"]) == 1 else "s", names, more))
+            lines.append("%d report%s could not be read: %s." % (
+                len(summary["unreadable"]), "" if len(summary["unreadable"]) == 1 else "s",
+                listed(summary["unreadable"])))
+        if summary.get("bad_names"):
+            lines.append("Skipped (the name cannot be a machine name): %s." % listed(summary["bad_names"]))
+        for name, status in summary.get("end_of_life", []):
+            lines.append("%s is marked %s but reported to Live Ops - check where it is." % (name, status))
         if summary["added"]:
             lines.append("New machines are left unassigned - use Issue to… to say who has them.")
         self.last_sync_message = "\n".join(lines)

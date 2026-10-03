@@ -130,6 +130,11 @@ def _issuable_sql() -> str:
     return issuable_sql("status")
 
 
+def _not_on_loan_sql() -> str:
+    from .hardware import not_on_loan_sql
+    return not_on_loan_sql("hardware_inventory.machine_name")
+
+
 class OnboardingService:
     def __init__(self, db=None):
         if db is None:
@@ -469,7 +474,7 @@ class OnboardingService:
 
     # ------------------------------------------------------------------ assets
     def issue_machine(self, machine_name: str, username: str, by_whom: str,
-                      note: str = "", override: bool = False) -> bool:
+                      note: str = "", override: bool = False, issued_on: date = None) -> bool:
         """
         Put a machine in somebody's hands, and record that it happened.
 
@@ -492,7 +497,7 @@ class OnboardingService:
                     "INSERT INTO asset_assignments "
                     "(machine_name, user_id, issued_on, issued_by, note) "
                     "VALUES (%s, %s, %s, %s, %s)",
-                    (machine_name, username, date.today(), by_whom, note))
+                    (machine_name, username, issued_on or date.today(), by_whom, note))
                 tx.write(
                     "UPDATE hardware_inventory SET assigned_to = %s, status = 'Active' "
                     "WHERE machine_name = %s", (username, machine_name),
@@ -666,7 +671,9 @@ class OnboardingService:
         try:
             rows = self.db.execute_query(
                 "SELECT * FROM hardware_inventory "
-                "WHERE (assigned_to IS NULL OR assigned_to = '') "
+                # Free means no open loan: the ledger, the IT area's one rule
+                # for who holds a machine (not the old assigned_to copy).
+                "WHERE " + _not_on_loan_sql() + " "
                 # The hardware domain's one rule: not in repair, not end of life.
                 "AND " + _issuable_sql() + " "
                 "ORDER BY machine_name", fetch="all") or []
@@ -682,7 +689,7 @@ class OnboardingService:
         try:
             rows = self.db.execute_query(
                 "SELECT machine_name FROM hardware_inventory "
-                "WHERE (assigned_to IS NULL OR assigned_to = '') "
+                "WHERE " + _not_on_loan_sql() + " "
                 # In for repair, or at the end of its life: the hardware
                 # domain's one rule (IT area).
                 "AND " + _issuable_sql() + " "
