@@ -87,7 +87,7 @@ def shot_name_problem(name, what: str = "Shot name") -> Optional[str]:
     # One sentence for every character rule, so the person sees all of them
     # at once (a name with a space and a '/' used to hear about the space only).
     if ".." in text or not _SHOT_ALLOWED.match(text):
-        return (f"{what} '{text}' can only use letters, digits, _ - and . "
+        return (f"{what} '{text}' can only use letters, digits, _ - and . (English A-Z only) "
                 f"and must start with a letter or digit (no spaces, / or ..).")
     # What is left of the file-name rules: Windows device names, a final dot.
     return name_problem(text, what)

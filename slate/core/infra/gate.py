@@ -256,7 +256,9 @@ class Gate:
 
         # The vocabulary the dashboard actually uses. One definition, so the
         # table, the counts and the board can never disagree about what colour
-        # DONE is.
+        # DONE is. Neutral statuses (not started, omitted) take the secondary
+        # text colour in Light: IDLE there is too pale to read on a white pill.
+        neutral = cls.IDLE if cls.IS_DARK else cls.TEXT_2
         cls.STATUS = {
             "APPROVED": cls.OK,
             "DONE": cls.OK,
@@ -267,10 +269,11 @@ class Gate:
             "SENT FOR REVIEW": cls.INFO,
             "REVIEW": cls.INFO,
             "IN REVIEW": cls.INFO,
-            "YTS": cls.IDLE,
-            "NOT STARTED": cls.IDLE,
-            "OMIT": cls.IDLE,
-            "OMITTED": cls.IDLE,
+            "YTS": neutral,
+            "NOT STARTED": neutral,
+            "OMIT": neutral,
+            "OMITTED": neutral,
+            "N/A": neutral,
             "RETAKE": cls.BAD,
             "SI": cls.BAD,
             "FAILED": cls.BAD,

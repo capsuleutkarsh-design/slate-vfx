@@ -44,7 +44,12 @@ class PriorityDelegate(QStyledItemDelegate):
     def setEditorData(self, editor, index):
         value = index.data(Qt.ItemDataRole.EditRole)
         idx = editor.findData(value)
-        editor.setCurrentIndex(idx if idx >= 0 else max(0, editor.count() - 1))
+        if idx < 0 and value is not None:
+            # A value the studio has no name for stays as it is (as in the
+            # shot panel): opening and closing the editor never changes it.
+            editor.addItem(str(value), value)
+            idx = editor.count() - 1
+        editor.setCurrentIndex(max(0, idx))
 
     def setModelData(self, editor, model, index):
         new_value = editor.currentData()

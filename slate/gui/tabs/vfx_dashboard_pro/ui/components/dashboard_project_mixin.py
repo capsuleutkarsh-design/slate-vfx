@@ -20,7 +20,9 @@ from PySide6.QtWidgets import QDialog
 
 from slate.core.domain import shot_status
 from slate.gui.tabs.vfx_dashboard_pro.core.excel_handler import ExcelHandler
-from slate.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler, StaleDataError
+from slate.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import (
+    ProjectClosedError, SQLiteHandler, StaleDataError,
+)
 from slate.gui.tabs.vfx_dashboard_pro.core.file_lock import FileLock
 from slate.gui.tabs.vfx_dashboard_pro.ui.shot_table_model import (
     changed_fields, display_value, field_label, get_field, restore, set_field, snapshot,
@@ -91,7 +93,14 @@ class DashboardProjectMixin:
                 username=username,
                 actor_identities=self._artist_identity_candidates(),
             )
-            shots = self.data_handler.read_shots()
+            try:
+                shots = self.data_handler.read_shots()
+            except Exception as exc:
+                # An outage must not look like an empty project somebody
+                # could start re-adding shots to.
+                logging.exception("Could not read project %s", project_code)
+                self._show_read_failure(project, exc)
+                return
             shots = self._filter_shots_for_current_user(shots)
             # Other people's changes arrive shot by shot from here on.
             self._start_live_updates(project_code)
@@ -110,8 +119,11 @@ class DashboardProjectMixin:
             if changing:
                 # A filter set on one project never carries into the next.
                 self.clear_all_filters(apply=False)
-                self.close_detail_dock()
+                self.close_detail_dock(force=True)
+                # An artist's Undo belongs to the project it was made on.
+                self._own_status_undo = []
             self._own_writes = {}
+            self._read_failed = None
             self.all_shots = shots
             self.table_model.set_shots(shots)
             self.populate_filters()
@@ -130,6 +142,16 @@ class DashboardProjectMixin:
             logging.exception("Could not show project %s", project_code)
             self._notify("The project's shots could not be shown.", "error", details=str(e))
 
+    def _show_read_failure(self, project, exc):
+        """The project could not be read: say so, with Retry - never an empty grid."""
+        self.all_shots = []
+        self._read_failed = project.name
+        self.table_model.set_shots([])
+        self.apply_filters()
+        self.status_bar.showMessage(f"{project.name} could not be read.", 8000)
+        self._notify(f"{project.name} could not be read.", "error", 15000, details=str(exc),
+                     action=("Retry", lambda code=project.code: self.switch_project(code)))
+
     def reload_shots(self) -> bool:
         """
         Read the project again and merge it in: shots with pending edits keep
@@ -137,8 +159,13 @@ class DashboardProjectMixin:
         replaced. Refresh used to reload over the top and lose pending edits.
         """
         handler = getattr(self, "data_handler", None)
+        if getattr(self, "_read_failed", None) and self.current_project:
+            self.switch_project(self.current_project.code)      # open it properly this time
+            return True
         if not isinstance(handler, SQLiteHandler) or not self.current_project:
-            if self.current_project:
+            # A project kept only in its sheet is read again from the sheet,
+            # which cannot keep pending edits - so ask first.
+            if self.current_project and self.confirm_discarding_changes("reload the sheet"):
                 self.switch_project(self.current_project.code, refresh=True)
             return True
         from ...controllers.live_update_mixin import merge_shots, _shot_id
@@ -148,10 +175,6 @@ class DashboardProjectMixin:
         except Exception as exc:
             logging.exception("Reload failed: %s", exc)
             self._notify("The project could not be read again.", "error", details=str(exc))
-            return False
-        if current and not fresh:
-            self._notify("The project came back empty, so nothing on screen was replaced. "
-                         "Try again in a moment.", "warning")
             return False
         checked = {_shot_id(s) for s in current} | {_shot_id(s) for s in fresh}
         checked.discard(None)
@@ -185,9 +208,14 @@ class DashboardProjectMixin:
                         and shot_status.canonical((getattr(s, "_baseline", None) or {}).get("status"))
                         != shot_status.APPROVED]
         try:
+            # ponytail: the save runs on the UI thread - one read and a few batched
+            # statements; move it to a worker if large saves to a remote server still stall.
             ok = self.data_handler.write_shots(pending)
         except StaleDataError as exc:
             return self._resolve_conflicts(exc, pending)
+        except ProjectClosedError as exc:
+            self._project_closed(exc)
+            return False
         except PermissionError as exc:
             self._notify(str(exc), "warning", 8000)
             return False
@@ -206,9 +234,20 @@ class DashboardProjectMixin:
         self._after_save(pending, approved_now)
         return True
 
+    def _project_closed(self, exc):
+        """Someone deleted or archived the open project: nothing was saved; say what can be done."""
+        from slate.core.domain.access import can_delete_project
+        action = None
+        code = self.current_project.code if self.current_project else ""
+        if exc.archived and can_delete_project(self.user_roles) and code:
+            action = ("Restore", lambda c=code: self._restore_archived(c))
+        self._notify(f"{exc} Your edits are still here.", "warning", 15000, action=action)
+
     def _after_save(self, saved, approved_now=()):
         self.table_model.mark_clean(saved)
-        self.table_model.clear_undo()
+        # Undo steps of the shots just written go; edits to other shots can
+        # still be taken back.
+        self.table_model.forget_undo_for(saved)
         self._own_writes = getattr(self, "_own_writes", None) or {}
         for shot in saved:
             try:
@@ -218,15 +257,15 @@ class DashboardProjectMixin:
                 pass
         self.update_unsaved_indicator()
         count = len(saved)
-        backed_up = self._mirror_shots_to_excel(saved)
-        self.update_backup_indicator()
-        if backed_up or not self._excel_allowed():
-            self._notify(f"Saved {count} shot{'s' if count != 1 else ''}.", "success")
-        else:
-            self._notify(
-                f"Saved {count} shot{'s' if count != 1 else ''} to the database, but the Excel "
-                "backup did not update.", "warning",
-                details=getattr(self.sync_service, "last_backup_error", "") or "")
+        self._notify(f"Saved {count} shot{'s' if count != 1 else ''}.", "success")
+
+        def backed_up(ok):
+            # The backup is written after the save, in the background; only a
+            # failure needs saying.
+            if not ok:
+                self._notify("The Excel backup did not update.", "warning",
+                             details=getattr(self.sync_service, "last_backup_error", "") or "")
+        self._mirror_shots_to_excel(saved, on_done=backed_up)
         self._board_dirty = True
         if self._board_visible():
             self.update_kanban()
@@ -275,6 +314,17 @@ class DashboardProjectMixin:
         from ..conflict_resolver_dialog import ConflictResolverDialog
         from slate.core.domain.access import can_force_save
         conflicts = exc.conflicts or []
+        deleted = [c for c in conflicts if c.get("kind") == "deleted"]
+        if deleted:
+            # Nothing to merge with: the shot is gone. Its edits cannot be
+            # saved, and the rest are not saved either until this is settled.
+            gone = {(str(c.get("reel") or "").lower(), c["shot_name"].lower()) for c in deleted}
+            lost = [s for s in pending if (str(s.reel_episode or "").lower(), s.shot_name.lower()) in gone]
+            self.table_model.discard_changes(lost)
+            self.reload_shots()
+            self._notify(f"{exc} Their edits here could not be saved and were dropped; your other "
+                         "edits are still waiting - save again.", "warning", 12000)
+            return False
         details = self._conflict_details(conflicts, pending) if conflicts else []
         can_force = can_force_save(getattr(self, "access_roles", []))
         dlg = ConflictResolverDialog(details or str(exc), can_force=can_force, parent=self)
@@ -285,9 +335,11 @@ class DashboardProjectMixin:
             kept, dropped = self._rebase_on_latest(details, keep_mine_on_overlap=False)
             message = "Their changes are loaded"
             if kept:
-                message += f"; {kept} of your edits are back on top, not saved yet"
+                message += (f"; {kept} of your edit{'s are' if kept != 1 else ' is'} back on top, "
+                            "not saved yet")
             if dropped:
-                message += f"; {dropped} of yours were dropped because they changed the same field"
+                message += (f"; {dropped} of your edit{'s were' if dropped != 1 else ' was'} dropped "
+                            f"because they changed the same field")
             self._notify(message + ". Check, then save.", "info", 10000)
             return False
         if dlg.action_selected == "force":
@@ -324,7 +376,8 @@ class DashboardProjectMixin:
             shot._modified = self.table_model.is_dirty(shot)
             shot._remote_changed = False
             touched.append(shot)
-        self.table_model.clear_undo()
+        # Only these shots' undo steps go: they no longer match what is under them.
+        self.table_model.forget_undo_for(touched)
         self.table_model.refresh_shots(touched)
         self.update_unsaved_indicator()
         self.apply_filters()
@@ -332,18 +385,15 @@ class DashboardProjectMixin:
 
     # ------------------------------------------------------------ auto-publish
     def output_folder_name(self, shot=None) -> str:
-        """The name of the project's output folder for a shot ('08_Deliver' on new projects)."""
-        import os
+        """
+        The name of the project's output folder ('08_Deliver' on new projects),
+        from the folder template - never by listing the share before a question.
+        """
         if self.current_project is None:
             return "the output folder"
-        try:
-            path = self.project_manager.get_folder_path(
-                self.current_project.code, "output",
-                getattr(shot, "reel_episode", "") or "", getattr(shot, "shot_name", "") or "")
-        except Exception:
-            path = ""
-        name = os.path.basename(str(path or "").rstrip("/\\"))
-        return name or "the output folder"
+        template = (getattr(self.current_project, "folder_template", {}) or {}).get("output", "")
+        name = str(template).replace("\\", "/").rstrip("/").split("/")[-1]
+        return name if name and "{" not in name else "the output folder"
 
     def _offer_auto_publish(self, shots):
         """Approved just now: offer to copy the comp renders to the shot's output folder."""

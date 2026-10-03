@@ -16,6 +16,7 @@ from slate.core.domain.access import can_edit_dashboard, can_edit_own_status
 from slate.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler
 from slate.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
 from slate.gui.tabs.vfx_dashboard_pro.ui.shot_table_model import ShotTableModel
+from tests.dashboard_util import open_project
 
 
 @pytest.fixture(autouse=True)
@@ -42,6 +43,7 @@ def _shot(name="SH010", reel="ReelA"):
 @pytest.fixture
 def seeded(mock_db):
     """A shot with comp on Rahul and roto on Priya."""
+    open_project(mock_db, PROJECT)
     supervisor = SQLiteHandler(PROJECT, db_manager=mock_db, user_role="supervisor")
     supervisor.write_shots([_shot()])
     return supervisor

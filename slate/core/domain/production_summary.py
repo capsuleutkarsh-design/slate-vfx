@@ -28,24 +28,9 @@ OMITTED_STATUSES = set(shot_status.OMITTED_STATUSES)
 
 
 def _parse_date(value) -> Optional[date]:
-    """Best-effort date parsing across the formats the sheets use."""
-    if not value:
-        return None
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
-
-    text = str(value).strip()
-    if not text:
-        return None
-    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y",
-                "%Y/%m/%d", "%d-%b-%Y", "%d %b %Y"):
-        try:
-            return datetime.strptime(text, fmt).date()
-        except ValueError:
-            continue
-    return None
+    """The shared date reader: ISO with or without a time, day-first, '3 Oct 2026'."""
+    from slate.core.domain.dates import parse_date
+    return parse_date(value)
 
 
 def _is_done(status) -> bool:
@@ -147,10 +132,12 @@ def build_summary(shots: Iterable, today: Optional[date] = None,
 
     status_counts: Dict[str, int] = defaultdict(int)
     dept_rows: Dict[str, DepartmentLoad] = {
-        dept.key: DepartmentLoad(key=dept.key, label=dept.label)
+        dept.key: DepartmentLoad(key=dept.key, label=dept.name)
         for dept in load_departments()
     }
+    # By the name as people mean it: 'Priya' and 'priya ' are one person.
     artist_rows: Dict[str, ArtistLoad] = {}
+    spellings: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
     for shot in everything:
         if _is_omitted(getattr(shot, "status", "")):
@@ -159,6 +146,9 @@ def build_summary(shots: Iterable, today: Optional[date] = None,
     for shot in shots:
         status = shot_status.label(getattr(shot, "status", ""))
         status_counts[status] += 1
+        # A finished shot has no work left in any department, whatever a
+        # department row still says.
+        shot_done = _is_done(getattr(shot, "status", ""))
 
         # --- per-department work -------------------------------------
         assigned_anywhere = False
@@ -186,7 +176,8 @@ def build_summary(shots: Iterable, today: Optional[date] = None,
             row.shots += 1
             row.bid_days += bid
 
-            if _is_done(dept_status):
+            dept_done = shot_done or _is_done(dept_status)
+            if dept_done:
                 row.done += 1
             elif _is_not_started(dept_status):
                 row.not_started += 1
@@ -196,16 +187,22 @@ def build_summary(shots: Iterable, today: Optional[date] = None,
                 row._outstanding += bid
 
             if artist:
-                entry = artist_rows.setdefault(artist, ArtistLoad(name=artist))
+                person = " ".join(artist.split()).casefold()
+                spellings[person][" ".join(artist.split())] += 1
+                entry = artist_rows.setdefault(person, ArtistLoad(name=artist))
                 entry.shots += 1
                 entry.bid_days += bid
                 entry.departments[key] = entry.departments.get(key, 0.0) + bid
-                if not _is_done(dept_status):
+                if not dept_done:
                     entry.outstanding_days += bid
 
-        if not assigned_anywhere and not str(
+        # Work nobody is on - finished shots need nobody. Named with the reel:
+        # SH010 may be in two reels.
+        if not shot_done and not assigned_anywhere and not str(
                 getattr(shot, "assigned_artist", "") or "").strip():
-            summary.unassigned.append(getattr(shot, "shot_name", ""))
+            reel = str(getattr(shot, "reel_episode", "") or "")
+            name = getattr(shot, "shot_name", "")
+            summary.unassigned.append(f"{reel} / {name}" if reel and name else name)
 
         # --- dates ----------------------------------------------------
         target = _parse_date(getattr(shot, "target", None))
@@ -237,6 +234,8 @@ def build_summary(shots: Iterable, today: Optional[date] = None,
     summary.total_bid_days = round(summary.total_bid_days, 2)
     summary.outstanding_bid_days = round(summary.outstanding_bid_days, 2)
 
+    for person, entry in artist_rows.items():
+        entry.name = max(spellings[person].items(), key=lambda kv: (kv[1], kv[0]))[0]
     summary.artists = sorted(artist_rows.values(),
                              key=lambda a: (-a.outstanding_days, a.name))
     for artist in summary.artists:

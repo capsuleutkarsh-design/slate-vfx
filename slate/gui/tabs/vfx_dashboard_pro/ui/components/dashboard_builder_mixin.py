@@ -144,36 +144,3 @@ class DashboardBuilderMixin:
             self.refresh_connection_state()
             self._update_empty_state()
             self.load_projects()
-
-    def _build_main_sheet_headers(self, project, source_ws=None):
-            mapping = dict(getattr(project, "column_mapping", {}) or {})
-            if not mapping:
-                return []
-
-            max_col = 0
-            for letter in mapping.values():
-                try:
-                    max_col = max(max_col, int(column_index_from_string(str(letter))))
-                except Exception:
-                    continue
-            if max_col <= 0:
-                return []
-
-            headers = [""] * max_col
-            header_row = int(getattr(project, "header_row", 2) or 2)
-
-            if source_ws is not None:
-                for col in range(1, max_col + 1):
-                    val = source_ws.cell(row=header_row, column=col).value
-                    if val is not None:
-                        headers[col - 1] = str(val)
-
-            for field_name, letter in mapping.items():
-                try:
-                    col = int(column_index_from_string(str(letter)))
-                except Exception:
-                    continue
-                idx = col - 1
-                if 0 <= idx < len(headers) and not str(headers[idx] or "").strip():
-                    headers[idx] = self._friendly_header_name(field_name)
-            return headers

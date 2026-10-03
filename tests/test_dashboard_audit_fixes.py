@@ -268,31 +268,44 @@ class TestSaving:
             handler.write_shots([mine_r02])
         assert caught.value.conflicts[0]["reel"] == "R02"
 
-    def test_failed_task_save_is_reported(self, mock_db, monkeypatch):
-        """DSH-004."""
-        handler = _project(mock_db, [_shot("SH010"), _shot("SH020")])
-        shots = handler.read_shots()
-        monkeypatch.setattr(mock_db, "save_tracking_tasks", lambda *a, **k: False)
-        assert handler.write_shots(shots) is False
-        assert "department" in handler.last_error
+    def test_a_refused_department_write_saves_nothing(self, mock_db, monkeypatch):
+        """DSH-004 / DSH2-065: the shot row and its department rows are one transaction."""
+        handler = _project(mock_db, [_shot("SH010")])
+        shot = handler.read_shots()[0]
+        shot.sow = "new scope"
+        shot.dept("roto").status = "WIP"
+        from slate.core.infra.db_results import DatabaseWriteError
+
+        def refuse(*_a, **_k):
+            raise DatabaseWriteError("refused")
+        monkeypatch.setattr(handler, "_write_tasks", refuse)
+        assert handler.write_shots([shot]) is False
+        assert handler.last_error
+        after = handler.read_shots()[0]
+        assert after.sow == "" and after.dept("roto").status == ""
 
     def test_status_no_longer_mirrors_into_comp(self, mock_db):
         """DSH-023."""
         handler = _project(mock_db, [_shot("SH010")])
         shot = handler.read_shots()[0]
-        assert handler.update_shot_field("SH010", "status", "APPROVED", shot.version, reel="R01")
+        shot.status = "APPROVED"
+        assert handler.write_shots([shot])
         after = handler.read_shots()[0]
         assert after.status == "APPROVED" and after.dept("comp").status == ""
 
-    def test_a_lead_cannot_change_shot_fields_through_the_field_writer(self, mock_db):
+    def test_a_lead_cannot_change_shot_fields(self, mock_db):
         """DSH-020/021."""
-        handler = _project(mock_db, [_shot("SH010")])
+        _project(mock_db, [_shot("SH010")])
         lead = SQLiteHandler(PROJECT, db_manager=mock_db, user_role=["lead"], department_family="roto")
+        shot = lead.read_shots()[0]
+        shot.status = "APPROVED"
         with pytest.raises(PermissionError):
-            lead.update_shot_field("SH010", "status", "APPROVED", 0, reel="R01")
+            lead.write_shots([shot])
         nobody = SQLiteHandler(PROJECT, db_manager=mock_db, user_role=["lead"], department_family="")
+        shot = nobody.read_shots()[0]
+        shot.dept("roto").status = "WIP"
         with pytest.raises(PermissionError):
-            nobody.update_shot_field("SH010", "roto.status", "WIP", 0, reel="R01")
+            nobody.write_shots([shot])
 
 
 # ------------------------------------------------------------------ the screen
@@ -582,15 +595,18 @@ class TestVerifierRound:
         opened = []
         monkeypatch.setattr(dbd.DeliveryBatchesDialog, "exec", lambda self: opened.append(self) or 0)
         artist.open_delivery_batches_dialog()
-        dialog = opened[0]
+        # DSH2-035: an artist, who sees only their own shots, does not get the
+        # project's packages at all; the store still refuses them a create.
+        assert opened == []
+        dialog = dbd.DeliveryBatchesDialog(PROJECT, roles=artist.access_roles)
         qtbot.addWidget(dialog)
-        assert dialog.store.roles == artist.access_roles
         assert not dialog.create_btn.isVisibleTo(dialog)
         with pytest.raises(PermissionError):
             dialog.store.create_delivery(PROJECT, "DEL", [1])
         sup = _open(_widget(qtbot))
         sup.open_delivery_batches_dialog()
-        assert opened[1].create_btn.isVisibleTo(opened[1])
+        assert opened[0].store.roles == sup.access_roles
+        assert opened[0].create_btn.isVisibleTo(opened[0])
 
     def test_long_project_names_end_in_an_ellipsis(self, qtbot):
         """DSH-055."""

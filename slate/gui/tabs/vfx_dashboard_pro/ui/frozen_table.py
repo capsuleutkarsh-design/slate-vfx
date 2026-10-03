@@ -84,6 +84,8 @@ class FrozenColumnTable(QTableView):
     def setModel(self, model):
         super().setModel(model)
         self.frozen.setModel(model)
+        for signal in (model.modelReset, model.layoutChanged, model.rowsInserted, model.rowsRemoved):
+            signal.connect(lambda *_: self.update_frozen_geometry())
         self.frozen.setSelectionModel(self.selectionModel())
         self.frozen.setSelectionBehavior(self.selectionBehavior())
         self.frozen.setSelectionMode(self.selectionMode())
@@ -139,8 +141,11 @@ class FrozenColumnTable(QTableView):
         self.frozen.setVisible(width > 0)
         self.frozen.raise_()
         x = (self.verticalHeader().width() if self.verticalHeader().isVisible() else 0) + self.frameWidth()
-        self.frozen.setGeometry(x, self.frameWidth(), width,
-                                self.viewport().height() + self.horizontalHeader().height())
+        # With no rows only the heading is pinned: an empty body drew a box
+        # over the "No shots match" message.
+        rows = self.model().rowCount() if self.model() is not None else 0
+        body = self.viewport().height() if rows else 0
+        self.frozen.setGeometry(x, self.frameWidth(), width, body + self.horizontalHeader().height())
 
     # ------------------------------------------------------------ keeping in step
     def _frozen_resized(self, logical, old, new):

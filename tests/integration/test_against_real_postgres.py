@@ -22,6 +22,7 @@ from slate.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import (
     SQLiteHandler, StaleDataError,
 )
 from slate.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
+from tests.dashboard_util import open_project
 
 
 PROJECT = "PGTEST"
@@ -37,6 +38,7 @@ def _shot(name="SH010", reel="ReelA", **kwargs):
 
 @pytest.fixture
 def handler(pg_db):
+    open_project(pg_db, PROJECT)
     return _handler(pg_db)
 
 

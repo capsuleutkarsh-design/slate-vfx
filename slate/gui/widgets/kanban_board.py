@@ -275,6 +275,21 @@ class KanbanColumn(QListWidget):
         else:
             event.ignore()
 
+    def contextMenuEvent(self, event):
+        """'Move to' another column - the board without a mouse drag."""
+        item = self.itemAt(event.pos())
+        widget = self.itemWidget(item) if item else None
+        targets = getattr(self, "move_targets", None)
+        if not self.editable or widget is None or targets is None:
+            return
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        move = menu.addMenu("Move to")
+        for key, title in targets():
+            if key != self.status_key:
+                move.addAction(title, lambda k=key, t=widget.task_id: self.task_dropped.emit(t, k))
+        menu.exec(event.globalPos())
+
 
 class _ColumnFrame(QFrame):
     """A column: its heading (name and count, click to fold) and its cards."""
@@ -308,6 +323,17 @@ class _ColumnFrame(QFrame):
         self.list.model().modelReset.connect(self.update_count)
         self.collapsed = False
         self.set_collapsed(collapsed)
+        # A folded column (OMIT starts folded) still takes a dropped card.
+        self.setAcceptDrops(True)
+
+    def dragEnterEvent(self, event):
+        if self.list.editable and event.mimeData().hasFormat(TASK_MIME):
+            event.accept()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        self.list.dropEvent(event)
 
     def update_count(self, *args):
         count = self.list.count()
@@ -386,6 +412,7 @@ class KanbanBoard(QWidget):
             frame.list.task_dropped.connect(self.handle_drop)
             frame.list.task_double_clicked.connect(self.task_double_clicked.emit)
             frame.list.set_editable(self._editable)
+            frame.list.move_targets = lambda: [(k, f.title) for k, f in self._frames.items()]
             self.main_layout.addWidget(frame)
             self._frames[key] = frame
             self.columns[key] = frame.list

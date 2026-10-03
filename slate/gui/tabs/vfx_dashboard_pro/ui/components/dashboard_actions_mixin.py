@@ -6,10 +6,6 @@ from PySide6.QtWidgets import *
 from PySide6.QtCore import *
 from PySide6.QtGui import *
 
-from openpyxl import Workbook, load_workbook
-from openpyxl.utils import column_index_from_string, get_column_letter
-from openpyxl.styles import Font, PatternFill, Border, Side, Alignment, Protection
-from openpyxl.worksheet.datavalidation import DataValidation
 from slate.gui.tabs.vfx_dashboard_pro.ui.edit_project_dialog import EditProjectDialog
 
 class DashboardActionsMixin:
@@ -33,10 +29,59 @@ class DashboardActionsMixin:
             self._notify("Open a project first.", "warning")
             return
 
-        # Verdicts need the right to give them (the store refuses otherwise).
-        dialog = ReviewQueueDialog(self.current_project.code, parent=self,
-                                   roles=getattr(self, "access_roles", None))
+        # Verdicts need the right to give them (the store refuses otherwise);
+        # an artist sees only the shots they see in the grid.
+        visible = None
+        if self._is_artist_scope():
+            visible = {(str(s.reel_episode or "").lower(), s.shot_name.lower()) for s in self.all_shots or []}
+        scope = self._department_scope()
+        dialog = ReviewQueueDialog(
+            self.current_project.code, parent=self, roles=getattr(self, "access_roles", None),
+            current_user=self._signed_in_name(), visible=visible,
+            departments=scope, on_verdict=self.on_version_verdict)
         dialog.exec()
+
+    def _signed_in_name(self) -> str:
+        data = getattr(self, "user_data", {}) or {}
+        return str(data.get("display_name") or data.get("username") or "").strip()
+
+    def on_version_verdict(self, version, status):
+        """
+        A verdict on a version moves its shot too - as a pending edit, so the
+        same Save writes it with its history and tells the artist. Approved and
+        Retake only; a department version moves that department, one without a
+        department the shot itself.
+        """
+        from slate.core.domain import shot_status
+        from slate.core.domain.versions import STATUS_APPROVED, STATUS_RETAKE
+        from slate.gui.tabs.vfx_dashboard_pro.ui.shot_table_model import field_label, get_field, set_field
+        target = {STATUS_APPROVED: shot_status.APPROVED, STATUS_RETAKE: shot_status.RETAKE}.get(status)
+        model = getattr(self, "table_model", None)
+        if not target or model is None or not model.can_edit_freely():
+            return
+        name = version.shot_name.lower()
+        matches = [s for s in self.all_shots or [] if s.shot_name.lower() == name
+                   and (not version.reel or str(s.reel_episode or "").lower() == version.reel.lower())]
+        if len(matches) != 1:
+            return              # not on screen, or the reel is not known and the name is ambiguous
+        shot = matches[0]
+        dept = str(version.department or "").lower()
+        scope = self._department_scope()
+        if dept in model._department_keys:
+            if scope is not None and dept not in scope:
+                return
+            path = f"departments.{dept}.status"
+        else:
+            if scope is not None:
+                return
+            path = "status"
+        if shot_status.canonical(get_field(shot, path)) == target:
+            return
+        model.apply_edit([shot], lambda s: set_field(s, path, target),
+                         f"{field_label(path)} change on {shot.shot_name}")
+        self._notify(f"{shot.shot_name} {field_label(path)} set to {target} from the review. "
+                     "Not saved yet - Save writes it and tells the artist.", "info", 8000,
+                     action=self._undo_action())
 
     def production_summary_click(self):
         """Where the show is, who is loaded, what is late."""
@@ -49,10 +94,12 @@ class DashboardActionsMixin:
             return
 
         # What is on screen, and the whole project - the dialog says which it
-        # shows ("Filtered: 33 of 262 shots") and switches between them.
+        # shows ("Filtered: 33 of 262 shots") and switches between them. An
+        # artist only ever has their own shots, and the caption says so.
         name = getattr(self.current_project, "name", "") if self.current_project else ""
         dialog = ProductionSummaryDialog(list(self.displayed_shots or []), project_name=name,
-                                         parent=self, all_shots=list(self.all_shots or []))
+                                         parent=self, all_shots=list(self.all_shots or []),
+                                         whole_label="your shots" if self._is_artist_scope() else "whole project")
         dialog.exec()
 
     def add_shots_click(self):
@@ -115,11 +162,15 @@ class DashboardActionsMixin:
                 failed_status = True
 
         count = len(result.created)
+        skipped = list(values.get("skipped") or []) + [n for n in values["shots"] if n not in result.created]
+        skipped_text = (f" Skipped {len(skipped)} already there: {', '.join(skipped[:8])}"
+                        + ("…" if len(skipped) > 8 else "") + ".") if skipped else ""
         if failed_status:
-            self._notify(f"Added {count} shot(s), but their status and priority could not be set.",
-                         "warning")
+            self._notify(f"Added {count} shot(s), but their status and priority could not be set."
+                         + skipped_text, "warning", 10000)
         else:
-            self._notify(f"Added {count} shot{'s' if count != 1 else ''}.", "success")
+            self._notify(f"Added {count} shot{'s' if count != 1 else ''}." + skipped_text, "success",
+                         10000 if skipped else 4000)
         self.reload_shots()
 
     def export_to_excel_click(self):
@@ -136,312 +187,19 @@ class DashboardActionsMixin:
             self._notify("Nothing to export - no shots loaded.", "warning")
             return
 
-        try:
-            # force=True so this runs even when automatic mirroring is off. The
-            # mirror creates the passbook when the project has none yet, as a
-            # save does - export used to refuse ("No Excel file is set").
-            if self._mirror_shots_to_excel(self.all_shots, force=True):
-                self._notify(
-                    f"Exported {len(self.all_shots)} shot(s) to the Excel backup.",
-                    "success",
-                )
+        # force=True so this runs even when automatic mirroring is off. The
+        # mirror creates the passbook when the project has none yet, as a
+        # save does. It is written in the background.
+        count = len(self.all_shots)
+
+        def done(ok):
+            if ok:
+                self._notify(f"Exported {count} shot(s) to the Excel backup.", "success")
             else:
-                reason = getattr(self.sync_service, "last_backup_error", "") or ""
-                self._notify("The Excel backup could not be written.", "error", details=reason)
-        except Exception as exc:
-            logging.exception("Excel export failed: %s", exc)
-            self._notify("The Excel backup could not be written.", "error", details=str(exc))
-        self.update_backup_indicator()
-
-    def create_blank_template_click(self):
-            """Create a blank template Excel using current project structure/mapping."""
-            project = self.current_project
-            if not project:
-                self._notify("Pick a project first.", "warning")
-                return
-
-            if not self._can_manage_shots():
-                self._notify("You don't have permission to create templates.", "warning")
-                return
-            default_name = f"{project.code}_blank_template.xlsx"
-            target_path, _ = QFileDialog.getSaveFileName(
-                self,
-                "Save Blank Template",
-                default_name,
-                "Excel Files (*.xlsx)",
-            )
-            if not target_path:
-                return
-
-            try:
-                source_path = self.current_excel_path or self.project_manager.get_excel_path(project.code)
-                source_wb = None
-                source_ws = None
-                if source_path and os.path.exists(source_path):
-                    source_wb = load_workbook(source_path, data_only=False, keep_vba=False)
-                    sheet_name = str(getattr(project, "sheet_name", "") or "").strip()
-                    if sheet_name and sheet_name in source_wb.sheetnames:
-                        source_ws = source_wb[sheet_name]
-                    else:
-                        source_ws = source_wb.active
-
-                out_wb = Workbook()
-                out_ws = out_wb.active
-                out_ws.title = str(getattr(project, "sheet_name", "MASTER") or "MASTER")
-
-                header_row = int(getattr(project, "header_row", 2) or 2)
-                data_start_row = int(getattr(project, "data_start_row", 3) or 3)
-                mapping = dict(getattr(project, "column_mapping", {}) or {})
-
-                # Preserve top title/meta rows from source when available.
-                if source_ws is not None and header_row > 1:
-                    for row_idx in range(1, header_row):
-                        for col in range(1, source_ws.max_column + 1):
-                            out_ws.cell(row=row_idx, column=col, value=source_ws.cell(row=row_idx, column=col).value)
-                elif header_row > 1:
-                    # Professional title banner when source metadata rows are unavailable.
-                    max_banner_col = max(8, max((column_index_from_string(v) for v in mapping.values()), default=8))
-                    out_ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=max_banner_col)
-                    out_ws.cell(row=1, column=1, value=f"{project.code} - {project.name} | Slate Production Template")
-                    out_ws.cell(row=1, column=1).font = Font(name="Segoe UI", size=14, bold=True, color="FFFFFF")
-                    out_ws.cell(row=1, column=1).fill = PatternFill(fill_type="solid", fgColor="0F172A")
-                    out_ws.cell(row=1, column=1).alignment = Alignment(horizontal="left", vertical="center")
-                    out_ws.row_dimensions[1].height = 28
-
-                    if header_row >= 2:
-                        out_ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=max_banner_col)
-                        out_ws.cell(row=2, column=1, value="Fill only required columns. Use dropdowns where available.")
-                        out_ws.cell(row=2, column=1).font = Font(name="Segoe UI", size=10, italic=True, color="1E293B")
-                        out_ws.cell(row=2, column=1).fill = PatternFill(fill_type="solid", fgColor="E2E8F0")
-                        out_ws.cell(row=2, column=1).alignment = Alignment(horizontal="left", vertical="center")
-
-                headers = self._build_main_sheet_headers(project, source_ws=source_ws)
-                for idx, header in enumerate(headers, start=1):
-                    out_ws.cell(row=header_row, column=idx, value=header)
-
-                # Professional styling (inspired by modern dashboard palettes)
-                thin = Side(style="thin", color="D1D5DB")
-                medium = Side(style="medium", color="334155")
-                header_fill_default = PatternFill(fill_type="solid", fgColor="1E3A8A")  # corporate blue
-                alt_fill = PatternFill(fill_type="solid", fgColor="F8FAFC")
-                section_band_fill = PatternFill(fill_type="solid", fgColor="E0F2FE")
-                header_font = Font(name="Segoe UI", size=10, bold=True, color="FFFFFF")
-                body_font = Font(name="Segoe UI", size=10, color="111827")
-                center = Alignment(horizontal="center", vertical="center", wrap_text=True)
-                left = Alignment(horizontal="left", vertical="center", wrap_text=True)
-
-                # Semantic multi-color header accents.
-                palette = {
-                    "identity": "1D4ED8",    # Blue
-                    "schedule": "0F766E",    # Teal
-                    "feedback": "7C3AED",    # Violet
-                    "status": "B45309",      # Amber/Brown
-                    "artist": "BE185D",      # Pink
-                    "delivery": "047857",    # Emerald
-                    "department": "6D28D9",  # Deep violet
-                    "admin": "374151",       # Slate
-                }
-
-                def classify_field(field_name: str) -> str:
-                    f = str(field_name or "").lower()
-                    if f in {"serial", "thumbnail", "reel", "shot_name", "frames", "sow"}:
-                        return "identity"
-                    if "feedback" in f or "comment" in f or "note" in f:
-                        return "feedback"
-                    if "artist" in f:
-                        return "artist"
-                    if "status" in f:
-                        return "status"
-                    if any(k in f for k in ("date", "eta", "target", "wip", "done", "submission")):
-                        return "schedule"
-                    if any(k in f for k in ("version", "priority", "shot_type", "type")):
-                        return "admin"
-                    if any(k in f for k in ("roto", "dmp", "cg", "prep", "comp", "slapcomp")):
-                        return "department"
-                    return "delivery"
-
-                field_by_column = {}
-                for field_name, col_letter in mapping.items():
-                    try:
-                        field_by_column[int(column_index_from_string(str(col_letter)))] = str(field_name)
-                    except Exception:
-                        continue
-
-                # Style main header row
-                for idx in range(1, len(headers) + 1):
-                    cell = out_ws.cell(row=header_row, column=idx)
-                    field_name = field_by_column.get(idx, "")
-                    bucket = classify_field(field_name)
-                    color = palette.get(bucket, "1E3A8A")
-                    cell.fill = PatternFill(fill_type="solid", fgColor=color) if field_name else header_fill_default
-                    cell.font = header_font
-                    cell.alignment = center
-                    cell.border = Border(left=medium, right=medium, top=medium, bottom=medium)
-
-                # Pre-style first 200 blank data rows for production usage.
-                preview_rows = 200
-                for row_idx in range(data_start_row, data_start_row + preview_rows):
-                    is_alt = ((row_idx - data_start_row) % 2) == 1
-                    for col_idx in range(1, len(headers) + 1):
-                        c = out_ws.cell(row=row_idx, column=col_idx)
-                        c.font = body_font
-                        c.alignment = left
-                        c.border = Border(left=thin, right=thin, top=thin, bottom=thin)
-                        c.protection = Protection(locked=False)
-                        if is_alt:
-                            c.fill = alt_fill
-
-                # Light section band just beneath header for visual hierarchy.
-                band_row = data_start_row
-                for col_idx in range(1, len(headers) + 1):
-                    if out_ws.cell(row=band_row, column=col_idx).value in (None, ""):
-                        out_ws.cell(row=band_row, column=col_idx).fill = section_band_fill
-
-                # Optional formula columns with protection
-                serial_col = mapping.get("serial")
-                version_col = mapping.get("version")
-                latest_version_col = mapping.get("latest_version")
-                if serial_col:
-                    try:
-                        serial_idx = int(column_index_from_string(serial_col))
-                        for row_idx in range(data_start_row, data_start_row + preview_rows):
-                            cell = out_ws.cell(row=row_idx, column=serial_idx)
-                            cell.value = f'=IF($D{row_idx}="","",ROW()-{data_start_row - 1})'
-                            cell.alignment = center
-                            cell.protection = Protection(locked=True)
-                    except Exception:
-                        pass
-
-                if latest_version_col and version_col:
-                    try:
-                        latest_idx = int(column_index_from_string(latest_version_col))
-                        version_idx = int(column_index_from_string(version_col))
-                        version_letter = get_column_letter(version_idx)
-                        for row_idx in range(data_start_row, data_start_row + preview_rows):
-                            cell = out_ws.cell(row=row_idx, column=latest_idx)
-                            cell.value = f'=IF(${version_letter}{row_idx}="","",${version_letter}{row_idx})'
-                            cell.alignment = center
-                            cell.protection = Protection(locked=True)
-                    except Exception:
-                        pass
-
-                if data_start_row > header_row + 1:
-                    # Keep expected spacing between header and first data row.
-                    out_ws.cell(row=data_start_row - 1, column=1, value=out_ws.cell(row=data_start_row - 1, column=1).value)
-
-                # Carry column widths from source for better usability.
-                if source_ws is not None:
-                    for idx in range(1, len(headers) + 1):
-                        letter = get_column_letter(idx)
-                        dim = source_ws.column_dimensions.get(letter)
-                        if dim and dim.width:
-                            out_ws.column_dimensions[letter].width = dim.width
-                        elif out_ws.column_dimensions[letter].width is None or out_ws.column_dimensions[letter].width < 8:
-                            out_ws.column_dimensions[letter].width = 16
-
-                # Freeze panes + filter for quick production use.
-                out_ws.freeze_panes = f"A{data_start_row}"
-                if headers:
-                    out_ws.auto_filter.ref = f"A{header_row}:{get_column_letter(len(headers))}{header_row + preview_rows}"
-                out_ws.sheet_view.showGridLines = True
-                out_ws.row_dimensions[header_row].height = 24
-                out_ws.protection.sheet = True
-                out_ws.protection.autoFilter = True
-                out_ws.protection.sort = True
-                out_ws.protection.selectLockedCells = True
-                out_ws.protection.selectUnlockedCells = True
-
-                # Data validation dropdowns via hidden lookup sheet
-                lookup_ws = out_wb.create_sheet("_LOOKUPS")
-                from slate.core.domain import shot_status
-                lookups = {
-                    # The statuses the dashboard itself uses, in workflow order.
-                    "statuses": list(shot_status.WORKFLOW),
-                    "priorities": [str(v) for v, _label in shot_status.priorities()],
-                    "shot_types": shot_status.shot_types(),
-                    "artists": sorted({str(u).strip() for u in (self.all_users or []) if str(u).strip()}),
-                }
-
-                col_cursor = 1
-                named_ranges = {}
-                for key, values in lookups.items():
-                    lookup_ws.cell(row=1, column=col_cursor, value=key.upper())
-                    for r, v in enumerate(values, start=2):
-                        lookup_ws.cell(row=r, column=col_cursor, value=v)
-                    col_letter = get_column_letter(col_cursor)
-                    named_ranges[key] = f"'_LOOKUPS'!${col_letter}$2:${col_letter}${len(values)+1}"
-                    col_cursor += 1
-                lookup_ws.sheet_state = "hidden"
-
-                def add_list_validation(field_names, list_key):
-                    if isinstance(field_names, str):
-                        field_names = [field_names]
-                    for fn in field_names:
-                        col_letter = mapping.get(fn)
-                        if not col_letter:
-                            continue
-                        dv = DataValidation(type="list", formula1=f"={named_ranges[list_key]}", allow_blank=True)
-                        dv.error = "Select a value from the dropdown list."
-                        dv.prompt = "Choose from available values."
-                        out_ws.add_data_validation(dv)
-                        dv.add(f"{col_letter}{data_start_row}:{col_letter}{data_start_row + preview_rows - 1}")
-
-                add_list_validation(["overall_status", "internal_status", "client_status", "scan_status", "edit_status"], "statuses")
-                add_list_validation(["assigned_artist", "artist_all", "roto_artist", "cg_artist", "slapcomp_artist"], "artists")
-                add_list_validation("priority", "priorities")
-                add_list_validation("shot_type", "shot_types")
-
-                # Print setup
-                out_ws.page_setup.orientation = "landscape"
-                out_ws.page_setup.fitToWidth = 1
-                out_ws.page_setup.fitToHeight = 0
-                out_ws.print_title_rows = f"{header_row}:{header_row}"
-                out_ws.print_area = (
-                    f"A1:{get_column_letter(len(headers))}{header_row + preview_rows}"
-                    if headers else None
-                )
-
-                # Add auxiliary sheets used by dashboard features.
-                extended = getattr(self.project_manager, "extended_sheets", {}) or {}
-                for sheet_cfg in extended.values():
-                    sheet_name = str(sheet_cfg.get("name", "")).strip()
-                    if not sheet_name or sheet_name in out_wb.sheetnames:
-                        continue
-                    ws = out_wb.create_sheet(sheet_name)
-                    cols = dict(sheet_cfg.get("columns", {}) or {})
-                    if cols:
-                        max_col = 0
-                        for letter in cols.values():
-                            try:
-                                max_col = max(max_col, int(column_index_from_string(str(letter))))
-                            except Exception:
-                                continue
-                        ext_headers = [""] * max_col
-                        for key, letter in cols.items():
-                            try:
-                                pos = int(column_index_from_string(str(letter))) - 1
-                            except Exception:
-                                continue
-                            if 0 <= pos < len(ext_headers):
-                                ext_headers[pos] = self._friendly_header_name(key)
-                        for idx, header in enumerate(ext_headers, start=1):
-                            ws.cell(row=1, column=idx, value=header)
-                            hc = ws.cell(row=1, column=idx)
-                            hc.fill = PatternFill(fill_type="solid", fgColor="334155")
-                            hc.font = Font(name="Segoe UI", size=10, bold=True, color="FFFFFF")
-                            hc.alignment = center
-                            hc.border = Border(left=medium, right=medium, top=medium, bottom=medium)
-                            col_letter = get_column_letter(idx)
-                            if ws.column_dimensions[col_letter].width is None or ws.column_dimensions[col_letter].width < 8:
-                                ws.column_dimensions[col_letter].width = 18
-                        ws.freeze_panes = "A2"
-
-                out_wb.save(target_path)
-                if source_wb is not None:
-                    source_wb.close()
-                self._notify(f"Blank template created: {target_path}", "success", 5000)
-            except Exception as e:
-                self._notify("The blank template could not be created.", "error", 6000, details=str(e))
+                self._notify("The Excel backup could not be written.", "error",
+                             details=getattr(self.sync_service, "last_backup_error", "") or "")
+        self._notify("Writing the Excel backup…", "info", 2000)
+        self._mirror_shots_to_excel(self.all_shots, force=True, on_done=done)
 
     def edit_project_click(self):
             if not self.current_project:

@@ -85,8 +85,8 @@ class AddShotsDialog(QDialog):
         form.addRow("Priority", self.priority_input)
         layout.addLayout(form)
 
-        hint = QLabel("One shot name per line: letters, digits, _ - and . only. "
-                      "Names already in this reel are skipped.")
+        hint = QLabel("One shot name per line: English letters (A-Z), digits, _ - and . only. "
+                      "Names already in this reel, or typed twice, are skipped and listed below.")
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color: {Gate.TEXT_2};")
         layout.addWidget(hint)
@@ -140,13 +140,22 @@ class AddShotsDialog(QDialog):
         return names
 
     def skipped_names(self):
-        return [line.strip() for line in self._lines()
-                if not name_problem(line.strip()) and self._exists(line.strip())]
+        """Names already in the reel, and repeats in the list (NEW_A and new_a are one name)."""
+        out, seen = [], set()
+        for line in self._lines():
+            name = line.strip()
+            if name_problem(name):
+                continue
+            if self._exists(name) or name.lower() in seen:
+                out.append(name)
+            seen.add(name.lower())
+        return out
 
     def get_values(self):
         return {
             "reel": self._reel(),
             "shots": self.shot_names(),
+            "skipped": self.skipped_names(),
             "status": self.status_input.currentData(),
             "priority": self.priority_input.currentData(),
         }
@@ -164,8 +173,8 @@ class AddShotsDialog(QDialog):
             if new_names:
                 parts.append(f"{len(new_names)} shot{'s' if len(new_names) != 1 else ''} will be added to {self._reel()}.")
             if skipped:
-                parts.append(f"{len(skipped)} already in {self._reel()}: {', '.join(skipped[:5])}"
-                             + ("…" if len(skipped) > 5 else ""))
+                parts.append(f"{len(skipped)} skipped (already in {self._reel()}, or listed twice): "
+                             f"{', '.join(skipped[:8])}" + ("…" if len(skipped) > 8 else ""))
         self.preview_label.setText("\n".join(parts))
         self.preview_label.setStyleSheet(
             f"color: {Gate.BAD};" if problems else (f"color: {Gate.ACCENT};" if new_names else f"color: {Gate.TEXT_2};"))

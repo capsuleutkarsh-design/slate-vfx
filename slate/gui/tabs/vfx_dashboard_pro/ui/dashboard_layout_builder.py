@@ -94,7 +94,7 @@ def build_dashboard_ui(widget):
         QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
     widget.project_combo.setMinimumContentsLength(18)
     widget.project_combo.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-    widget.project_combo.setMaximumWidth(sp(360, minimum=300))
+    widget.project_combo.setMaximumWidth(sp(640, minimum=520))
     widget.project_combo.currentIndexChanged.connect(widget.on_project_changed)
     row1.addWidget(widget.project_combo)
 
@@ -228,8 +228,10 @@ def build_dashboard_ui(widget):
     widget.reports_menu = QMenu(widget)
     review_action = widget.reports_menu.addAction("Review queue", widget.review_queue_click)
     review_action.setToolTip("Versions submitted and still waiting for a verdict")
-    delivery_action = widget.reports_menu.addAction("Delivery batches", widget.open_delivery_batches_dialog)
+    delivery_action = widget.reports_menu.addAction("Deliveries", widget.open_delivery_batches_dialog)
     delivery_action.setToolTip("Outgoing delivery packages")
+    # Packages list every shot of the show; an artist sees only their own shots.
+    delivery_action.setVisible(not widget._is_artist_scope())
     summary_action = widget.reports_menu.addAction("Production summary", widget.production_summary_click)
     summary_action.setToolTip("Progress, load and overdue shots")
     widget.reports_btn = _menu_button("Reports", widget.reports_menu, "Review queue, deliveries and the production summary")
@@ -489,22 +491,31 @@ def _build_project_menu(widget):
     menu = widget.project_menu
     menu.clear()
     can_manage = widget._can_manage_shots()
+    can_delete = can_delete_project(widget.user_roles)
     if can_manage:
         menu.addAction("Add new project…", widget.add_project_click)
         menu.addAction("Edit current project…", widget.edit_project_click)
         menu.addAction("Set project root…", widget.set_project_root_click)
         menu.addSeparator()
-        menu.addAction("Create blank template…", widget.create_blank_template_click)
+    old_export = getattr(widget, "_reports_export_action", None)
+    if old_export is not None:
+        widget.reports_menu.removeAction(old_export)
+        widget._reports_export_action = None
     if can_use_excel(getattr(widget, "user_roles", [])):
         # Excel is a passbook: the software writes to it, never reads from it.
-        export_action = menu.addAction("Export to Excel (backup now)", widget.export_to_excel_click)
+        # With nothing else to manage (a lead) it sits under Reports instead
+        # of a one-item Manage project menu.
+        target = menu if (can_manage or can_delete) else widget.reports_menu
+        export_action = target.addAction("Export to Excel (backup now)", widget.export_to_excel_click)
         export_action.setToolTip("Write all loaded shots out to the project's Excel backup")
-    if can_delete_project(widget.user_roles):
+        if target is not menu:
+            widget._reports_export_action = export_action
+    if can_delete:
         menu.addSeparator()
         menu.addAction("Archive project…", widget.archive_project_click)
         menu.addAction("Show archived projects…", widget.show_archived_projects)
         delete_action = menu.addAction("Delete project permanently…", widget.delete_project_click)
-        delete_action.setToolTip("Removes the project, its shots and its history for good")
+        delete_action.setToolTip("Removes the project and its shots for good (the change history is kept)")
     widget.manage_proj_btn.setVisible(not menu.isEmpty())
 
 
@@ -517,6 +528,9 @@ def _install_shortcuts(widget):
 
     # Ctrl+Z takes back the last edit (any editor, not only the grid).
     widget.undo_shortcut = shortcut(QKeySequence.StandardKey.Undo, widget.undo_last_edit)
+    # Ctrl+Y and Ctrl+Shift+Z put an undone edit back.
+    widget.redo_shortcuts = [shortcut("Ctrl+Y", widget.redo_last_edit),
+                             shortcut("Ctrl+Shift+Z", widget.redo_last_edit)]
     widget.save_shortcut = shortcut("Ctrl+S", widget.save_changes)
     widget.find_shortcut = shortcut("Ctrl+F", widget.focus_search)
     widget.escape_shortcut = shortcut("Esc", widget.on_escape)

@@ -143,6 +143,10 @@ SYSTEM = (
 DASHBOARD = (
     step("dashboard_placeholder_thumbnails",
          "slate.core.infra.migrations.dashboard_repairs:clear_placeholder_thumbnails", once=True),
+    step("dashboard_unrecorded_actual_days",
+         "slate.core.infra.migrations.dashboard_repairs:unrecorded_actual_days", once=True),
+    step("dashboard_shot_artist_from_comp",
+         "slate.core.infra.migrations.dashboard_repairs:fill_shot_artist_from_comp", once=True),
 )
 
 # ---- media (Stock, review, players) ----

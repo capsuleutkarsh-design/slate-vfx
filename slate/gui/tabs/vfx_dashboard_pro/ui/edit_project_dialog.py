@@ -122,8 +122,9 @@ class EditProjectDialog(QDialog):
                 label.setVisible(bool(shown))
 
     def browse_excel(self):
+        # openpyxl reads .xlsx/.xlsm only; an old .xls must be saved as .xlsx first.
         path, _ = QFileDialog.getOpenFileName(self, "Excel backup file", self.excel_input.text(),
-                                              "Excel files (*.xlsx *.xls)")
+                                              "Excel workbooks (*.xlsx *.xlsm)")
         if path:
             self.excel_field.setText(path)
             self.analyze_excel()
@@ -157,11 +158,22 @@ class EditProjectDialog(QDialog):
         if path:
             self.folder_field.setText(path)
 
+    def _refuse(self, text, widget):
+        self.message.setText(text)
+        self.message.setStyleSheet(f"color: {Gate.BAD};")
+        widget.setFocus()
+
     def validate_and_accept(self):
         if not self.name_input.text().strip():
-            self.message.setText("The project needs a name.")
-            self.message.setStyleSheet(f"color: {Gate.BAD};")
-            self.name_input.setFocus()
+            self._refuse("The project needs a name.", self.name_input)
+            return
+        if self.data_row_spin.value() <= self.header_row_spin.value():
+            # Data starting at or above the headings would be written over them.
+            self.adv_toggle.setChecked(True)
+            self._refuse("The first data row must be below the header row.", self.data_row_spin)
+            return
+        if self.excel_input.text().strip() and not self.sheet_combo.currentText().strip():
+            self._refuse("Name the sheet the backup is written to.", self.sheet_combo)
             return
         self.accept()
 

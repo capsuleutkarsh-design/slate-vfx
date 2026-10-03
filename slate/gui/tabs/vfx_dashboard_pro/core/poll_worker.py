@@ -72,7 +72,7 @@ class PollWorker(QThread):
                 current_max = self._get_max_timestamp()
                 
                 if current_max and self.last_known_timestamp:
-                    if current_max > self.last_known_timestamp:
+                    if current_max != self.last_known_timestamp:
                         logging.info(f"PollWorker: New data detected! Local={self.last_known_timestamp}, DB={current_max}")
                         self.last_known_timestamp = current_max
                         self.updates_available.emit()
@@ -85,20 +85,22 @@ class PollWorker(QThread):
                     break
                 
     def _get_max_timestamp(self):
+        """
+        A fingerprint of the project's shots: (count, sum of versions). Every
+        save bumps a version and a delete changes the count; neither depends on
+        a workstation's clock (last_updated is each writer's own time, so a
+        slow clock's saves went unnoticed).
+        """
         try:
-            with self.db_manager.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT MAX(last_updated) FROM tracking_shots WHERE project_code=%s", 
-                    (self.project_code,)
-                )
-                result = cursor.fetchone()
-                if result and result[0]:
-                    return result[0]
+            row = self.db_manager.execute_query(
+                "SELECT COUNT(*) AS n, COALESCE(SUM(version), 0) AS v FROM tracking_shots "
+                "WHERE project_code=%s", (self.project_code,), fetch="one")
+            if row:
+                row = dict(row)
+                return (int(row.get("n") or 0), int(row.get("v") or 0), 1)
         except DatabaseUnavailableError:
             raise
         except Exception:
-            # logging.exception(f"PollWorker query failed: {e}")
             pass
         return None
 

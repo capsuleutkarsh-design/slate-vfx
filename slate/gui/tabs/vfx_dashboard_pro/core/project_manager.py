@@ -115,6 +115,11 @@ def _extend_mapping_with_departments(mapping: Dict[str, str]) -> Dict[str, str]:
         used.add(next_index)
         return get_column_letter(next_index)
 
+    # Shot fields the backup must hold for a restore to keep the schedule.
+    for field in ("target", "in_os", "edit_status", "description", "prev_version"):
+        if field not in mapping:
+            mapping[field] = claim()
+
     for dept in load_departments():
         key = dept.key
         # A department counts as mapped if it already has an artist or status
@@ -124,6 +129,7 @@ def _extend_mapping_with_departments(mapping: Dict[str, str]) -> Dict[str, str]:
             "status": [f"{key}_status", f"{key}_required", f"{key}_comp"],
             "bid": [f"{key}_bid", f"{key}_mandays"],
             "eta": [f"{key}_eta", f"{key}_target"],
+            "actual": [f"{key}_actual"],
         }
         for field, names in aliases.items():
             if any(name in mapping for name in names):
@@ -231,6 +237,13 @@ class ProjectManager:
         if not project.column_mapping:
             project.column_mapping = default_column_mapping()
             changed = True
+        else:
+            # Columns added since the mapping was made (targets, actual days)
+            # go after the last one in use; nothing already mapped moves.
+            extended = _extend_mapping_with_departments(project.column_mapping)
+            if extended != project.column_mapping:
+                project.column_mapping = extended
+                changed = True
 
         if changed:
             try:
@@ -270,13 +283,29 @@ class ProjectManager:
                     column_mapping: dict = None):
         """Creates a new project in the database. Returns it, or None (see last_error)."""
         self.last_error = ""
-        code = str(code or "").strip()
-        if not code:
-            self.last_error = "A project needs a code."
+        from slate.core.domain.naming import shot_name_problem
+        from slate.core.infra.database_manager import database_manager
+        # The code names folders, the passbook file and every row of the
+        # project: one spelling, in capitals, with no spaces or slashes.
+        code = str(code or "").strip().upper()
+        problem = shot_name_problem(code, "The project code")
+        if problem:
+            self.last_error = problem
             return None
-        if code in self.projects:
-            self.last_error = f"There is already a project {code}."
+        # Every project, archived ones too: re-using an archived code quietly
+        # brought that project back with the new settings.
+        rows = database_manager.execute_query("SELECT code, active FROM tracking_projects", fetch="all")
+        if rows is None:
+            self.last_error = "The list of projects could not be read, so nothing was created."
             return None
+        for row in rows:
+            row = dict(row)
+            if str(row.get("code") or "").upper() == code:
+                archived = str(row.get("active")).strip().lower() not in ("1", "t", "true", "y", "yes")
+                self.last_error = (f"{row['code']} is archived - restore it (Manage project > Show "
+                                   "archived projects) or pick another code." if archived
+                                   else f"There is already a project {row['code']}.")
+                return None
         next_num = max((p.project_number for p in self.projects.values()), default=0) + 1
 
         if excel_path:
@@ -303,11 +332,14 @@ class ProjectManager:
             # match the folders Build & Ingest actually creates.
             folder_template=_default_folder_template(),
         )
-        try:
-            self._save_project_to_db(new_project)
-        except Exception as exc:
-            self.last_error = str(exc)
-            logging.error("ProjectManager: add %s failed: %s", code, exc)
+        # A plain INSERT: a code taken in the meantime is refused, never merged.
+        result = database_manager.execute_update(
+            "INSERT INTO tracking_projects (code, name, config_json, active) VALUES (%s, %s, %s, 1)",
+            (code, new_project.name, json.dumps(asdict(new_project))))
+        if not result:
+            self.last_error = (f"There is already a project {code}." if getattr(result, "duplicate", False)
+                               else getattr(result, "error", "") or f"Project {code} could not be created.")
+            logging.error("ProjectManager: add %s failed: %s", code, self.last_error)
             return None
         self.projects[code] = new_project
         return new_project
@@ -416,6 +448,9 @@ class ProjectManager:
         if not self._check_delete_right(code, roles):
             return False
         from slate.core.infra.database_manager import database_manager
+        if code not in {p["code"] for p in self.archived_projects()}:
+            self.last_error = f"{code} is not archived."
+            return False
         result = database_manager.execute_update(
             "UPDATE tracking_projects SET active = 1 WHERE code = %s", (code,))
         if not getattr(result, "changed", result):
@@ -446,7 +481,9 @@ class ProjectManager:
 
     def delete_project(self, code: str, roles=None, by: str = "") -> bool:
         """
-        Remove a project, its shots and their department rows for good.
+        Remove a project, its shots, their department rows, versions, review
+        notes and delivery packages for good - a new project given the same
+        code later must not inherit any of them.
 
         `roles` are the acting person's: when given, the delete_project ability
         is checked here too, not only by the menu that offers it. The change
@@ -462,7 +499,18 @@ class ProjectManager:
         from slate.core.infra.database_manager import database_manager
         from slate.core.infra.transaction import atomic
         try:
+            from slate.core.infra.migrations.workplace_schema import _table_exists
+            extra = [(table, sql) for table, sql in (
+                ("tracking_version_notes", "DELETE FROM tracking_version_notes WHERE version_id IN "
+                                           "(SELECT id FROM tracking_versions WHERE project_code = %s)"),
+                ("tracking_versions", "DELETE FROM tracking_versions WHERE project_code = %s"),
+                ("tracking_delivery_items", "DELETE FROM tracking_delivery_items WHERE delivery_id IN "
+                                            "(SELECT id FROM tracking_deliveries WHERE project_code = %s)"),
+                ("tracking_deliveries", "DELETE FROM tracking_deliveries WHERE project_code = %s"),
+            ) if _table_exists(database_manager, table)]
             with atomic(database_manager) as tx:
+                for _table, sql in extra:
+                    tx.write(sql, (code,))
                 tx.write("DELETE FROM tracking_tasks WHERE shot_id IN "
                          "(SELECT id FROM tracking_shots WHERE project_code = %s)", (code,))
                 tx.write("DELETE FROM tracking_shots WHERE project_code = %s", (code,))

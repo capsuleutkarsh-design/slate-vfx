@@ -89,14 +89,22 @@ class StatsWidget(QWidget):
             key = shot_status.canonical(getattr(s, "status", ""))
             counts[key] = counts.get(key, 0) + 1
 
-        while self.main_layout.count():
-            item = self.main_layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None and widget is not self.more_button:
-                widget.setParent(None)
-                widget.deleteLater()
+        # Forget the old pills first, and hide them before they lose their
+        # parent: a re-entrant reflow showed parentless pills as tiny windows
+        # at the top-left of the screen.
         self.stat_containers = {}
         self._order = []
+        self._reflowing = True
+        try:
+            while self.main_layout.count():
+                item = self.main_layout.takeAt(0)
+                widget = item.widget()
+                if widget is not None and widget is not self.more_button:
+                    widget.hide()
+                    widget.setParent(None)
+                    widget.deleteLater()
+        finally:
+            self._reflowing = False
 
         total = len(shots or [])
         total_pill = self.create_pill("__total__", f"{total} {'shot' if total == 1 else 'shots'}",

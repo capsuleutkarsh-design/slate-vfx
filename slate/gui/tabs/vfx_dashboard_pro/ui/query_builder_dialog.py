@@ -19,8 +19,8 @@ from slate.gui.core.controls import make_button, set_default_button
 from slate.gui.core.icons import icon as draw_icon
 from .date_fields import scaled_font
 
-OPERATORS = ["Contains", "Equals", "Not Equals", "Does Not Contain", "Is Empty", "Is Not Empty"]
-NEEDS_NO_VALUE = ("Is Empty", "Is Not Empty")
+OPERATORS = ["contains", "is", "is not", "does not contain", "is empty", "is not empty"]
+NEEDS_NO_VALUE = ("is empty", "is not empty", "Is Empty", "Is Not Empty")
 
 
 def _fields():
@@ -74,7 +74,9 @@ class QueryRuleWidget(QWidget):
         index = self.field_combo.findText(field or "")
         if index >= 0:
             self.field_combo.setCurrentIndex(index)
-        self.op_combo.setCurrentText(rule.get("operator") or OPERATORS[0])
+        from ..controllers.filter_mixin import OPERATOR_NAMES
+        op = rule.get("operator") or OPERATORS[0]
+        self.op_combo.setCurrentText(OPERATOR_NAMES.get(op, op))
         self.value_input.setText(str(rule.get("value", "")))
 
     def get_rule(self):
@@ -181,7 +183,7 @@ class QueryBuilderDialog(QDialog):
         if incomplete:
             self.warning_label.setText(
                 f"{len(incomplete)} rule{'s have' if len(incomplete) != 1 else ' has'} no value. "
-                "Give it one, choose Is Empty / Is Not Empty, or remove it.")
+                "Give it one, choose "is empty" or "is not empty", or remove it.")
             self.warning_label.show()
             incomplete[0].value_input.setFocus()
             return

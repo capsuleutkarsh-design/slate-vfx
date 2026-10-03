@@ -1,190 +1,99 @@
 """
-Tests for Item 4.4: Delivery Batches.
-
-Verifies:
-- Creation of delivery packages with linked versions
-- Reading delivery items and metadata
-- Delivery note text generation for client emails
-- Cascade deletion of delivery items without deleting the versions themselves
+Delivery packages: creating, reading, deleting and the delivery note, on a real
+(SQLite) database - a package and its items are written together or not at all.
 """
 
 import pytest
-from PySide6.QtWidgets import QApplication
 
-from slate.core.domain.deliveries import DeliveryStore, Delivery
-from slate.core.domain.versions import VersionStore
+from slate.core.domain.deliveries import DeliveryStore
+from slate.core.domain.versions import STATUS_APPROVED, VersionStore
 
-
-@pytest.fixture(scope="session")
-def qapp():
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
-class FakeDb:
-    def __init__(self):
-        self.deliveries = {}
-        self.delivery_items = {}
-        self.versions = {}
-        self._d_counter = 1
-        self._item_counter = 1
-
-    def execute_query(self, query, params=None, fetch="all"):
-        q = query.strip().upper()
-        if "FROM TRACKING_DELIVERIES WHERE PROJECT_CODE=" in q:
-            p_code = params[0]
-            matches = [d for d in self.deliveries.values() if d.get("project_code") == p_code]
-            if "ORDER BY ID DESC" in q:
-                matches.sort(key=lambda d: d.get("id", 0), reverse=True)
-            if fetch == "one":
-                return matches[0] if matches else None
-            return matches
-        elif "FROM TRACKING_DELIVERIES WHERE ID=" in q:
-            d_id = int(params[0])
-            d = self.deliveries.get(d_id)
-            return d if fetch == "one" else ([d] if d else [])
-        elif "FROM TRACKING_DELIVERY_ITEMS" in q:
-            d_id = int(params[0])
-            res = []
-            for item in self.delivery_items.values():
-                if item.get("delivery_id") == d_id:
-                    v_id = item.get("version_id")
-                    v = self.versions.get(v_id, {})
-                    merged = dict(item)
-                    merged["shot_name"] = v.get("shot_name", "")
-                    merged["version_name"] = v.get("version_name", "")
-                    merged["department"] = v.get("department", "")
-                    merged["media_path"] = v.get("media_path", "")
-                    res.append(merged)
-            return res
-        elif "FROM TRACKING_VERSIONS WHERE ID=" in q:
-            v_id = int(params[0])
-            v = self.versions.get(v_id)
-            return v if fetch == "one" else ([v] if v else [])
-        elif "FROM TRACKING_VERSIONS WHERE PROJECT_CODE=" in q:
-            p_code = params[0]
-            return [v for v in self.versions.values() if v.get("project_code") == p_code]
-        return []
-
-    def execute_update(self, query, params=None):
-        q = query.strip().upper()
-        if q.startswith("INSERT INTO TRACKING_DELIVERIES"):
-            p_code, name, recip, d_date, notes, created_by = params
-            d_id = self._d_counter
-            self._d_counter += 1
-            self.deliveries[d_id] = {
-                "id": d_id,
-                "project_code": p_code,
-                "name": name,
-                "recipient": recip,
-                "delivery_date": d_date,
-                "notes": notes,
-                "created_by": created_by,
-                "created_at": "2026-09-09 16:00:00",
-            }
-            return True
-        elif q.startswith("INSERT INTO TRACKING_DELIVERY_ITEMS"):
-            d_id, v_id, status_at_delivery = params
-            item_id = self._item_counter
-            self._item_counter += 1
-            self.delivery_items[item_id] = {
-                "id": item_id,
-                "delivery_id": d_id,
-                "version_id": v_id,
-                "status_at_delivery": status_at_delivery,
-            }
-            return True
-        elif q.startswith("DELETE FROM TRACKING_DELIVERY_ITEMS"):
-            d_id = int(params[0])
-            to_del = [k for k, v in self.delivery_items.items() if v.get("delivery_id") == d_id]
-            for k in to_del:
-                del self.delivery_items[k]
-            return True
-        elif q.startswith("DELETE FROM TRACKING_DELIVERIES"):
-            d_id = int(params[0])
-            if d_id in self.deliveries:
-                del self.deliveries[d_id]
-                return True
-        return False
+PROJECT = "PRJ_DEL"
 
 
 @pytest.fixture
-def fake_delivery_store():
-    db = FakeDb()
-    db.versions[1] = {
-        "id": 1,
-        "project_code": "PRJ_DEL",
-        "shot_name": "SH010",
-        "version_name": "v004",
-        "department": "comp",
-        "status": "Approved",
-        "media_path": "/renders/SH010_v004.mov",
-    }
-    db.versions[2] = {
-        "id": 2,
-        "project_code": "PRJ_DEL",
-        "shot_name": "SH020",
-        "version_name": "v002",
-        "department": "roto",
-        "status": "Approved",
-        "media_path": "/renders/SH020_v002.mov",
-    }
-    return DeliveryStore(db=db)
+def stores(mock_db):
+    versions = VersionStore(db=mock_db)
+    v1 = versions.add_version(PROJECT, "SH010", version_name="v004", department="comp",
+                              media_path="/renders/SH010_v004.mov", reel="R01")
+    v2 = versions.add_version(PROJECT, "SH020", version_name="v002", department="roto",
+                              media_path="/renders/SH020_v002.mov", reel="R01")
+    for v in (v1, v2):
+        versions.update_version(v.id, status=STATUS_APPROVED)
+    return DeliveryStore(db=mock_db), versions, v1, v2
 
 
-def test_create_and_get_delivery(fake_delivery_store):
-    store = fake_delivery_store
-    delivery = store.create_delivery(
-        project_code="PRJ_DEL",
-        name="DEL_20260909_01",
-        version_ids=[1, 2],
-        recipient="Client Editorial",
-        notes="Final composites approved by supervisor.",
-        created_by="producer_mark",
-    )
-
+def test_create_and_get_delivery(stores):
+    store, _versions, v1, v2 = stores
+    delivery = store.create_delivery(PROJECT, "DEL_20260909_01", [v1.id, v2.id],
+                                     recipient="Client Editorial", notes="Finals.",
+                                     created_by="producer_mark")
     assert delivery is not None
-    assert delivery.name == "DEL_20260909_01"
     assert delivery.recipient == "Client Editorial"
-    assert len(delivery.items) == 2
-    assert delivery.items[0].shot_name == "SH010"
-    assert delivery.items[0].version_name == "v004"
-    assert delivery.items[1].shot_name == "SH020"
+    assert [i.shot_name for i in delivery.items] == ["SH010", "SH020"]
+    assert delivery.items[0].reel == "R01"
 
 
-def test_generate_delivery_note(fake_delivery_store):
-    store = fake_delivery_store
-    delivery = store.create_delivery(
-        project_code="PRJ_DEL",
-        name="DEL_20260909_02",
-        version_ids=[1],
-        recipient="Director Review",
-        notes="Shot 10 slapcomp.",
-    )
+def test_a_name_used_already_is_refused_and_the_next_one_is_suggested(stores):
+    """DSH2-080."""
+    store, _versions, v1, _v2 = stores
+    from datetime import date
+    day = date(2026, 10, 3)
+    first = store.next_free_name(PROJECT, day)
+    assert first == "DEL_20261003_01"
+    assert store.create_delivery(PROJECT, first, [v1.id]) is not None
+    assert store.next_free_name(PROJECT, day) == "DEL_20261003_02"
+    assert store.create_delivery(PROJECT, first, [v1.id]) is None
+    assert "already" in store.last_error
 
+
+def test_a_failure_half_way_leaves_nothing_behind(stores, monkeypatch):
+    """DSH2-030: the package row and its items are one transaction."""
+    store, _versions, v1, v2 = stores
+    from slate.core.infra import transaction
+
+    real = transaction.AtomicUnit.write
+
+    def failing(self, sql, params=None, **kw):
+        if "tracking_delivery_items" in sql:
+            raise transaction.DatabaseWriteError("refused")
+        return real(self, sql, params, **kw)
+    monkeypatch.setattr(transaction.AtomicUnit, "write", failing)
+    assert store.create_delivery(PROJECT, "DEL_X", [v1.id, v2.id]) is None
+    monkeypatch.setattr(transaction.AtomicUnit, "write", real)
+    assert store.list_deliveries(PROJECT) == []
+
+
+def test_generate_delivery_note(stores, mock_db):
+    """DSH2-082/097: dates and department names as people read them, one line per version."""
+    store, _versions, v1, _v2 = stores
+    mock_db.save_tracking_project(PROJECT, "Delivery Show", "{}")
+    delivery = store.create_delivery(PROJECT, "DEL_20260909_02", [v1.id], recipient="Director Review",
+                                     notes="Shot 10 slapcomp.", delivery_date="2026-09-09")
     note = store.generate_delivery_note(delivery.id)
-    assert "DELIVERY NOTE: DEL_20260909_02" in note
-    assert "SH010" in note
-    assert "v004" in note
-    assert "/renders/SH010_v004.mov" in note
-    assert "Shot 10 slapcomp." in note
+    assert "Delivery note: DEL_20260909_02" in note
+    assert "PRJ_DEL - Delivery Show" in note
+    assert "9 Sep 2026" in note
+    assert "R01\tSH010\tv004\tComp\tApproved\t/renders/SH010_v004.mov" in note
+    assert "Prepared by" in note and "Shot 10 slapcomp." in note
 
 
-def test_delete_delivery(fake_delivery_store):
-    store = fake_delivery_store
-    delivery = store.create_delivery(
-        project_code="PRJ_DEL",
-        name="DEL_TO_DELETE",
-        version_ids=[1, 2],
-    )
+def test_delete_delivery(stores):
+    store, versions, v1, v2 = stores
+    delivery = store.create_delivery(PROJECT, "DEL_TO_DELETE", [v1.id, v2.id])
+    assert store.delete_delivery(delivery.id) is True
+    assert store.get_delivery(delivery.id) is None
+    assert len(versions.list_for_shot(PROJECT, "SH010")) == 1     # versions untouched
 
-    d_id = delivery.id
-    assert store.get_delivery(d_id) is not None
-    assert store.delete_delivery(d_id) is True
-    assert store.get_delivery(d_id) is None
 
-    # Verify versions are untouched
-    assert 1 in store.db.versions
-    assert 2 in store.db.versions
+def test_new_delivery_lists_the_latest_approved_versions(qtbot, stores):
+    """DSH2-029."""
+    from slate.gui.tabs.vfx_dashboard_pro.ui.delivery_batches_dialog import CreateDeliveryDialog
+    store, versions, v1, _v2 = stores
+    versions.add_version(PROJECT, "SH010", version_name="v005", department="comp", reel="R01")  # pending
+    dialog = CreateDeliveryDialog(PROJECT, store=store, version_store=versions)
+    qtbot.addWidget(dialog)
+    shown = {dialog.versions_table.item(r, 3).text() for r in range(dialog.versions_table.rowCount())}
+    assert shown == {"v004", "v002"}
+    dialog.show_all.setChecked(True)
+    assert dialog.versions_table.rowCount() == 3

@@ -18,9 +18,12 @@ from PySide6.QtWidgets import (
     QTextEdit, QFrame, QMessageBox, QSplitter, QWidget, QScrollArea,
 )
 
+from slate.core.domain.dates import format_date
 from slate.core.domain.versions import (
-    Version, VersionStore, STATUS_APPROVED, STATUS_RETAKE, SENT_INTERNAL,
+    AWAITING_REVIEW, Version, VersionStore, STATUS_APPROVED, STATUS_RETAKE, SENT_INTERNAL,
+    department_label,
 )
+from slate.gui.core.controls import make_button
 from slate.gui.widgets.advanced_player import AdvancedPlayer
 from slate.core.infra.gate import Gate
 
@@ -38,9 +41,8 @@ class ReviewPlayerDialog(QDialog):
         self.queue_versions = list(queue_versions or [version])
         self.current_index = current_index
         self.store = store or VersionStore()
-        self.current_user = str(current_user or "supervisor").strip()
-
-        self.setWindowTitle(f"Review: {version.shot_name} - {version.version_name}")
+        # The person giving the notes - never a made-up "supervisor".
+        self.current_user = str(current_user or "").strip()
         self.resize(1280, 800)
         self.setModal(True)
         self.setStyleSheet(f"""
@@ -102,7 +104,7 @@ class ReviewPlayerDialog(QDialog):
             QPushButton:disabled {{
                 background: {Gate.PANEL};
                 border-color: {Gate.RAISED};
-                color: {Gate.LINE};
+                color: {Gate.TEXT_DIM};
             }}
         """
         self.prev_btn = QPushButton("◀ Previous")
@@ -139,6 +141,12 @@ class ReviewPlayerDialog(QDialog):
 
         self.player = AdvancedPlayer(player_container)
         player_layout.addWidget(self.player, 1)
+        self.no_media_label = QLabel()
+        self.no_media_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.no_media_label.setWordWrap(True)
+        self.no_media_label.setStyleSheet(f"color: {Gate.TEXT_2}; font-size: 13px;")
+        self.no_media_label.hide()
+        player_layout.addWidget(self.no_media_label, 1)
 
         self.media_path_label = QLabel()
         self.media_path_label.setStyleSheet(f"font-size: 11px; color: {Gate.TEXT_DIM}; padding: 2px 4px; background: transparent;")
@@ -160,8 +168,8 @@ class ReviewPlayerDialog(QDialog):
         sidebar_layout.setContentsMargins(12, 12, 12, 12)
         sidebar_layout.setSpacing(8)
 
-        sidebar_title = QLabel("VERSION HISTORY & NOTES")
-        sidebar_title.setStyleSheet(f"font-size: 10px; font-weight: 700; color: {Gate.TEXT_DIM}; letter-spacing: 0.5px;")
+        sidebar_title = QLabel("Notes on this version")
+        sidebar_title.setStyleSheet(f"font-size: 11px; font-weight: 700; color: {Gate.TEXT_2};")
         sidebar_layout.addWidget(sidebar_title)
 
         self.notes_scroll = QScrollArea()
@@ -177,8 +185,8 @@ class ReviewPlayerDialog(QDialog):
         sidebar_layout.addWidget(self.notes_scroll)
 
         # New Note Input
-        new_note_label = QLabel("ADD REVIEW NOTE")
-        new_note_label.setStyleSheet(f"font-size: 10px; font-weight: 700; color: {Gate.TEXT_DIM}; letter-spacing: 0.5px;")
+        new_note_label = QLabel("Add a review note")
+        new_note_label.setStyleSheet(f"font-size: 11px; font-weight: 700; color: {Gate.TEXT_2};")
         sidebar_layout.addWidget(new_note_label)
 
         self.note_edit = QTextEdit()
@@ -203,44 +211,20 @@ class ReviewPlayerDialog(QDialog):
         verdict_layout = QHBoxLayout()
         verdict_layout.setSpacing(8)
 
-        self.approve_btn = QPushButton("Approve")
-        self.approve_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {Gate.OK};
-                color: {Gate.GROUND};
-                font-weight: 700;
-                font-size: 12px;
-                padding: 8px 16px;
-                border-radius: 4px;
-                border: none;
-            }}
-            QPushButton:hover {{ background: {Gate.OK}; }}
-            QPushButton:pressed {{ background: {Gate.OK}; }}
-        """)
-        self.approve_btn.clicked.connect(self._on_approve_clicked)
+        # The product's button kinds: readable in every theme, with hover and
+        # pressed states.
+        self.approve_btn = make_button("Approve", "primary", on_click=self._on_approve_clicked)
+        self.approve_btn.setAutoDefault(False)
         verdict_layout.addWidget(self.approve_btn)
 
-        self.retake_btn = QPushButton("Retake")
-        self.retake_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {Gate.BAD};
-                color: {Gate.TEXT};
-                font-weight: 700;
-                font-size: 12px;
-                padding: 8px 16px;
-                border-radius: 4px;
-                border: none;
-            }}
-            QPushButton:hover {{ background: {Gate.BAD}; }}
-            QPushButton:pressed {{ background: {Gate.BAD}; }}
-        """)
-        self.retake_btn.clicked.connect(self._on_retake_clicked)
+        self.retake_btn = make_button("Retake", "danger", on_click=self._on_retake_clicked)
+        self.retake_btn.setAutoDefault(False)
         verdict_layout.addWidget(self.retake_btn)
 
         sidebar_layout.addLayout(verdict_layout)
-        can_verdict = getattr(self.store, "can_give_verdicts", lambda: True)()
-        self.approve_btn.setVisible(can_verdict)
-        self.retake_btn.setVisible(can_verdict)
+        self._can_verdict = getattr(self.store, "can_give_verdicts", lambda *a: True)
+        # Versions judged in this session (so stepping back cannot judge them twice).
+        self._judged = set()
         splitter.addWidget(sidebar)
 
         splitter.setStretchFactor(0, 7)  # 70% Player
@@ -249,11 +233,19 @@ class ReviewPlayerDialog(QDialog):
 
     def _load_version(self, version: Version):
         self.version = version
+        self.setWindowTitle(f"Review: {version.shot_name} - {version.version_name}")
         self.title_label.setText(f"{version.shot_name} · {version.version_name}")
         self.meta_label.setText(
-            f"Dept: {version.department or '-'} | Artist: {version.artist or '-'} | "
-            f"Status: {version.status} | Sent: {version.sent_date or '-'}"
+            f"{department_label(version.department) or 'No department'} · "
+            f"{version.artist or 'No artist'} · {version.status} · "
+            f"Sent {format_date(version.sent_date) or 'not yet'}"
         )
+        judged = version.id in self._judged or version.status not in AWAITING_REVIEW
+        allowed = self._can_verdict(version.department)
+        self.approve_btn.setVisible(allowed)
+        self.retake_btn.setVisible(allowed)
+        self.approve_btn.setEnabled(not judged)
+        self.retake_btn.setEnabled(not judged)
         total = len(self.queue_versions)
         idx_display = (self.current_index + 1) if total > 0 else 1
         self.queue_pos_label.setText(f"{idx_display} / {total}")
@@ -262,17 +254,22 @@ class ReviewPlayerDialog(QDialog):
 
         # Media loading
         media_path = str(version.media_path or "").strip()
-        if media_path and os.path.exists(media_path):
+        has_media = bool(media_path and os.path.exists(media_path))
+        # No media: a plain message, not the player's own "Select an asset".
+        self.player.setVisible(has_media)
+        self.no_media_label.setVisible(not has_media)
+        if has_media:
             self.media_path_label.setText(f"Media: {media_path}")
             try:
                 self.player.load(media_path)
             except Exception as exc:
                 logging.warning("Failed to load media %s: %s", media_path, exc)
-                self.media_path_label.setText(f"Load error: {exc}")
+                self.media_path_label.setText(f"The media could not be loaded: {exc}")
         else:
-            self.media_path_label.setText(
-                f"Media path not found or empty: {media_path or '(none)'}"
-            )
+            self.media_path_label.setText("")
+            self.no_media_label.setText(
+                f"The media for this version is not where it was recorded:\n{media_path}"
+                if media_path else "No media was recorded for this version.")
 
         # Refresh notes history
         self._refresh_notes_list()
@@ -304,24 +301,30 @@ class ReviewPlayerDialog(QDialog):
 
         for idx, note in enumerate(notes):
             card = QFrame()
+            # Scoped to the card: QLabel is a QFrame too, and an unscoped rule
+            # drew a second box round each line.
+            card.setObjectName("noteCard")
             card.setStyleSheet(f"""
-                QFrame {{
+                QFrame#noteCard {{
                     background: {Gate.PANEL};
                     border: 1px solid {Gate.RAISED};
                     border-radius: 6px;
-                    padding: 6px;
                 }}
             """)
             card_l = QVBoxLayout(card)
             card_l.setContentsMargins(8, 6, 8, 6)
             card_l.setSpacing(4)
 
-            header = QLabel(f"<b>{note.author or 'Unknown'}</b> ({note.source or 'internal'}) · {note.note_date}")
+            # Plain text: a note is never markup ('<b>', or a '<' that hid the rest).
+            header = QLabel(f"{note.author or 'Unknown'} ({(note.source or 'internal').title()}) · "
+                            f"{format_date(note.note_date) or note.note_date}")
+            header.setTextFormat(Qt.TextFormat.PlainText)
             header.setStyleSheet(f"font-size: 11px; color: {Gate.ACCENT}; font-weight: 600;")
             card_l.addWidget(header)
 
             body = QLabel(note.text)
-            body.setStyleSheet(f"font-size: 12px; color: {Gate.TEXT}; line-height: 1.4;")
+            body.setTextFormat(Qt.TextFormat.PlainText)
+            body.setStyleSheet(f"font-size: 12px; color: {Gate.TEXT};")
             body.setWordWrap(True)
             card_l.addWidget(body)
 
@@ -335,7 +338,7 @@ class ReviewPlayerDialog(QDialog):
         note_text = self.note_edit.toPlainText().strip()
         if not note_text:
             ans = QMessageBox.question(
-                self, "Retake Note",
+                self, "Retake without a note",
                 "Submitting a Retake without revision notes makes it harder for the artist. Submit anyway?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
@@ -348,7 +351,7 @@ class ReviewPlayerDialog(QDialog):
 
     def _submit_verdict(self, status: str, note_text: str):
         if not self.version or self.version.id <= 0:
-            QMessageBox.warning(self, "Invalid Version", "Cannot update an unpersisted version.")
+            QMessageBox.warning(self, "Give a verdict", "This version is not saved, so it cannot be judged.")
             return
 
         try:
@@ -361,26 +364,32 @@ class ReviewPlayerDialog(QDialog):
                 QMessageBox.critical(self, "Give a verdict", f"The version could not be set to {status}.")
                 return
 
-            if note_text:
-                self.store.add_note(
-                    version_id=self.version.id,
-                    text=note_text,
-                    source=SENT_INTERNAL,
-                    author=self.current_user,
-                )
+            note_failed = bool(note_text) and not self.store.add_note(
+                version_id=self.version.id, text=note_text, source=SENT_INTERNAL,
+                author=self.current_user)
 
             self.version.status = status
+            self._judged.add(self.version.id)
             self.verdict_submitted.emit(self.version, status, note_text)
+            if note_failed:
+                QMessageBox.warning(self, "Give a verdict",
+                                    f"{self.version.version_name} is {status}, but the note could not be "
+                                    "saved. It is still in the box - copy it before you move on.")
+                self._load_version(self.version)
+                return
             self.note_edit.clear()
 
-            # Advance to next item or close if at end
-            if self.current_index < len(self.queue_versions) - 1:
-                self._on_next_clicked()
+            # On to the next version nobody has judged yet; done when there is none.
+            remaining = [i for i, v in enumerate(self.queue_versions)
+                         if v.id not in self._judged and v.status in AWAITING_REVIEW]
+            later = [i for i in remaining if i > self.current_index]
+            if remaining:
+                self.current_index = (later or remaining)[0]
+                self._load_version(self.queue_versions[self.current_index])
             else:
                 QMessageBox.information(
-                    self, "Queue Complete",
-                    f"Version {self.version.version_name} set to {status}. You have reached the end of the review queue."
-                )
+                    self, "Review queue",
+                    f"{self.version.version_name} set to {status}. Every version in the queue has a verdict.")
                 self.accept()
         except Exception as exc:
             logging.exception("Failed to submit verdict: %s", exc)
@@ -398,6 +407,11 @@ class ReviewPlayerDialog(QDialog):
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:
+            if self.note_edit.toPlainText().strip() and QMessageBox.question(
+                    self, "Close the review", "The note you are writing is not saved. Close anyway?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+                return
             self.close()
         else:
             super().keyPressEvent(event)

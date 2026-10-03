@@ -188,7 +188,7 @@ class TestAddShotsDialog:
 
         values = dialog.get_values()
         assert values == {"reel": "ReelA", "shots": ["SH010"],
-                          "status": "WIP", "priority": 1}
+                          "status": "WIP", "priority": 1, "skipped": []}
 
 
 class TestNewProjectDefaults:
@@ -283,7 +283,7 @@ class TestUndo:
         undone = model.undo()
         assert shot.status == "YTS"
         assert undone["shot"] == "SH010"
-        assert "Status" in undone["description"]
+        assert "status" in undone["description"]
 
     def test_a_department_cell_can_be_taken_back(self, qtbot):
         model, shot = self._model()
