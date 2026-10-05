@@ -366,6 +366,32 @@ def test_studio_logs_card_says_where_the_logs_are(qtbot, monkeypatch, mock_db):
     assert said == ["warning"]
 
 
+def test_every_slate_import_names_a_module_that_exists():
+    """
+    Imports inside try/except fail quietly. Closing the window imported
+    core.infra.error_reporting, which does not exist, so the error handler's
+    cleanup never ran.
+    """
+    missing = []
+    for top in ("slate", "slate_server"):
+        for path in (ROOT / top).rglob("*.py"):
+            package = path.parent.relative_to(ROOT).parts
+            for node in ast.walk(ast.parse(path.read_bytes())):
+                if not isinstance(node, ast.ImportFrom):
+                    continue
+                if node.level:
+                    base = package[:len(package) - node.level + 1]
+                    parts = list(base) + (node.module.split(".") if node.module else [])
+                elif node.module and node.module.split(".")[0] in ("slate", "slate_server"):
+                    parts = node.module.split(".")
+                else:
+                    continue
+                target = ROOT.joinpath(*parts)
+                if not (target.with_suffix(".py").exists() or target.is_dir()):
+                    missing.append(f"{path.relative_to(ROOT)}:{node.lineno} {'.' * node.level}{node.module}")
+    assert not missing, missing
+
+
 def test_dashboard_retry_reconnects(monkeypatch):
     """The offline banner's Retry asked for a reconnect() nothing has, so it never retried."""
     from slate.core.domain import access
