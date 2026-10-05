@@ -99,7 +99,8 @@ class TrackingRepository:
         a Python boolean - PostgreSQL refuses that outright, while SQLite quietly
         accepts it as 1. And the result was thrown away, so the refusal was
         silent: creating a project on PostgreSQL did nothing at all and said
-        nothing about it.
+        nothing about it. An update leaves `active` alone: it used to set it to
+        1, so any save of an archived project's settings brought it back.
         """
         q = """
             INSERT INTO tracking_projects (code, name, config_json, active)
@@ -107,7 +108,6 @@ class TrackingRepository:
             ON CONFLICT (code) DO UPDATE SET
                 name = EXCLUDED.name,
                 config_json = EXCLUDED.config_json,
-                active = EXCLUDED.active,
                 last_updated = CURRENT_TIMESTAMP
         """
         return bool(self.db.execute_update(q, (code, name, config_json, 1)))

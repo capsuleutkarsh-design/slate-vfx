@@ -341,6 +341,15 @@ def test_column_filter_row_click_ticks_the_value(qtbot):
     assert item.checkState() == Qt.CheckState.Checked
 
 
+def test_saving_an_archived_project_keeps_it_archived(pg_db):
+    """The PostgreSQL upsert set active=1 on every update, so a save un-archived it."""
+    pg_db.save_tracking_project("ARC", "Archived", "{}")
+    pg_db.execute_update("UPDATE tracking_projects SET active = 0 WHERE code = %s", ("ARC",))
+    pg_db.save_tracking_project("ARC", "Archived", '{"x": 1}')
+    row = pg_db.execute_query("SELECT active FROM tracking_projects WHERE code = %s", ("ARC",), fetch="one")
+    assert row["active"] == 0
+
+
 def test_dashboard_retry_reconnects(monkeypatch):
     """The offline banner's Retry asked for a reconnect() nothing has, so it never retried."""
     from slate.core.domain import access
