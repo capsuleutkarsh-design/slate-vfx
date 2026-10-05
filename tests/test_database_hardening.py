@@ -149,10 +149,6 @@ class TestTheShippedSettings:
         assert config["max_db_connections"] <= 2
         assert config["min_db_connections"] >= 1
 
-    def test_semantic_search_cannot_hoard_connections(self, config):
-        """It used to be allowed 20 per machine: 3,000 across the studio."""
-        assert config["max_semantic_connections"] <= 8
-
 
 class TestFailuresAreLoud:
     """

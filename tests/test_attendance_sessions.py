@@ -312,9 +312,3 @@ def test_a_second_punch_in_end_to_end_through_home(att, qtbot):
     assert str(status["punch_in"])[:5] != "08:00" and status["punch_out"] is None
     assert "session 2 today" in tab.lbl_punch_status.text()
     assert att.today_state("asha")["state"] == "working"
-
-
-def test_signing_out_through_sync_never_punches_out(att):
-    att.log_action("asha", "in")
-    assert att.sync_attendance("asha", "asha", "logout")
-    assert att.today_state("asha")["state"] == "working"

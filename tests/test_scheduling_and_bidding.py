@@ -149,28 +149,6 @@ def test_an_unknown_complexity_falls_back_to_medium():
     assert bidding.days_per_shot("Baffling") == bidding.days_per_shot("Medium")
 
 
-def test_margin_is_a_share_of_the_price_not_a_markup_on_the_cost():
-    """
-    100 shots of medium work at 300 a day is 90,000 of cost. At 20% margin the
-    price is 112,500 - of which 22,500, exactly a fifth, is margin. Adding 20%
-    to the cost would give 108,000 and quietly bid the studio under.
-    """
-    result = bidding.estimate(100, "Medium", rate=300.0, margin=20.0)
-    assert result["days"] == 300.0
-    assert result["cost"] == 90000.0
-    assert result["price"] == pytest.approx(112500.0)
-    assert (result["price"] - result["cost"]) / result["price"] == pytest.approx(0.20)
-
-
-def test_a_hundred_per_cent_margin_does_not_divide_by_zero():
-    result = bidding.estimate(10, "Medium", rate=100.0, margin=100.0)
-    assert result["price"] == result["cost"]
-
-
-def test_no_shots_costs_nothing():
-    assert bidding.estimate(0, "Hard")["price"] == 0.0
-
-
 def test_the_pipeline_value_leaves_out_the_jobs_we_lost(db):
     """
     The bug: the total summed every bid including rejected ones, so the number

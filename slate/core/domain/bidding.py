@@ -164,32 +164,6 @@ def tax_label(currency_code: str = "") -> str:
     return "Tax"
 
 
-def estimate(shots: int, complexity: str, rate: float = None,
-             margin: float = None) -> dict:
-    """
-    What a job of this size is worth bidding (one complexity, floats - kept for
-    callers that only need a quick figure; bids are priced with price_bid).
-
-    Margin is the share of the price the studio keeps, so the price is the cost
-    divided by what is left - not the cost plus the margin, which quietly bids
-    under. At 20% those differ by four per cent of the whole job.
-    """
-    shots = max(0, int(shots or 0))
-    rate = day_rate() if rate is None else float(rate)
-    margin = margin_percent() if margin is None else float(margin)
-
-    days = shots * days_per_shot(complexity)
-    cost = days * rate
-    if 0 <= margin < 100:
-        price = cost / (1 - (margin / 100.0))
-    else:
-        # 100% margin or more has no arithmetic meaning here. Bidding at cost is
-        # wrong but at least it is a number somebody can see is wrong.
-        price = cost
-
-    return {"days": days, "cost": cost, "price": price}
-
-
 # ------------------------------------------------------------------ numbers
 
 def dec(value, default: Decimal = Decimal(0)) -> Decimal:

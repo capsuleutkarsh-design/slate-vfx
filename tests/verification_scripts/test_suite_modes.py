@@ -37,7 +37,6 @@ from slate.core.infra.app_context import AppContext
 from slate.gui.vfx_studio_window import VFXStudioWindow
 from slate.gui.studio_ops_window import StudioOpsWindow
 from slate.gui.main_window import VFXFolderCreatorApp
-from slate.gui.tabs.vfx_dashboard_pro.viewmodels.dashboard_viewmodel import DashboardViewModel
 
 # Ensure Developer role has ALL permissions
 um = AppContext().user_manager()

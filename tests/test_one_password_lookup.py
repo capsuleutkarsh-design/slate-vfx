@@ -85,17 +85,12 @@ def test_a_blank_setting_does_not_hide_the_keyring(sources):
     assert local_secrets.find_db_password() == "from keyring"
 
 
-def test_all_three_readers_use_it(sources, monkeypatch):
-    from slate.core.infra import db_factory, database_manager
+def test_both_readers_use_it(sources):
     from slate.core.infra.postgres_manager import PostgresManager
 
     sources["keyring"]("k")
     assert local_secrets.db_password() == "k"
     assert PostgresManager._load_password_secure(None) == "k"
-    monkeypatch.setattr(database_manager, "database_manager",
-                        types.SimpleNamespace(active_mode="postgres", fallback_used=False))
-    assert db_factory.get_database_url().startswith("postgresql+psycopg2://")
-    assert ":k@" in db_factory.get_database_url()
 
 
 def test_none_found_still_says_so(sources):

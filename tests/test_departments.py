@@ -195,7 +195,7 @@ class TestDetailPanel:
         panel.apply_requested.connect(lambda s, changes: applied.append(changes))
         widgets["artist_combo"].setCurrentText("Vikram")
         widgets["status_combo"].setCurrentIndex(widgets["status_combo"].findData("WIP"))
-        panel.save_data()
+        panel.apply_changes()
 
         # The panel hands the dashboard exactly what changed; the dashboard
         # stages it as a pending edit (one save model).

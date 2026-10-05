@@ -184,14 +184,6 @@ def format_money(amount: Number, code: Optional[str] = None, *, compact: bool = 
     return f"{sign}{prefix}{body}"
 
 
-def sum_money(amounts: Iterable[Number]) -> Decimal:
-    """An exact total."""
-    total = Decimal(0)
-    for amount in amounts:
-        total += to_decimal(amount)
-    return total
-
-
 def sum_by_currency(pairs: Iterable[Tuple[Number, Optional[str]]]) -> "OrderedDict[str, Decimal]":
     """
     Totals kept apart per currency - (amount, code) pairs in, {code: total} out,
@@ -211,11 +203,6 @@ def format_totals(totals: Dict[str, Number], *, compact: bool = False, empty: st
     if not parts:
         return empty or format_money(0, studio_currency(), compact=compact)
     return " + ".join(parts)
-
-
-def percent_of(amount: Number, rate_percent: Number) -> Decimal:
-    """rate_percent % of amount, to the paisa - GST on a subtotal, a margin."""
-    return quantize(to_decimal(amount) * to_decimal(rate_percent) / Decimal(100))
 
 
 # ------------------------------------------------------------ studio settings

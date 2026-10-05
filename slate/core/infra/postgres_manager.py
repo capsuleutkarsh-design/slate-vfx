@@ -290,8 +290,6 @@ class PostgresManager(ManagerFacade):
         self.stock_repo = StockRepository(self)
         self.tracking_repo = TrackingRepository(self)
         self.user_repo = UserRepository(self)
-        from .attendance_repository import AttendanceRepository
-        self.attendance_repo = AttendanceRepository(self)
         
         logging.info(
             f"PostgresManager Instantiated (Hosts: {self.host_candidates}, "

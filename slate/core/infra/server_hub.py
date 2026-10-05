@@ -3,14 +3,13 @@ import os
 from pathlib import Path
 import time
 import logging
-import re
 import uuid
 from .global_config import GlobalConfig
 from slate.utils.safe_json import SafeJsonIO
 
 class ServerHub:
     """
-    Manages centralized server resources, commands, and PC registration.
+    Manages centralized server resources and commands.
     Now uses SafeJsonIO for concurrency and GlobalConfig for paths.
     """
     def __init__(self):
@@ -57,53 +56,6 @@ class ServerHub:
         """Save global settings with locking."""
         SafeJsonIO.save_json(self.settings_file, settings)
 
-    def register_pc(self, pc_name: str) -> bool:
-        """Atomic PC Registration"""
-        if not re.match(r'^[A-Za-z0-9_-]+$', pc_name):
-            logging.warning(f"SECURITY: Invalid PC name attempted: {pc_name}")
-            return False
-
-        def update_logic(data):
-            active_pcs = data.get('active_pcs', [])
-            if pc_name not in active_pcs:
-                active_pcs.append(pc_name)
-                data['active_pcs'] = active_pcs
-                logging.info(f"Registered new PC: {pc_name}")
-                
-        return SafeJsonIO.update_json(self.settings_file, update_logic)
-
-    def is_gatekeeper_enabled(self) -> bool:
-        settings = self.load_settings()
-        return settings.get('gatekeeper_enabled', True)
-
-    def set_gatekeeper_enabled(self, enabled: bool) -> bool:
-        """Atomic Gatekeeper Toggle"""
-        def update_logic(data):
-            data["gatekeeper_enabled"] = enabled
-            
-        return SafeJsonIO.update_json(self.settings_file, update_logic)
-
-    def trigger_remote_unlock(self, target_pc_name):
-        trigger_file = self.dirs["commands"] / f"UNLOCK_{target_pc_name}.trigger"
-        try:
-            with open(trigger_file, 'w') as f: f.write(f"UNLOCK REQUEST: {time.time()}")
-            return True
-        except Exception as e:
-            logging.exception(f"Trigger remote unlock failed: {e}")
-            return False
-
-    def check_for_unlock_trigger(self):
-        import socket
-        my_pc = socket.gethostname()
-        trigger_file = self.dirs["commands"] / f"UNLOCK_{my_pc}.trigger"
-        if trigger_file.exists():
-            try: 
-                os.remove(trigger_file)
-                return True
-            except Exception as e:
-                logging.warning(f"Failed to remove trigger file: {e}")
-        return False
-    
     # --- BROADCAST SYSTEM ---
     def post_command(self, cmd_type, target="all", message="", admin_user="", reason=""):
         # One file per command. Named by the second alone, a second command to

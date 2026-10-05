@@ -110,9 +110,7 @@ def test_compact_forms():
 
 
 def test_money_is_exact():
-    assert money.sum_money([0.1, 0.2]) == Decimal("0.3")
     assert money.quantize("2.345") == Decimal("2.35")
-    assert money.percent_of(1000, 18) == Decimal("180.00")
 
 
 def test_typed_amounts_are_understood():

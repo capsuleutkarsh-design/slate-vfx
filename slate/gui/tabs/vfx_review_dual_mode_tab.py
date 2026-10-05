@@ -100,11 +100,6 @@ class VFXReviewDualModeTab(QWidget):
                 return  # the status line already says it; no toast on opening the tab
             report(self, result)
 
-    def show_notifications(self):
-        """Open the header's notification list (kept for anything that calls it)."""
-        from ..components.notification_center import open_notifications
-        open_notifications(self)
-
     def set_shots(self, shots, project_root=None, folder_resolver=None,
                   project_name="", project_path=None, sequence_fps=24.0):
         """Hand the timeline the shots the dashboard is tracking."""

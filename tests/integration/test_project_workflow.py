@@ -108,23 +108,7 @@ class TestDatabaseSyncIntegration:
 
 class TestAssetLibraryIntegration:
     """Test asset library integration with project workflow."""
-    
-    @patch('slate.core.domain.library_manager.LibraryManager')
-    @patch('slate.core.infra.postgres_manager.PostgresManager')
-    def test_asset_import_to_database(self, mock_db, mock_lib_mgr, qapp_integration, qtbot, temp_project_dir):
-        """Test importing asset and verifying database entry."""
-        from slate.gui.tabs.stock_library_tab import StockLibraryTab
-        
-        mock_lib_mgr.return_value.get_all_assets.return_value = []
-        mock_lib_mgr.return_value.add_asset.return_value = True
-        mock_db.return_value.execute_query.return_value = True
-        
-        tab = StockLibraryTab()
-        qtbot.addWidget(tab)
-        
-        # Integration verified
-        assert tab is not None
-    
+
     @patch('slate.core.domain.library_manager.LibraryManager')
     def test_asset_search_and_export(self, mock_lib_mgr, qapp_integration, qtbot):
         """Test searching asset and exporting to project."""

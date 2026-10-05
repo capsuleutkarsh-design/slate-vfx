@@ -263,9 +263,6 @@ def build_dashboard_ui(widget):
     app_layout.addLayout(row2)
     main_layout.addWidget(app_bar)
 
-    # Notifications are the bell in the main header now, for every screen.
-    widget.notifications_btn = None
-
     # ---------------------------------------------------------------- banners
     widget.offline_banner = QFrame()
     widget.offline_banner.setObjectName("offlineBanner")
