@@ -5,6 +5,7 @@ The window itself starts a database, so these drive its methods on a stand-in
 and build the real views.
 """
 import types
+from pathlib import Path
 
 import pytest
 from PySide6.QtWidgets import QApplication
@@ -162,12 +163,15 @@ def test_closing_a_running_server_asks(app, monkeypatch):
     assert event.ignored and "stop" not in calls
 
 
-def test_the_api_port_is_a_setting(app):
+def test_the_server_no_longer_starts_the_web_api(app):
+    """It listened on 0.0.0.0, nothing in Slate used it, and it allowed admin takeover."""
     module = _window_module()
-    fake = types.SimpleNamespace(_api_port=8100)
-    fake.api_port = lambda: module.UTServerWindow.api_port(fake)
-    assert module.UTServerWindow.dashboard_url(fake) == "http://localhost:8100/admin"
+    for gone in ("api_port", "dashboard_url", "_on_open_dashboard"):
+        assert not hasattr(module.UTServerWindow, gone)
+    source = Path(module.__file__).read_text(encoding="utf-8")
+    assert "ApiServer" not in source
     from slate_server.gui.views.settings_view import SettingsView
     view = SettingsView()
-    assert view.input_port.width() == view.input_pooler_port.width() == view.input_api_port.width() \
+    assert not hasattr(view, "input_api_port")
+    assert view.input_port.width() == view.input_pooler_port.width() \
         or view.input_port.maximumWidth() == view.input_pooler_port.maximumWidth()

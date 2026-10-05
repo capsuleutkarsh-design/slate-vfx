@@ -831,3 +831,144 @@ def test_old_snapshots_are_pruned_but_the_first_is_kept(tmp_path, monkeypatch):
     assert snapshots.prune(layout, keep=100) == 4
     names = [p.name[:4] for p in snapshots.list_snapshots(layout)]
     assert names[0] == "0001" and names[1] == "0006" and names[-1] == "0105" and len(names) == 101
+
+
+# ============================ turning server switches on (and off) - 2.2.0
+
+def _mode(lab, name):
+    from slate.core.security import switches
+    from slate.core.security.dbapi import ConnectionDB
+    conn = lab.connect("ut_vfx_app", APP_PASSWORD)          # as a workstation reads it
+    try:
+        return switches.mode(name, db=ConnectionDB(conn),
+                             override_path=lab.layout.switches_file)
+    finally:
+        conn.close()
+
+
+def _settings(lab):
+    return json.loads(lab.credentials.read_text(encoding="utf-8"))
+
+
+@slow
+def test_split_superuser_password_on_keeps_both_logins_and_off_puts_it_back(healthy):
+    lab = healthy
+    session = lab.session(lab.key)
+    session.turn_on("split_superuser_password")
+    db_credentials.reload()
+    separate = db_credentials.admin_password()
+    assert separate != APP_PASSWORD and _settings(lab)["db_admin_password"] == separate
+    assert lab.can_login("postgres", separate)
+    assert not lab.can_login("postgres", APP_PASSWORD), "the public password no longer opens it"
+    assert lab.can_login("ut_vfx_app", APP_PASSWORD), "workstations untouched"
+    assert _mode(lab, "split_superuser_password") == "on"
+    # The server's own start keeps it.
+    assert lab.engine()._bootstrap(lab.said.append) is True
+    assert lab.can_login("postgres", separate)
+
+    session.switches_off(["split_superuser_password"])
+    db_credentials.reload()
+    assert not db_credentials.has_separate_admin_password()
+    assert lab.can_login("postgres", APP_PASSWORD), "off is exactly the old behaviour"
+    assert lab.can_login("ut_vfx_app", APP_PASSWORD)
+    assert _mode(lab, "split_superuser_password") == "off"
+    _no_window_left(lab, lab.hardened)
+
+
+@slow
+def test_split_superuser_password_refused_by_its_precheck_changes_nothing(healthy):
+    lab = healthy
+    lab.sql("ALTER ROLE ut_vfx_app PASSWORD 'workstations-are-already-out'")
+    with pytest.raises(actions.RecoveryRefused) as refused:
+        lab.session(lab.key).turn_on("split_superuser_password")
+    assert "Workstations could not connect" in str(refused.value)
+    assert "db_admin_password" not in _settings(lab)
+    assert lab.can_login("postgres", APP_PASSWORD)
+    assert snapshots.latest_snapshot(lab.layout) is None, "nothing was touched"
+
+
+@slow
+def test_split_superuser_password_that_breaks_the_server_login_is_rolled_back(healthy,
+                                                                           monkeypatch):
+    lab = healthy
+    # The server reads its password from the environment, so the new one in the
+    # settings file would not reach it: the check after the change must fail.
+    monkeypatch.setenv("SLATE_DB_ADMIN_PASSWORD", APP_PASSWORD)
+    from slate_server.core.recovery.hardening import turn_on
+    result = turn_on(lab.layout, "split_superuser_password")
+    monkeypatch.delenv("SLATE_DB_ADMIN_PASSWORD")
+    assert not result.applied and result.rolled_back
+    assert lab.can_login("postgres", APP_PASSWORD), "the old password is back"
+    assert "db_admin_password" not in _settings(lab), "the settings file is back"
+    assert _mode(lab, "split_superuser_password") == "off"
+
+
+@slow
+def test_strict_pg_hba_on_keeps_people_in_and_off_puts_the_old_rules_back(healthy):
+    from slate.core.security.precheck import check_hba
+    from slate_server.core.recovery.hardening import BEFORE_STRICT, STRICT_MARK
+    lab = healthy
+    session = lab.session(lab.key)
+    session.turn_on("strict_pg_hba")
+    assert STRICT_MARK in lab.hba()
+    assert check_hba(lab.hba(), database=DBNAME).ok
+    assert lab.can_login("postgres", APP_PASSWORD), "the server, from this PC"
+    assert lab.can_login("ut_vfx_app", APP_PASSWORD), "workstations, into the studio database"
+    assert not lab.can_login("ut_vfx_app", APP_PASSWORD, dbname="postgres"), \
+        "and nowhere else"
+    assert (lab.data / BEFORE_STRICT).read_text(encoding="utf-8") == lab.hardened
+    assert _mode(lab, "strict_pg_hba") == "on"
+
+    session.switches_off(["strict_pg_hba"])
+    assert lab.hba() == lab.hardened, "off is exactly the old rules"
+    assert lab.can_login("ut_vfx_app", APP_PASSWORD, dbname="postgres")
+    assert _mode(lab, "strict_pg_hba") == "off"
+
+
+@slow
+def test_strict_pg_hba_is_refused_while_a_workstation_uses_the_superuser(healthy,
+                                                                         monkeypatch):
+    from slate_server.core import server_facts
+    lab = healthy
+    monkeypatch.setattr(server_facts, "sessions", lambda port: [
+        {"pid": 7, "client": "10.0.0.31", "user": "postgres", "database": DBNAME}])
+    with pytest.raises(actions.RecoveryRefused) as refused:
+        lab.session(lab.key).turn_on("strict_pg_hba")
+    assert "postgres from 10.0.0.31" in str(refused.value)
+    assert lab.hba() == lab.hardened and snapshots.latest_snapshot(lab.layout) is None
+    # Log only is still allowed: it changes nothing, and the server logs the session.
+    lab.session(lab.key).turn_on("strict_pg_hba", "log_only")
+    assert lab.hba() == lab.hardened
+    assert _mode(lab, "strict_pg_hba") == "log_only"
+
+
+@slow
+def test_strict_pg_hba_that_locks_the_workstations_out_is_rolled_back(healthy, monkeypatch):
+    from slate_server.core.recovery import hardening
+    lab = healthy
+    # Passes the text check (LAN workstations allowed), but leaves out the
+    # loopback rule the check after the change logs in with.
+    looks_fine = "\n".join(l for l in hardening.strict_rules().splitlines()
+                           if not ("ut_vfx_app" in l and ("127.0.0.1" in l or "::1" in l)))
+    monkeypatch.setattr(hardening, "strict_rules", lambda: looks_fine + "\n")
+    result = hardening.turn_on(lab.layout, "strict_pg_hba")
+    assert not result.applied and result.rolled_back
+    assert lab.hba() == lab.hardened
+    assert lab.can_login("ut_vfx_app", APP_PASSWORD)
+    assert _mode(lab, "strict_pg_hba") == "off"
+
+
+@slow
+def test_a_sign_in_switch_is_turned_on_only_with_an_administrator_left(healthy):
+    lab = healthy
+    session = lab.session(lab.key)
+    session.switches_off(None)                    # forced off on this PC, every switch
+    session.turn_on("refuse_inactive_signin", "log_only")
+    assert _mode(lab, "refuse_inactive_signin") == "log_only", "the forced-off file is lifted"
+    assert _mode(lab, "no_plaintext_passwords") == "off", "only for that one switch"
+
+    lab.sql("UPDATE ut_users SET active=0 WHERE username='admin'")
+    with pytest.raises(actions.RecoveryRefused) as refused:
+        session.turn_on("no_plaintext_passwords")
+    assert "administrator" in str(refused.value)
+    assert _mode(lab, "no_plaintext_passwords") == "off"

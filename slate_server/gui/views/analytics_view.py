@@ -301,8 +301,10 @@ class AnalyticsView(QWidget):
         """
         from slate_server.core.server_facts import session_warning
 
+        picked = (self.selected_pid() or {}).get("pid")
         self._sessions = list(rows or [])
         table = self.table
+        table.clearSelection()
         table.setRowCount(len(self._sessions))
         table.setColumnCount(6)
         table.setHorizontalHeaderLabels(
@@ -327,6 +329,10 @@ class AnalyticsView(QWidget):
                 if row.get("query"):
                     item.setToolTip(row["query"])
                 table.setItem(r, c, item)
+            if row["pid"] == picked:
+                # The selection follows the session, not the row number, so a
+                # refresh never leaves another connection selected.
+                table.selectRow(r)
 
     def selected_pid(self):
         rows = {i.row() for i in self.table.selectedIndexes()}
@@ -336,21 +342,3 @@ class AnalyticsView(QWidget):
         if index >= len(getattr(self, "_sessions", [])):
             return None
         return self._sessions[index]
-
-    def update_table(self, connections_data):
-        """Update the data grid with fresh connections"""
-        self.table.setRowCount(len(connections_data))
-        for row, data in enumerate(connections_data):
-            # data is a tuple: (client_addr, application_name, state, query)
-            for col, value in enumerate(data):
-                item = QTableWidgetItem(str(value) if value else "")
-                item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-                
-                # Colorize state
-                if col == 2:  # State column
-                    if value == 'active':
-                        item.setForeground(Qt.GlobalColor.green)
-                    elif value == 'idle':
-                        item.setForeground(Qt.GlobalColor.gray)
-                        
-                self.table.setItem(row, col, item)

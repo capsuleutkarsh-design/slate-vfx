@@ -199,11 +199,10 @@ The server computer must accept these:
 | 5440 | TCP | the database (PostgreSQL) |
 | 6432 | TCP | the connection pool (PgBouncer). Workstations try this first |
 | 54320 | UDP | discovery: workstations asking "where is the server?" |
-| 8000 | TCP | the web API and admin dashboard — only needed if you open it from another computer |
 
 In **Slate Server → Settings**, the **Allow Firewall** button adds Windows
 Firewall rules for the database, pool and discovery ports (Windows asks for
-administrator permission). It does not open 8000. The database and pool port
+administrator permission). The database and pool port
 numbers can be changed on the same screen; if you change them, open the new
 numbers instead.
 

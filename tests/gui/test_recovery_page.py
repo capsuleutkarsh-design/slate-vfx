@@ -44,6 +44,69 @@ def test_unlocking_on_another_pc_is_refused_on_the_page(app, qtbot, layout):
     assert view.session is not None and not view.session.unlocked
 
 
+def test_switches_can_be_set_to_log_only_or_on_one_at_a_time(app, qtbot, layout, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    from slate.core.security import switches
+    from slate_server.gui.views.recovery_view import RecoveryView
+    view = RecoveryView(lambda: layout)
+    qtbot.addWidget(view)
+    told = []
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: told.append(a[2]))
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: told.append(a[2]) or QMessageBox.StandardButton.Yes)
+
+    # "Every security switch" is for turning off only.
+    view._switch_on("on")
+    assert told and "one at a time" in told[-1]
+
+    # Each switch shows its mode and its description from the catalogue.
+    view._modes = {"strict_pg_hba": "log_only"}
+    view.switch_pick.setCurrentIndex(view.switch_pick.findData("strict_pg_hba"))
+    about = view.switch_about.text()
+    assert "now: log_only" in about and switches.known()["strict_pg_hba"] in about
+
+    calls = []
+
+    class Session:
+        unlocked = True
+        say = None
+
+        def turn_on(self, name, mode):
+            calls.append((name, mode))
+            return ["Applied."]
+
+    session = Session()
+    view._session = lambda: session
+    monkeypatch.setattr(view, "refresh_switches", lambda: None)
+    view._switch_on("log_only")
+    qtbot.waitUntil(lambda: calls == [("strict_pg_hba", "log_only")], timeout=10000)
+
+    # signed_* switches: Log only first is recommended before Turn on.
+    signed = [n for n in switches.known() if n.startswith("signed_")]
+    assert signed
+    qtbot.waitUntil(lambda: view.btn_switch_on.isEnabled(), timeout=10000)
+    view.switch_pick.setCurrentIndex(view.switch_pick.findData(signed[0]))
+    assert "Log only first" in view.switch_about.text()
+    view._switch_on("on")
+    assert "Log only first" in told[-1]
+
+
+def test_a_refused_turn_on_says_why_in_plain_words(app, qtbot, layout, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    from slate_server.core.recovery import hardening
+    from slate_server.core.recovery.session import RecoverySession
+    from slate_server.gui.views.recovery_view import RecoveryView
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr(RecoverySession, "_need_unlocked", lambda self: None)
+    monkeypatch.setattr(RecoverySession, "unlocked", property(lambda self: True))
+    view = RecoveryView(lambda: layout)
+    qtbot.addWidget(view)
+    view.switch_pick.setCurrentIndex(view.switch_pick.findData("pgbouncer_hba"))
+    view._switch_on("on")
+    qtbot.waitUntil(lambda: "Not done" in view.output.toPlainText(), timeout=10000)
+    assert hardening.NOT_BUILT["pgbouncer_hba"] in view.output.toPlainText()
+
+
 def test_the_key_dialog_cannot_be_closed_until_the_key_is_stored(app, qtbot):
     from slate_server.gui.views.recovery_view import RecoveryKeyDialog
     dialog = RecoveryKeyDialog("ABCDE-FGHJK-MNPQR-STVWX-YZ012")

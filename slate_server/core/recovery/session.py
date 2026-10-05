@@ -154,16 +154,40 @@ class RecoverySession:
         self._need_unlocked()
         names = list(names) if names is not None else None
         try:
-            return self._in_window("switches-off",
-                                   lambda conn: actions.switches_off(self.layout, names, conn),
-                                   snapshot=False)
+            lines = self._in_window("switches-off",
+                                    lambda conn: actions.switches_off(self.layout, names, conn),
+                                    snapshot=False)
         except Exception as exc:
             lines = actions.switches_off(self.layout, names, None)
             lines.append("(The database could not be reached: %s)" % str(exc).splitlines()[0])
             self._log("switches-off (file only)", True)
             for line in lines:
                 self.say(line)
-            return lines
+        if names is None or "strict_pg_hba" in names:
+            # After the window: while it is open the file is its temporary rule.
+            from .hardening import undo_strict_pg_hba
+            for line in undo_strict_pg_hba(self.layout):
+                self.say(line)
+                lines.append(line)
+        return lines
+
+    def turn_on(self, name: str, mode: str = "on") -> List[str]:
+        """One switch on (or log_only), through apply_hardening_step. Raises when refused."""
+        self._need_unlocked()
+        from .hardening import turn_on
+        try:
+            who = getpass.getuser()
+        except Exception:
+            who = "?"
+        result = turn_on(self.layout, name, mode, by="recovery tool (%s)" % who)
+        self._log("switch-%s %s" % (mode, name), result.applied,
+                  "" if result.applied else result.message.splitlines()[0][:200])
+        lines = [result.message] + list(result.details)
+        if not result.applied:
+            raise actions.RecoveryRefused("\n".join(lines))
+        for line in lines:
+            self.say(line)
+        return lines
 
     def restore_latest_snapshot(self, accounts: bool = False) -> List[str]:
         """

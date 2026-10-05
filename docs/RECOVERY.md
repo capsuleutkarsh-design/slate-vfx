@@ -51,6 +51,18 @@ out for good.
 
 Then press **Check now** again. When everything is OK, people can sign in.
 
+### Turning a security switch on
+
+Unlock, then in **Security switches** choose one switch. The line under it says what the switch
+does and whether it is off, log only or on.
+
+- **Log only** changes nothing. Slate Server writes in its log what the switch would refuse.
+  Use it first, always for the `signed_...` switches.
+- **Turn on** checks first that people can still get in. If they could not, it refuses, says
+  why, and changes nothing. If the check after the change fails, the change is undone at once.
+- **Turn off** puts the old behaviour back. For `split_superuser_password` the superuser gets
+  the workstations' password again. For `strict_pg_hba` the previous access rules come back.
+
 ### Changing the workstations' password (app password)
 
 Every workstation must have the same database password. If you change it, do this on **every**
