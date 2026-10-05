@@ -91,14 +91,20 @@ def _names(tab):
 
 # ----------------------------------------------------------------- HR-021
 
-def test_the_buttons_follow_the_day(studio):
+def _punch(tab, qtbot, action):
+    """The punch runs on a worker (CentralAttendance.punch); wait for it."""
+    tab.manual_punch(action)
+    qtbot.waitUntil(lambda: not tab.punch_busy(), timeout=5000)
+
+
+def test_the_buttons_follow_the_day(studio, qtbot):
     tab = _tab(studio, "aarav", ["Artist"])
     assert tab.btn_punch_in.isEnabled() and not tab.btn_punch_out.isEnabled()
-    tab.manual_punch("in")
+    _punch(tab, qtbot, "in")
     assert not tab.btn_punch_in.isEnabled() and tab.btn_punch_out.isEnabled()
     assert tab.lbl_punch_note.text().startswith("Punched in at")
     assert tab.lbl_status.text().startswith("Working")
-    tab.manual_punch("out")                       # the question is answered Yes in tests
+    _punch(tab, qtbot, "out")                     # the question is answered Yes in tests
     assert tab.btn_punch_in.isEnabled() and tab.btn_punch_in.text() == "Punch in again"
     assert not tab.btn_punch_out.isEnabled()
 
@@ -254,13 +260,13 @@ def test_a_supervisor_sees_the_people_under_their_leads(studio):
     assert tab.show_system.isHidden()
 
 
-def test_the_wfh_tick_waits_for_the_punch_in(studio):
+def test_the_wfh_tick_waits_for_the_punch_in(studio, qtbot):
     """HR2-011: the refresh keeps a choice made before punching in."""
     tab = _tab(studio, "aarav", ["Artist"])
     tab.chk_wfh_box.setChecked(True)
     tab.refresh_personal_view()
     assert tab.chk_wfh_box.isChecked()
-    tab.manual_punch("in")
+    _punch(tab, qtbot, "in")
     assert studio["att"].today_state("aarav")["wfh"] is True
 
 

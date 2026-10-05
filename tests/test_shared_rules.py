@@ -117,3 +117,38 @@ def test_the_account_columns_have_one_owner():
     assert {"must_change_password", "active", "deactivated_on", "deactivated_by"} <= owned
     assert "ALTER TABLE" not in inspect.getsource(UserManager._ensure_schema)
     assert not hasattr(UserManager, "load_users")
+
+
+# ------------------------------------------------------------ one punch (item 3)
+def test_home_and_attendance_punch_through_one_rule(mock_db, qtbot, monkeypatch):
+    """
+    Both buttons call CentralAttendance.punch on a worker; a punch-in on a day
+    of approved leave asks first on Home too; Home reads today's punch with
+    today_state, by the database's date.
+    """
+    from slate.core.domain.central_attendance import CentralAttendance
+    from slate.gui.components import feedback
+    from slate.gui.tabs import home_tab
+    from slate.gui.tabs.home_tab import HomeTab, HomeLoaderWorker
+
+    att = CentralAttendance(mock_db)
+    leave = {"type": "Sick", "half": ""}
+    monkeypatch.setattr(CentralAttendance, "leave_today", lambda self, user: leave)
+    assert att.punch("asha", "in") == {"on_leave": leave}            # not punched
+    assert att.today_state("asha")["state"] == "out"
+
+    asked = []
+    monkeypatch.setattr(feedback, "confirm", lambda *a, **k: asked.append(a[2]) or True)
+    tab = HomeTab(user_data={"username": "asha", "display_name": "Asha"}, mode="ops")
+    qtbot.addWidget(tab)
+    tab.attendance = att
+    tab._host = lambda: None
+    tab._read_todays_punch = HomeLoaderWorker("asha", None, mode="ops", db=mock_db).todays_punch
+    tab.do_punch("in")
+    qtbot.waitUntil(lambda: not tab.punch_busy() and att.today_state("asha")["state"] == "working",
+                    timeout=5000)
+    assert "approved leave" in asked[0]
+    assert att.punch("asha", "in", on_leave_ok=True)["rule"].startswith("Already punched in")
+    status = tab._read_todays_punch()
+    assert status["sessions"] == 1 and status["punch_in"] and status["punch_out"] is None
+    assert home_tab.db_today(mock_db) == att.server_today()

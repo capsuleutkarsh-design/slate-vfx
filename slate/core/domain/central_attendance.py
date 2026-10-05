@@ -131,6 +131,10 @@ class CentralAttendance:
                                      int(parts[2].split(".")[0]) if len(parts) > 2 else 0)
         return today_date, now_time
 
+    def server_today(self) -> datetime.date:
+        """Today by the database's clock - the one punches are written with."""
+        return as_date(self._server_now()[0])
+
     def _row(self, user_id, day_key):
         row = self.db.execute_query(
             "SELECT id, punch_in, punch_out, pc_name, metadata FROM attendance_log "
@@ -180,6 +184,45 @@ class CentralAttendance:
             "wfh": bool(meta.get("wfh")),
             "date": today_date,
         }
+
+    def leave_today(self, user_name):
+        """
+        Approved full-day leave on the database's today, or None. A half day
+        is meant to be worked for the other half, so it is not asked about.
+        """
+        from slate.core.infra.leave_repository import LeaveRepository
+        today = self.server_today()
+        who = str(user_name or "").strip().lower()
+        leave = LeaveRepository(self.db).approved_leave(today, today, [who]).get(who, {}).get(today)
+        return leave if leave and not leave.get("half") else None
+
+    def punch(self, user_name, action, metadata=None, on_leave_ok=False) -> dict:
+        """
+        The punch a person makes with a button - Home and Attendance both call
+        this, on a worker thread:
+
+            {"on_leave": leave}  a punch-in on a day of approved leave was NOT
+                                 made: ask, then call again with on_leave_ok
+            {"rule": text}       refused by the punch rules ("Already punched
+                                 in at 09:42", nothing to punch out of)
+            {"stored": {...}}    made (log_action's answer)
+
+        A database failure raises. The automatic punch-in at sign-in is
+        log_action(automatic=True); closing Slate never punches out.
+        """
+        if action == "in" and not on_leave_ok:
+            try:
+                leave = self.leave_today(user_name)
+            except Exception as exc:
+                # Not being able to read the leave must not stop the punch.
+                logger.warning("Approved leave not checked before the punch: %s", exc)
+                leave = None
+            if leave:
+                return {"on_leave": leave}
+        try:
+            return {"stored": self.log_action(user_name, action, metadata=metadata)}
+        except ValueError as exc:
+            return {"rule": str(exc)}
 
     def log_action(self, user_name, action, metadata=None, automatic=False):
         """
