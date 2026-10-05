@@ -274,6 +274,10 @@ def turn_on(layout, name: str, mode: str = "on", by: str = "recovery tool") -> S
             except Exception as exc:
                 logger.warning("security_switches was not handed to %s: %s",
                                client["user"], exc)
+            if name == "split_superuser_password" and mode == switches.ON:
+                result.details.append(
+                    "Press Restart pool on the Dashboard: the pool copies the passwords "
+                    "when it starts, and until then still accepts the old one for postgres.")
         return result
     finally:
         conn.close()
