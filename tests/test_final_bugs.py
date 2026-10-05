@@ -100,3 +100,34 @@ def test_server_comp_off_job_runs_on_the_studio_database(monkeypatch, tmp_path):
     assert any("FROM attendance_log" in a for a in asked), "the attendance record was never reviewed"
     assert any("expires_on IS NOT NULL" in a for a in asked), "expired comp off was never lapsed"
     assert asked[-1] == "closed"
+
+
+def test_clear_temporary_files_keeps_the_caches(monkeypatch, tmp_path):
+    """
+    Item 5. The sweeper (every 5 minutes, and "Clear temporary files")
+    emptied Slate\Cache of anything a day old: thumbnails, local-only
+    proxies, the RV playlist. Only temporary files go now.
+    """
+    import os
+    import time
+    from slate.core.services.sweepers import temp_sweeper
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr(temp_sweeper.tempfile, "gettempdir", lambda: str(temp))
+    cache = tmp_path / "appdata" / "Slate" / "Cache" / "Proxies"
+    cache.mkdir(parents=True)
+    kept = [cache / "sh010_v001.jpg", cache / "sh010_v001.mp4", cache.parent / "rv_temp.rv",
+            cache.parent / "Library_Cache.caplib", cache / "sh020.partial-notes.txt"]
+    gone = [cache / "sh010_v002.part4120-7788.mp4", temp / "slate-frames-4120-99.txt"]
+    fresh = cache / "sh010_v003.part4120-7788.jpg"
+    day_old = time.time() - 2 * 86400
+    for path in kept + gone + [fresh]:
+        path.write_bytes(b"x")
+        if path is not fresh:
+            os.utime(path, (day_old, day_old))
+
+    result = temp_sweeper.TempFileSweeper(max_age_days=1).run()
+    assert result["files_deleted"] == 2 and not result["errors"]
+    assert all(p.exists() for p in kept + [fresh]) and not any(p.exists() for p in gone)

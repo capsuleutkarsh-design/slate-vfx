@@ -61,7 +61,8 @@ class SequenceEngine(StreamEngine):
         if self.seq is not None and self.seq.missing_frames:
             # ffmpeg stops at a missing frame: read through a frame list that
             # holds the frame before each gap (FrameSequence.ffconcat).
-            # ponytail: one small list per player, rewritten each launch, left in TEMP.
+            # One small list per player, rewritten each launch; the temp sweeper
+            # removes it a day later.
             listing = Path(tempfile.gettempdir()) / f"slate-frames-{os.getpid()}-{id(self)}.txt"
             listing.write_text(self.seq.ffconcat(start_num, self.fps), encoding="utf-8")
             source = ['-f', 'concat', '-safe', '0', '-i', str(listing), '-r', f"{self.fps:g}"]
