@@ -1348,9 +1348,11 @@ class UserManager:
             if value == self.CLEAR:
                 note = "%s left, so it went to HR." % people.display_name(manager, self._get_db())
                 for request_id, _user in self._waiting_requests([username]):
-                    self._get_db().execute_update(
-                        "UPDATE leave_requests SET status=%s, route_note=%s WHERE id=%s",
-                        (lp.STATUS_PENDING_HR, note, request_id))
+                    if not self._get_db().execute_update(
+                            "UPDATE leave_requests SET status=%s, route_note=%s WHERE id=%s",
+                            (lp.STATUS_PENDING_HR, note, request_id)):
+                        problems.append("%s: a waiting leave request could not be sent to HR "
+                                        "- HR can decide it from the Leave queue" % username)
         return moved, problems
 
     def open_items(self, username: str, include_reports: bool = True) -> List[str]:

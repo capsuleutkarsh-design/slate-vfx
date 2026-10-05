@@ -396,6 +396,7 @@ class AttendanceTab(QWidget):
         self._team_data = {}
         self._holiday_cache = {}
         self._location_cache = {}
+        self._unread = None      # what could not be read this time (_holidays, _leave)
 
         # Handle roles array (new format) and role string (legacy)
         roles_data = user_data.get('roles', user_data.get('role', ['Artist']))
@@ -911,8 +912,11 @@ class AttendanceTab(QWidget):
                 self._holiday_cache[key] = (repo.holidays(year, place),
                                             repo.holiday_names(year, None if place == "All" else place))
             except Exception as exc:
-                logging.debug("Attendance could not read the holidays: %s", exc)
-                self._holiday_cache[key] = (set(), {})
+                # Not cached: an empty set showed every holiday as Absent for
+                # the rest of the session, and in the export.
+                logging.warning("Attendance could not read the holidays: %s", exc)
+                self._unread = "the holiday calendar"
+                return set()
         return self._holiday_cache[key][0]
 
     def _holiday_name(self, day, location=None) -> str:
@@ -956,8 +960,17 @@ class AttendanceTab(QWidget):
             from slate.core.infra.leave_repository import LeaveRepository
             return LeaveRepository().approved_leave(start, end, users)
         except Exception as exc:
-            logging.debug("Attendance could not read approved leave: %s", exc)
+            logging.warning("Attendance could not read approved leave: %s", exc)
+            self._unread = "approved leave"
             return {}
+
+    def _report_unread(self) -> bool:
+        """Say so when holidays or approved leave could not be read; True if so."""
+        what, self._unread = self._unread, None
+        if what:
+            self._notify("Could not read %s, so some days may show as Absent that are not. "
+                         "Refresh to try again; if it keeps happening, tell IT." % what, "warning")
+        return bool(what)
 
     def calculate_streak(self, user_log=None, year=None, month=None):
         """On-time days in a row, across month ends, leave and days off neutral."""
@@ -1072,6 +1085,7 @@ class AttendanceTab(QWidget):
         self.lbl_monthly_late_value.setText(f"{summary['late']}")
         self.lbl_monthly_hours_value.setText(f"{summary['hours']:.1f}")
         self.lbl_monthly_wfh_value.setText(f"{summary['wfh']}")
+        self._report_unread()
 
     def _refresh_today(self, now):
         try:
@@ -1309,6 +1323,7 @@ class AttendanceTab(QWidget):
         with KeepSelection(self.team_table):
             self._fill_team_view(reload)
         self.team_empty.refresh()
+        self._report_unread()
 
     def _fill_team_view(self, reload=True):
         from slate.gui.components.table_tools import KEY_ROLE
@@ -1325,7 +1340,8 @@ class AttendanceTab(QWidget):
             cached = ((year, month), self.user_manager.get_all_users() or {},
                       self.attendance.get_full_month_data(year, month),
                       self._leave(first, last))
-            self._team_read = cached
+            # A failed leave read is not kept for the next filter change.
+            self._team_read = None if self._unread else cached
         _, users, data, leave = cached
         chosen = self.team_people(year, month, users)
         self._team_users = dict(chosen)
@@ -1576,6 +1592,7 @@ class AttendanceTab(QWidget):
         chosen = self.team_people(year, month)
         days = calendar.monthrange(year, month)[1]
         first, last = date(year, month, 1), date(year, month, days)
+        self._unread = None
         rows = []
         for uid, rec in chosen:
             location = rec.get("location") or ""
@@ -1584,11 +1601,18 @@ class AttendanceTab(QWidget):
                          "expected": self._expected(uid, rec)})
         data = self.attendance.get_full_month_data(year, month)
         leave = self._leave(first, last, [u for u, _ in chosen])
+        studio_holidays = self._holidays(year, "All")
+        what, self._unread = self._unread, None
+        if what:
+            self._notify("The export was not made: %s could not be read, so those days would "
+                         "have gone into the file as Absent. Try again in a moment." % what,
+                         "error")
+            return
 
         self._cleanup_export_worker()
         self._export_worker = ExcelExportWorker(path, year, month, rows, data, leave,
                                                 now=datetime.now(),
-                                                studio_holidays=self._holidays(year, "All"))
+                                                studio_holidays=studio_holidays)
         self._export_worker.finished_export.connect(self._on_export_finished)
         self._export_worker.finished.connect(self._on_export_worker_done)
         self._export_worker.finished.connect(self._export_worker.deleteLater)

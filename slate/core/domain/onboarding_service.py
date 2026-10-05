@@ -378,29 +378,36 @@ class OnboardingService:
         date would silently change the leave they have accrued. The dialog
         shows the existing date and asks; overwrite_joined is the answer.
         employment None leaves it alone (leaving always passes None).
+
+        All or nothing, and a failure raises ValueError (the dialog shows it)
+        before any checklist line is laid out. The results were ignored, so a
+        leaver's last day could go unsaved - the account stayed active - while
+        the screen showed the checklist as started.
         """
         try:
-            if employment:
-                self.db.execute_update(
-                    "UPDATE ut_users SET employment = %s "
-                    "WHERE LOWER(username) = LOWER(%s)",
-                    (str(employment), username))
-
-            if direction == JOINING:
-                self.db.execute_update(
-                    "UPDATE ut_users SET joined_on = %s "
-                    "WHERE LOWER(username) = LOWER(%s)"
-                    + ("" if overwrite_joined else " AND joined_on IS NULL"),
-                    (effective_date or date.today(), username))
-            else:
-                self.db.execute_update(
-                    "UPDATE ut_users SET last_day = %s "
-                    "WHERE LOWER(username) = LOWER(%s)",
-                    (effective_date or date.today(), username))
+            with atomic(self.db) as tx:
+                if employment:
+                    tx.write("UPDATE ut_users SET employment = %s "
+                             "WHERE LOWER(username) = LOWER(%s)",
+                             (str(employment), username), expect_rows=True)
+                if direction == JOINING:
+                    tx.write("UPDATE ut_users SET joined_on = %s "
+                             "WHERE LOWER(username) = LOWER(%s)"
+                             + ("" if overwrite_joined else " AND joined_on IS NULL"),
+                             (effective_date or date.today(), username))
+                else:
+                    tx.write("UPDATE ut_users SET last_day = %s "
+                             "WHERE LOWER(username) = LOWER(%s)",
+                             (effective_date or date.today(), username), expect_rows=True)
         except DatabaseUnavailableError:
             raise
-        except Exception:
+        except Exception as exc:
             logger.exception("_record_employment failed")
+            raise ValueError(
+                "%s's %s could not be saved, so no checklist was started. Try again; "
+                "if it keeps happening, tell IT. (%s)" % (
+                    username, "joining details" if direction == JOINING else "last working day",
+                    exc)) from exc
 
     def joined_on(self, username: str):
         """The joining date on record, if any (shown in the Start joining dialog)."""
