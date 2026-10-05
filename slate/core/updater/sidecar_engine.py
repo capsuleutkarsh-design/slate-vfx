@@ -7,7 +7,7 @@ import hashlib
 from pathlib import Path
 from PySide6.QtCore import QObject, Signal
 from ..infra.global_config import GlobalConfig
-from .manifest import problems as manifest_problems
+from .manifest import problems as manifest_problems, signature_refusal
 
 class SidecarEngine(QObject):
     """
@@ -36,6 +36,9 @@ class SidecarEngine(QObject):
                     "This update cannot be installed: %s. The package was built "
                     "or published incorrectly; it has not been downloaded."
                     % "; ".join(faults))
+            refused = signature_refusal(self.manifest)
+            if refused:
+                raise ValueError(refused)
 
             package_name = self.manifest["package_name"]
 

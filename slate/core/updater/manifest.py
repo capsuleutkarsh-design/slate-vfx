@@ -120,3 +120,48 @@ def problems(manifest) -> list:
                      % len(digest))
 
     return found
+
+
+# ------------------------------------------------------------- signing
+#
+# signed_updates. The manifest carries the package's hash, so signing the
+# manifest signs the package. The owner's private key signs it
+# (tools/release_publisher.py); the public half ships in the app
+# (release_key.py), so nobody who can only write to the share can make one.
+
+def sign(manifest: dict, private_key_file) -> dict:
+    """The manifest with its signature, made with the key in private_key_file."""
+    from pathlib import Path
+    from slate.core.security.signing import sign as _sign
+    private = Path(private_key_file).read_text(encoding="utf-8").strip()
+    return _sign(manifest, private)
+
+
+def signature_refusal(manifest, public_key=None) -> str:
+    """
+    '' when this manifest may be used, otherwise why not. Only signed_updates
+    = on refuses; log_only logs what it would refuse. Installing by hand with
+    the installer never comes here.
+    """
+    import logging
+    from slate.core.security import switches
+    from slate.core.security.signing import verify
+    mode = switches.mode("signed_updates")
+    if mode == switches.OFF:
+        return ""
+    if public_key is None:
+        from .release_key import PUBLIC_KEY as public_key
+    if public_key and verify(manifest, public_key):
+        return ""
+    signed = isinstance(manifest, dict) and manifest.get("signature")
+    why = ("this build has no release key" if not public_key else
+           "it is not signed" if not signed else "its signature is not valid")
+    logging.getLogger(__name__).warning(
+        "signed_updates (%s): update %s %s, because %s.", mode,
+        manifest.get("version") if isinstance(manifest, dict) else "?",
+        "was refused" if mode == switches.ON else "would be refused", why)
+    if mode != switches.ON:
+        return ""
+    return ("This update is not signed with the studio's release key (%s), so it was not "
+            "installed. Install it with the installer instead, or ask whoever publishes "
+            "Slate updates to sign it." % why)
