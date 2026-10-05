@@ -1,6 +1,6 @@
 """
 The Timeline Viewer's lineup: a table of the shots, a player to watch them
-in, and the bridge to Olive.
+in, RV, and the EDLs for editorial.
 
 What changed, by finding:
   * The shots are a table - include box, reel, shot, frames, fps, layers,
@@ -9,132 +9,36 @@ What changed, by finding:
     and odd frame rates are marked (MED-087, MED-088, MED-089).
   * Reading the shot folders and planning proxies run on a thread with a
     busy line; the window does not freeze on a large show (MED-091).
-  * Sync writes only the ticked shots into <project>/editorial/lineups and
+  * Export writes only the ticked shots into <project>/editorial/lineups and
     reports in a dialog with "...and N more", Open folder and Copy path
-    (MED-086, MED-092, MED-093). Last sync is read from the written file, so
-    it survives a restart (MED-105).
+    (MED-086, MED-092, MED-093). The last export is read from the written
+    files, so it survives a restart (MED-105).
   * Proxies already made are not offered again; "Rebuild" is there when all
     are up to date (MED-090).
-  * Launch: only once a lineup is written, disabled with a reason when Olive
-    is not installed (MED-094, MED-095). It never kills an Olive somebody
-    already has open (MED-080), and only a window of the Olive it started is
-    ever taken into Slate (MED-081). "Back to lineup" leaves Olive running
-    with a "Return to Olive" button; "Close Olive" asks first (MED-082). While
-    Olive starts, the panel says so; if it cannot be embedded there are
-    "Show Olive window" and "Try again" (MED-083). Re-sync while Olive is open
-    offers to reload it (MED-096).
-  * Styles are scoped, Sync is the primary action, red only for Close Olive,
-    plain words and plurals, a toolbar instead of a column of slabs
-    (MED-099 to MED-102). Win32 is only touched on Windows, when needed (MED-107).
+  * Olive is gone: it is no longer developed. "Open in RV" plays the ticked
+    shots in edit order, and the EDL takes the lineup to Resolve, Premiere or
+    Avid - both show the layer chosen beside the player.
 """
 
 import datetime
 import logging
-import os
-import shutil
-import subprocess
-import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QEvent, QThread, QTimer, Signal, QUrl
+from PySide6.QtCore import Qt, QThread, Signal, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QApplication, QCheckBox, QComboBox, QDialog, QHBoxLayout, QLabel, QLineEdit,
     QPlainTextEdit, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from slate.core.infra.gate import Gate
-from ....core.infra.global_config import GlobalConfig
 from ...core.controls import make_button, set_default_button
 from .lineup_preview import LineupPreview
 
 logger = logging.getLogger(__name__)
 
-# Windows API constants for embedding
-GWL_STYLE = -16
-WS_CAPTION = 0x00C00000
-WS_THICKFRAME = 0x00040000
-WS_CHILD = 0x40000000
-SWP_NOACTIVATE = 0x0010
-SWP_NOZORDER = 0x0004
-SWP_FRAMECHANGED = 0x0020
-
-OLIVE_EXE = "olive-editor.exe"
-# Said to the person: no developer script, no setting that is not there (MED2-048).
-OLIVE_MISSING = "Olive is not installed on this machine - ask IT to install it."
-EMBED_ATTEMPTS = 20          # x 500 ms
-
-
-def _user32():
-    """user32, only on Windows and only when asked for - importing this never fails."""
-    if sys.platform != "win32":
-        return None
-    import ctypes
-    return ctypes.windll.user32
-
-
-def _olive_pids(root_pid: int) -> set:
-    """The Olive process we started and its children."""
-    pids = {int(root_pid)} if root_pid else set()
-    try:
-        import psutil
-        for child in psutil.Process(int(root_pid)).children(recursive=True):
-            pids.add(child.pid)
-    except Exception:
-        pass
-    return pids
-
-
-def find_olive_window(target_pid: int = 0, windows=None):
-    """
-    The visible top-level window of the Olive we launched, or None.
-
-    Only windows owned by that process (or its children) count. The old
-    fallbacks - any olive-editor.exe, any title containing "olive" - could
-    swallow somebody's own Olive, or a browser tab called "Olive oil order"
-    (MED-081). windows: optional [(hwnd, pid)] for tests.
-    """
-    if not target_pid:
-        return None
-    wanted = _olive_pids(target_pid)
-    if windows is None:
-        windows = _visible_windows()
-    for hwnd, pid in windows:
-        if int(pid) in wanted:
-            return hwnd
-    return None
-
-
-def _visible_windows():
-    user32 = _user32()
-    if user32 is None:
-        return []
-    import ctypes
-    from ctypes import wintypes
-    found = []
-
-    def callback(hwnd, _):
-        if user32.IsWindowVisible(hwnd):
-            pid = ctypes.c_ulong()
-            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-            found.append((hwnd, int(pid.value)))
-        return True
-
-    proc = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
-    user32.EnumWindows(proc(callback), 0)
-    return found
-
-
-def other_olive_running(own_pid: int = 0) -> bool:
-    """Whether an Olive we did not start is open on this machine."""
-    try:
-        import psutil
-        for proc in psutil.process_iter(["name", "pid"]):
-            if (proc.info.get("name") or "").lower() == OLIVE_EXE and proc.info["pid"] != own_pid:
-                return True
-    except Exception:
-        return False
-    return False
+# Said to the person; the reason is in the log for IT (MED2-063).
+RV_FAILED = "RV is not installed on this machine, or could not start - tell IT."
 
 
 def friendly_time(stamp: datetime.datetime, now: datetime.datetime = None) -> str:
@@ -192,15 +96,14 @@ class ProxyBuildWorker(QThread):
         self.finished_signal.emit(result)
 
 
-class SyncResultDialog(QDialog):
-    """What Sync wrote, the shots it left out (with '...and N more'), and where."""
+class ExportResultDialog(QDialog):
+    """What the export wrote, the shots it left out (with '...and N more'), and where."""
 
     SHOW = 20
 
-    def __init__(self, result, folder: Path, project_name: str, olive_open: bool, parent=None,
-                 olive_installed: bool = True):
+    def __init__(self, result, folder: Path, project_name: str, layer_note: str, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Lineup written")
+        self.setWindowTitle("EDL written")
         self.setMinimumWidth(520)
         self.folder = Path(folder)
         layout = QVBoxLayout(self)
@@ -208,6 +111,7 @@ class SyncResultDialog(QDialog):
         heading.setWordWrap(True)
         heading.setStyleSheet(f"font-weight: 600; color: {Gate.TEXT};")
         layout.addWidget(heading)
+        layout.addWidget(QLabel(layer_note))
         where = QLabel(f"Written to {self.folder}")
         where.setWordWrap(True)
         where.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -229,10 +133,6 @@ class SyncResultDialog(QDialog):
                 self.btn_all = make_button("Show all", "ghost",
                                            on_click=lambda: box.setPlainText(", ".join(result.skipped)))
                 layout.addWidget(self.btn_all, 0, Qt.AlignmentFlag.AlignLeft)
-        if olive_open:
-            layout.addWidget(QLabel("Olive still shows the previous version until it is reloaded."))
-        elif olive_installed:
-            layout.addWidget(QLabel("Launch Olive to open the combined timeline."))
         row = QHBoxLayout()
         self.btn_open = make_button("Open folder", "secondary", icon="folder",
                                     on_click=lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.folder))))
@@ -253,76 +153,28 @@ ROW_ROLE = Qt.ItemDataRole.UserRole + 10
 
 
 class LineupEditorMode(QWidget):
-    """The lineup, its player, and Olive."""
+    """The lineup, its player, RV and the EDLs."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.shots = []
         self.rows = []
         self.lineup = []
-        self.olive_process = None
-        self.olive_hwnd = None
-        self.embed_timer = None
-        self.health_timer = None
-        self.embed_attempts = 0
         self.project_name = ""
         self.project_path = None
         self.prefer_proxy_media = True
         self.project_root = None
         self.folder_resolver = None
         self.last_result = None
-        self.output_path = None
         self.proxy_worker = None
         self._scan_job = None
         self._plan_job = None
-        self._olive_path = self._find_olive_executable()
         self.setup_ui()
         self._update_actions()
 
     # ------------------------------------------------------------- layout
     def setup_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        # The Olive stage: takes all the room while Olive is shown.
-        self.olive_container = QFrame()
-        self.olive_container.setObjectName("OliveStage")
-        self.olive_container.setStyleSheet(f"QFrame#OliveStage {{ background: {Gate.GROUND}; }}")
-        self.olive_container.hide()
-        self.olive_container.installEventFilter(self)
-        stage = QVBoxLayout(self.olive_container)
-        stage.addStretch(1)
-        self.stage_label = QLabel("Starting Olive…")
-        self.stage_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.stage_label.setStyleSheet(f"color: {Gate.TEXT_2}; font-size: 14px;")
-        stage.addWidget(self.stage_label)
-        stage_buttons = QHBoxLayout()
-        stage_buttons.addStretch()
-        self.btn_show_window = make_button("Show Olive window", "secondary",
-                                           on_click=self._show_olive_unembedded)
-        self.btn_retry_embed = make_button("Try again", "primary", on_click=self._retry_embed)
-        stage_buttons.addWidget(self.btn_show_window)
-        stage_buttons.addWidget(self.btn_retry_embed)
-        stage_buttons.addStretch()
-        stage.addLayout(stage_buttons)
-        stage.addStretch(1)
-        self.btn_show_window.hide()
-        self.btn_retry_embed.hide()
-        layout.addWidget(self.olive_container, 1)
-
-        self.dashboard_widget = QWidget()
-        self.setup_dashboard(self.dashboard_widget)
-        layout.addWidget(self.dashboard_widget, 1)
-
-        self.compact_toolbar = QWidget()
-        self.compact_toolbar.setObjectName("OliveToolbar")
-        self.compact_toolbar.hide()
-        self.setup_compact_toolbar(self.compact_toolbar)
-        layout.addWidget(self.compact_toolbar, 0)
-
-    def setup_dashboard(self, parent):
-        layout = QVBoxLayout(parent)
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(10)
 
@@ -332,33 +184,32 @@ class LineupEditorMode(QWidget):
         self.status_label.setStyleSheet(f"color: {Gate.TEXT}; font-weight: 600;")
         self.status_label.setWordWrap(True)
         bar.addWidget(self.status_label, 1)
-        self.sync_time_label = QLabel("Not synced yet")
+        self.sync_time_label = QLabel("No EDL yet")
         self.sync_time_label.setStyleSheet(f"color: {Gate.TEXT_DIM};")
         bar.addWidget(self.sync_time_label)
         layout.addLayout(bar)
 
         actions = QHBoxLayout()
         actions.setSpacing(8)
-        self.btn_sync = make_button("Sync to Olive", "primary", icon="timeline",
-                                    tooltip="Write the ticked shots as Olive timelines: one per "
-                                            "reel and one with every reel")
-        self.btn_sync.clicked.connect(self.sync_lineup)
+        self.btn_rv = make_button("Open in RV", "primary", icon="play",
+                                  tooltip="Play the ticked shots in RV, in edit order, showing the "
+                                          "layer chosen beside the player (the plate where a shot "
+                                          "has no render of it yet)")
+        self.btn_rv.clicked.connect(self.open_in_rv)
+        self.btn_edl = make_button("Export EDL", "secondary", icon="timeline",
+                                   tooltip="Write the ticked shots as EDLs for Resolve, Premiere or "
+                                           "Avid: one per reel and one with every reel")
+        self.btn_edl.clicked.connect(self.sync_lineup)
         self.btn_proxy = make_button("Make review proxies", "secondary", icon="film",
-                                     tooltip="Make an MP4 beside each plate and render so Olive, "
-                                             "RV and the player here play smoothly")
+                                     tooltip="Make an MP4 beside each plate and render so RV and "
+                                             "the player here play smoothly")
         self.btn_proxy.clicked.connect(self.build_proxies)
-        self.btn_launch = make_button("Launch Olive", "secondary", icon="external")
-        self.btn_launch.clicked.connect(self.launch_olive)
-        self.btn_return = make_button("Return to Olive", "secondary", icon="arrow-right",
-                                      tooltip="Olive is still open")
-        self.btn_return.clicked.connect(self.return_to_olive)
-        self.btn_return.hide()
-        self.chk_prefer_proxy = QCheckBox("Use proxies in Olive")
+        self.chk_prefer_proxy = QCheckBox("Use proxies in RV")
         self.chk_prefer_proxy.setChecked(self.prefer_proxy_media)
-        self.chk_prefer_proxy.setToolTip("Use the MP4 review proxies where they exist, for "
-                                         "smoother playback in Olive")
+        self.chk_prefer_proxy.setToolTip("Play the MP4 review proxies where they are up to date, "
+                                         "for smoother playback in RV")
         self.chk_prefer_proxy.toggled.connect(self._on_prefer_proxy_toggled)
-        for widget in (self.btn_sync, self.btn_proxy, self.btn_launch, self.btn_return):
+        for widget in (self.btn_rv, self.btn_edl, self.btn_proxy):
             actions.addWidget(widget)
         actions.addWidget(self.chk_prefer_proxy)
         actions.addStretch(1)
@@ -407,55 +258,20 @@ class LineupEditorMode(QWidget):
         splitter.setSizes([560, 520])
         layout.addWidget(splitter, 1)
 
-    def setup_compact_toolbar(self, parent):
-        """Slim bar shown while Olive is on screen."""
-        parent.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        parent.setStyleSheet(f"QWidget#OliveToolbar {{ background: {Gate.PANEL}; "
-                             f"border-top: 1px solid {Gate.LINE}; }}")
-        layout = QHBoxLayout(parent)
-        layout.setContentsMargins(10, 6, 10, 6)
-        self.compact_status = QLabel("Olive")
-        self.compact_status.setStyleSheet(f"color: {Gate.TEXT}; font-weight: 600;")
-        layout.addWidget(self.compact_status)
-        layout.addStretch()
-        self.btn_sync_mini = make_button("Re-sync", "primary", icon="refresh",
-                                         tooltip="Write the timelines again from the current shots",
-                                         on_click=self.sync_lineup)
-        self.btn_back = make_button("Back to lineup", "secondary", icon="arrow-left",
-                                    tooltip="Olive keeps running; Return to Olive brings it back",
-                                    on_click=self.back_to_lineup)
-        self.btn_close_olive = make_button("Close Olive", "danger", icon="close",
-                                           on_click=self.close_olive)
-        for widget in (self.btn_sync_mini, self.btn_back, self.btn_close_olive):
-            layout.addWidget(widget)
-
     # ------------------------------------------------------------- state
     def _set_status(self, text):
         self.status_label.setText(text)
-        self.compact_status.setText(text)
-
-    def olive_running(self) -> bool:
-        return bool(self.olive_process is not None and self.olive_process.poll() is None)
 
     def _update_actions(self):
-        has_lineup = bool(self.included_lineup())
-        self.btn_sync.setEnabled(has_lineup and self._scan_job is None)
+        has_lineup = bool(self.included_lineup()) and self._scan_job is None
+        self.btn_rv.setEnabled(has_lineup)
+        self.btn_edl.setEnabled(has_lineup)
         self.btn_proxy.setEnabled(bool(self.lineup) and self._scan_job is None)
-        written = bool(self.output_path and Path(self.output_path).exists())
-        if not self._olive_path:
-            self.btn_launch.setEnabled(False)
-            self.btn_launch.setToolTip(OLIVE_MISSING)
-        else:
-            self.btn_launch.setEnabled(written and not self.olive_running())
-            self.btn_launch.setToolTip("Open the combined timeline in Olive" if written else
-                                       "Sync to Olive first - there is no timeline to open yet")
-        self.btn_return.setVisible(self.olive_running() and not self.olive_container.isVisible())
 
     def set_project_context(self, project_name: str = "", project_path: Path = None):
         self.project_name = (project_name or "").strip()
         self.project_path = project_path
-        # Another project: the last one's timeline is not this one's (MED2-040).
-        self.output_path = None
+        # Another project: the last one's export is not this one's (MED2-040).
         self.last_result = None
 
     def set_project_source(self, project_root=None, folder_resolver=None):
@@ -479,14 +295,10 @@ class LineupEditorMode(QWidget):
                 return name
         return "Project"
 
-    def _sanitize_project_key(self, name: str) -> str:
-        clean = "".join(ch if (ch.isalnum() or ch in ("_", "-")) else "_" for ch in (name or "").strip())
-        return clean.strip("._ ") or "Project"
-
     # ------------------------------------------------------------- shots
     def set_shots(self, all_shots: list):
         """Take the dashboard's shots; read their folders on a thread (MED-091)."""
-        from slate.core.domain.olive_lineup import lineup_rows
+        from slate.core.domain.lineup import lineup_rows
         self.shots = list(all_shots or [])
         root, resolver = self.project_root, self.folder_resolver
         if not self.shots:
@@ -522,7 +334,7 @@ class LineupEditorMode(QWidget):
         self._fill(rows or [])
 
     def _fill(self, rows):
-        from slate.core.domain.olive_lineup import department_labels, fps_mismatches, lineup_fps, plural
+        from slate.core.domain.lineup import department_labels, fps_mismatches, lineup_fps, plural
         from ...core.table_style import dim_cell, set_cell_status
         self.rows = list(rows)
         self.lineup = [r.entry for r in self.rows if r.entry is not None]
@@ -642,28 +454,52 @@ class LineupEditorMode(QWidget):
                 self.table.blockSignals(False)
                 break
 
-    # ------------------------------------------------------------- sync
+    def _layer_note(self) -> str:
+        """'Comp (the plate where a shot has no Comp yet)' - what RV and the EDL show."""
+        layer, label = self.preview.layer(), self.preview.combo_layer.currentText() or "Scan"
+        return label if layer == "scan" else f"{label} (the plate where a shot has no {label} yet)"
+
+    # ------------------------------------------------------------- RV
+    def open_in_rv(self):
+        """Play the ticked shots in RV, in edit order, at the layer being watched."""
+        from slate.core.domain.proxy_builder import proxy_is_current, proxy_path_for
+        from slate.core.domain.rv_review import launch
+        from ...components.feedback import toast, warn
+        lineup = self.included_lineup()
+        if not lineup:
+            toast(self, "Tick at least one shot with a scan.", "warning")
+            return False
+        layer = self.preview.layer()
+        paths = []
+        for entry in lineup:
+            clip = entry.clip_for(layer)
+            use_proxy = self.prefer_proxy_media and proxy_is_current(clip, entry.name)
+            paths.append(str(proxy_path_for(clip, entry.name) if use_proxy else clip.path))
+        if not launch(paths):
+            warn(self, "Open in RV", RV_FAILED)
+            return False
+        return True
+
+    # ------------------------------------------------------------- EDL
     def _read_last_sync(self):
-        """When the combined timeline was last written - from the file itself (MED-105)."""
-        from slate.core.domain.olive_lineup import _safe_name, lineup_folder
-        folder = lineup_folder(self.project_root, self._infer_project_name())
-        combined = folder / f"{_safe_name(self._infer_project_name())}_All_Reels.ovexml"
+        """When an EDL of every reel was last written - from the files themselves (MED-105)."""
+        from slate.core.domain.lineup import _safe_name, lineup_folder
+        name = self._infer_project_name()
+        folder = lineup_folder(self.project_root, name)
         try:
-            if combined.exists():
-                stamp = datetime.datetime.fromtimestamp(combined.stat().st_mtime)
-                self.sync_time_label.setText(f"Synced {friendly_time(stamp)}")
-                self.output_path = combined
-                return
+            stamps = [f.stat().st_mtime for f in folder.glob(f"{_safe_name(name)}_All_Reels_*.edl")]
         except OSError:
-            pass
-        self.sync_time_label.setText("Not synced yet")
-        self.output_path = None
-        self.last_result = None
+            stamps = []
+        if stamps:
+            stamp = datetime.datetime.fromtimestamp(max(stamps))
+            self.sync_time_label.setText(f"EDL written {friendly_time(stamp)}")
+        else:
+            self.sync_time_label.setText("No EDL yet")
 
     def sync_lineup(self):
-        """Write the ticked shots: one timeline per reel and one with every reel."""
-        from slate.core.domain.olive_lineup import generate_timelines, lineup_folder
-        from ...components.feedback import show_error, toast
+        """Write the ticked shots as EDLs: one per reel and one with every reel."""
+        from slate.core.domain.lineup import generate_timelines, lineup_folder
+        from ...components.feedback import toast
         lineup = self.included_lineup()
         if not lineup:
             toast(self, "No shots loaded - click Refresh from Dashboard." if not self.rows
@@ -671,36 +507,17 @@ class LineupEditorMode(QWidget):
             return None
         project_name = self._infer_project_name()
         folder = lineup_folder(self.project_root, project_name)
-        try:
-            result = generate_timelines(self.shots, folder, project_name,
-                                        project_root=self.project_root,
-                                        folder_resolver=self.folder_resolver,
-                                        prefer_proxy_media=self.prefer_proxy_media,
-                                        lineup=lineup)
-        except Exception as e:
-            logger.error("Sync failed: %s", e, exc_info=True)
-            show_error(self, "The lineup could not be written.", exc=e)
-            return None
+        result = generate_timelines(self.shots, folder, project_name,
+                                    project_root=self.project_root,
+                                    folder_resolver=self.folder_resolver,
+                                    layer=self.preview.layer(), lineup=lineup)
         self.last_result = result
         if not result.ok:
-            toast(self, result.summary(), "warning")
+            toast(self, result.summary(), "error" if result.error else "warning")
             return result
-        self.output_path = result.combined or next(iter(result.per_reel.values()), None)
         self._read_last_sync()
-        self._update_actions()
-        olive_open = self.olive_running()
-        SyncResultDialog(result, folder, project_name, olive_open, self,
-                         olive_installed=bool(self._olive_path)).exec()
-        if olive_open and self._ask_reload():
-            self.reload_olive()
+        ExportResultDialog(result, folder, project_name, f"Layer: {self._layer_note()}", self).exec()
         return result
-
-    def _ask_reload(self) -> bool:
-        from ...components.feedback import confirm
-        return confirm(self, "Reload in Olive", "Reload the new timeline in Olive?",
-                       yes_label="Reload", no_label="Not now",
-                       informative="Olive is closed and opened again with the new file. "
-                                   "Save anything you changed in Olive first.")
 
     # ------------------------------------------------------------- proxies
     def build_proxies(self, rebuild=False):
@@ -727,7 +544,7 @@ class LineupEditorMode(QWidget):
         job.start()
 
     def _on_plan(self, jobs, error, rebuild):
-        from slate.core.domain.olive_lineup import plural
+        from slate.core.domain.lineup import plural
         from ...components.feedback import confirm
         self._plan_job = None
         self.btn_proxy.setEnabled(True)
@@ -768,263 +585,8 @@ class LineupEditorMode(QWidget):
             toast(self, result.summary(), "warning",
                   details="Not made:\n" + "\n".join(result.failed))
         elif result.built and not result.cancelled:
-            toast(self, result.summary() + ". Re-sync to have Olive use them.", "success")
+            toast(self, result.summary() + ".", "success")
         self.preview.show_shot(self.preview.index)
-
-    # ------------------------------------------------------------- Olive
-    def _find_olive_executable(self):
-        """Find olive-editor.exe using config/env + install locations."""
-        candidates = []
-        configured = GlobalConfig.get("olive_path")
-        if configured:
-            candidates.append(configured)
-        env_path = os.environ.get("OLIVE_EDITOR_PATH") or os.environ.get("OLIVE_EDITOR")
-        if env_path:
-            candidates.append(env_path)
-        if getattr(sys, 'frozen', False):
-            base_dir = os.path.dirname(sys.executable)
-            candidates.append(os.path.join(base_dir, "_internal", "olive-editor", OLIVE_EXE))
-            if hasattr(sys, '_MEIPASS'):
-                candidates.append(os.path.join(sys._MEIPASS, "olive-editor", OLIVE_EXE))
-            candidates.append(os.path.join(base_dir, "olive-editor", OLIVE_EXE))
-            candidates.append(os.path.join(base_dir, "..", "olive-editor", OLIVE_EXE))
-        else:
-            module_root = Path(__file__).resolve().parents[3]
-            project_root = module_root.parent
-            candidates.extend([
-                str(project_root / "external" / "olive-editor" / OLIVE_EXE),
-                str(module_root / "external" / "olive-editor" / OLIVE_EXE),
-                str(project_root / "olive-editor" / OLIVE_EXE),
-            ])
-        candidates.append(str(Path.home() / "AppData/Local/Slate Production/olive-editor" / OLIVE_EXE))
-        candidates.append(str(Path.home() / "AppData/Local/Slate/olive-editor" / OLIVE_EXE))
-        system_path = shutil.which("olive-editor") or shutil.which(OLIVE_EXE)
-        if system_path:
-            candidates.append(system_path)
-        for candidate in candidates:
-            try:
-                if Path(candidate).exists():
-                    return Path(candidate)
-            except OSError:
-                continue
-        logger.info("Olive not found. Tried: %s", candidates)
-        return None
-
-    def launch_olive(self):
-        """Open the combined timeline in Olive, embedded in this tab."""
-        from ...components.feedback import confirm, show_error, warn
-        if not self._olive_path:
-            warn(self, "Launch Olive", OLIVE_MISSING)
-            return
-        if not (self.output_path and Path(self.output_path).exists()):
-            if not confirm(self, "Launch Olive", "There is no timeline to open yet.",
-                           yes_label="Sync and launch", no_label="Cancel"):
-                return
-            if not self.sync_lineup() or not self.output_path:
-                return
-        if self.olive_running():
-            self.return_to_olive()
-            return
-        # Somebody's own Olive is never closed for them (MED-080).
-        if other_olive_running() and not confirm(
-                self, "Launch Olive", "Olive is already open on this machine.",
-                yes_label="Open another", no_label="Cancel",
-                informative="Slate opens a second Olive for the lineup; the one already open "
-                            "is left as it is."):
-            return
-        env = os.environ.copy()
-        for key in ("QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH", "QT_FONTS_PATH",
-                    "PYTHONPATH", "PYTHONHOME"):
-            env.pop(key, None)
-        args = [str(self._olive_path), str(self.output_path)]
-        try:
-            logger.info("Launching Olive: %s", args)
-            self.olive_process = subprocess.Popen(args, cwd=self._olive_path.parent, env=env)
-        except Exception as e:
-            logger.error("Launch failed: %s", e)
-            show_error(self, "Olive could not be started.", exc=e)
-            return
-        self._show_stage("Starting Olive…")
-        self._start_embedding()
-
-    def _show_stage(self, message):
-        self.dashboard_widget.hide()
-        self.compact_toolbar.show()
-        self.olive_container.show()
-        self.stage_label.setText(message)
-        self.stage_label.show()
-        self._set_status(message)
-        self._update_actions()
-
-    def _start_embedding(self):
-        self.embed_attempts = 0
-        self.btn_show_window.hide()
-        self.btn_retry_embed.hide()
-        if self.embed_timer is None:
-            self.embed_timer = QTimer(self)
-            self.embed_timer.timeout.connect(self.try_embed_olive)
-        self.embed_timer.start(500)
-
-    def try_embed_olive(self):
-        """Poll for the Olive window we started, and take it in."""
-        self.embed_attempts += 1
-        proc = self.olive_process
-        if proc is not None and proc.poll() is not None:
-            rc = proc.returncode
-            self.embed_timer.stop()
-            self.olive_process = None
-            self._olive_gone(f"Olive closed while starting (code {rc}).")
-            return
-        if self.embed_attempts > EMBED_ATTEMPTS:
-            self.embed_timer.stop()
-            text = "Olive is running, but its window could not be brought into Slate."
-            self.stage_label.setText(text)
-            self._set_status("Could not embed Olive")
-            self.btn_show_window.show()
-            self.btn_retry_embed.show()
-            return
-        if proc is None:
-            self.embed_timer.stop()
-            return
-        hwnd = find_olive_window(target_pid=proc.pid)
-        if hwnd:
-            self.embed_timer.stop()
-            self.stage_label.hide()
-            self.embed_window(hwnd)
-            self._set_status(f"Olive: {Path(str(self.output_path)).name}")
-            self._start_health_monitor()
-
-    def _retry_embed(self):
-        self.stage_label.setText("Looking for the Olive window…")
-        self._start_embedding()
-
-    def _show_olive_unembedded(self):
-        """Leave Olive in its own window; back to the lineup here."""
-        self.btn_show_window.hide()
-        self.btn_retry_embed.hide()
-        self.back_to_lineup()
-
-    def _start_health_monitor(self):
-        if self.health_timer is None:
-            self.health_timer = QTimer(self)
-            self.health_timer.timeout.connect(self._check_olive_health)
-        self.health_timer.start(2000)
-
-    def _check_olive_health(self):
-        proc = self.olive_process
-        if not proc:
-            return
-        rc = proc.poll()
-        if rc is None:
-            return
-        if self.health_timer:
-            self.health_timer.stop()
-        self.olive_process = None
-        self.olive_hwnd = None
-        self._olive_gone("Olive has closed." if rc == 0 else f"Olive closed unexpectedly (code {rc}).")
-
-    def _olive_gone(self, message):
-        from ...components.feedback import toast
-        self._switch_to_dashboard_ui()
-        self._fill(self.rows)
-        toast(self, message, "info" if "unexpectedly" not in message else "warning")
-
-    def embed_window(self, hwnd):
-        """Take Olive's window into the stage (Windows only)."""
-        user32 = _user32()
-        if user32 is None:
-            return
-        self.olive_hwnd = hwnd
-        user32.SetParent(hwnd, int(self.olive_container.winId()))
-        style = user32.GetWindowLongW(hwnd, GWL_STYLE)
-        style = style & ~WS_CAPTION & ~WS_THICKFRAME | WS_CHILD
-        user32.SetWindowLongW(hwnd, GWL_STYLE, style)
-        user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER)
-        self.resize_embedded()
-
-    def back_to_lineup(self):
-        """Show the lineup again; Olive keeps running (MED-082)."""
-        self._switch_to_dashboard_ui()
-        self._update_actions()
-
-    def return_to_olive(self):
-        if not self.olive_running():
-            self._update_actions()
-            return
-        self.dashboard_widget.hide()
-        self.compact_toolbar.show()
-        self.olive_container.show()
-        if self.olive_hwnd:
-            self.stage_label.hide()
-            self.resize_embedded()
-        self._update_actions()
-
-    def close_olive(self):
-        from ...components.feedback import confirm
-        if not confirm(self, "Close Olive", "Close Olive?", yes_label="Close Olive",
-                       no_label="Keep it open", destructive=True,
-                       informative="Save your work in Olive first - anything unsaved is lost."):
-            return
-        self._stop_olive_process()
-        self._switch_to_dashboard_ui()
-        self._update_actions()
-
-    def reload_olive(self):
-        """Close our Olive and open it again with the new timeline (MED-096)."""
-        self._stop_olive_process()
-        self.launch_olive()
-
-    # Kept for older callers.
-    def return_to_dashboard(self):
-        self.back_to_lineup()
-
-    def _switch_to_dashboard_ui(self):
-        self.olive_container.hide()
-        self.compact_toolbar.hide()
-        self.dashboard_widget.show()
-
-    def _stop_olive_process(self, timeout_s: int = 3):
-        """Stop the Olive we started (never anyone else's)."""
-        if self.embed_timer and self.embed_timer.isActive():
-            self.embed_timer.stop()
-        if self.health_timer and self.health_timer.isActive():
-            self.health_timer.stop()
-        proc = self.olive_process
-        if not proc:
-            return
-        try:
-            if proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=timeout_s)
-                except subprocess.TimeoutExpired:
-                    logger.warning("Olive process did not exit in %ss; killing.", timeout_s)
-                    proc.kill()
-                    try:
-                        proc.wait(timeout=1)
-                    except subprocess.TimeoutExpired:
-                        logger.warning("Olive process kill wait timed out.")
-        except Exception as exc:
-            logger.warning("Failed to stop Olive process cleanly: %s", exc)
-        finally:
-            self.olive_process = None
-            self.olive_hwnd = None
-
-    def eventFilter(self, obj, event):
-        if obj is self.olive_container and event.type() == QEvent.Type.Resize:
-            self.resize_embedded()
-        return super().eventFilter(obj, event)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.resize_embedded()
-
-    def resize_embedded(self):
-        user32 = _user32()
-        if user32 and self.olive_hwnd and self.olive_container.isVisible():
-            dpr = self.olive_container.devicePixelRatio()
-            user32.MoveWindow(self.olive_hwnd, 0, 0, int(self.olive_container.width() * dpr),
-                              int(self.olive_container.height() * dpr), True)
 
     # ------------------------------------------------------------- lifetime
     def busy_reason(self):
@@ -1050,11 +612,6 @@ class LineupEditorMode(QWidget):
         self.preview.cleanup()
 
     def closeEvent(self, event):
-        if self.embed_timer is not None and self.embed_timer.isActive():
-            self.embed_timer.stop()
-        if self.health_timer and self.health_timer.isActive():
-            self.health_timer.stop()
         self._stop_proxy_worker()
-        self._stop_olive_process()
         self.cleanup_resources()
         super().closeEvent(event)

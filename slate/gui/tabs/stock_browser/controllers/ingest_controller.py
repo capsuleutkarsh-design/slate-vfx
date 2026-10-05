@@ -20,7 +20,7 @@ from .....core.domain.asset_ingestor import IngestWorker
 
 def summary_sentence(summary: dict) -> tuple:
     """(message, level) for what an ingest did."""
-    from .....core.domain.olive_lineup import plural
+    from .....core.domain.lineup import plural
     summary = summary or {}
     added = int(summary.get("added") or 0)
     refreshed = int(summary.get("refreshed") or 0)
@@ -172,7 +172,7 @@ class StockIngestController(QObject):
         reachable = [r for r in roots if Path(r).is_dir()]
         unreachable = [r for r in roots if r not in reachable]
         if unreachable:
-            from .....core.domain.olive_lineup import plural
+            from .....core.domain.lineup import plural
             self.notice.emit(f"{plural(len(unreachable), 'ingest folder')} could not be reached "
                              "and left out.", "warning")
         if not reachable:

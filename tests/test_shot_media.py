@@ -1,7 +1,7 @@
 """
 Finding the right media for a shot.
 
-Both the review player and the Olive timeline ask this module what to show.
+Both the review player and the lineup ask this module what to show.
 The mistake that actually costs money is reviewing the wrong thing - an old
 scan version after a re-delivery, or a department's work-in-progress instead of
 its output - so that is what most of these tests pin down.
@@ -246,3 +246,35 @@ class TestMediaClip:
         clip = MediaClip(path=tmp_path / "nope" / "SH010.%04d.exr", is_sequence=True)
 
         assert not clip.exists()
+
+
+class TestNewestRender:
+    """By name, Output/v001 came before v002 and the oldest render was reviewed."""
+
+    def test_the_newest_version_folder_wins(self, tmp_path):
+        comp = tmp_path / "07_Comp"
+        for version in ("v001", "v002", "v010"):
+            _frames(comp / "Output" / version, f"SH010_comp_{version}")
+        _frames(comp / "Output" / "Shape", "SH010_shape")
+
+        clip = resolve_department(comp, "comp")
+
+        assert clip.path.parent.name == "v010"
+
+    def test_versions_in_one_folder_give_the_newest(self, tmp_path):
+        output = tmp_path / "07_Comp" / "Output"
+        _frames(output, "SH010_comp_v001", frames=range(1001, 1011))
+        _frames(output, "SH010_comp_v002", frames=range(1001, 1006))
+
+        clip = resolve_department(tmp_path / "07_Comp", "comp")
+
+        assert clip.path.name.startswith("SH010_comp_v002")
+
+    def test_without_versions_the_largest_sequence_still_wins(self, tmp_path):
+        output = tmp_path / "07_Comp" / "Output"
+        _frames(output, "SH010_comp", frames=range(1001, 1011))
+        _frames(output, "stray", frames=(1,))
+
+        clip = resolve_department(tmp_path / "07_Comp", "comp")
+
+        assert clip.path.name.startswith("SH010_comp")

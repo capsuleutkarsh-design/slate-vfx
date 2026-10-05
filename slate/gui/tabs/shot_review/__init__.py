@@ -1,5 +1,5 @@
 """
-What is left of the Shot Review package: the Olive lineup editor.
+What is left of the Shot Review package: the lineup editor and its player.
 
 The rest of it - a thousand-line tab, a comparison viewer, an image viewer, a
 tech-check dialog and their workers - was reachable from nothing. The sidebar

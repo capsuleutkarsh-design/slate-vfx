@@ -5,8 +5,8 @@ Three installers, one per machine role. Install the server first, then the works
 | Installer | Install on | What it holds |
 |---|---|---|
 | `setup_Slate Server_vBETA 2.1.0.exe` | the one machine that runs the studio database | Slate Server, PostgreSQL 17, PgBouncer, the updater |
-| `setup_Slate_Studio_vBETA 2.1.0.exe` | artist, lead and supervisor workstations | Slate Studio, ffmpeg, Olive, OpenRV, the updater |
-| `setup_Slate_Ops_vBETA 2.1.0.exe` | HR, IT and production office machines | Slate Operations, ffmpeg, Olive, the updater |
+| `setup_Slate_Studio_vBETA 2.1.0.exe` | artist, lead and supervisor workstations | Slate Studio, ffmpeg, OpenRV, the updater |
+| `setup_Slate_Ops_vBETA 2.1.0.exe` | HR, IT and production office machines | Slate Operations, ffmpeg, the updater |
 
 Nothing needs an internet connection. Every dependency is inside the installer, and updates are picked up from the studio's shared folder.
 
@@ -21,7 +21,7 @@ This is a big release. Every screen was gone through, as an artist, a lead, HR, 
 - **Build & Ingest copies by default.** Move is an option. A check runs before every ingest so you see what will happen first.
 - **CAP Rename works again**, with a real **Undo last rename**.
 - **Stock Viewer**: favourites, Studio picks, sound in previews, search by "4K" or "24fps", and Undo after delete.
-- **Timeline Viewer** has its own preview player, so you can play the lineup inside Slate.
+- **Timeline Viewer** has its own preview player, opens the lineup in **RV**, and exports **EDLs** for editorial. Olive is removed: it is no longer developed.
 - **IT Support** clocks count working hours (10:00–19:00 on the studio's working days), so a ticket raised on Saturday evening is not "breached" on Monday morning.
 - **Closing Slate or signing out never punches you out.** You can also punch in again after punching out, as a second session that day.
 - **Smaller laptops work.** The window fits 1366×768 and 1280×720 screens, and pages scroll instead of being cut off.
@@ -152,7 +152,7 @@ On each machine, a settings file damaged by the old `&` / apostrophe bug is also
 - **Stock stills play the original file.** EXR, HDR and DPX stills are no longer shown from an 8-bit proxy, so the colour controls appear. Proxies are used only for movies and image sequences. Sound and 3D files are not taken into the library; the ingest summary names them.
 - **Timeline Viewer** reads each movie plate's frame rate and length from the file. Image sequences are played and written at 24 fps, because Slate has no project frame-rate setting yet.
 - **New shot names follow one rule everywhere:** Add Shots, Build & Ingest, CAP Rename's stitch names and "Create shots from bid". Names may use letters, digits, `_`, `-` and `.`, with no spaces, up to 64 characters. Shots you already have are never refused.
-- **Timeline Viewer lineups are written to `<project>/editorial/lineups`.**
+- **Olive is removed.** It is no longer developed, so the Timeline Viewer no longer writes Olive timelines or opens Olive. **Open in RV** plays the lineup instead, and **Export EDL** writes CMX 3600 EDLs to `<project>/editorial/lineups` for Resolve, Premiere or Avid. Old `.ovexml` files there are left alone. The Studio installer is about 240 MB smaller.
 - **Auto-publish** fires only when a shot changes to Approved, and asks first. On new projects the output folder is `08_Deliver`. It copies only the shot's current (else newest) version folder, and only media files, keeping sub-folders.
 - **Bidding:**
   - **A revised Won bid stays Won** until the new revision is decided. Its money still counts in the Won card and its tracking stays open; the table says "Won – v2 in progress". When v2 is decided, v1 becomes Superseded. (Revising a Lost bid works the same way. Revising a Sent bid still supersedes it at once.) Only the newest revision can be revised or decided.
@@ -348,12 +348,11 @@ On each machine, a settings file damaged by the old `&` / apostrophe bug is also
 - **Lineup table** with include boxes, reel filter and search. Shots without a scan are greyed out.
 - Shots are ordered by reel, then by every number in the name.
 - **Plate frame rate and length** are read from movie plates, so a 25 fps plate says 25 and the mismatch warning works. Shots of unknown length are drawn hatched in the strip.
-- Ticking shots keeps the shot you were watching, changing layer during **Play lineup** keeps playing, and after switching project **Launch Olive** never opens the previous project's timeline.
+- Ticking shots keeps the shot you were watching, and changing layer during **Play lineup** keeps playing.
 - Every department gets a layer once it has a render, including DMP, CG, Roto, Matchmove and Slapcomp.
-- **Olive:**
-  - Slate never closes an Olive you already had open;
-  - only the Olive window Slate started is embedded;
-  - **Back to lineup**, **Return to Olive** and **Close Olive** (which asks first).
+- **Open in RV** plays the ticked shots in RV, in edit order, at the layer chosen beside the player (the plate where a shot has no render of it yet). **Use proxies in RV** plays up-to-date review proxies instead of the frames.
+- **Export EDL** writes the ticked shots as EDLs of that layer, one per reel and one with every reel. Each event names its clip and file for relinking; a sequence keeps its frame numbers as source timecode.
+- Where a department keeps versions (`Output002`, or `_v002` in the file name), the newest is shown. Before, `v001` came first by name.
 
 **RV picker** shows layer, version and frames in a table, with tick boxes you can see in Dark and **Tick all / Untick all**. A render's version is read from its file name when nothing else gives it.
 
@@ -665,7 +664,8 @@ On each machine, a settings file damaged by the old `&` / apostrophe bug is also
 - Ingest took about 1 second per small image, even in Fast mode.
 - The play button showed paused while playing. Image sequences froze Slate while they were probed.
 - Switching clips quickly could crash Slate.
-- **Launching the Timeline Viewer force-closed every Olive on the machine**, and could grab any window with "olive" in its title.
+- **RV playlists never opened.** The session file Slate wrote was rejected by RV, so the dashboard's "Open 2 in RV" failed. It is now the format RV writes itself, checked with RV.
+- **A re-rendered shot kept playing its old proxy**, and Make review proxies called it "already there". A proxy older than its render is now passed over and offered to be made again. **Rebuild all** did not rebuild anything; it does now.
 - Timeline shots were ordered by the last number only, mixing reels. DMP, CG, Roto, Matchmove and Slapcomp renders never appeared.
 - **Deleted stock assets came back** on the next ingest or Rescan.
 - **The inspector kept showing (and could keep playing) an asset** that was no longer selected or no longer listed.
@@ -675,7 +675,7 @@ On each machine, a settings file damaged by the old `&` / apostrophe bug is also
 - A file that could not be read showed "Analysing…" forever and was re-analysed on every Rescan. Unplayable files showed ffmpeg's raw error. Sound files were skipped without a word.
 - Import counted assets already there as "Imported". Export carried the exporter's favourites, database ids and cache paths.
 - The grid sometimes laid out one column short, and sorting by a column header left the Sort box showing the old order.
-- The Timeline Viewer listed every shot at 24 fps and every movie plate as "~100 (length unknown)". After switching to a project that was never synced, Launch Olive opened the previous project's timeline. Ticking a shot threw the player back to the first shot.
+- The Timeline Viewer listed every shot at 24 fps and every movie plate as "~100 (length unknown)". Ticking a shot threw the player back to the first shot.
 - A metadata check finishing after a clip was closed could crash Slate.
 
 ### Scheduling and Bidding
@@ -814,8 +814,8 @@ On each machine, a settings file damaged by the old `&` / apostrophe bug is also
 - Another person's ingest lock that is still fresh can only be cleared by an admin.
 - Shot names in non-Latin scripts are spelled out from the letters' names and marked "check it". This is not a real transliteration, so check them before you ingest.
 - CAP Rename reorders with **Move up / Move down** and sorting. Rows cannot be dragged.
-- **Review proxies stay in a `proxy` folder next to the frames** (for plates, inside the scan version, for example `01_Scan\v001\EXR\proxy`). Help says exactly where. Moving them would leave existing proxies behind and affect the link to Olive, so a separate review folder is left for a later decision.
-- Image sequences play and are written to Olive at 24 fps, because projects have no frame-rate setting yet. Movie plates use their own rate.
+- **Review proxies stay in a `proxy` folder next to the frames** (for plates, inside the scan version, for example `01_Scan\v001\EXR\proxy`). Help says exactly where. Stock proxies are kept apart, in the server's `Cache` folder.
+- Image sequences play, and are timed in EDLs, at 24 fps, because projects have no frame-rate setting yet. Movie plates use their own rate.
 - Importing an exported stock library brings back files that were deleted.
 
 **Scheduling and Bidding**

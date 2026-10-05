@@ -69,22 +69,6 @@
       "required": false
     },
     {
-      "name": "olive",
-      "title": "Olive video editor",
-      "why": "Embedded in the review tab for cutting. Slate falls back to its own player when this is absent.",
-      "url": null,
-      "kind": "zip",
-      "dest": "external/olive-editor",
-      "probe": "external/olive-editor/olive-editor.exe",
-      "required": false,
-      "resolve": {
-        "_comment": "Olive's nightly asset carries the build's commit hash in its filename, so a pinned link rots within the week. The release is looked up at setup time instead.",
-        "github_release": "olive-editor/olive",
-        "tag": "0.2.0-nightly",
-        "asset_match": "Windows-x86_64-Portable\\.zip$"
-      }
-    },
-    {
       "name": "openrv",
       "title": "OpenRV",
       "why": "Used for review playback when it is present. There is no public Windows build, so this one is built or supplied by the studio - drop it in the folder below and Slate finds it.",

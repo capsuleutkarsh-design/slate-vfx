@@ -5,7 +5,7 @@ A dashboard shot knows where its folders are - ``folder_paths`` maps "scan",
 "comp", "prep" and every other department to a path inside the project. What it
 does not know is which of those folders actually contain something to look at.
 
-Both the review player and the Olive timeline need the same answer: given a
+Both the review player and the lineup need the same answer: given a
 shot and a department, what is the one thing a person would want to watch, and
 which departments have anything at all? That answer lives here once, so the
 picker in the review button and the tracks in the timeline can never disagree.
@@ -36,6 +36,14 @@ SEQUENCE_SUFFIXES = (".exr", ".dpx", ".tif", ".tiff", ".jpg", ".jpeg", ".png")
 _JUNK_PREFIXES = ("._", "~$", ".")
 
 _VERSION_DIR = re.compile(r"^v(\d+)$", re.IGNORECASE)
+# A version in a file name: SH010_comp_v002. -> 2.
+_VERSION_IN_NAME = re.compile(r"(?<![A-Za-z0-9])v(\d+)(?![0-9])", re.IGNORECASE)
+
+
+def _name_version(text: str) -> int:
+    """The last version number in a name, or -1 when it carries none."""
+    found = _VERSION_IN_NAME.findall(str(text))
+    return int(found[-1]) if found else -1
 
 
 @dataclass
@@ -85,7 +93,7 @@ def _media_files(folder: Path, suffixes) -> List[Path]:
 
 def _sequence_from_files(files: List[Path]) -> Optional[MediaClip]:
     """
-    Turn a folder of numbered frames into one clip Olive and RV both accept.
+    Turn a folder of numbered frames into one clip the players and RV accept.
 
     Frames become ``name.%04d.exr``; the padding is taken from the real file
     names rather than assumed, because a four-digit assumption silently breaks
@@ -97,8 +105,10 @@ def _sequence_from_files(files: List[Path]) -> Optional[MediaClip]:
     sequences, _stills = group_frames(files, min_frames=1)
     if not sequences:
         return None
-    # The real sequence is the one with the most frames (largest first).
-    seq = sequences[0]
+    # The newest version when the names carry one - v001 and v002 rendered
+    # into the same folder used to give the larger, often the older - else
+    # the real sequence, the one with the most frames (largest first).
+    seq = max(sequences, key=lambda s: _name_version(s.head))
     pattern = seq.filename_pattern
     if not seq.padding and len(str(seq.start)) == len(str(seq.end)):
         # Every number written at the same width (100001-100002): say so,
@@ -144,17 +154,20 @@ def _search_folders(root: Path) -> List[Path]:
     Where to look inside a department folder, nearest first.
 
     Departments keep their reviewable output in ``Output``, sometimes split
-    again (``Output/Anim``, ``Output/Shape``). The department root itself is
-    included last so a studio that drops a MOV straight in still works.
+    again (``Output/Anim``, ``Output/Shape``) or by version (``Output/v002``),
+    newest version first - by name, v001 came before v002 and the oldest
+    render was the one reviewed. The department root itself is included last
+    so a studio that drops a MOV straight in still works.
     """
     candidates: List[Path] = []
     output = root / "Output"
     if output.is_dir():
         candidates.append(output)
         try:
-            candidates.extend(sorted(d for d in output.iterdir() if d.is_dir()))
+            subfolders = sorted(d for d in output.iterdir() if d.is_dir())
         except (PermissionError, OSError):
-            pass
+            subfolders = []
+        candidates.extend(sorted(subfolders, key=lambda d: -_name_version(d.name)))
     candidates.append(root)
     return candidates
 

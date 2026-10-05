@@ -189,9 +189,6 @@ def build_release():
     if os.path.exists('slate/bin'):
         args.append('--add-data=slate/bin;slate/bin')
         
-    if os.path.exists('external/olive-editor'):
-        args.append('--add-data=external/olive-editor;external/olive-editor')
-        
     # Help Content
     if os.path.exists('slate/core/help_content.json'):
          args.append('--add-data=slate/core/help_content.json;slate/core')
@@ -349,7 +346,7 @@ def _copy_unmanaged_data():
 
     This used to sit inside _check_server_carries_its_settings, after its early
     returns - so a bundle that could not be opened skipped the copy as well,
-    and the build shipped without Olive or the database scripts and said
+    and the build shipped without the database scripts and said
     nothing. It is its own step now, and it always runs.
 
     slate/bin is not copied: the spec already places ffmpeg and ffprobe in
@@ -404,7 +401,6 @@ def _copy_unmanaged_data():
         else:
             print(f'  ({src} not present - skipped)')
 
-    copy_if_exists('external/olive-editor', 'external/olive-editor')
     copy_if_exists('database', 'database')
 
 

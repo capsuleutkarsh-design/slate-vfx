@@ -1,14 +1,14 @@
 """
-Timeline Viewer - the lineup: watched here, edited in Olive.
+Timeline Viewer - the lineup: watched here, in RV, and as EDLs for editorial.
 
 The shots come from the dashboard, so the timeline is always built from what
 the production is actually tracking: plates laid out reel by reel, with each
 department's render on its own layer beneath the plate it came from. The tab
-plays the lineup itself (LineupPreview) and writes Olive timelines; reviewing
-proper happens in OpenRV from the dashboard.
+plays the lineup itself (LineupPreview), opens it in RV and writes EDLs;
+reviewing a single shot happens in OpenRV from the dashboard.
 
 On first show it loads the stored project by itself instead of opening on an
-empty list with an enabled Sync button (MED-086).
+empty list with enabled buttons (MED-086).
 """
 
 import logging
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class VFXReviewDualModeTab(QWidget):
-    """The lineup, built from the dashboard, played here and opened in Olive."""
+    """The lineup, built from the dashboard, played here, in RV and as EDLs."""
 
     def __init__(self, config_manager, user_data=None):
         super().__init__()
@@ -58,7 +58,7 @@ class VFXReviewDualModeTab(QWidget):
         title = QLabel("Timeline")
         title.setStyleSheet(f"color: {Gate.TEXT}; font-size: 16px; font-weight: 600;")
         layout.addWidget(title)
-        subtitle = QLabel("The lineup from the dashboard: watch it here, open it in Olive")
+        subtitle = QLabel("The lineup from the dashboard: watch it here or in RV, export an EDL")
         subtitle.setStyleSheet(f"color: {Gate.TEXT_DIM};")
         layout.addWidget(subtitle)
         layout.addStretch()

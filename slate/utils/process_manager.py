@@ -1,6 +1,6 @@
 """
 Process and Subprocess Lifecycle Manager for Slate.
-Ensures no orphan child processes (FFmpeg, Python, Olive, etc.) remain running
+Ensures no orphan child processes (FFmpeg, Python, etc.) remain running
 after the main application closes.
 """
 import atexit

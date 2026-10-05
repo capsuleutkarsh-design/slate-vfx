@@ -155,6 +155,21 @@ class TestRVAcceptsSequences:
         assert not RVLauncher.media_exists(str(tmp_path / "b.mov"))
 
 
+def test_a_playlist_session_is_gto_rv_reads(tmp_path):
+    """
+    The old session failed to parse in RV ("syntax error" at line 5), so no
+    playlist ever opened. This shape was checked by loading it with rvio.
+    """
+    session = tmp_path / "p.rv"
+    paths = ["C:\\show\\SH010.mov", "C:\\show\\EXR\\SH020.%04d.exr"]
+    assert RVLauncher.__new__(RVLauncher)._generate_rv_session(paths, str(session))
+    text = session.read_text(encoding="utf-8")
+    assert text.startswith("GTOa (4)") and 'string viewNode = "defaultSequence"' in text
+    assert text.count(": RVFileSource (1)") == 2
+    assert '        string movie = "C:/show/EXR/SH020.%04d.exr"' in text
+    assert "string media :" not in text
+
+
 class TestReadingWhatRVWrote:
 
     def _write(self, tmp_path, **data):

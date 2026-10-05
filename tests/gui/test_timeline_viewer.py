@@ -1,6 +1,6 @@
 """
-The Timeline Viewer: the lineup table, its player, and the Olive bridge.
-Finding ids are named on each test. Olive itself is never started here.
+The Timeline Viewer: the lineup table, its player, RV and the EDLs.
+Finding ids are named on each test. RV itself is never started here.
 """
 
 import datetime
@@ -27,9 +27,8 @@ def _shot(tmp_path, name, reel="R1", scan=True):
 
 
 @pytest.fixture
-def editor(qtbot, monkeypatch):
+def editor(qtbot):
     from slate.gui.tabs.shot_review import lineup_editor_mode as mod
-    monkeypatch.setattr(mod.LineupEditorMode, "_find_olive_executable", lambda self: None)
     e = mod.LineupEditorMode()
     qtbot.addWidget(e)
     e.resize(1400, 800)
@@ -45,9 +44,7 @@ def _load(qtbot, editor, tmp_path, shots):
 
 def test_it_starts_empty_and_says_what_to_do(editor):
     assert "No shots loaded" in editor.status_label.text()                         # MED-086
-    assert not editor.btn_sync.isEnabled()
-    assert not editor.btn_launch.isEnabled()                                        # MED-094, 095
-    assert "ask IT to install" in editor.btn_launch.toolTip()                       # MED2-048
+    assert not editor.btn_edl.isEnabled() and not editor.btn_rv.isEnabled()
 
 
 def test_shots_without_scans_are_listed_and_counted(qtbot, editor, tmp_path):
@@ -57,7 +54,7 @@ def test_shots_without_scans_are_listed_and_counted(qtbot, editor, tmp_path):
     assert editor.table.rowCount() == 3                                             # MED-087
     assert "2 shots without a scan" in editor.status_label.text()                    # MED2-050
     assert editor.table.item(1, 3).text() == "no scan yet"
-    assert editor.btn_sync.isEnabled()
+    assert editor.btn_edl.isEnabled() and editor.btn_rv.isEnabled()
 
 
 def test_the_table_filters_and_leaves_out_unticked_shots(qtbot, editor, tmp_path):
@@ -72,99 +69,46 @@ def test_the_table_filters_and_leaves_out_unticked_shots(qtbot, editor, tmp_path
     assert len(editor.preview.entries) == 2
 
 
-def test_sync_writes_into_the_project_and_enables_launch(qtbot, editor, tmp_path, monkeypatch):
+def test_export_writes_edls_into_the_project(qtbot, editor, tmp_path, monkeypatch):
     from slate.gui.tabs.shot_review import lineup_editor_mode as mod
-    monkeypatch.setattr(mod.LineupEditorMode, "_find_olive_executable", lambda self: tmp_path)
-    editor._olive_path = tmp_path / "olive-editor.exe"
     shots = [_shot(tmp_path, "SH010")] + [_shot(tmp_path, f"X{i:02d}", scan=False) for i in range(25)]
     _load(qtbot, editor, tmp_path, shots)
     seen = []
-    monkeypatch.setattr(mod.SyncResultDialog, "exec", lambda self: seen.append(self) or 1)
+    monkeypatch.setattr(mod.ExportResultDialog, "exec", lambda self: seen.append(self) or 1)
     result = editor.sync_lineup()
     assert result.ok and result.combined.parent == tmp_path / "editorial" / "lineups"   # MED-093
+    assert result.combined.suffix == ".edl"
     assert "and 5 more" in seen[0].skipped_text                                         # MED-092
-    assert editor.btn_launch.isEnabled()                                                # MED-095
-    assert editor.sync_time_label.text().startswith("Synced today")                    # MED-105
+    assert editor.sync_time_label.text().startswith("EDL written today")                # MED-105
 
 
-def test_resync_with_olive_open_offers_a_reload(qtbot, editor, tmp_path, monkeypatch):
-    from slate.gui.tabs.shot_review import lineup_editor_mode as mod
-    _load(qtbot, editor, tmp_path, [_shot(tmp_path, "SH010")])
-
-    class Running:
-        pid = 4242
-        def poll(self): return None
-    editor.olive_process = Running()
-    monkeypatch.setattr(mod.SyncResultDialog, "exec", lambda self: 1)
-    monkeypatch.setattr(editor, "_ask_reload", lambda: True)
-    reloaded = []
-    monkeypatch.setattr(editor, "reload_olive", lambda: reloaded.append(1))
-    editor.sync_lineup()
-    assert reloaded == [1]                                                               # MED-096
-    editor.olive_process = None
-
-
-def test_back_to_lineup_keeps_a_way_back(qtbot, editor, tmp_path):
-    class Running:
-        pid = 1
-        def poll(self): return None
-    editor.olive_process = Running()
-    editor._show_stage("Olive")
-    editor.back_to_lineup()
-    assert editor.btn_return.isVisibleTo(editor)                                          # MED-082
-    editor.return_to_olive()
-    assert editor.olive_container.isVisibleTo(editor)
-    editor.olive_process = None
+def test_open_in_rv_plays_the_ticked_shots_in_order(qtbot, editor, tmp_path, monkeypatch):
+    from slate.core.domain import rv_review
+    from slate.core.domain.proxy_builder import proxy_path_for
+    shots = [_shot(tmp_path, "SH020"), _shot(tmp_path, "SH010"), _shot(tmp_path, "SH030")]
+    _load(qtbot, editor, tmp_path, shots)
+    editor.table.item(2, 0).setCheckState(Qt.CheckState.Unchecked)                 # leave out SH030
+    proxy = proxy_path_for(editor.lineup[1].clips["scan"], "SH020")
+    proxy.parent.mkdir(parents=True)
+    proxy.write_bytes(b"mp4")
+    sent = []
+    monkeypatch.setattr(rv_review, "launch", lambda paths, launcher=None: sent.append(paths) or True)
+    assert editor.open_in_rv()
+    assert [p.split("\\")[-1].split("/")[-1] for p in sent[0]] == ["SH010.%04d.exr", "SH020_scan_proxy.mp4"]
+    editor.chk_prefer_proxy.setChecked(False)
+    editor.open_in_rv()
+    assert sent[1][1].endswith("SH020.%04d.exr")
 
 
-def test_an_olive_that_cannot_be_embedded_says_so(qtbot, editor, monkeypatch):
-    from slate.gui.tabs.shot_review import lineup_editor_mode as mod
-
-    class Running:
-        pid = 99999
-        def poll(self): return None
-    monkeypatch.setattr(mod, "find_olive_window", lambda target_pid=0, windows=None: None)
-    editor.olive_process = Running()
-    editor._show_stage("Starting Olive…")
-    editor._start_embedding()
-    for _ in range(mod.EMBED_ATTEMPTS + 1):
-        editor.try_embed_olive()
-    assert "could not be brought into Slate" in editor.stage_label.text()              # MED-083
-    assert editor.btn_show_window.isVisibleTo(editor) and editor.btn_retry_embed.isVisibleTo(editor)
-    assert editor.compact_status.text() == "Could not embed Olive"
-    editor.embed_timer.stop()
-    editor.olive_process = None
-
-
-def test_only_our_olive_window_is_taken(monkeypatch):
-    from slate.gui.tabs.shot_review import lineup_editor_mode as mod
-    monkeypatch.setattr(mod, "_olive_pids", lambda pid: {pid})
-    windows = [(11, 500), (12, 600)]          # 500: somebody's "Olive oil order" tab
-    assert mod.find_olive_window(600, windows=windows) == 12                            # MED-081
-    assert mod.find_olive_window(700, windows=windows) is None
-    assert mod.find_olive_window(0, windows=windows) is None
-
-
-def test_nothing_is_ever_force_killed():
-    from slate.gui.tabs.shot_review import lineup_editor_mode as mod
-    source = inspect.getsource(mod)
-    assert "taskkill" not in source                                                       # MED-080
-    assert "user32 = ctypes.windll" not in source                                         # MED-107
-
-
-def test_an_open_olive_is_asked_about_not_closed(qtbot, editor, tmp_path, monkeypatch):
-    from slate.gui.tabs.shot_review import lineup_editor_mode as mod
+def test_rv_that_will_not_start_says_so(qtbot, editor, tmp_path, monkeypatch):
+    from slate.core.domain import rv_review
     from slate.gui.components import feedback
-    editor._olive_path = tmp_path / "olive-editor.exe"
-    editor.output_path = tmp_path / "x.ovexml"
-    editor.output_path.write_text("x")
-    monkeypatch.setattr(mod, "other_olive_running", lambda own_pid=0: True)
-    asked = []
-    monkeypatch.setattr(feedback, "confirm", lambda *a, **k: asked.append(a) or False)
-    started = []
-    monkeypatch.setattr(mod.subprocess, "Popen", lambda *a, **k: started.append(a))
-    editor.launch_olive()
-    assert asked and started == []
+    _load(qtbot, editor, tmp_path, [_shot(tmp_path, "SH010")])
+    monkeypatch.setattr(rv_review, "launch", lambda paths, launcher=None: False)
+    said = []
+    monkeypatch.setattr(feedback, "warn", lambda *a, **k: said.append(a))
+    assert editor.open_in_rv() is False
+    assert "tell IT" in said[0][2]                                                       # MED2-063
 
 
 def test_buttons_and_header_read_cleanly(qtbot):
@@ -172,8 +116,7 @@ def test_buttons_and_header_read_cleanly(qtbot):
     from slate.gui.tabs.vfx_review_dual_mode_tab import VFXReviewDualModeTab
     tab = VFXReviewDualModeTab(None)
     qtbot.addWidget(tab)
-    assert tab.lineup_editor.btn_sync.property("kind") == "primary"                      # MED-100
-    assert tab.lineup_editor.btn_close_olive.property("kind") == "danger"
+    assert tab.lineup_editor.btn_rv.property("kind") == "primary"                        # MED-100
     texts = [w.text() for w in tab.findChildren(QLabel)]
     assert "Timeline" in texts and "TIMELINE VIEWER" not in texts                        # MED-101
     header = tab.findChild(QWidget, "TimelineHeader")
@@ -181,7 +124,7 @@ def test_buttons_and_header_read_cleanly(qtbot):
 
 
 def test_plurals_and_friendly_times():
-    from slate.core.domain.olive_lineup import plural
+    from slate.core.domain.lineup import plural
     from slate.gui.tabs.shot_review.lineup_editor_mode import friendly_time
     assert plural(1, "shot") == "1 shot" and plural(3, "proxy", "proxies") == "3 proxies"  # MED-101
     now = datetime.datetime(2026, 10, 2, 20, 0)
@@ -267,32 +210,35 @@ def test_shot_names_stay_readable_at_1280(qtbot, editor, tmp_path):
 
 # ------------------------------------------------------------------ round 2
 
-def test_another_project_does_not_launch_the_last_ones_timeline(qtbot, editor, tmp_path):
+def test_another_project_does_not_show_the_last_ones_edl(qtbot, editor, tmp_path):
     _load(qtbot, editor, tmp_path, [_shot(tmp_path, "SH010")])
-    editor.output_path = tmp_path / "AUDIT2_All_Reels.ovexml"
-    editor.output_path.write_text("x")
+    folder = tmp_path / "editorial" / "lineups"
+    folder.mkdir(parents=True)
+    (folder / "PRJ_All_Reels_scan.edl").write_text("x")
+    editor._read_last_sync()
+    assert editor.sync_time_label.text() != "No EDL yet"
     other = tmp_path / "other"
     editor.set_project_context("OTHER")
     editor.set_project_source(other)
     editor.set_shots([_shot(other, "SH900")])
     qtbot.waitUntil(lambda: editor._scan_job is None, timeout=10000)
-    assert editor.output_path is None and editor.sync_time_label.text() == "Not synced yet"  # MED2-040
+    assert editor.sync_time_label.text() == "No EDL yet"                                  # MED2-040
 
 
 def test_a_movie_plate_gives_its_rate_and_length(tmp_path):
     from pathlib import Path
-    from slate.core.domain import olive_lineup
+    from slate.core.domain import lineup
     from slate.core.domain.shot_media import MediaClip
     clip = MediaClip(path=Path(tmp_path / "SH010_scan.mov"), department="scan")
     fake = {"fps": 25.0, "duration_sec": 2.0, "width": 1920, "height": 1080}
     from slate.core.domain.metadata_engine import SmartMetadataManager
     import unittest.mock as mock
     with mock.patch.object(SmartMetadataManager, "extract_tech_metadata", return_value=fake):
-        assert olive_lineup.plate_facts(clip) == (25.0, 50)                          # MED2-041/042
+        assert lineup.plate_facts(clip) == (25.0, 50)                          # MED2-041/042
     shot = Shot(shot_name="SH010")
-    assert olive_lineup._frame_range(shot, clip, 50) == (1, 50)
+    assert lineup._frame_range(shot, clip, 50) == (1, 50)
     seq = MediaClip(path=Path("x.%04d.exr"), is_sequence=True, first_frame=1001, last_frame=1008)
-    assert olive_lineup.plate_facts(seq) == (24.0, 0)
+    assert lineup.plate_facts(seq) == (24.0, 0)
 
 
 def test_ticking_keeps_the_shot_being_watched(qtbot, editor, tmp_path):
@@ -322,7 +268,7 @@ def test_an_unreadable_share_is_not_an_empty_project(qtbot, editor):
 
 
 def test_the_strip_does_not_inflate_unknown_lengths(qtbot):
-    from slate.core.domain.olive_lineup import LineupShot
+    from slate.core.domain.lineup import LineupShot
     from slate.gui.tabs.shot_review.lineup_preview import LineupStrip
     strip = LineupStrip()
     qtbot.addWidget(strip)

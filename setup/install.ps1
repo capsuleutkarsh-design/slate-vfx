@@ -109,28 +109,6 @@ function Expand-Into {
 
 # ---------------------------------------------------------------- components
 
-function Resolve-Url {
-    <#
-        Some projects put the build's commit hash in the asset filename, so a
-        pinned link stops working within the week. Those entries name the
-        release instead and the real asset is looked up here.
-    #>
-    param($Component)
-
-    if ($Component.url) { return $Component.url }
-    if (-not $Component.resolve) { return $null }
-
-    $repo = $Component.resolve.github_release
-    $tag  = $Component.resolve.tag
-    $api  = "https://api.github.com/repos/$repo/releases/tags/$tag"
-
-    $release = Invoke-RestMethod -Uri $api -Headers @{ "User-Agent" = "Slate-Setup" } -TimeoutSec 30
-    $asset = $release.assets | Where-Object { $_.name -match $Component.resolve.asset_match } | Select-Object -First 1
-    if (-not $asset) { throw "no asset in $repo@$tag matching $($Component.resolve.asset_match)" }
-    Say "resolved to $($asset.name)"
-    return $asset.browser_download_url
-}
-
 function Install-Component {
     param($Component)
 
@@ -139,7 +117,7 @@ function Install-Component {
     $probe = Join-Path $Root $Component.probe
 
     # An optional component that cannot be fetched is reported and stepped
-    # over. Slate runs without Olive or OpenRV; it does not run without Python.
+    # over. Slate runs without OpenRV; it does not run without Python.
     $soft = ($Component.required -eq $false)
 
     if ($name -eq "postgresql" -and -not $Server) {
@@ -162,8 +140,7 @@ function Install-Component {
     Step "$title"
     Say  $Component.why
 
-    try   { $url = Resolve-Url $Component }
-    catch { if ($soft) { Warn "$title - skipped ($($_.Exception.Message))" } else { Bad "$title - $($_.Exception.Message)" }; return }
+    $url = $Component.url
     if (-not $url) { Warn "$title - no download link"; return }
 
     if ($Check) {

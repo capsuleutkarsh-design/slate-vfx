@@ -1,17 +1,16 @@
 """
 Making review proxies for a project's plates and renders.
 
-Olive and RV can both play EXR sequences, but slowly: a reel of 2K EXRs is
-gigabytes a shot, and scrubbing a lineup built from them is painful. An MP4
-beside each sequence fixes that, and both the Olive bridge and the review
-picker already prefer a proxy when one is there.
+RV and the Timeline player can both play EXR sequences, but slowly: a reel of
+2K EXRs is gigabytes a shot, and scrubbing a lineup built from them is painful.
+An MP4 beside each sequence fixes that, and the lineup prefers a proxy when a
+current one is there.
 
 This runs when someone asks for it - after an ingest has been checked over -
 rather than during the ingest itself, so a delivery is never held up behind
 ffmpeg.
 
-Proxies are written to a ``proxy`` folder beside the media they came from, which
-is exactly where the Olive bridge already looks for them.
+Proxies are written to a ``proxy`` folder beside the media they came from.
 """
 
 from __future__ import annotations
@@ -28,8 +27,7 @@ from slate.core.domain.shot_media import (
 
 logger = logging.getLogger(__name__)
 
-# Where a proxy goes, relative to the media it was made from. The Olive bridge
-# searches this name already, so a proxy put here is found without any wiring.
+# Where a proxy goes, relative to the media it was made from.
 PROXY_FOLDER = "proxy"
 
 
@@ -104,6 +102,30 @@ def proxy_path_for(clip: MediaClip, shot_name: str) -> Path:
     return clip.path.parent / PROXY_FOLDER / name
 
 
+def _is_current(target: Path, source: Path) -> bool:
+    """
+    Whether the proxy at target is there and made after its source.
+
+    A re-render into the same folder left the old proxy behind, and going by
+    the name alone the old picture kept playing and "Make review proxies"
+    called it already there. A proxy whose source has gone is all there is,
+    so it stands.
+    """
+    try:
+        made = target.stat().st_mtime
+    except OSError:
+        return False
+    try:
+        return made >= source.stat().st_mtime
+    except OSError:
+        return True
+
+
+def proxy_is_current(clip: MediaClip, shot_name: str) -> bool:
+    """Whether this clip has a proxy that shows what is on disk now."""
+    return _is_current(proxy_path_for(clip, shot_name), first_frame_file(clip))
+
+
 def needs_proxy(clip: MediaClip) -> bool:
     """
     Whether this clip is worth making a proxy of.
@@ -118,9 +140,9 @@ def plan(shots, project_root=None, folder_resolver=None, rebuild: bool = False) 
     """
     Every proxy this project is missing, plate first for each shot.
 
-    A proxy that is already there is not offered again unless rebuild=True:
-    the question used to be "Build 8 proxies?" and the answer "8 already
-    there" (MED-090).
+    A current proxy is not offered again unless rebuild=True: the question
+    used to be "Build 8 proxies?" and the answer "8 already there" (MED-090).
+    One older than its render is offered, to be made again.
     """
     jobs: List[ProxyJob] = []
 
@@ -139,7 +161,7 @@ def plan(shots, project_root=None, folder_resolver=None, rebuild: bool = False) 
             if not source.exists():
                 continue
             target = proxy_path_for(clip, shot_name)
-            if not rebuild and target.exists():
+            if not rebuild and _is_current(target, source):
                 continue
             jobs.append(ProxyJob(
                 shot_name=shot_name,
@@ -189,7 +211,7 @@ def build(jobs: List[ProxyJob], manager=None,
         if progress is not None:
             progress(index, total, job.label)
 
-        if job.target.exists() and not overwrite:
+        if not overwrite and _is_current(job.target, job.source):
             result.already_there.append(job.label)
             continue
 
@@ -206,6 +228,7 @@ def build(jobs: List[ProxyJob], manager=None,
                 input_path=job.source,
                 is_seq=job.is_sequence,
                 proxy_path=job.target,
+                overwrite=True,
             )
         except Exception as exc:
             logger.exception("Proxy failed for %s: %s", job.label, exc)

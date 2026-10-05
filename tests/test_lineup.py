@@ -1,5 +1,5 @@
 """
-Building the Olive timeline from dashboard data.
+Building the lineup and its EDLs from dashboard data.
 
 The lineup is the edit: plates in reel order on layer one, and each
 department's render on its own layer directly beneath the plate it came from.
@@ -7,11 +7,9 @@ What matters is that a render lands at the same point on the timeline as its
 plate - a comp one slot to the left of its scan is worse than no comp at all.
 """
 
-import xml.etree.ElementTree as ET
-
 import pytest
 
-from slate.core.domain.olive_lineup import (
+from slate.core.domain.lineup import (
     TRACK_LAYOUT, build_lineup, build_lineup_shot, generate_timelines,
     group_by_reel,
 )
@@ -49,58 +47,15 @@ def _shot(tmp_path, name="SH010", reel="ReelA", scan=True, departments=(),
     return Shot(shot_name=name, reel_episode=reel, folder_paths=folders, **kwargs)
 
 
-def _clip_labels(path):
-    """Every clip label in a generated timeline."""
-    tree = ET.parse(path)
-    labels = []
-    for node in tree.iter("node"):
-        if node.attrib.get("id", "").endswith(".footage"):
-            label = node.find("label")
-            if label is not None and label.text:
-                labels.append(label.text)
-    return labels
+def _events(path):
+    """Each event line of an EDL, split into its fields."""
+    return [line.split() for line in path.read_text(encoding="utf-8").splitlines()
+            if line[:3].isdigit()]
 
 
-def _clip_starts(path):
-    """
-    Where each clip sits on the timeline, keyed by the media it plays.
-
-    A clip node carries the timing but no name; the name is on the footage node
-    it reaches through the transform, so the chain has to be followed.
-    """
-    tree = ET.parse(path)
-    by_ptr = {n.attrib.get("ptr"): n for n in tree.iter("node")}
-
-    def label_behind(node, depth=0):
-        """The footage label this node ultimately plays."""
-        if depth > 5:
-            return None
-        label = node.find("label")
-        if node.attrib.get("id", "").endswith(".footage") and label is not None:
-            return label.text
-        for conn in node.iter("connection"):
-            output = conn.find("output")
-            if output is None or output.text not in by_ptr:
-                continue
-            found = label_behind(by_ptr[output.text], depth + 1)
-            if found:
-                return found
-        return None
-
-    starts = {}
-    for node in tree.iter("node"):
-        if not node.attrib.get("id", "").endswith(".clip"):
-            continue
-        name = label_behind(node)
-        if not name:
-            continue
-        for inp in node.iter("input"):
-            if inp.attrib.get("id") != "timeline_in":
-                continue
-            track = inp.find(".//track")
-            if track is not None:
-                starts[name] = track.text
-    return starts
+def _clip_names(path):
+    return [line.split(": ", 1)[1] for line in path.read_text(encoding="utf-8").splitlines()
+            if line.startswith("* FROM CLIP NAME:")]
 
 
 class TestOneShotBecomesATimelineEntry:
@@ -109,7 +64,7 @@ class TestOneShotBecomesATimelineEntry:
         entry = build_lineup_shot(_shot(tmp_path), tmp_path)
 
         assert entry.layers == ["scan"]
-        assert entry.scan_path is not None
+        assert entry.paths["scan"] is not None
 
     def test_renders_fill_their_own_layers(self, tmp_path):
         shot = _shot(tmp_path, departments=("comp", "prep"))
@@ -163,7 +118,7 @@ class TestEditOrder:
                          ("R2", "SEQ030_SH005"), ("R2", "SEQ030_SH015")]
 
     def test_an_unknown_length_is_marked(self, tmp_path):
-        from slate.core.domain.olive_lineup import fps_mismatches
+        from slate.core.domain.lineup import fps_mismatches
         shot = _shot(tmp_path, "SH010")
         root = tmp_path / "05_Reels" / "ReelA" / "SH010" / "01_Scan" / "v001" / "EXR"
         for f in root.iterdir():
@@ -178,7 +133,7 @@ class TestEditOrder:
         assert fps_mismatches([entry, entry, other]) == ["SH020"]
 
     def test_lineups_go_into_the_project(self, tmp_path):
-        from slate.core.domain.olive_lineup import lineup_folder
+        from slate.core.domain.lineup import lineup_folder
         assert lineup_folder(tmp_path, "PRJ") == tmp_path / "editorial" / "lineups"   # MED-093
 
     def test_shots_run_in_shot_number_order(self, tmp_path):
@@ -211,9 +166,9 @@ class TestEditOrder:
         assert set(reels) == {"ReelA", "ReelB"}
 
 
-class TestGeneratedTimelines:
+class TestGeneratedEdls:
 
-    def test_a_timeline_per_reel_and_one_holding_everything(self, tmp_path):
+    def test_an_edl_per_reel_and_one_holding_everything(self, tmp_path):
         shots = [
             _shot(tmp_path, "SH010", reel="ReelA"),
             _shot(tmp_path, "SH020", reel="ReelB"),
@@ -222,80 +177,55 @@ class TestGeneratedTimelines:
         result = generate_timelines(shots, tmp_path / "out", "PRJ", tmp_path)
 
         assert set(result.per_reel) == {"ReelA", "ReelB"}
-        assert result.combined.exists()
+        assert result.combined.name == "PRJ_All_Reels_scan.edl"
         assert all(path.exists() for path in result.per_reel.values())
 
-    def test_the_combined_timeline_holds_every_shot(self, tmp_path):
+    def test_the_combined_edl_holds_every_shot_in_order(self, tmp_path):
+        shots = [
+            _shot(tmp_path, "SH020", reel="ReelB"),
+            _shot(tmp_path, "SH010", reel="ReelA"),
+        ]
+
+        result = generate_timelines(shots, tmp_path / "out", "PRJ", tmp_path)
+
+        assert _clip_names(result.combined) == ["SH010.%04d.exr", "SH020.%04d.exr"]
+
+    def test_a_reel_edl_holds_only_that_reel(self, tmp_path):
         shots = [
             _shot(tmp_path, "SH010", reel="ReelA"),
             _shot(tmp_path, "SH020", reel="ReelB"),
         ]
 
         result = generate_timelines(shots, tmp_path / "out", "PRJ", tmp_path)
-        labels = _clip_labels(result.combined)
 
-        assert "SH010_scan" in labels
-        assert "SH020_scan" in labels
+        assert _clip_names(result.per_reel["ReelA"]) == ["SH010.%04d.exr"]
 
-    def test_a_reel_timeline_holds_only_that_reel(self, tmp_path):
-        shots = [
-            _shot(tmp_path, "SH010", reel="ReelA"),
-            _shot(tmp_path, "SH020", reel="ReelB"),
-        ]
+    def test_the_chosen_layer_with_the_plate_standing_in(self, tmp_path):
+        shots = [_shot(tmp_path, "SH010", departments=("comp",)), _shot(tmp_path, "SH020")]
 
-        result = generate_timelines(shots, tmp_path / "out", "PRJ", tmp_path)
-        labels = _clip_labels(result.per_reel["ReelA"])
+        result = generate_timelines(shots, tmp_path / "out", "PRJ", tmp_path, layer="comp")
 
-        assert labels == ["SH010_scan"]
+        assert result.combined.name == "PRJ_All_Reels_comp.edl"
+        assert _clip_names(result.combined) == ["SH010_comp.mov", "SH020.%04d.exr"]
 
-    def test_a_render_appears_on_its_own_layer(self, tmp_path):
-        shots = [_shot(tmp_path, "SH010", departments=("comp", "deage"))]
-
-        result = generate_timelines(shots, tmp_path / "out", "PRJ", tmp_path,
-                                    prefer_proxy_media=False)
-        labels = _clip_labels(result.combined)
-
-        assert set(labels) == {"SH010_scan", "SH010_comp", "SH010_deage"}
-
-    def test_the_timeline_has_a_track_for_every_layer(self, tmp_path):
-        shots = [_shot(tmp_path, "SH010", departments=("comp",))]
+    def test_timecodes_follow_on_from_one_hour(self, tmp_path):
+        """A sequence keeps its frame numbers as source; each shot starts where the last ended."""
+        shots = [_shot(tmp_path, "SH010", frames=(1001, 1010)),
+                 _shot(tmp_path, "SH020", frames=(1001, 1048))]
 
         result = generate_timelines(shots, tmp_path / "out", "PRJ", tmp_path)
-        tree = ET.parse(result.combined)
-        tracks = [n for n in tree.iter("node")
-                  if n.attrib.get("id", "").endswith(".track")]
+        events = _events(result.combined)
 
-        # The plate and the layers the shots fill - not a row of empty tracks.
-        assert len(tracks) == 2
+        # 1001 at 24 fps is 41 s 17 f; ten frames run to 41 s 27 f = 42 s 3 f.
+        assert events[0] == ["001", "AX", "V", "C", "00:00:41:17", "00:00:42:03",
+                             "01:00:00:00", "01:00:00:10"]
+        assert events[1][6:] == ["01:00:00:10", "01:00:02:10"]
 
-    def test_a_render_sits_at_the_same_time_as_its_plate(self, tmp_path):
-        """The whole point of the stack: comp directly beneath its scan."""
-        shots = [
-            _shot(tmp_path, "SH010", frames=(1, 10), departments=("comp",)),
-            _shot(tmp_path, "SH020", frames=(1, 10), departments=("comp",)),
-        ]
+    def test_a_movie_starts_at_zero(self, tmp_path):
+        result = generate_timelines([_shot(tmp_path, "SH010", departments=("comp",))],
+                                    tmp_path / "out", "PRJ", tmp_path, layer="comp")
 
-        result = generate_timelines(shots, tmp_path / "out", "PRJ", tmp_path,
-                                    prefer_proxy_media=False)
-        starts = _clip_starts(result.combined)
-
-        assert starts["SH010_comp"] == starts["SH010_scan"]
-        assert starts["SH020_comp"] == starts["SH020_scan"]
-        # And the second shot really does come after the first.
-        assert starts["SH020_scan"] != starts["SH010_scan"]
-
-    def test_each_shot_starts_where_the_last_one_ended(self, tmp_path):
-        shots = [
-            _shot(tmp_path, "SH010", frames=(1, 10)),
-            _shot(tmp_path, "SH020", frames=(1, 10)),
-        ]
-
-        result = generate_timelines(shots, tmp_path / "out", "PRJ", tmp_path)
-        starts = _clip_starts(result.combined)
-
-        assert starts["SH010_scan"] == "0/1"
-        # Ten frames at 24fps, as a reduced fraction of a second.
-        assert starts["SH020_scan"] == "5/12"
+        assert _events(result.combined)[0][4] == "00:00:00:00"
 
     def test_shots_with_no_plate_are_reported_not_silently_dropped(self, tmp_path):
         shots = [
@@ -314,44 +244,17 @@ class TestGeneratedTimelines:
         assert not result.ok
         assert "No shots loaded" in result.summary()
 
-    def test_a_bridge_that_fails_is_reported_not_raised(self, tmp_path):
-        class BrokenBridge:
-            def generate_project(self, *args, **kwargs):
-                return False
+    def test_a_folder_that_cannot_be_written_is_reported_not_raised(self, tmp_path):
+        blocker = tmp_path / "out"
+        blocker.write_text("a file where the folder should be")
 
-        result = generate_timelines([_shot(tmp_path)], tmp_path / "out", "PRJ",
-                                    tmp_path, bridge=BrokenBridge())
+        result = generate_timelines([_shot(tmp_path)], blocker, "PRJ", tmp_path)
 
-        assert not result.ok
+        assert not result.ok and "Could not write" in result.summary()
 
 
-class TestNodeIdentifiersAreUnique:
-    """
-    Olive wires nodes together by their pointer, so two nodes sharing one means
-    a clip pointing at the wrong footage. The old generator added a random
-    number under ten thousand to a millisecond timestamp, which collides
-    readily - a draw a millisecond later with a smaller random part lands on
-    exactly the same value.
-    """
-
-    def test_a_long_run_never_repeats(self):
-        from slate.core.domain.olive_bridge import OliveBridge
-
-        bridge = OliveBridge()
-        pointers = [bridge._generate_ptr() for _ in range(20000)]
-
-        assert len(set(pointers)) == len(pointers), "pointers collided"
-
-    def test_a_generated_project_has_no_duplicate_pointers(self, tmp_path):
-        shots = [_shot(tmp_path, f"SH{n:03d}", departments=("comp", "prep"))
-                 for n in range(10, 130, 10)]
-
-        result = generate_timelines(shots, tmp_path / "out", "PRJ", tmp_path,
-                                    prefer_proxy_media=False)
-        tree = ET.parse(result.combined)
-        pointers = [n.attrib.get("ptr") for n in tree.iter("node")
-                    if n.attrib.get("ptr")]
-
-        assert len(set(pointers)) == len(pointers), (
-            "two nodes share a pointer; clips would play the wrong media"
-        )
+def test_timecode():
+    from slate.core.domain.lineup import timecode
+    assert timecode(0, 24) == "00:00:00:00"
+    assert timecode(86400 + 23, 24) == "01:00:00:23"
+    assert timecode(25 * 61, 25) == "00:01:01:00"

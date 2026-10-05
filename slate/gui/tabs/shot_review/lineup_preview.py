@@ -2,8 +2,8 @@
 The Timeline Viewer's own player: watch the lineup inside Slate.
 
 The Help promised scrubbing the lineup in Slate and there was no player at
-all (MED-084); the user asked for one to be built. Olive and RV stay the
-editing and review tools - this is for looking.
+all (MED-084); the user asked for one to be built. RV stays the review
+tool and the EDLs go to editorial - this is for looking.
 
   * A strip across the top shows the lineup as blocks in edit order, as long
     as each shot runs; click one to go there. The current shot is lit.
@@ -40,16 +40,15 @@ def media_for(entry, layer: str):
     (path, kind, clip) to play for this shot and layer.
 
     kind is "proxy", "movie" or "frames". The plate stands in for a layer the
-    shot does not have yet.
+    shot does not have yet. A proxy older than its render is passed over.
     """
-    from slate.core.domain.proxy_builder import first_frame_file, proxy_path_for
+    from slate.core.domain.proxy_builder import first_frame_file, proxy_is_current, proxy_path_for
     clips = getattr(entry, "clips", {}) or {}
     clip = clips.get(layer) or clips.get("scan")
     if clip is None:
         return None, "", None
-    proxy = proxy_path_for(clip, entry.name)
-    if proxy.exists():
-        return proxy, "proxy", clip
+    if proxy_is_current(clip, entry.name):
+        return proxy_path_for(clip, entry.name), "proxy", clip
     if not clip.is_sequence:
         return Path(clip.path), "movie", clip
     return first_frame_file(clip), "frames", clip
@@ -246,7 +245,7 @@ class LineupPreview(QWidget):
         self.strip.set_entries(self.entries)
         self.combo_layer.blockSignals(True)
         self.combo_layer.clear()
-        from slate.core.domain.olive_lineup import layout_for
+        from slate.core.domain.lineup import layout_for
         for label, key in (layout or layout_for(self.entries)):
             self.combo_layer.addItem(label, key)
         self.combo_layer.setCurrentIndex(max(0, self.combo_layer.findData(was_layer)))

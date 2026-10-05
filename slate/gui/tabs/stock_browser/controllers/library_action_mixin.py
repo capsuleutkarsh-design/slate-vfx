@@ -23,7 +23,7 @@ MANAGERS = "Only leads, supervisors and admins can"
 
 def import_sentence(summary: dict) -> tuple:
     """(message, level): new, already there, not on disk and unreadable, each said apart (MED2-021)."""
-    from .....core.domain.olive_lineup import plural
+    from .....core.domain.lineup import plural
     imported = int(summary.get("imported") or 0)
     existing = int(summary.get("existing") or 0)
     missing = int(summary.get("missing") or 0)
@@ -133,7 +133,7 @@ class LibraryActionMixin:
                          action=("Undo", lambda: self.undo_delete(ids)))
 
     def undo_delete(self, ids):
-        from .....core.domain.olive_lineup import plural
+        from .....core.domain.lineup import plural
         restored = self.lib_manager.restore_assets(ids)
         if restored:
             self._notify(f"Restored {plural(restored, 'asset')}.", "success")
@@ -175,7 +175,7 @@ class LibraryActionMixin:
             # still there, or it looks cleared (MED2-027).
             self.load_library_from_server()
             return
-        from .....core.domain.olive_lineup import plural
+        from .....core.domain.lineup import plural
         self.model.clear_assets()
         self.db_total = 0
         self.inspector.clear()
@@ -244,7 +244,7 @@ class LibraryActionMixin:
         except Exception as e:
             self._notify("The library could not be exported.", "error", details=str(e))
             return
-        from .....core.domain.olive_lineup import plural
+        from .....core.domain.lineup import plural
         folder = str(Path(path).parent)
         self._notify(f"Exported {plural(len(data), 'asset')} to {Path(path).name}.", "success",
                      action=("Open folder", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(folder))))
@@ -300,7 +300,7 @@ class LibraryActionMixin:
         self.update_ui_counts()
         # What really happened, counted (MED2-030); picks are shared, so they
         # are confirmed.
-        from .....core.domain.olive_lineup import plural
+        from .....core.domain.lineup import plural
         if done:
             self._notify(f"{'Added' if on else 'Removed'} {plural(len(done), 'asset')} "
                          f"{'to' if on else 'from'} the studio picks.", "success")

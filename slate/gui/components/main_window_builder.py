@@ -315,7 +315,7 @@ class MainWindowBuilderMixin:
                     tooltip="Browse and preview the stock library"
                 )
 
-                # Timeline Viewer (the Olive lineup).
+                # Timeline Viewer (the reel lineup).
                 # The permission key stays "Shot Review": it is what every
                 # existing role config grants, and renaming it would quietly
                 # lock people out of a tab they already have.
@@ -326,7 +326,7 @@ class MainWindowBuilderMixin:
                     permission_key="Shot Review",
                     user_role=self.user_role,
                     allowed_tabs=self.allowed_tabs,
-                    tooltip="Build the reel lineup and open it in Olive"
+                    tooltip="Build the reel lineup, play it in RV, export an EDL"
                 )
 
                 # VFX Dashboard Pro

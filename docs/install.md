@@ -48,16 +48,11 @@ script reads it rather than hard-coding anything.
 | **pip** | required | bootstrapped into that runtime |
 | **FFmpeg** | required | `slate/bin/ffmpeg.exe` — thumbnails, proxies, playback |
 | **PostgreSQL 16** | server only | `slate_server/bin/pgsql` — skipped without `/server` |
-| **Olive** | optional | `external/olive-editor` — the review tab falls back without it |
 | **OpenRV** | manual | `OpenRV/` — no public Windows build; drop yours in and Slate finds it |
 
 None of it is committed. These are third-party builds with their own licences
 and their own release cadence, and together they are the better part of a
 gigabyte — pinning them keeps the repository at 8 MB.
-
-Olive's nightly asset carries the build's commit hash in its filename, so that
-one is resolved through the GitHub API at install time rather than pinned to a
-link that stops working within the week.
 
 ---
 

@@ -390,7 +390,7 @@ class QuickSearchControllerMixin:
             ("Open Help (F1)", self.show_help_dialog, "help manual documentation", None),
             ("Keyboard shortcuts", getattr(self, "show_shortcuts", None), "keys shortcuts keyboard", None),
             ("Rebuild Timeline from Dashboard", self._rebuild_timeline_from_dashboard,
-             "timeline rebuild lineup olive", "Timeline Viewer"),
+             "timeline rebuild lineup rv edl", "Timeline Viewer"),
             ("Refresh Stock Viewer", self._refresh_stock_viewer, "stock rescan library refresh", "Stock Viewer"),
             ("Full screen (F11)", self.toggle_fullscreen, "fullscreen window maximise", None),
             ("Clear temporary files (maintenance)", self._run_quick_temp_cleanup,

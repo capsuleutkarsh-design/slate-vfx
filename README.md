@@ -64,7 +64,7 @@ screen was listing.
 - **Build & Ingest** — lay down a shot structure from a template and move scans into it.
 - **CAP Rename** — batch rename with search/replace and sequence serialising; understands an image sequence as one item rather than 1,200 files.
 - **Stock Viewer** — the studio's stock library, with thumbnails, tags and a search that reaches into metadata.
-- **Timeline Viewer** — reel lineup, cut in Olive.
+- **Timeline Viewer** — reel lineup: play it in RV, export an EDL for editorial.
 - **VFX Dashboard** — shots, statuses, artists and departments, backed by the database or an Excel sheet.
 - **Scheduling & Bidding** — who is on what, and what a job should cost.
 
@@ -388,6 +388,6 @@ The Icons8 icons, the product logos on the launch buttons, and the OpenRV folder
 the Studio installer ships (and what is left out of it on purpose) are covered
 in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-FFmpeg, PostgreSQL, Olive and OpenRV are not in this repository. `setup.bat`
-fetches FFmpeg, PostgreSQL and Olive from their own projects; OpenRV has no
+FFmpeg, PostgreSQL and OpenRV are not in this repository. `setup.bat`
+fetches FFmpeg and PostgreSQL from their own projects; OpenRV has no
 public Windows build and is supplied by the studio. Each keeps its own licence.

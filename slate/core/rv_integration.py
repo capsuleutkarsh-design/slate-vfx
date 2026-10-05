@@ -124,55 +124,31 @@ class RVLauncher:
             return False
             
     def _generate_rv_session(self, media_paths: List[str], output_rv_path: str) -> bool:
-        """Generate a basic .rv GTO session file for a playlist of media paths."""
+        """
+        Write an .rv session that plays media_paths one after another.
+
+        The file written before was not GTO RV could read ("syntax error" at
+        line 5), so every playlist - the dashboard's several departments, the
+        lineup - failed to open. This is the session format RV writes itself,
+        checked by loading it with rvio.
+        """
+        def quoted(text):
+            return '"' + str(text).replace("\\", "/").replace('"', "'") + '"'
+
+        lines = ["GTOa (4)", "",
+                 "rv : RVSession (4)", "{", "    session", "    {",
+                 '        string viewNode = "defaultSequence"', "    }", "}", ""]
+        for i, path in enumerate(media_paths):
+            node = f"sourceGroup{i:06d}"
+            lines += [f"{node} : RVSourceGroup (1)", "{", "    ui", "    {",
+                      f"        string name = {quoted(os.path.basename(str(path)))}", "    }", "}", "",
+                      f"{node}_source : RVFileSource (1)", "{", "    media", "    {",
+                      f"        string movie = {quoted(path)}", "    }", "}", ""]
         try:
-            # A very basic RV session file structure
-            lines = [
-                'GTOa (3)',
-                '',
-                'rv : RVSession (1)',
-                '{',
-                '    int fps = 24',
-                '    int realtime = 1',
-                '}',
-                ''
-            ]
-            
-            source_nodes = []
-            for i, path in enumerate(media_paths):
-                # RV expects forward slashes
-                safe_path = path.replace("\\", "/")
-                node_name = f"sourceGroup{i:03d}"
-                source_nodes.append(node_name)
-                
-                lines.extend([
-                    f'{node_name} : RVSourceGroup (1)',
-                    '{',
-                    f'    string ui : name = "{os.path.basename(safe_path)}"',
-                    '}',
-                    '',
-                    f'{node_name}_source : RVFileSource (1)',
-                    '{',
-                    f'    string media : movie = "{safe_path}"',
-                    '}',
-                    ''
-                ])
-                
-            # Define default sequence layout
-            lines.extend([
-                'defaultLayout : RVLayoutGroup (1)',
-                '{',
-                '    int mode = 1', # 1 = stack/sequence
-                '}',
-                ''
-            ])
-            
-            # Write to file
             with open(output_rv_path, "w", encoding="utf-8") as f:
                 f.write("\n".join(lines))
-                
             return True
-        except Exception as e:
+        except OSError as e:
             logger.error(f"Failed to generate RV session file: {e}")
             return False
 

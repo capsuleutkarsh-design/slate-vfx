@@ -1,7 +1,7 @@
 """
 Making review proxies on demand.
 
-Olive and RV both play EXR sequences slowly, so an MP4 goes beside each one.
+RV and the Timeline player both play EXR sequences slowly, so an MP4 goes beside each one.
 This runs when someone presses the button after checking an ingest, never
 during the ingest itself - a delivery must not wait behind ffmpeg.
 
@@ -53,6 +53,7 @@ class FakeManager:
     def generate_proxy(self, input_path=None, is_seq=False, proxy_path=None,
                        **kwargs):
         self.calls.append((input_path, is_seq, proxy_path))
+        self.kwargs = kwargs
         if self.succeed:
             proxy_path.write_bytes(b"mp4")
             return True, proxy_path
@@ -92,7 +93,6 @@ class TestWhatNeedsAProxy:
 class TestWhereProxiesGo:
 
     def test_beside_the_media_in_a_proxy_folder(self, tmp_path):
-        """This is the folder the Olive bridge already searches."""
         clip = MediaClip(path=tmp_path / "EXR" / "SH010.%04d.exr",
                          department="scan", is_sequence=True)
 
@@ -219,8 +219,47 @@ class TestBuilding:
 
 def test_the_plan_leaves_out_proxies_that_exist(tmp_path):
     """MED-090: it offered to build proxies that were already there."""
-    jobs = plan([_shot(tmp_path)], tmp_path)
+    shot = _shot(tmp_path)
+    jobs = plan([shot], tmp_path)
     jobs[0].target.parent.mkdir(parents=True)
     jobs[0].target.write_bytes(b"already")
-    assert plan([_shot(tmp_path)], tmp_path) == []
-    assert len(plan([_shot(tmp_path)], tmp_path, rebuild=True)) == len(jobs)
+    assert plan([shot], tmp_path) == []
+    assert len(plan([shot], tmp_path, rebuild=True)) == len(jobs)
+
+
+def test_a_proxy_older_than_its_render_is_made_again(tmp_path):
+    """A re-render into the same folder kept playing the old proxy, called 'already there'."""
+    import os
+    from slate.core.domain.proxy_builder import proxy_is_current
+    shot = _shot(tmp_path)
+    job = plan([shot], tmp_path)[0]
+    job.target.parent.mkdir(parents=True)
+    job.target.write_bytes(b"old")
+    clip = MediaClip(path=job.source.parent / "SH010.%04d.exr", department="scan", is_sequence=True,
+                     first_frame=1001, last_frame=1002)
+    assert proxy_is_current(clip, "SH010")
+    past = job.source.stat().st_mtime - 60
+    os.utime(job.target, (past, past))                 # the frames are newer now
+    assert not proxy_is_current(clip, "SH010")
+    stale = plan([shot], tmp_path)
+    assert [j.target for j in stale] == [job.target]
+    manager = FakeManager()
+    result = build(stale, manager=manager)
+    assert result.built and manager.kwargs.get("overwrite") is True
+
+
+def test_rebuild_really_replaces_the_file(tmp_path):
+    """'Rebuild all' handed back the old proxy: generate_proxy returned any file already there."""
+    from slate.core.domain.proxy_manager import ProxyManager
+    manager = ProxyManager.__new__(ProxyManager)       # no cache folder needed
+    manager.ffmpeg_path = "ffmpeg"
+    (tmp_path / "x.mov").write_bytes(b"movie")
+    target = tmp_path / "SH010_scan_proxy.mp4"
+    target.write_bytes(b"old")
+    import unittest.mock as mock
+    with mock.patch("subprocess.run") as run:
+        run.return_value = mock.Mock(returncode=1, stderr=b"", stdout=b"")
+        ok, _ = manager.generate_proxy(input_path=tmp_path / "x.mov", proxy_path=target)
+        assert ok and not run.called                    # kept, as before
+        manager.generate_proxy(input_path=tmp_path / "x.mov", proxy_path=target, overwrite=True)
+        assert run.called

@@ -1,6 +1,6 @@
 """
-Building the lineup - for Olive and for the Timeline Viewer's own player - out
-of what the dashboard knows.
+Building the lineup - for the Timeline Viewer's player, RV and the editors'
+EDLs - out of what the dashboard knows.
 
 The lineup starts as the plates, in reel order: that is the edit, and it exists
 before any work is done. As renders arrive they are laid on their own layer
@@ -18,9 +18,11 @@ Shots are ordered by reel, then by every number in the name compared as a
 number (SEQ010_SH020 before SEQ020_SH010), so reels are not interleaved
 (MED-079).
 
-One project produces a timeline per reel and one holding every reel, because
-both get used: a reel to review a section, the combined one to see the show.
-They are written into the project, under editorial/lineups (MED-093).
+One project produces an EDL per reel and one holding every reel, because both
+get used: a reel to review a section, the combined one to see the show. They
+are written into the project, under editorial/lineups (MED-093). They replace
+the Olive timelines: Olive is no longer developed, and every editor's tool
+reads a CMX 3600 EDL.
 """
 
 from __future__ import annotations
@@ -31,7 +33,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from slate.core.domain.olive_bridge import OliveBridge
 from slate.core.domain.shot_media import MediaClip, available_media
 
 
@@ -75,7 +76,7 @@ def natural_key(text: str) -> tuple:
 
 @dataclass
 class LineupShot:
-    """One shot as Olive needs to see it: a name, a length, and its layers."""
+    """One shot of the lineup: a name, a length, and its layers."""
 
     name: str
     reel: str = ""
@@ -85,12 +86,9 @@ class LineupShot:
     clips: Dict[str, MediaClip] = field(default_factory=dict)
     scan_version: str = ""
 
-    def __getattr__(self, item):
-        # The bridge asks for scan_path, comp_path, prep_path... one per track.
-        if item.endswith("_path"):
-            paths = self.__dict__.get("paths") or {}
-            return paths.get(item[:-5])
-        raise AttributeError(item)
+    def clip_for(self, layer: str) -> MediaClip:
+        """The layer's render, or the plate while the shot has none yet."""
+        return self.clips.get(layer) or self.clips["scan"]
 
     @property
     def length_known(self) -> bool:
@@ -300,6 +298,47 @@ def lineup_folder(project_root=None, project_name: str = "") -> Path:
     return GlobalConfig.server_root() / "Lineups" / _safe_name(project_name)
 
 
+# Editorial convention: a timeline's first frame is at one hour.
+RECORD_START_SECONDS = 3600
+
+
+def timecode(frame: int, rate: int) -> str:
+    """A frame count as non-drop SMPTE timecode, HH:MM:SS:FF."""
+    seconds, ff = divmod(int(frame), rate)
+    minutes, ss = divmod(seconds, 60)
+    hh, mm = divmod(minutes, 60)
+    return f"{hh:02d}:{mm:02d}:{ss:02d}:{ff:02d}"
+
+
+def edl_text(entries: List[LineupShot], title: str, layer: str = "scan") -> str:
+    """
+    A CMX 3600 EDL of these shots in order, for Resolve, Premiere or Avid.
+
+    Each event is the layer's render, or the plate while the shot has none
+    yet, at the length of the plate. A sequence keeps its own frame numbers
+    as source timecode; a movie starts at zero. The clip and file are written
+    as the comments editors relink by. A rate like 23.976 is written on a
+    24 timebase, non-drop.
+    """
+    rate = max(1, round(lineup_fps(entries)))
+    record = RECORD_START_SECONDS * rate
+    lines = [f"TITLE: {title}", "FCM: NON-DROP FRAME", ""]
+    for number, entry in enumerate(entries, start=1):
+        clip = entry.clip_for(layer)
+        length = entry.get_frame_count()
+        source = clip.first_frame if clip.is_sequence else 0
+        lines += [
+            f"{number:03d}  AX       V     C        "
+            f"{timecode(source, rate)} {timecode(source + length, rate)} "
+            f"{timecode(record, rate)} {timecode(record + length, rate)}",
+            f"* FROM CLIP NAME: {clip.path.name}",
+            f"* SOURCE FILE: {clip.path}",
+            "",
+        ]
+        record += length
+    return "\n".join(lines)
+
+
 @dataclass
 class LineupResult:
     """What was written, and what could not be."""
@@ -325,9 +364,9 @@ class LineupResult:
 
         parts = [plural(self.shot_count, "shot")]
         if self.per_reel:
-            parts.append(plural(len(self.per_reel), "reel timeline"))
+            parts.append(plural(len(self.per_reel), "reel EDL"))
         if self.combined:
-            parts.append("one combined timeline")
+            parts.append("one EDL of every reel")
         if self.skipped:
             parts.append(f"{plural(len(self.skipped), 'shot')} skipped (no scan)")
         if self.fps_mismatch:
@@ -335,12 +374,15 @@ class LineupResult:
         return ", ".join(parts)
 
 
+def combined_edl_name(project_name: str, layer: str) -> str:
+    return f"{_safe_name(project_name)}_All_Reels_{_safe_name(layer)}.edl"
+
+
 def generate_timelines(shots, output_dir, project_name="Lineup",
                        project_root=None, folder_resolver=None,
-                       prefer_proxy_media: bool = True,
-                       bridge=None, lineup: List[LineupShot] = None) -> LineupResult:
+                       layer: str = "scan", lineup: List[LineupShot] = None) -> LineupResult:
     """
-    Write a timeline per reel and one combined timeline.
+    Write an EDL per reel and one of every reel, of the chosen layer.
 
     lineup, when given, is the list to write (the Timeline Viewer passes the
     shots left ticked); otherwise it is built from shots. Returns what was
@@ -367,32 +409,18 @@ def generate_timelines(shots, output_dir, project_name="Lineup",
     if not lineup:
         return result
 
-    bridge = bridge or OliveBridge()
     output_dir = Path(output_dir)
-
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
+        for reel, entries in group_by_reel(lineup).items():
+            path = output_dir / f"{_safe_name(project_name)}_{_safe_name(reel)}_{_safe_name(layer)}.edl"
+            path.write_text(edl_text(entries, f"{project_name} {reel}", layer), encoding="utf-8")
+            result.per_reel[reel] = path
+        combined = output_dir / combined_edl_name(project_name, layer)
+        combined.write_text(edl_text(lineup, f"{project_name} all reels", layer), encoding="utf-8")
+        result.combined = combined
     except OSError as exc:
         result.error = f"Could not write to {output_dir}: {exc}"
-        return result
-
-    for reel, entries in group_by_reel(lineup).items():
-        path = output_dir / f"{_safe_name(project_name)}_{_safe_name(reel)}.ovexml"
-        if bridge.generate_project(entries, path,
-                                   prefer_proxy_media=prefer_proxy_media,
-                                   tracks=layout_for(entries)):
-            result.per_reel[reel] = path
-        else:
-            logger.warning("Could not build the timeline for reel %s", reel)
-
-    combined = output_dir / f"{_safe_name(project_name)}_All_Reels.ovexml"
-    if bridge.generate_project(lineup, combined,
-                               prefer_proxy_media=prefer_proxy_media,
-                               tracks=layout_for(lineup)):
-        result.combined = combined
-    else:
-        logger.warning("Could not build the combined timeline")
-
     return result
 
 

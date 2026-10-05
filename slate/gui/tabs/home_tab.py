@@ -81,7 +81,7 @@ VFX_TILES = (
     ("VFX Dashboard", "Every shot, status and version", "chart"),
     ("CAP Rename", "Rename delivered files", "tag"),
     ("Build & Ingest", "Project structure and scans", "folder"),
-    ("Timeline Viewer", "Reel lineup in Olive", "clapper"),
+    ("Timeline Viewer", "Reel lineup in RV", "clapper"),
     ("Stock Viewer", "Browse the stock library", "film"),
     ("Scheduling", "Milestones and the schedule", "calendar"),
 )

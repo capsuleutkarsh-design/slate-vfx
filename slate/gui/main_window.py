@@ -1102,7 +1102,7 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
                                level="warning", duration=3000)
 
     def _rebuild_timeline_from_dashboard(self):
-        """Rebuild the Olive lineup from the shots the dashboard is tracking."""
+        """Rebuild the lineup from the shots the dashboard is tracking."""
         if not self._switch_to_tab_label("Timeline Viewer"):
             self.show_feedback("Timeline Viewer is not in your sidebar.",
                                level="warning", duration=3000)

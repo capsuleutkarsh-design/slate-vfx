@@ -347,12 +347,14 @@ class ProxyManager:
 
     def generate_proxy(self, input_path: Path = None, is_seq: bool = False, source_path: Path = None,
                        proxy_path: Path = None, target_resolution: str = "1920x1080",
-                       sequence=None) -> Tuple[bool, Path]:
+                       sequence=None, overwrite: bool = False) -> Tuple[bool, Path]:
         """
         A review proxy: a JPG for a still, an H.264 MP4 for a movie or sequence.
 
         sequence=(printf pattern, first frame) reads a known sequence directly;
-        without it a sequence is found from the frame named.
+        without it a sequence is found from the frame named. overwrite=True
+        makes it again over one already there - "Rebuild all" used to hand
+        back the old file untouched.
         """
         if input_path is None and source_path is not None:
             input_path = Path(source_path)
@@ -375,7 +377,7 @@ class ProxyManager:
             output_proxy = self.cache_path_for(
                 file_hash, "_proxy.mp4", self.identity_hash(input_path))
             
-        if self._usable(output_proxy): return True, output_proxy
+        if not overwrite and self._usable(output_proxy): return True, output_proxy
         partial = self._partial_name(output_proxy)
 
         try:
