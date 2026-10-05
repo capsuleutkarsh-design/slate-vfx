@@ -187,6 +187,14 @@ class DashboardActionsMixin:
             self._notify("Nothing to export - no shots loaded.", "warning")
             return
 
+        # An Excel-only project is its Excel file: every save already goes
+        # there. This said "Exported N" having written nothing.
+        from slate.gui.tabs.vfx_dashboard_pro.core.excel_handler import ExcelHandler
+        if isinstance(self.data_handler, ExcelHandler):
+            self._notify("This project is kept in its Excel file, so every save already "
+                         "goes there. There is no separate backup to write.", "info")
+            return
+
         # force=True so this runs even when automatic mirroring is off. The
         # mirror creates the passbook when the project has none yet, as a
         # save does. It is written in the background.

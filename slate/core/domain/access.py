@@ -282,6 +282,15 @@ def can(roles, action: str) -> bool:
     return _allowed(action, roles)
 
 
+def opens_users_and_roles(roles) -> bool:
+    """
+    Whether Users & Roles is there for these roles: the sidebar and the screen
+    ask this one question. The sidebar also showed it for the HRMS tab key,
+    which opened onto "You do not have permission".
+    """
+    return can(roles, "manage_users") or can(roles, "manage_permissions")
+
+
 def can_edit_dashboard(roles) -> bool:
     """Edit shots, statuses and assignments."""
     return _allowed("dashboard_write", roles)

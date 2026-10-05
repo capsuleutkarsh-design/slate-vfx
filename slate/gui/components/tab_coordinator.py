@@ -437,8 +437,7 @@ class TabCoordinator(QObject):
             # must not reveal a tab the person has no permission for.
             'permitted': bool(visible),
         })
-        if self.groups:
-            self.groups[-1]['rows'].append(self.sidebar_nav.count() - 1)
+        self._add_to_group(self.sidebar_nav.count() - 1)
         if label not in self.tab_labels:
             self.tab_labels.append(label)
         self.tab_instances[label] = page_widget
@@ -464,6 +463,9 @@ class TabCoordinator(QObject):
         item.setFlags(Qt.ItemFlag.NoItemFlags)
         
         self.sidebar_nav.addItem(item)
+        # Shown by its first entry: an Ops user with neither Users & Roles nor
+        # Admin Panel saw an empty ADMINISTRATION heading.
+        item.setHidden(True)
         
         # Set premium widget
         widget = CategoryHeaderWidget(label)
@@ -490,6 +492,13 @@ class TabCoordinator(QObject):
         
         logging.debug(f"Category header added: {label}")
     
+    def _add_to_group(self, row):
+        """File an entry under the last heading, and show that heading."""
+        if self.groups:
+            group = self.groups[-1]
+            group['rows'].append(row)
+            self.sidebar_nav.item(group['header_row']).setHidden(False)
+
     def set_tab_visible(self, page_widget, visible, rename_to=None):
         """
         Set visibility of a tab.
@@ -816,8 +825,7 @@ class TabCoordinator(QObject):
             # Folding a group must never reveal a tab this person may not open.
             'permitted': (not item.isHidden()),
         })
-        if self.groups:
-            self.groups[-1]['rows'].append(self.sidebar_nav.count() - 1)
+        self._add_to_group(self.sidebar_nav.count() - 1)
 
         if self.sidebar_nav.currentRow() < 0 and not item.isHidden() and bool(item.flags() & Qt.ItemFlag.ItemIsEnabled):
             self.sidebar_nav.setCurrentRow(self.sidebar_nav.count() - 1)

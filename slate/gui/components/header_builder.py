@@ -369,7 +369,8 @@ class HeaderBuilder:
                 global_settings = self.parent.config_manager.settings.get("global_settings", {}) or {}
             except Exception:
                 global_settings = {}
-        return str(global_settings.get("branding_logo_path", "") or "").strip()
+        from slate.core.infra.studio_settings import studio_logo
+        return studio_logo(global_settings.get("branding_logo_path", ""))
 
     def _apply_studio_logo(self):
         """Put the configured studio logo in its box, or hide the box."""
