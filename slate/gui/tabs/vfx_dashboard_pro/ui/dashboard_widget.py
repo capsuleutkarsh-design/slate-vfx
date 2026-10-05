@@ -591,9 +591,13 @@ class DashboardWidget(
 
     def retry_connection(self):
         """Try the central database again after an outage."""
+        # The manager has no reconnect(): asking for one found nothing, so this
+        # button never tried the database again. Rebuilding from the settings
+        # is what the sign-in window's Try again does.
+        from slate.core.domain.access import is_offline_fallback
         try:
-            if hasattr(database_manager, "reconnect"):
-                database_manager.reconnect()
+            if is_offline_fallback():
+                database_manager.reload_from_config()
         except DatabaseUnavailableError:
             raise
         except Exception as exc:
