@@ -16,11 +16,12 @@ from slate.api.routers import users, attendance, shots
 # Initialize FastAPI App
 app = FastAPI(title="Slate Waiter API", description="High-performance API Gateway for Slate")
 
-# Allow all origins for local network testing
+# Any origin may call it, but never with the browser's cookies or credentials:
+# "*" together with credentials let any web page act as a signed-in user.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -495,7 +496,14 @@ def get_admin_dashboard():
                 else if(msg.includes('WARN')) colorClass = 'log-warn';
                 else if(msg.includes('SUCCESS') || msg.includes('connected')) colorClass = 'log-success';
                 
-                div.innerHTML = `<span class="log-time">[${timeStr}]</span> <span class="${colorClass}">▶ ${msg}</span>`;
+                // Text, never HTML: anyone can send /ws a message and it is shown here (NEW-6).
+                const time = document.createElement('span');
+                time.className = 'log-time';
+                time.textContent = `[${timeStr}]`;
+                const text = document.createElement('span');
+                text.className = colorClass;
+                text.textContent = `▶ ${msg}`;
+                div.append(time, ' ', text);
                 logsDiv.appendChild(div);
                 if (logsDiv.children.length > 200) {
                     logsDiv.removeChild(logsDiv.firstChild);
