@@ -405,10 +405,7 @@ class ApplicationEntry:
                 return False
 
             values = dlg.values()
-            for key in ("SERVER_ROOT", "db_host", "db_port", "db_name", "db_user"):
-                GlobalConfig.set(key, values[key])
-            if values.get("db_password"):
-                GlobalConfig.set("db_password", values["db_password"])
+            GlobalConfig.save_connection(values)
 
             flag_path.parent.mkdir(parents=True, exist_ok=True)
             flag_path.write_text("configured=true\n", encoding="utf-8")
