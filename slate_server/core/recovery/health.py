@@ -123,14 +123,31 @@ def _check_settings(layout, out):
                              % ", ".join(broken),
                              "Restore the last snapshot, or set the passwords again with "
                              "the recovery tool."))
+        elif layout.secrets_file.is_file() and not db_credentials.stored():
+            out.append(Check("Password settings", FAIL,
+                             "The passwords kept on this PC (%s) cannot be read here - was the "
+                             "database moved from another PC?" % layout.secrets_file,
+                             "Use 'Set app password' with the password the workstations "
+                             "have (the one written down with the Recovery Key)."))
         elif not db_credentials.app_password():
             out.append(Check("Password settings", FAIL,
-                             "No database password is configured on this server.",
-                             "Use 'Set database app password' in the recovery tool."))
+                             "No database password is kept on this server yet.",
+                             "Start Slate Server once: it finds the password in use, or makes "
+                             "one for a new database. If it cannot, use 'Set app password' "
+                             "here with the password the workstations already have."))
         else:
             out.append(Check("Password settings", OK, "The server has its database passwords%s."
                              % (" (a separate superuser password is set)"
                                 if db_credentials.has_separate_admin_password() else "")))
+            from slate.core.infra.local_secrets import LEGACY_PASSWORD
+            if db_credentials.app_password() == LEGACY_PASSWORD:
+                out.append(Check(
+                    "Studio password", WARN,
+                    "The workstations still use the password every older Slate shipped "
+                    "with. It is public.",
+                    "Database passwords: Show app password lists the workstations that have "
+                    "learned the new one (published when the server starts). When all have "
+                    "it, press Switch to the published password."))
     except Exception as exc:
         out.append(Check("Password settings", WARN, "Could not be read: %s" % exc))
 

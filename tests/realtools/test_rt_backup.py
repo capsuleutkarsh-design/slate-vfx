@@ -122,10 +122,12 @@ def test_after_a_server_restore_the_workstations_account_can_still_read_and_writ
 
 
 def test_server_backup_with_a_wrong_or_missing_password_fails_and_leaves_nothing(
-        server, tmp_path):
+        server, tmp_path, monkeypatch):
     from slate_server.core import db_credentials
     lab = server
     folder = tmp_path / "Backups"
+    # The settings file decides, not the passwords the server keeps protected.
+    monkeypatch.setattr(db_credentials, "_secrets_path", tmp_path / "no_secrets.dat")
     original = lab.credentials.read_text(encoding="utf-8")
     try:
         for settings in ({"db_password": "not-the-password", "db_name": DBNAME},

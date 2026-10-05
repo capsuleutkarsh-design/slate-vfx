@@ -8,7 +8,9 @@ next. Passwords are passed to PostgreSQL as literals and never logged.
 
     reset_account(conn, "admin", new)          (a) password, deactivation, last day
     restore_admin(conn, "admin", new)          (b) make or mend an administrator
-    set_app_password(conn, new, layout)        (c) the workstations' password
+    set_app_password(conn, new, layout)        (c) the workstations' password, now
+    publish_app_password(conn)                 (c) the next one, for them to learn first
+    app_password_lines(conn)                   (c) what the passwords are, for the admin
     set_superuser_password(conn, new, layout)  (c) postgres's own password
     switches_off(layout, names, conn)          (d) turn security features off
     restore latest snapshot                    (e) snapshots.restore_snapshot
@@ -24,7 +26,6 @@ from __future__ import annotations
 import json
 import logging
 from datetime import date, datetime
-from pathlib import Path
 from typing import Iterable, List, Optional
 
 import bcrypt
@@ -225,45 +226,16 @@ def _audit(db: ConnectionDB, username: str, what: str) -> None:
 
 # --------------------------------------------------------- (c) passwords
 
-def _write_setting(layout, key: str, value: str) -> Path:
-    """Merge one setting into the server's credentials file, atomically."""
-    from . import fs
-    target = Path(layout.credentials_path) if layout.credentials_path else None
-    if target is None:
-        from .layout import credentials_file
-        target = credentials_file()
-    data = {}
-    if target.exists():
-        try:
-            loaded = json.loads(target.read_text(encoding="utf-8-sig"))
-            if isinstance(loaded, dict):
-                data = loaded
-        except Exception:
-            # A damaged file is replaced, and kept beside it for whoever wants
-            # to see what else it held.
-            import shutil
-            shutil.copy2(target, target.with_name(target.name + ".damaged"))
-            data = {}
-    data[key] = value
-    fs.write_atomic(target, json.dumps(data, indent=4))
-    try:
-        from slate_server.core import db_credentials
-        db_credentials.reload()
-    except Exception:
-        pass
-    return target
-
-
 def workstation_instructions(new_password_hint: str = "the new password") -> List[str]:
     return [
-        "On EVERY workstation, Slate now needs %s. On each one:" % new_password_hint,
-        "  - open Slate; on the sign-in screen click 'Reconfigure server / database'",
-        "    and type the new database password; or",
-        "  - open %LOCALAPPDATA%\\Slate\\config.json in Notepad and set",
-        '      "db_password": "<the new password>"   (or run setup.bat again).',
+        "Workstations that already have %s carry on. Any other workstation:" % new_password_hint,
+        "  open Slate; on the sign-in screen click 'Reconfigure server / database'",
+        "  and type it as the database password (Show app password shows it).",
         "Until a workstation has it, that workstation cannot open Slate.",
         "Tip: if the workstations still have the OLD password and you only need them",
         "working again, set the database app password back to THAT value instead.",
+        "The gentle way to change it is Publish, then Switch: the workstations learn",
+        "the new password first.",
     ]
 
 
@@ -284,13 +256,90 @@ def set_app_password(conn, new_password: str, layout) -> List[str]:
         if cur.fetchone():
             cur.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(
                 sql.Identifier(database_name()), sql.Identifier(role)))
-    written = _write_setting(layout, "db_password", password)
+    from slate_server.core import db_credentials as creds
+    old = creds.app_password()
+    keep = {"app_password": password, "app_password_previous": old if old != password else None}
+    if creds.stored().get("app_password_next") == password:
+        keep["app_password_next"] = None
+    written = creds.store(**keep)
     logger.warning("Recovery: the database app password was changed (not logged).")
     return (["The workstations' database account (%s) %s." % (
                 role, "has the new password" if exists else "was created with the new password"),
-             "The server's settings (%s) were updated, so its connection pool uses it after "
-             "the server is restarted." % written]
+             "This server keeps it protected (%s). Press Restart pool on the Dashboard, "
+             "or restart the server." % written]
             + workstation_instructions())
+
+
+def publish_app_password(conn, password: Optional[str] = None) -> List[str]:
+    """
+    Publish the studio's next app password in the database, where the
+    workstations (2.2.0 and later) learn it each time they connect. Nothing
+    changes for anyone until switch_app_password (hardening.py). A random
+    one unless ``password`` is given; publishing again keeps the one already
+    published.
+    """
+    import secrets
+    from psycopg2 import sql
+    from slate.core.infra.local_secrets import LEARNED_TABLE, NEXT_TABLE
+    from slate_server.core import db_credentials as creds
+    published = creds.stored().get("app_password_next")
+    new = (_check_password(password, "database app password") if password
+           else published or secrets.token_urlsafe(24))
+    if new == creds.app_password():
+        raise RecoveryRefused("That is already the workstations' password.")
+    creds.store(app_password_next=new)
+    with conn.cursor() as cur:
+        cur.execute("CREATE TABLE IF NOT EXISTS %s (id INTEGER PRIMARY KEY DEFAULT 1 "
+                    "CHECK (id = 1), password TEXT NOT NULL, published_at TEXT)" % NEXT_TABLE)
+        cur.execute("CREATE TABLE IF NOT EXISTS %s (machine TEXT PRIMARY KEY, "
+                    "learned_at TEXT)" % LEARNED_TABLE)
+        for table in (NEXT_TABLE, LEARNED_TABLE):
+            cur.execute(sql.SQL("ALTER TABLE {} OWNER TO {}").format(
+                sql.Identifier(table), sql.Identifier(creds.application_user())))
+        if new != published:
+            cur.execute("DELETE FROM %s" % LEARNED_TABLE)
+        cur.execute("INSERT INTO %s (id, password, published_at) VALUES (1, %%s, %%s) "
+                    "ON CONFLICT (id) DO UPDATE SET password = EXCLUDED.password, "
+                    "published_at = EXCLUDED.published_at" % NEXT_TABLE,
+                    (new, datetime.now().isoformat(timespec="seconds")))
+    logger.warning("The next database app password was published (not logged).")
+    return ["A new app password is published. Each workstation on Slate 2.2.0 or later "
+            "learns it the next time it connects; nothing changes yet.",
+            "Show app password lists the workstations that have it. When every one does, "
+            "press Switch to the published password."]
+
+
+def learned_machines(conn) -> List[str]:
+    """The workstations that have learned the published password ([] when none)."""
+    from slate.core.infra.local_secrets import LEARNED_TABLE
+    db = ConnectionDB(conn)
+    if not db.table_exists(LEARNED_TABLE):
+        return []
+    rows = db.execute_query("SELECT machine, learned_at FROM %s ORDER BY machine"
+                            % LEARNED_TABLE, fetch="all") or []
+    return ["%s (%s)" % (r["machine"], r["learned_at"]) for r in rows]
+
+
+def app_password_lines(conn=None) -> List[str]:
+    """For the admin's eyes only (Recover Slate, unlocked): the passwords and who has the next one."""
+    from slate.core.infra.local_secrets import LEGACY_PASSWORD
+    from slate_server.core import db_credentials as creds
+    have = creds.stored()
+    current = creds.app_password()
+    lines = ["Workstations' database password now: %s" % (current or "(none on this server)")]
+    if current == LEGACY_PASSWORD:
+        lines.append("  That is the password every older Slate shipped with: it is public. "
+                     "Publish a new one and switch to it.")
+    if have.get("app_password_next"):
+        lines.append("Published, not in use yet: %s" % have["app_password_next"])
+        machines = learned_machines(conn) if conn is not None else []
+        lines.append("Workstations that have it (%d):" % len(machines))
+        lines += ["  " + m for m in machines] or ["  none yet"]
+    if have.get("app_password_previous"):
+        lines.append("Before the last change it was: %s" % have["app_password_previous"])
+    lines.append("A new workstation: Reconfigure server / database on its sign-in screen, "
+                 "and type the password in use now.")
+    return lines
 
 
 def set_superuser_password(conn, new_password: str, layout) -> List[str]:
@@ -301,10 +350,12 @@ def set_superuser_password(conn, new_password: str, layout) -> List[str]:
     with conn.cursor() as cur:
         cur.execute(sql.SQL("ALTER ROLE {} PASSWORD {}").format(
             sql.Identifier(admin_user()), sql.Literal(password)))
-    written = _write_setting(layout, "db_admin_password", password)
+    from slate_server.core import db_credentials
+    written = db_credentials.store(admin_password=password)
+    db_credentials.strip_from_files("db_admin_password")
     logger.warning("Recovery: the superuser password was changed (not logged).")
     return ["The superuser (%s) has the new password." % admin_user(),
-            "The server reads it from %s (db_admin_password), so it keeps working. "
+            "This server keeps it protected (%s), so it keeps working. "
             "Workstations are not affected - they never use this account." % written,
             "Keep this password with the Recovery Key; nobody else needs it."]
 
@@ -350,7 +401,8 @@ def _unsplit_superuser(conn, layout) -> List[str]:
     with conn.cursor() as cur:
         cur.execute(sql.SQL("ALTER ROLE {} PASSWORD {}").format(
             sql.Identifier(creds.admin_user()), sql.Literal(creds.app_password())))
-    _write_setting(layout, "db_admin_password", "")      # blank = "not set" (db_credentials)
+    creds.store(admin_password=None)
+    creds.strip_from_files("db_admin_password")
     return ["The superuser (%s) has the workstations' database password again, as before "
             "split_superuser_password. If Slate Server is running in another window, "
             "restart it." % creds.admin_user()]
