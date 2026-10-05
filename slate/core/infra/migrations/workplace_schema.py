@@ -382,6 +382,32 @@ def _column_type(db, table: str, column: str) -> str:
         return ""
 
 
+def _one_credit_per_day(db) -> None:
+    """
+    A day of attendance is credited as comp-off once (a partial unique index,
+    so hand-made entries with another source are not limited).
+
+    A day credited twice before the index existed would stop it being built.
+    The later copies are relabelled 'attendance-duplicate' rather than deleted:
+    a spend may point at them and the days may already be taken, so whether
+    to take them back is for HR to decide, not for an upgrade. Repeatable:
+    once the index exists there is nothing left to relabel.
+    """
+    if not _table_exists(db, "comp_off_ledger"):
+        return
+    db.execute_update(
+        "UPDATE comp_off_ledger SET source = 'attendance-duplicate' "
+        "WHERE source = 'attendance' AND id NOT IN ("
+        "SELECT MIN(id) FROM comp_off_ledger WHERE source = 'attendance' "
+        "GROUP BY LOWER(user_id), earned_on)")
+    made = db.execute_update(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_comp_off_attendance_day "
+        "ON comp_off_ledger (LOWER(user_id), earned_on) WHERE source = 'attendance'")
+    if not made:
+        logger.error("Comp-off: the one-credit-per-day index was not made: %s",
+                     getattr(made, "error", ""))
+
+
 def apply_migration(db) -> bool:
     """Bring the workplace tables up to date. Returns True when in shape."""
     if db is None:
@@ -454,6 +480,7 @@ def apply_migration(db) -> bool:
             db.execute_update("CREATE INDEX IF NOT EXISTS %s ON %s" % (name, definition))
         except Exception as exc:
             logger.debug("Index %s skipped: %s", name, exc)
+    _one_credit_per_day(db)
 
     logger.info("Workplace schema checked (%d table(s), %d column(s) added, %d column type(s) converted).",
                 made, added, converted)
