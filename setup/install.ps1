@@ -302,7 +302,9 @@ function Write-LocalConfig {
     }
 
     New-Item -ItemType Directory -Force -Path (Split-Path $target) | Out-Null
-    $config | ConvertTo-Json -Depth 4 | Set-Content $target -Encoding UTF8
+    # UTF-8 without a BOM: "Set-Content -Encoding UTF8" in Windows PowerShell 5
+    # starts the file with one, which Slate's readers once refused.
+    [IO.File]::WriteAllText($target, ($config | ConvertTo-Json -Depth 4))
     Good "wrote slate\config.json"
 
     if (-not $dbpass) {

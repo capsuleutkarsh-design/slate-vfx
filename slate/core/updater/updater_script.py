@@ -115,6 +115,18 @@ def is_persistent(name: str) -> bool:
     return any(fnmatch.fnmatch(name, pattern) for pattern in PERSISTENT_PATTERNS)
 
 
+def backup_ignore(install_dir: Path):
+    """
+    copytree's ignore for the rollback backup: the persistent items, at the top
+    of the install folder only. ignore_patterns skipped them at every depth, so
+    a library's own "database", "logs", "tmp" or "Cache" folder inside the
+    build was missing after a rollback.
+    """
+    skip = shutil.ignore_patterns(*PERSISTENT_ITEMS, *PERSISTENT_PATTERNS)
+    top = Path(install_dir)
+    return lambda folder, names: skip(folder, names) if Path(folder) == top else set()
+
+
 def restore_backup(backup_dir: Path, install_dir: Path) -> bool:
     """
     Put the previous build back, leaving the studio's own files where they are.
@@ -185,7 +197,7 @@ def main():
         shutil.copytree(
             install_dir,
             backup_dir,
-            ignore=shutil.ignore_patterns(*PERSISTENT_ITEMS, *PERSISTENT_PATTERNS)
+            ignore=backup_ignore(install_dir)
         )
     except (OSError, shutil.Error) as e:
         error_exit(f"Backup failed, aborting update: {e}")
