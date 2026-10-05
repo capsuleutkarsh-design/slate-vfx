@@ -378,10 +378,13 @@ class StockRepository:
         Deleted rows are included, with deleted_at set: the ingest leaves them
         out, so a deletion sticks however often the folder is rescanned
         (MED2-002). Restoring is done from "Removed".
+
+        Strict: a failed read raises. Read as "no paths", every file would be
+        new and the save would bring deleted assets back.
         """
         rows = self.db.execute_query(
             "SELECT id, file_path, file_size, thumb_path, metadata, deleted_at "
-            "FROM stock_library") or []
+            "FROM stock_library", strict=True) or []
         return [dict(r) for r in rows]
 
     def get_stock_count(self) -> int:
