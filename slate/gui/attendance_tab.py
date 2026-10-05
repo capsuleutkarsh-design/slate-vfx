@@ -474,18 +474,7 @@ class AttendanceTab(QWidget):
             except Exception as exc:
                 logging.warning("Could not read who reports to %s: %s", self.username, exc)
                 return set()
-        under = {}
-        for uid, rec in users.items():
-            boss = str((rec or {}).get("reports_to") or "").strip().lower()
-            under.setdefault(boss, set()).add(str(uid).lower())
-        me = str(self.username).lower()
-        team, todo = set(), [me]
-        while todo:
-            for uid in under.get(todo.pop(), ()):
-                if uid != me and uid not in team:      # a loop in the records ends here
-                    team.add(uid)
-                    todo.append(uid)
-        return team
+        return people.reports_under(users, self.username, all_the_way_down=True)
 
     def _notify(self, message: str, level: str = "info", details: str = ""):
         """Use host feedback API when available, fallback to dialogs."""

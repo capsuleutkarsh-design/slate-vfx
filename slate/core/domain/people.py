@@ -270,3 +270,32 @@ def is_service_record(record) -> bool:
     if flag is not None and str(flag).strip().lower() not in ("", "0", "false", "f", "no", "none"):
         return True
     return str(record.get("username") or "").strip().lower() in SERVICE_USERNAMES
+
+
+def reports_under(users, manager, all_the_way_down: bool = False) -> set:
+    """
+    THE reporting-line rule: the usernames (lower-case) whose Reports to is
+    manager. users is {username: record with "reports_to"}.
+
+    all_the_way_down follows the line through leads - who a supervisor sees on
+    Attendance (one level showed a supervisor their lead but not the lead's
+    artists). Nobody reports to themselves, and a loop in the records ends the
+    walk instead of running for ever.
+    """
+    me = str(manager or "").strip().lower()
+    if not me:
+        return set()
+    under = {}
+    for uid, record in (users or {}).items():
+        boss = str((record or {}).get("reports_to") or "").strip().lower()
+        name = str(uid or "").strip().lower()
+        if boss and name:
+            under.setdefault(boss, set()).add(name)
+    team, todo = set(), [me]
+    while todo:
+        for uid in under.get(todo.pop(), ()):
+            if uid != me and uid not in team:
+                team.add(uid)
+                if all_the_way_down:
+                    todo.append(uid)
+    return team

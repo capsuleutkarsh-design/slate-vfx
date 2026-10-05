@@ -319,25 +319,18 @@ class LeaveRepository:
         of them - which is not a queue, it is a free-for-all that happens to be
         sorted by date.
         """
-        manager = str(manager or "").strip()
-        if not manager:
+        if not str(manager or "").strip():
             return set()
         try:
             rows = self.db.execute_query(
-                "SELECT username FROM ut_users WHERE LOWER(reports_to) = LOWER(%s)",
-                (manager,), fetch="all") or []
+                "SELECT username, reports_to FROM ut_users", fetch="all") or []
         except DatabaseUnavailableError:
             raise
         except Exception:
             logger.exception("reports_to failed")
             return set()
-
-        out = set()
-        for row in rows:
-            name = (row["username"] if isinstance(row, dict) else row[0]) or ""
-            if str(name).strip():
-                out.add(str(name).strip().lower())
-        return out
+        from slate.core.domain.people import reports_under
+        return reports_under({dict(row)["username"]: dict(row) for row in rows}, manager)
 
     # ---------------------------------------------------------------- requests
     def for_user(self, username: str) -> list:

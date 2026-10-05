@@ -63,3 +63,26 @@ def test_one_stored_date_reader_and_one_roles_reader():
     assert UserManager._parse_roles is admin_guard.parse_roles
     assert admin_guard.parse_roles('["HR", "Artist"]') == ["HR", "Artist"]
     assert admin_guard.parse_roles("Artist") == ["Artist"] and admin_guard.parse_roles(None) == []
+
+
+# -------------------------------------------------- who reports to whom (item 2)
+def test_one_reporting_line_rule():
+    users = {"Sam": {}, "lead.kiran": {"reports_to": "sam"}, "Ira": {"reports_to": " Lead.Kiran "},
+             "jo": {"reports_to": "SAM"}, "loop.a": {"reports_to": "loop.b"},
+             "loop.b": {"reports_to": "loop.a"}, "self": {"reports_to": "self"}}
+    assert people.reports_under(users, "sam") == {"lead.kiran", "jo"}
+    assert people.reports_under(users, "sam", all_the_way_down=True) == {"lead.kiran", "jo", "ira"}
+    assert people.reports_under(users, "loop.a", all_the_way_down=True) == {"loop.b"}
+    assert people.reports_under(users, "self") == set() and people.reports_under(users, "") == set()
+
+
+def test_leave_and_users_ask_the_reporting_rule(mock_db):
+    from slate.core.domain.user_manager import UserManager
+    from slate.core.infra.leave_repository import LeaveRepository
+    um = UserManager(db=mock_db)
+    um.add_user("sup.vikram", "password1", ["Supervisor"], "Vikram", "Comp")
+    um.add_user("aarav", "password1", ["Artist"], "Aarav", "Comp", reports_to="sup.vikram")
+    um.add_user("gone", "password1", ["Artist"], "Gone", "Comp", reports_to="SUP.VIKRAM",
+                last_day="2000-01-01")
+    assert LeaveRepository(mock_db).reports_to("sup.vikram") == {"aarav", "gone"}
+    assert um.reports_of("sup.vikram") == ["aarav"]         # active people only

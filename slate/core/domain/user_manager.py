@@ -1282,9 +1282,9 @@ class UserManager:
 
     def reports_of(self, manager: str) -> List[str]:
         """Active people whose Reports to is this person."""
-        wanted = str(manager or "").strip().lower()
-        return sorted(u for u, d in self.active_users().items()
-                      if wanted and str(d.get("reports_to") or "").strip().lower() == wanted)
+        active = self.active_users()
+        team = people.reports_under(active, manager)
+        return sorted(u for u in active if str(u).strip().lower() in team)
 
     def _waiting_requests(self, usernames) -> list:
         """[(id, user_id)] of these people's requests at the supervisor stage."""
