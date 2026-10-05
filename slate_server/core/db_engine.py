@@ -381,6 +381,7 @@ class DatabaseEngine:
         try:
             self._ensure_slate_database()
             if self._ensure_application_role():
+                self._ensure_secure_schema()
                 hardened = self._harden_access() is not False
                 return True
 
@@ -683,6 +684,34 @@ class DatabaseEngine:
             self._last_role_error = first[0] if first else str(exc)
             logging.error("Failed to set up the application account %s: %s",
                           role, exc)
+            return False
+        finally:
+            conn.close()
+
+    def _ensure_secure_schema(self) -> bool:
+        """
+        slate_secure (secure_schema.py): the append-only audit trail, the hidden
+        password store and the fleet key, which the workstations' account cannot
+        change. Made on every start, so an upgraded server has it. Never stops
+        the server: without it the workstations keep writing the audit trail to
+        the share, as before.
+        """
+        from slate_server.core import secure_schema
+        from slate_server.core.db_credentials import (
+            admin_password, admin_user, application_user, database_name)
+        try:
+            import psycopg2
+            conn = psycopg2.connect(host="127.0.0.1", port=int(self.port), dbname=database_name(),
+                                    user=admin_user(), password=admin_password(),
+                                    connect_timeout=10, application_name="Slate Central Server")
+        except Exception as exc:
+            logging.error("slate_secure was not set up (cannot log in): %s", exc)
+            return False
+        try:
+            secure_schema.install(conn, application_user())
+            return True
+        except Exception as exc:
+            logging.error("slate_secure was not set up: %s", exc)
             return False
         finally:
             conn.close()
