@@ -310,6 +310,31 @@ def test_signed_fleet_commands_off_log_only_on(healthy, caplog):
     assert signing.command_allowed(unsigned, db), "off again: as before"
 
 
+@slow
+def test_signed_fleet_commands_refused_or_failing_changes_nothing(healthy, monkeypatch):
+    lab = healthy
+    lab.sql("UPDATE ut_users SET active=0 WHERE username='admin'")
+    with pytest.raises(actions.RecoveryRefused) as refused:
+        lab.session(lab.key).turn_on("signed_fleet_commands", "log_only")
+    assert "administrator" in str(refused.value)
+    assert _mode(lab, "signed_fleet_commands") == "off"
+    lab.sql("UPDATE ut_users SET active=1 WHERE username='admin'")
+
+    real = secure_schema.install
+
+    def install_and_leak(conn, app_role):
+        real(conn, app_role)
+        with conn.cursor() as cur:
+            cur.execute("GRANT SELECT ON slate_secure.keys TO ut_vfx_app")
+    monkeypatch.setattr(secure_schema, "install", install_and_leak)
+    result = hardening.turn_on(lab.layout, "signed_fleet_commands", "log_only")
+    assert not result.applied and "private half" in result.message
+    assert _mode(lab, "signed_fleet_commands") == "off"
+    monkeypatch.setattr(secure_schema, "install", real)
+    lab.bootstrap()                                    # the next server start mends it
+    assert _refused(_app(lab), "SELECT private_key FROM slate_secure.keys")
+
+
 # ============================================================ signed_updates
 
 @slow

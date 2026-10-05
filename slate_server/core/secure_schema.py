@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS slate_secure.audit_trail (
     status text NOT NULL DEFAULT '',
     details text NOT NULL DEFAULT '',
     pc text NOT NULL DEFAULT '');
-REVOKE ALL ON slate_secure.audit_trail FROM PUBLIC;
+REVOKE ALL ON slate_secure.audit_trail FROM PUBLIC, {app};
 GRANT SELECT, INSERT ON slate_secure.audit_trail TO {app};
 GRANT USAGE ON SEQUENCE slate_secure.audit_trail_id_seq TO {app};
 
@@ -79,7 +79,7 @@ CREATE OR REPLACE TRIGGER audit_trail_no_truncate
 CREATE TABLE IF NOT EXISTS slate_secure.passwords (
     username text PRIMARY KEY,
     hash text NOT NULL);
-REVOKE ALL ON slate_secure.passwords FROM PUBLIC;
+REVOKE ALL ON slate_secure.passwords FROM PUBLIC, {app};
 
 -- The rule UserManager._check_password has always had: bcrypt ($2a$/$2b$),
 -- else an unsalted SHA-256 in hex, else the plain text. pgcrypto knows only
@@ -138,7 +138,7 @@ CREATE TABLE IF NOT EXISTS slate_secure.keys (
     public_key text NOT NULL,
     private_key text NOT NULL,
     made_at timestamptz NOT NULL DEFAULT now());
-REVOKE ALL ON slate_secure.keys FROM PUBLIC;
+REVOKE ALL ON slate_secure.keys FROM PUBLIC, {app};
 GRANT SELECT (name, public_key, made_at) ON slate_secure.keys TO {app};
 
 -- Full access (a role holding ALL, or named admin / developer) or
