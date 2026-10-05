@@ -28,7 +28,6 @@ from __future__ import annotations
 import json
 import logging
 from copy import deepcopy
-from datetime import date
 from typing import Callable, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -45,24 +44,9 @@ class LastAdminRefused(_Base):
 
 # --------------------------------------------------------------- the rules
 
-def account_active(record) -> bool:
-    """Not switched off and not past the last day. Lenient: anything unclear is active."""
-    value = record.get("active")
-    if value is not None and str(value).strip() not in ("", "1", "True", "true"):
-        try:
-            if int(value) == 0:
-                return False
-        except (TypeError, ValueError):
-            if str(value).strip().lower() in ("false", "no"):
-                return False
-    last = record.get("last_day")
-    if last:
-        try:
-            if date.fromisoformat(str(last)[:10]) < date.today():
-                return False
-        except ValueError:
-            pass
-    return True
+# "Not switched off and not past the last day": one rule for all of Slate,
+# kept in people.py and named here too because callers import it from here.
+from slate.core.domain.people import account_active  # noqa: E402,F401
 
 
 def usable_password(stored_hash) -> bool:

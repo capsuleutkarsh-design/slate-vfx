@@ -77,7 +77,8 @@ def reset_account(conn, username: str, new_password: str) -> List[str]:
     if db.column_exists("ut_users", "must_change_password"):
         sets.append("must_change_password=1")
         done.append("They must choose their own password at the next sign-in.")
-    if db.column_exists("ut_users", "active") and str(row.get("active")) in ("0", "False", "false"):
+    from slate.core.domain.people import switched_off
+    if db.column_exists("ut_users", "active") and switched_off(row.get("active")):
         sets += ["active=1", "deactivated_on=NULL", "deactivated_by=NULL"]
         done.append("The account was deactivated; it is active again.")
     last = row.get("last_day")

@@ -37,15 +37,7 @@ from ..core.data_display import setup_date_edit
 from slate.gui.components.table_tools import KeepSelection, make_item, selected_keys
 
 
-def _as_date(value):
-    if not value:
-        return None
-    if hasattr(value, "year") and not hasattr(value, "hour"):
-        return value
-    try:
-        return date.fromisoformat(str(value)[:10])
-    except ValueError:
-        return None
+from slate.core.domain.dates import as_date as _as_date  # noqa: E402  (the shared stored-date reader)
 
 
 class MachinePickerDialog(QDialog):

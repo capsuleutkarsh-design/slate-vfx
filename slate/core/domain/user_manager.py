@@ -10,6 +10,7 @@ from ..infra.audit_logger import AuditLogger
 from slate.utils.safe_json import SafeJsonIO
 from slate.core.domain import people
 from slate.core.domain.people import plural
+from slate.core.security import admin_guard
 
 class UserManager:
     """
@@ -73,24 +74,14 @@ class UserManager:
             """)
         except Exception as e:
             logging.error(f"Failed to initialize Auth Schema: {e}")
-        # Normally added by the workplace migration when the database opens;
-        # ut_users may not have existed yet at that moment on a new database.
+        # The account columns (must_change_password, active, last_day, ...) are
+        # the workplace migration's; it ran when the database opened, but
+        # ut_users may not have existed yet then on a new database, so ask it again.
         try:
-            from ..infra.migrations.workplace_schema import _column_exists
-            if not _column_exists(db, "ut_users", "must_change_password"):
-                db.execute_update("ALTER TABLE ut_users ADD COLUMN must_change_password INTEGER")
+            from ..infra.migrations.workplace_schema import add_columns
+            add_columns(db, "ut_users")
         except Exception as e:
-            logging.warning("Could not add must_change_password: %s", e)
-        # Deactivation (see deactivate_user). Additive, and NULL means active,
-        # so every existing account stays exactly as it was.
-        try:
-            from ..infra.migrations.workplace_schema import _column_exists
-            for column, kind in (("active", "INTEGER"), ("deactivated_on", "TEXT"),
-                                 ("deactivated_by", "TEXT")):
-                if not _column_exists(db, "ut_users", column):
-                    db.execute_update(f"ALTER TABLE ut_users ADD COLUMN {column} {kind}")
-        except Exception as e:
-            logging.warning("Could not add the account status columns: %s", e)
+            logging.warning("Could not add the account columns: %s", e)
         # Sign-in reads security switches; without the table every read logs an error.
         from slate.core.security import switches
         switches.ensure_table(db)
@@ -649,37 +640,13 @@ class UserManager:
         return (admin_guard.has_full_access(admin_guard.parse_roles(row.get("roles")), perms)
                 and not admin_guard.administrators(users, perms))
 
-    @property
-    def users(self) -> Dict[str, Dict[str, Any]]:
-        """Backward-compatibility property returning dictionary of users."""
-        return self.get_all_users()
-
-    def load_users(self):
-        """Backward-compatibility stub."""
-        pass
-
     def get_all_users(self) -> Dict[str, Dict[str, Any]]:
         db = self._get_db()
         rows = db.execute_query("SELECT * FROM ut_users", fetch="all") or []
         users_dict = {}
         for r in rows:
             uid = r['username']
-            try:
-                roles_raw = r.get('roles', '[]')
-                if isinstance(roles_raw, list):
-                    roles = roles_raw
-                elif isinstance(roles_raw, str):
-                    try:
-                        roles = json.loads(roles_raw)
-                        if isinstance(roles, str):
-                            roles = [roles]
-                    except Exception:
-                        roles = [roles_raw] if roles_raw else []
-                else:
-                    roles = []
-            except Exception:
-                roles = []
-                
+            roles = self._parse_roles(r.get('roles'))
             users_dict[uid] = {
                 "password_hash": r['password_hash'],
                 "display_name": r.get('display_name', ''),
@@ -1223,17 +1190,8 @@ class UserManager:
             (self.acting_user,), fetch="one")
         return self._parse_roles(row.get("roles") if row else None) if row else []
 
-    @staticmethod
-    def _parse_roles(raw):
-        if isinstance(raw, list):
-            return raw
-        if isinstance(raw, str) and raw.strip():
-            try:
-                value = json.loads(raw)
-                return [value] if isinstance(value, str) else list(value or [])
-            except Exception:
-                return [raw]
-        return []
+    # The one reader of a stored roles value (also used by ticket_repository).
+    _parse_roles = staticmethod(admin_guard.parse_roles)
 
     def _refuse(self, message):
         from slate.core.domain.access import GrantRefused
@@ -1289,10 +1247,9 @@ class UserManager:
 
     @staticmethod
     def _flag_active(record) -> bool:
-        """Not deactivated and not past the last day - the rule the
-        last-administrator guard uses too (admin_guard.account_active)."""
-        from slate.core.security.admin_guard import account_active
-        return account_active(record)
+        """Not deactivated and not past the last day: people.account_active,
+        the one rule (sign-in and the last-administrator guard use it too)."""
+        return people.account_active(record)
 
     def is_active(self, username: str) -> bool:
         row = self._get_db().execute_query(
@@ -1306,9 +1263,9 @@ class UserManager:
 
     def reports_of(self, manager: str) -> List[str]:
         """Active people whose Reports to is this person."""
-        wanted = str(manager or "").strip().lower()
-        return sorted(u for u, d in self.active_users().items()
-                      if wanted and str(d.get("reports_to") or "").strip().lower() == wanted)
+        active = self.active_users()
+        team = people.reports_under(active, manager)
+        return sorted(u for u in active if str(u).strip().lower() in team)
 
     def _waiting_requests(self, usernames) -> list:
         """[(id, user_id)] of these people's requests at the supervisor stage."""

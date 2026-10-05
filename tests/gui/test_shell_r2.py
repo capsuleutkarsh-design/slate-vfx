@@ -97,7 +97,7 @@ class FakeDB:
                 rows = [r for r in rows if r["user_id"].lower() == str(params[0]).lower()]
             return rows
         if "reports_to" in sql:
-            return [{"username": "rahul"}]
+            return [{"username": "rahul", "reports_to": "sam"}]
         return []
 
 

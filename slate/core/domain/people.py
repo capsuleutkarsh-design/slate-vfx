@@ -29,7 +29,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date
 from typing import Dict, Iterable, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -67,17 +67,43 @@ class Person:
         return (self.name.casefold(), self.username.casefold())
 
 
-def _as_date(value) -> Optional[date]:
-    if value is None or value == "":
-        return None
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
+from .dates import as_date as _as_date
+
+
+# How a stored "active" flag says off. ut_users.active is INTEGER (NULL = on),
+# but a copied or hand-edited database can hold text or a boolean.
+_SWITCHED_OFF = frozenset({"0", "false", "f", "no", "off"})
+
+
+def switched_off(value) -> bool:
+    """
+    Whether a stored active flag says the account is off: 0, False, '0',
+    'f', 'false', 'no', 'off' (any case), 0.0. None, '' and anything unclear
+    read as on - lenient, so an odd value never shuts anybody out.
+    """
+    if value is None:
+        return False
+    text = str(value).strip().lower()
+    if text in _SWITCHED_OFF:
+        return True
     try:
-        return date.fromisoformat(str(value)[:10])
+        return float(text) == 0
     except ValueError:
-        return None
+        return False
+
+
+def account_active(record, today: Optional[date] = None) -> bool:
+    """
+    THE "is this account active" rule: not switched off, and the last working
+    day (if any) not passed. Sign-in (refuse_inactive_signin), the
+    last-administrator guard, leave routing, the pickers and onboarding all
+    ask this one function. Person.active / has_left are its two halves.
+    """
+    record = record or {}
+    if switched_off(record.get("active")):
+        return False
+    last = _as_date(record.get("last_day"))
+    return not (last and last < (today or date.today()))
 
 
 class Directory:
@@ -127,7 +153,7 @@ class Directory:
                 if flag is not None else False
             service = service or username.lower() in SERVICE_USERNAMES
             active_raw = row.get("is_active", row.get("active"))
-            active = True if active_raw is None else str(active_raw).strip().lower() not in ("0", "false", "f", "no", "")
+            active = not switched_off(active_raw)
             found[username.lower()] = Person(
                 username=username,
                 display_name=str(row.get("display_name") or "").strip(),
@@ -244,3 +270,32 @@ def is_service_record(record) -> bool:
     if flag is not None and str(flag).strip().lower() not in ("", "0", "false", "f", "no", "none"):
         return True
     return str(record.get("username") or "").strip().lower() in SERVICE_USERNAMES
+
+
+def reports_under(users, manager, all_the_way_down: bool = False) -> set:
+    """
+    THE reporting-line rule: the usernames (lower-case) whose Reports to is
+    manager. users is {username: record with "reports_to"}.
+
+    all_the_way_down follows the line through leads - who a supervisor sees on
+    Attendance (one level showed a supervisor their lead but not the lead's
+    artists). Nobody reports to themselves, and a loop in the records ends the
+    walk instead of running for ever.
+    """
+    me = str(manager or "").strip().lower()
+    if not me:
+        return set()
+    under = {}
+    for uid, record in (users or {}).items():
+        boss = str((record or {}).get("reports_to") or "").strip().lower()
+        name = str(uid or "").strip().lower()
+        if boss and name:
+            under.setdefault(boss, set()).add(name)
+    team, todo = set(), [me]
+    while todo:
+        for uid in under.get(todo.pop(), ()):
+            if uid != me and uid not in team:
+                team.add(uid)
+                if all_the_way_down:
+                    todo.append(uid)
+    return team

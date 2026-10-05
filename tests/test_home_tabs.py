@@ -78,12 +78,12 @@ class TestSeparatedHomeTabs:
         tab._read_todays_punch = lambda: {}
         tab.do_punch("in")
         qtbot.waitUntil(lambda: not tab.punch_busy(), timeout=5000)
-        mock_log_action.assert_called_with("test_ops", "in")
+        mock_log_action.assert_called_with("test_ops", "in", metadata=None)
 
         with patch.object(feedback, "confirm", lambda *a, **k: True):
             tab.do_punch("out")
             qtbot.waitUntil(lambda: not tab.punch_busy(), timeout=5000)
-        mock_log_action.assert_called_with("test_ops", "out")
+        mock_log_action.assert_called_with("test_ops", "out", metadata=None)
 
         logged = {call.args[0] for call in mock_log_action.call_args_list}
         assert "Test Ops" not in logged, "the display name must never be the key"
