@@ -1636,11 +1636,6 @@ class PostgresManager:
     def get_user_id(self, name_or_user: str) -> Optional[int]:
         return self.user_repo.get_user_id(name_or_user)
 
-    # Stubs for less critical stats
-    def get_error_statistics(self): return {'total_errors': 0, 'recent_errors': []}
-    def get_asset_statistics(self): return {'total_assets': 0, 'recent_assets': []}
-    def get_compliance_data(self): return {'audit_trail': []}
-    def export_data(self, table, path): return True
 
     def log_change_event(self, project_code, entity_type, entity_id, user_id, action_type,
                          field, old_val, new_val, **shot):

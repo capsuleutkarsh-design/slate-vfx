@@ -181,7 +181,7 @@ class SessionManagerMixin:
             except Exception as e:
                 logging.debug(f"Telemetry shutdown skipped: {e}")
             try:
-                from ...core.infra.error_reporting import error_handler
+                from ...utils.error_handler import error_handler
                 error_handler.cleanup()
             except Exception as e:
                 logging.debug(f"Error handler cleanup skipped: {e}")

@@ -765,11 +765,7 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         # Only log attendance automatically in Ops or All mode (VFX has attendance removed)
         if getattr(self, "app_mode", "all") != "vfx":
             self._log_attendance_async()
-        
-        # E. Start Background Workers
-        if hasattr(self, 'worker_manager'):
-            self.worker_manager.start_workers()
-        
+
         if self.user_has_navigated():
             # They have already opened something: leave them there.
             logging.info("Start-up: staying on %s - opened before start-up finished",

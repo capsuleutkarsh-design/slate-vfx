@@ -26,14 +26,7 @@ from datetime import date, datetime
 # come back empty; catching it here and returning a fallback puts the fault
 # straight back. So it is re-raised, and anything else is logged before the
 # fallback is used.
-try:
-    from .postgres_manager import DatabaseUnavailableError
-except ImportError:                                  # pragma: no cover
-    try:
-        from ..infra.postgres_manager import DatabaseUnavailableError
-    except ImportError:
-        class DatabaseUnavailableError(ConnectionError):
-            """Fallback when the manager cannot be imported."""
+from ..infra.db_results import DatabaseUnavailableError
 
 from ..infra.transaction import atomic
 from .people import plural

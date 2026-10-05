@@ -1712,9 +1712,6 @@ class UserManager:
         """Backward compatibility property returning dictionary of all users."""
         return self.get_all_users()
 
-    # STUBS for legacy compatibility if external code calls them
-    def _sync_to_postgres(self): pass
-    def load_users(self): pass
     def save_users(self, users_dict: Optional[Dict[str, Any]] = None) -> bool:
         db = self._get_db()
         if users_dict:
@@ -1724,5 +1721,3 @@ class UserManager:
                 self._refuse_last_admin(why)
             return db.sync_users(users_dict)
         return True
-    def load_roles(self): pass
-    def save_roles(self): return True

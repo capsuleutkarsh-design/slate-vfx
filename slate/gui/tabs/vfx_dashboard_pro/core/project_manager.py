@@ -167,11 +167,6 @@ class ProjectManager:
         self.last_error = ""
         self.load_config()
 
-    @property
-    def default_project(self):
-        """No sample project is opened by default any more (the dashboard remembers yours)."""
-        return None
-
     def load_config(self):
         from slate.core.infra.database_manager import database_manager
 

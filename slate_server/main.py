@@ -35,8 +35,7 @@ def main():
         code = recover(rest) or 0
         if commands and getattr(sys, "frozen", False):
             try:
-                input("
-Press Enter to close.")
+                input("\nPress Enter to close.")
             except Exception:
                 pass
         os._exit(code)

@@ -124,9 +124,6 @@ class LibraryManager:
         )
         return self._convert_db_assets_to_legacy_format(rows)
 
-    def save_library(self):
-        """Legacy no-op: every change is written to the database as it happens."""
-        pass
 
     def _convert_db_assets_to_legacy_format(self, db_rows):
         """Converts Database rows to the list-of-dicts format expected by UI."""
