@@ -89,7 +89,6 @@ class DashboardProjectMixin:
                            or self.user_data.get("user_id") or "").strip()
             self.data_handler = SQLiteHandler(
                 project_code, user_role=self.access_roles,
-                department_family=self._department_family() or "",
                 username=username,
                 actor_identities=self._artist_identity_candidates(),
             )

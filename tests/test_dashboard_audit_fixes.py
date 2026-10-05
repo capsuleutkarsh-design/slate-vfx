@@ -296,12 +296,15 @@ class TestSaving:
     def test_a_lead_cannot_change_shot_fields(self, mock_db):
         """DSH-020/021."""
         _project(mock_db, [_shot("SH010")])
-        lead = SQLiteHandler(PROJECT, db_manager=mock_db, user_role=["lead"], department_family="roto")
+        from tests.dashboard_util import person
+        lead = SQLiteHandler(PROJECT, db_manager=mock_db, user_role=["lead"],
+                             username=person(mock_db, "rl", "Roto Lead"))
         shot = lead.read_shots()[0]
         shot.status = "APPROVED"
         with pytest.raises(PermissionError):
             lead.write_shots([shot])
-        nobody = SQLiteHandler(PROJECT, db_manager=mock_db, user_role=["lead"], department_family="")
+        nobody = SQLiteHandler(PROJECT, db_manager=mock_db, user_role=["lead"],
+                               username=person(mock_db, "nl", "Trainee"))
         shot = nobody.read_shots()[0]
         shot.dept("roto").status = "WIP"
         with pytest.raises(PermissionError):

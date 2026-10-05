@@ -102,8 +102,9 @@ def test_the_grid_and_the_handler_share_the_department_scope(mock_db):
     assert roto and all(departments.get_department(k).family == "roto" for k in roto)
     grid = SimpleNamespace(user_data={"job_title": "Roto Lead"}, user_roles=["Lead"])
     grid._department_family = lambda: DashboardWidget._detect_user_department_family(grid)
+    from tests.dashboard_util import person
     handler = SQLiteHandler("P3", db_manager=mock_db, user_role=["Lead"],
-                            department_family=grid._department_family())
+                            username=person(mock_db, "rl", grid.user_data["job_title"]))
     assert DashboardWidget._department_scope(grid) == handler._scoped_department_keys() == roto
     assert handler._family_name() == DashboardWidget._family_name("roto") == departments.family_name("roto")
 

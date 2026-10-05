@@ -94,8 +94,10 @@ class TestALeadIsConfinedToTheirDepartment:
         assert not is_department_scoped(["artist"])
 
     def _lead(self, mock_db, family="roto"):
+        from tests.dashboard_util import person
+        title = f"{family.title()} Lead" if family else "Trainee"
         return SQLiteHandler("PRJ", db_manager=mock_db, user_role="lead",
-                             department_family=family)
+                             username=person(mock_db, f"lead_{family or 'none'}", title))
 
     def test_a_roto_lead_can_change_roto(self, mock_db):
         _seed(mock_db)

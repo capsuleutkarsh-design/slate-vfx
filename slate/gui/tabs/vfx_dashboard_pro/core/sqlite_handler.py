@@ -89,7 +89,6 @@ class SQLiteHandler:
         db_manager: DatabaseManager = None,
         user_id: int = None,
         user_role: str = "artist",
-        department_family: str = "",
         username: str = "",
         actor_identities=None,
     ):
@@ -111,11 +110,6 @@ class SQLiteHandler:
         }
         if self.username:
             self.actor_identities.add(self.username.lower())
-        # The department a scoped role (a lead) is confined to. Empty means
-        # the person's job title named no department, so a scoped role can
-        # edit nothing until an admin sets one.
-        self.department_family = str(department_family or "").strip().lower()
-
         if isinstance(user_role, list):
             self.user_roles = [str(r).lower() for r in user_role if str(r).strip()]
             self.user_role = self.user_roles[0] if self.user_roles else "artist"
@@ -297,9 +291,24 @@ class SQLiteHandler:
                 return dept.name
         return str(dept_key or "").title()
 
+    def _department_family(self) -> str:
+        """
+        The department a scoped role (a lead) is confined to, from the
+        person's own ut_users record. It used to be whatever the screen
+        passed in. Empty means the job title names no department, so a scoped
+        role can edit nothing until an admin sets one.
+        """
+        from slate.core.domain.departments import family_of
+        if not self.username:
+            return ""
+        row = self.db_manager.execute_query(
+            "SELECT job_title FROM ut_users WHERE LOWER(username) = LOWER(%s)",
+            (self.username,), fetch="one", strict=True)
+        return family_of(dict(row).get("job_title")) or "" if row else ""
+
     def _family_name(self) -> str:
         from slate.core.domain.departments import family_name
-        return family_name(self.department_family)
+        return family_name(self._department_family())
 
     def _notify_assignment(self, shot_name: str, old_artist: str, new_artist: str, dept_key: str = ""):
         if not self.notifier:
@@ -607,7 +616,7 @@ class SQLiteHandler:
     def _scoped_department_keys(self):
         """The department keys this person may edit, or None if unrestricted (departments.scope_keys)."""
         from slate.core.domain.departments import scope_keys
-        return scope_keys(self.user_roles, self.department_family)
+        return scope_keys(self.user_roles, self._department_family())
 
     @staticmethod
     def _shot_level_fields(shot: Shot) -> dict:

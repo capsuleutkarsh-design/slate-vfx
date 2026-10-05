@@ -131,3 +131,154 @@ def test_clear_temporary_files_keeps_the_caches(monkeypatch, tmp_path):
     result = temp_sweeper.TempFileSweeper(max_age_days=1).run()
     assert result["files_deleted"] == 2 and not result["errors"]
     assert all(p.exists() for p in kept + [fresh]) and not any(p.exists() for p in gone)
+
+
+def test_users_and_roles_is_offered_only_to_who_can_use_it(mock_db):
+    """
+    Item 6. The sidebar offered Users & Roles to a role holding only the HRMS
+    tab key; it opened onto "You do not have permission".
+    """
+    from slate.core.domain import access
+    from slate.core.domain.user_manager import UserManager
+
+    access.reset_cache()
+    UserManager(db=mock_db).update_role_permissions("Payroll", ["HRMS"])
+    assert not access.opens_users_and_roles(["Payroll"])
+    assert access.opens_users_and_roles(["HR"]) and access.opens_users_and_roles(["IT"])
+    access.reset_cache()
+
+
+def test_export_to_excel_on_an_excel_only_project_says_so(monkeypatch):
+    """Item 6. It said "Exported N shot(s)" having written nothing."""
+    from types import SimpleNamespace
+    from slate.gui.tabs.vfx_dashboard_pro.core.excel_handler import ExcelHandler
+    from slate.gui.tabs.vfx_dashboard_pro.ui.components.dashboard_actions_mixin import (
+        DashboardActionsMixin)
+
+    said, mirrored = [], []
+    widget = SimpleNamespace(
+        _excel_allowed=lambda: True, current_project=object(), all_shots=[object()],
+        data_handler=object.__new__(ExcelHandler),
+        _notify=lambda text, *a, **k: said.append(text),
+        _mirror_shots_to_excel=lambda *a, **k: mirrored.append(a))
+    DashboardActionsMixin.export_to_excel_click(widget)
+    assert not mirrored and "kept in its Excel file" in said[-1]
+
+
+def test_the_studio_logo_is_one_for_the_studio(monkeypatch):
+    """
+    Item 6. The logo sat on a studio card but was saved per workstation. It is
+    a studio setting now; a PC's old value shows until the studio saves one.
+    """
+    from slate.core.infra import database_manager, studio_settings
+
+    monkeypatch.setattr(database_manager, "is_connected", lambda: True)
+    monkeypatch.setattr(studio_settings, "get_setting",
+                        lambda key, default=None, db=None: "\\server\brand\logo.png")
+    assert studio_settings.studio_logo("C:/old/logo.png") == "\\server\brand\logo.png"
+    monkeypatch.setattr(studio_settings, "get_setting", lambda key, default=None, db=None: "")
+    assert studio_settings.studio_logo("C:/old/logo.png") == "C:/old/logo.png"
+    assert studio_settings.VALIDATORS["branding_logo_path"]("  x.png ") == "x.png"
+
+
+def test_a_sidebar_heading_with_nothing_under_it_is_hidden(qtbot):
+    """Item 6. Ops users with neither Users & Roles nor Admin Panel saw an empty ADMINISTRATION."""
+    from PySide6.QtWidgets import QListWidget, QStackedWidget, QWidget
+    from slate.gui.components.tab_coordinator import TabCoordinator
+
+    window = QWidget()
+    qtbot.addWidget(window)
+    nav, stack = QListWidget(window), QStackedWidget(window)
+    tabs = TabCoordinator(window, nav, stack)
+    tabs.add_category_header("PEOPLE")
+    tabs.register_tab_factory("Leave", QWidget, permission_key=None)
+    tabs.add_category_header("ADMINISTRATION")
+    tabs.register_tab_factory("Admin Panel", QWidget, permission_key="Admin Panel",
+                              user_role="HR", allowed_tabs=["HRMS"])
+    people, admin = (nav.item(g["header_row"]) for g in tabs.groups)
+    assert not people.isHidden() and admin.isHidden()
+
+
+def test_a_dashboard_thumbnail_cut_short_leaves_no_stump(monkeypatch, tmp_path):
+    """
+    Item 7. ffmpeg wrote the dashboard thumbnail straight to its final name,
+    so a run stopped by the 30 s timeout left a stump taken as made for ever.
+    """
+    import subprocess
+    from slate.gui.tabs.vfx_dashboard_pro.utils import thumbnail
+
+    gen = object.__new__(thumbnail.ThumbnailGenerator)
+    gen.ffmpeg_path = "ffmpeg"
+    gen._is_gui_thread = lambda: False          # it runs on a worker in Slate
+    final = tmp_path / "thumb.jpg"
+
+    def cut_short(cmd, **kw):
+        Path(cmd[-1]).write_bytes(b"\xff\xd8 half a jpeg")
+        raise subprocess.TimeoutExpired(cmd, 30)
+    monkeypatch.setattr(thumbnail.subprocess, "run", cut_short)
+    assert not gen.generate_with_ffmpeg("plate.exr", str(final))
+    assert list(tmp_path.iterdir()) == []
+
+    monkeypatch.setattr(thumbnail.subprocess, "run",
+                        lambda cmd, **kw: Path(cmd[-1]).write_bytes(b"\xff\xd8 whole"))
+    assert gen.generate_with_ffmpeg("plate.exr", str(final))
+    assert list(tmp_path.iterdir()) == [final]
+
+
+def test_the_rollback_backup_keeps_nested_folders_named_like_studio_files(tmp_path):
+    """
+    Item 9. The updater's backup skipped "database", "logs", "tmp", "Cache"
+    and "Backups" at any depth, so such a folder inside the build was gone
+    after a rollback. Only the install folder's own top level is the studio's.
+    """
+    import shutil
+    from slate.core.updater.updater_script import backup_ignore
+
+    install = tmp_path / "Slate"
+    for rel in ("logs/today.log", "database/slate.db", "Cache/x.jpg", "Slate.exe",
+                "_internal/lib/database/schema.sql", "_internal/tmp/keep.txt",
+                "_internal/Cache/keep.bin", "_internal/notes.log"):
+        (install / rel).parent.mkdir(parents=True, exist_ok=True)
+        (install / rel).write_text("x")
+    backup = tmp_path / "Backup"
+    shutil.copytree(install, backup, ignore=backup_ignore(install))
+    got = sorted(p.relative_to(backup).as_posix() for p in backup.rglob("*") if p.is_file())
+    assert got == ["Slate.exe", "_internal/Cache/keep.bin", "_internal/lib/database/schema.sql",
+                   "_internal/notes.log", "_internal/tmp/keep.txt"]
+
+
+def test_signing_in_on_approved_leave_is_not_a_punch_in(mock_db, monkeypatch):
+    """Item 12 (owner's decision). The punch-in at sign-in skips a day of approved full-day leave."""
+    from slate.core.domain.central_attendance import CentralAttendance
+
+    att = CentralAttendance(mock_db)
+    monkeypatch.setattr(CentralAttendance, "leave_today", lambda self, user: {"type": "Sick", "half": ""})
+    assert att.log_action("asha", "in", automatic=True) is None
+    assert att.today_state("asha")["state"] == "out"
+    monkeypatch.setattr(CentralAttendance, "leave_today", lambda self, user: None)
+    assert att.log_action("asha", "in", automatic=True)["session"] == 1
+
+
+def test_a_leads_department_comes_from_their_own_record(mock_db):
+    """
+    Item 12 (owner's decision). The shot handler confined a lead to whatever
+    department the screen passed in. It reads the person's own ut_users
+    record now, so a screen cannot widen it.
+    """
+    import pytest
+    from slate.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler
+    from slate.gui.tabs.vfx_dashboard_pro.models.shot_model import Shot
+    from tests.dashboard_util import open_project, person
+
+    open_project(mock_db, "PRJ")
+    shot = Shot(shot_name="SH010", reel_episode="R1", status="WIP")
+    assert SQLiteHandler("PRJ", db_manager=mock_db, user_role="supervisor").write_shots([shot])
+    lead = SQLiteHandler("PRJ", db_manager=mock_db, user_role="lead",
+                         username=person(mock_db, "rl", "Roto Lead"))
+    mine = lead.read_shots()[0]
+    mine.dept("comp").status = "WIP"
+    with pytest.raises(PermissionError):
+        lead.write_shots([mine])
+    mine = lead.read_shots()[0]
+    mine.dept("roto").status = "WIP"
+    assert lead.write_shots([mine])
