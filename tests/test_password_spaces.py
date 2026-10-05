@@ -52,7 +52,7 @@ def test_spaces_only_is_not_a_password(users):
     with pytest.raises(ValueError):
         users.add_user("nobody", "   ", ["Artist"], "Nobody", "")
     assert users.password_problem("") and users.password_problem("     ")
-    assert users.password_problem("abc") and not users.password_problem("  abcdef  ")
+    assert users.password_problem("abc") and not users.password_problem("  abcdefgh  ")
 
 
 def test_the_forced_change_works_after_a_stray_space(users):
@@ -96,8 +96,8 @@ def test_the_dialog_puts_the_length_rule_on_one_line(qtbot, users):
     dialog.new_input.setText("abc")
     dialog.repeat_input.setText("abc")
     dialog._save()
-    assert "6 characters" in dialog.hint.text()
-    assert dialog.error_label.isHidden() and "6 characters" not in dialog.error_label.text()
+    assert "8 characters" in dialog.hint.text()
+    assert dialog.error_label.isHidden() and "8 characters" not in dialog.error_label.text()
 
     dialog.new_input.setText("      ")
     dialog.repeat_input.setText("      ")
