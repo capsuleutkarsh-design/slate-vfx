@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from slate.core.infra.db_results import DatabaseUnavailableError
+from slate.core.infra.db_results import DatabaseReadError, DatabaseUnavailableError
 from slate.core.infra.gate import Gate
 from slate.core.infra.leave_repository import LeaveRepository, NO_APPROVER
 from slate.core.domain import leave_policy as lp
@@ -36,6 +36,11 @@ from slate.gui.components.table_tools import (
 )
 from slate.core.domain import people
 from slate.core.domain.dates import format_date
+
+# The holidays or the requests already made could not be read (strict reads),
+# so the cost and the overlap check are unknown - not "none".
+UNREAD = ("Your holidays and existing requests could not be read, so this cannot be "
+          "checked yet. Try again in a moment; if it keeps happening, tell IT.")
 
 
 def _tone(token: str) -> str:
@@ -319,6 +324,12 @@ class RequestLeaveDialog(QDialog):
         return max(0.0, valid - self.comp_off_pending)
 
     def _recost(self, *_):
+        try:
+            self._recost_now()
+        except DatabaseReadError:
+            self.cost.setText(UNREAD)
+
+    def _recost_now(self):
         start = self.start.date().toPython()
         self.retro.setVisible(start < date.today())
         if self.end.date() < self.start.date():
@@ -359,6 +370,13 @@ class RequestLeaveDialog(QDialog):
         self.cost.setText(text)
 
     def _submit(self):
+        try:
+            self._submit_now()
+        except DatabaseReadError:
+            self.note.setText(UNREAD)
+            self.note.show()
+
+    def _submit_now(self):
         if self.end.date() < self.start.date():
             self.note.setText("The end date is before the start date.")
             self.note.show()
