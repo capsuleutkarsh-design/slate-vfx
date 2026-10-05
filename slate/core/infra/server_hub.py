@@ -4,6 +4,7 @@ from pathlib import Path
 import time
 import logging
 import re
+import uuid
 from .global_config import GlobalConfig
 from slate.utils.safe_json import SafeJsonIO
 
@@ -105,8 +106,10 @@ class ServerHub:
     
     # --- BROADCAST SYSTEM ---
     def post_command(self, cmd_type, target="all", message=""):
-        # Write a unique command file to avoid race conditions
-        cmd_id = f"cmd_{int(time.time())}_{target}"
+        # One file per command. Named by the second alone, a second command to
+        # the same target in the same second (Restart then Shut down, two
+        # broadcasts) overwrote the first, which was never seen.
+        cmd_id = f"cmd_{int(time.time())}_{target}_{uuid.uuid4().hex[:8]}"
         cmd_file = self.dirs["commands"] / f"{cmd_id}.json"
         data = {
             "command": cmd_type, 
