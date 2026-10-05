@@ -650,24 +650,32 @@ class SQLiteManager:
         return self.write(query, params)
 
     def execute_sql(self, query: str, params: tuple = None, max_rows: Optional[int] = None) -> SqlResult:
-        """Run a typed statement and report everything - see PostgresManager.execute_sql()."""
+        """Run a typed statement read-only and report everything - see PostgresManager.execute_sql()."""
         try:
             conn = self._get_conn()
-            cur = conn.execute(self._translate_sql(query), params or ())
-            if cur.description is not None:
-                columns = [d[0] for d in cur.description]
-                if max_rows is not None and max_rows >= 0:
-                    rows = cur.fetchmany(max_rows + 1)
-                    truncated = len(rows) > max_rows
-                    rows = rows[:max_rows]
-                else:
-                    rows, truncated = cur.fetchall(), False
-                conn.commit()
-                return SqlResult(columns, [dict(r) for r in rows], rowcount=len(rows),
-                                 truncated=truncated, is_query=True)
-            rowcount = cur.rowcount
-            conn.commit()
-            return SqlResult(rowcount=max(rowcount, 0), is_query=False)
+            # query_only refuses every write; sqlite3 itself refuses a second statement.
+            conn.execute("PRAGMA query_only = ON")
+            try:
+                cur = conn.execute(self._translate_sql(query), params or ())
+                if cur.description is not None:
+                    columns = [d[0] for d in cur.description]
+                    if max_rows is not None and max_rows >= 0:
+                        rows = cur.fetchmany(max_rows + 1)
+                        truncated = len(rows) > max_rows
+                        rows = rows[:max_rows]
+                    else:
+                        rows, truncated = cur.fetchall(), False
+                    return SqlResult(columns, [dict(r) for r in rows], rowcount=len(rows),
+                                     truncated=truncated, is_query=True)
+                return SqlResult(rowcount=max(cur.rowcount, 0), is_query=False)
+            except sqlite3.OperationalError as e:
+                if "readonly" not in str(e).lower():
+                    raise
+                # query_only's refusal, not a database out of reach.
+                return SqlResult(error=error_text(e) + " (the SQL console is read-only)",
+                                 kind=classify_error(e))
+            finally:
+                conn.execute("PRAGMA query_only = OFF")
         except Exception as e:
             self._rollback_quietly()
             if _sqlite_unavailable(e):

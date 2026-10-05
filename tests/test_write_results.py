@@ -148,12 +148,19 @@ def test_execute_sql_returns_columns_rows_and_truncation(db):
     assert result.is_query
 
 
-def test_execute_sql_reports_rows_affected_by_a_write(db):
+def test_execute_sql_is_read_only(db):
+    """SYS-002/041-044: the console cannot write, not even behind a SELECT."""
     for n in range(3):
         _deployment(db, "pkg%d" % n)
-    result = db.execute_sql("UPDATE it_deployments SET status = 'Done'")
-    assert result.ok and not result.is_query
-    assert result.rowcount == 3
+    for sql in ("UPDATE it_deployments SET status = 'Done'",
+                "SELECT 1; UPDATE it_deployments SET status = 'Done'",
+                "SELECT 1; COMMIT; UPDATE it_deployments SET status = 'Done'",
+                "WITH x AS (UPDATE it_deployments SET status = 'Done' RETURNING id) SELECT * FROM x"):
+        result = db.execute_sql(sql)
+        assert not result.ok and result.error, sql
+    assert db.execute_sql("SELECT 1 AS one;").rows == [{"one": 1}]
+    rows = db.execute_query("SELECT status FROM it_deployments", fetch="all")
+    assert [dict(r)["status"] for r in rows] == ["Pending"] * 3
 
 
 def test_execute_sql_shows_the_database_error(db):

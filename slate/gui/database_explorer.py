@@ -44,6 +44,17 @@ TABLE_ROW_LIMIT = 500
 # How many rows a typed SELECT shows at most; the title says when there were more.
 SQL_RESULT_LIMIT = 5000
 
+# Columns never shown in the Data Center (SYS-020): password hashes, tokens, secrets.
+_SECRET_COLUMN = re.compile(r"password|token|secret", re.IGNORECASE)
+# Tables shown but not edited here. Users change in Users & Roles, which keeps
+# the last administrator safe.
+READ_ONLY_TABLES = {"ut_users": "Users are changed in Users & Roles, which keeps the last "
+                                "administrator safe. They are shown read-only here."}
+
+
+def is_secret_column(name) -> bool:
+    return bool(_SECRET_COLUMN.search(str(name or "")))
+
 # A friendly name for every table (British spelling); an unknown one is shown
 # with its underscores as spaces. The raw name is always the tooltip.
 TABLE_LABELS = {
@@ -936,12 +947,17 @@ class DatabaseExplorer(QWidget):
                     col_name = c.get("column_name") or c.get("name")
                 else:
                     col_name = c[0] if c else None
-                if col_name:
+                if col_name and not is_secret_column(col_name):
                     self.columns.append(col_name)
-            self.key_columns = [k for k in (data.get('keys') or []) if k in self.columns]
+            read_only = READ_ONLY_TABLES.get(table_name)
+            self.key_columns = [] if read_only else [
+                k for k in (data.get('keys') or []) if k in self.columns]
             self.primary_key_col = self.key_columns[0] if self.key_columns else None
 
-            if self.key_columns:
+            if read_only:
+                self.lbl_note.setText(read_only)
+                self.lbl_note.show()
+            elif self.key_columns:
                 self.lbl_note.hide()
             else:
                 self.lbl_note.setText("This table has no primary key, so its rows cannot be told "
@@ -957,8 +973,7 @@ class DatabaseExplorer(QWidget):
             self.data_grid.setHorizontalHeaderLabels(self.columns)
             self.data_grid.setRowCount(len(rows))
             for r, row in enumerate(rows):
-                values = [row[col] if isinstance(row, dict) else row[c]
-                          for c, col in enumerate(self.columns)]
+                values = [row[col] for col in self.columns]
                 key = [values[self.columns.index(k)] for k in self.key_columns] or None
                 for c, col in enumerate(self.columns):
                     val = values[c]
@@ -1280,96 +1295,65 @@ class DatabaseExplorer(QWidget):
         self._run_async(_do_purge, _on_done, _on_error)
 
     def run_custom_sql(self):
-        """Execute custom SQL asynchronously."""
+        """Run typed SQL asynchronously. It is read-only: execute_sql runs it in a
+        READ ONLY transaction, so no statement can change data (SYS-002)."""
         q = self.txt_sql.toPlainText().strip()
         if not q: return
 
-        if q.upper().startswith("SELECT"):
-            def _do_query():
-                # execute_sql reports the columns, the rows and the database's
-                # own error. execute_query returned None for a bad statement,
-                # which showed as nothing at all over the previous table.
-                return self.db.execute_sql(q, max_rows=SQL_RESULT_LIMIT)
+        def _do_query():
+            # execute_sql reports the columns, the rows and the database's
+            # own error. execute_query returned None for a bad statement,
+            # which showed as nothing at all over the previous table.
+            return self.db.execute_sql(q, max_rows=SQL_RESULT_LIMIT)
 
-            def _on_done(result):
-                if self._is_closing:
-                    return
-                # Clear first: a result must never be shown over, or mixed
-                # with, the rows of the table that was open before.
-                self.is_loading = True
-                try:
-                    self.current_table = None
-                    self.primary_key_col = None
-                    # The result replaces the table: its note, list highlight
-                    # and row count go with it.
-                    self.lbl_note.hide()
-                    self.lbl_rows.setText("")
-                    self.table_list.clearSelection()
-                    self.dashboard_view.hide()
-                    self.table_view_widget.show()
-                    self.data_grid.clear()
-                    self.data_grid.setRowCount(0)
-                    self.data_grid.setColumnCount(0)
-                    if not result.ok:
-                        self.lbl_table_name.setText("SQL Result - error")
-                        QMessageBox.critical(self, "The query failed", result.error)
-                        return
-                    count = len(result.rows)
-                    self.lbl_table_name.setText(
-                        "SQL Result - %d row%s%s" % (count, "" if count == 1 else "s",
-                                                     " (first %d shown)" % SQL_RESULT_LIMIT
-                                                     if result.truncated else ""))
-                    cols = result.columns
-                    self.data_grid.setColumnCount(len(cols))
-                    self.data_grid.setHorizontalHeaderLabels(cols)
-                    self.data_grid.setRowCount(count)
-                    for r, row in enumerate(result.rows):
-                        for c, col in enumerate(cols):
-                            val = row.get(col)
-                            item = QTableWidgetItem("NULL" if val is None else str(val))
-                            # A query result is not a table: not editable.
-                            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                            self.data_grid.setItem(r, c, item)
-                finally:
-                    self.is_loading = False
-
-            def _on_error(msg):
-                if self._is_closing:
-                    return
-                QMessageBox.critical(self, "Error", msg)
-
-            self._run_async(_do_query, _on_done, _on_error, track_primary=True)
-        else:
-            # Non-SELECT queries require confirmation
-            confirm = QMessageBox.warning(
-                self, "Execute SQL?",
-                f"You are about to execute a non-SELECT query:\n\n{q[:200]}{'...' if len(q) > 200 else ''}\n\nThis may modify or delete data. Continue?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No
-            )
-            if confirm != QMessageBox.StandardButton.Yes:
+        def _on_done(result):
+            if self._is_closing:
                 return
-
-            def _do_update():
-                return self.db.execute_sql(q)
-
-            def _on_done(result):
-                if self._is_closing:
-                    return
+            # Clear first: a result must never be shown over, or mixed
+            # with, the rows of the table that was open before.
+            self.is_loading = True
+            try:
+                self.current_table = None
+                self.primary_key_col = None
+                # The result replaces the table: its note, list highlight
+                # and row count go with it.
+                self.lbl_note.hide()
+                self.lbl_rows.setText("")
+                self.table_list.clearSelection()
+                self.dashboard_view.hide()
+                self.table_view_widget.show()
+                self.data_grid.clear()
+                self.data_grid.setRowCount(0)
+                self.data_grid.setColumnCount(0)
                 if not result.ok:
-                    # It used to say "Executed." whatever the database said.
-                    QMessageBox.critical(self, "Not executed", result.error)
+                    self.lbl_table_name.setText("SQL Result - error")
+                    QMessageBox.critical(self, "The query failed", result.error)
                     return
-                logging.info(f"Custom SQL executed: {q[:200]}")
-                QMessageBox.information(
-                    self, "Done",
-                    "%d row%s affected." % (result.rowcount, "" if result.rowcount == 1 else "s"))
+                count = len(result.rows)
+                self.lbl_table_name.setText(
+                    "SQL Result - %d row%s%s" % (count, "" if count == 1 else "s",
+                                                 " (first %d shown)" % SQL_RESULT_LIMIT
+                                                 if result.truncated else ""))
+                cols = [c for c in result.columns if not is_secret_column(c)]
+                self.data_grid.setColumnCount(len(cols))
+                self.data_grid.setHorizontalHeaderLabels(cols)
+                self.data_grid.setRowCount(count)
+                for r, row in enumerate(result.rows):
+                    for c, col in enumerate(cols):
+                        val = row.get(col)
+                        item = QTableWidgetItem("NULL" if val is None else str(val))
+                        # A query result is not a table: not editable.
+                        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                        self.data_grid.setItem(r, c, item)
+            finally:
+                self.is_loading = False
 
-            def _on_error(msg):
-                if self._is_closing:
-                    return
-                QMessageBox.critical(self, "Error", msg)
+        def _on_error(msg):
+            if self._is_closing:
+                return
+            QMessageBox.critical(self, "Error", msg)
 
-            self._run_async(_do_update, _on_done, _on_error, track_primary=True)
+        self._run_async(_do_query, _on_done, _on_error, track_primary=True)
 
     def closeEvent(self, event):
         """Ensure workers are cancelled before widget teardown."""
