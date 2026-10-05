@@ -1,11 +1,10 @@
 
-# The password is not in this file. It comes from the machine - either the
-# SLATE_DB_PASSWORD environment variable or the git-ignored slate/config.json
-# that setup.bat writes. This repository is public.
+# No password goes in the file: it would be copied to every PC in plain text.
+# Each PC is given it once (Reconfigure on the sign-in screen) and keeps it in
+# Windows Credential Manager.
 import sys as _sys
 from pathlib import Path as _Path
 _sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
-from slate.core.infra.local_secrets import db_password as _db_password
 
 import json
 import os
@@ -41,7 +40,6 @@ def create_client_config():
         "db_port": args.port or here["port"],
         "db_name": args.database or here["dbname"],
         "db_user": here["user"],
-        "db_password": _db_password(required=False),
         "SERVER_ROOT": server_root,
     }
 
@@ -51,6 +49,8 @@ def create_client_config():
 
     print(f"Successfully generated '{filename}'")
     print(f"Copy this file to 'RuntimeData/Slate/config.json' on client PCs.")
+    print("It holds no password: on each PC, type the studio's database password once with "
+          "Reconfigure server / database (Recover Slate > Show app password shows it).")
 
 if __name__ == "__main__":
     create_client_config()

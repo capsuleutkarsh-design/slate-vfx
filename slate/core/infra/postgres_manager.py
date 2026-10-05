@@ -60,6 +60,15 @@ def _client_identity() -> str:
     return f"Slate {user}@{host}"[:63]
 
 
+NO_PASSWORD_HELP = (
+    "This PC does not have the studio's database password.\n\n"
+    "1. Ask your Slate administrator for it. On the server PC it is in "
+    "Recover Slate > Database passwords > Show app password\n"
+    "2. Click Reconfigure server / database on the sign-in screen and type it "
+    "in as the database password\n"
+    "Slate keeps it in Windows Credential Manager on this PC, not in a file.")
+
+
 def what_to_do(error, host, port, dbname, user) -> str:
     """
     What to actually check, for the failure that actually happened.
@@ -90,14 +99,13 @@ def what_to_do(error, host, port, dbname, user) -> str:
 
     if "password authentication" in text:
         return (
-            "The server is running and it refused the password.\n\n"
-            "1. The password on this workstation is not the one the database "
-            "has - they are set together at install time and drift apart when "
-            "one end is reinstalled\n"
-            "2. Check Database Password in Slate Server's Settings, and use "
-            "the same one here\n"
-            "3. Reinstalling only this workstation will not fix it if the "
-            "server is the end that changed")
+            "The server is running and it refused this PC's database password.\n\n"
+            "1. The studio's database password has changed, or this PC never "
+            "had the right one\n"
+            "2. Your Slate administrator can see the current one on the server "
+            "PC: Recover Slate > Database passwords > Show app password\n"
+            "3. Click Reconfigure server / database on the sign-in screen and "
+            "type it in. Reinstalling this workstation will not fix it")
 
     if "does not exist" in text and "role" in text:
         return (
@@ -310,26 +318,21 @@ class PostgresManager(ManagerFacade):
     def _load_password_secure(self) -> str:
         """
         The database password (local_secrets.find_db_password - one order for
-        every reader). None found is an error with guidance.
+        every reader), and where it came from (password_source).
         """
-        from .local_secrets import find_db_password
-        password = find_db_password()
-        if password:
-            return password
-
-        error_msg = (
-            "\n" + "="*70 + "\n"
-            "DATABASE PASSWORD NOT CONFIGURED\n"
-            "="*70 + "\n\n"
-            "The database password must be configured before using Slate.\n\n"
-            "Please run the credential setup script:\n\n"
-            "    python tools/setup_credentials.py\n\n"
-            "Or set the DB_PASSWORD environment variable.\n\n"
-            "For more information, see docs/INSTALLATION.md\n"
-            "="*70
-        )
-        logging.critical(error_msg)
-        raise RuntimeError("Database password not configured. Run: python tools/setup_credentials.py")
+        from .local_secrets import (LEGACY_PASSWORD, LEGACY_SOURCE,
+                                    find_db_password_and_source)
+        password, source = find_db_password_and_source()
+        if not password:
+            # Nothing of its own: the password every older Slate shipped with,
+            # so an update never cuts this PC off a studio that still uses it.
+            # Anywhere else it is refused, and NO_PASSWORD_HELP says what to do.
+            logging.warning("This PC has no database password of its own; trying the one "
+                            "older Slate versions shipped with.")
+            password, source = LEGACY_PASSWORD, LEGACY_SOURCE
+        self.password_source = source
+        self._tried_passwords = []
+        return password
 
 
 
@@ -620,19 +623,31 @@ class PostgresManager(ManagerFacade):
                             is_auth_error = "password" in error_str or "authentication" in error_str
                             
                             if is_auth_error and attempt < max_auth_retries - 1:
-                                logging.warning(f"Authentication failed: {e}. Retrying credential lookup...")
-                                
-                                # Clear cached password so secure loaders re-read sources.
-                                self.password = None
-                                logging.info("Retrying auth with secure password sources (keyring entry preserved).")
-                                continue
-                            
+                                # Refused: try the other passwords this PC keeps,
+                                # the studio's next one first - that is how a
+                                # workstation follows the server when it
+                                # switches to a new password (local_secrets).
+                                from .local_secrets import passwords_to_try
+                                tried = self.__dict__.setdefault("_tried_passwords", [])
+                                if self.password:
+                                    tried.append(self.password)
+                                others = passwords_to_try(tried)
+                                if others:
+                                    logging.warning("The database refused this PC's password; "
+                                                    "trying the other one it keeps.")
+                                    self.password = others[0]
+                                    self.password_source = "Credential Manager"
+                                    continue
+
                             logging.error(f"Failed to initialize connection pool after retries: {e}")
+                            from .local_secrets import LEGACY_SOURCE
+                            no_password = (is_auth_error and getattr(
+                                self, "password_source", "") == LEGACY_SOURCE)
                             raise ConnectionError(
                                 f"Cannot connect to database at {self.host}:{self.port}\n\n"
                                 f"Error: {e}\n\n"
-                                + what_to_do(e, self.host, self.port,
-                                             self.dbname, self.user)
+                                + (NO_PASSWORD_HELP if no_password else
+                                   what_to_do(e, self.host, self.port, self.dbname, self.user))
                                 + (f"\n\n{self.discovery_warning}"
                                    if getattr(self, "discovery_warning", "") else "")
                             )

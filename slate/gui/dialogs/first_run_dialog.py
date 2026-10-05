@@ -32,6 +32,15 @@ class ConnectionTestWorker(QThread):
         self.done.emit(ok, message)
 
 
+def _kept_password() -> str:
+    """The password this PC already keeps (Credential Manager), for a blank field."""
+    try:
+        from slate.core.infra.local_secrets import find_db_password
+        return find_db_password()
+    except Exception:
+        return ""
+
+
 def test_database_connection(values, connect=None):
     """(ok, plain sentence) for the database details in the first-run window."""
     try:
@@ -40,7 +49,8 @@ def test_database_connection(values, connect=None):
             connect = psycopg2.connect
         conn = connect(host=values.get("db_host"), port=int(values.get("db_port") or 5440),
                        dbname=values.get("db_name"), user=values.get("db_user"),
-                       password=values.get("db_password") or None, connect_timeout=5)
+                       password=values.get("db_password") or _kept_password() or None,
+                       connect_timeout=5)
         try:
             conn.close()
         except Exception:
@@ -121,7 +131,8 @@ class FirstRunSetupDialog(QDialog):
 
         self.db_password_input = QLineEdit(str(GlobalConfig.get("db_password", "")))
         self.db_password_input.setEchoMode(QLineEdit.Password)
-        self.db_password_input.setPlaceholderText("Leave empty if IT gave you no database password")
+        self.db_password_input.setPlaceholderText(
+            "The studio's database password - leave empty to keep the one this PC has")
         form.addRow("Database password", self.db_password_input)
 
         root.addLayout(form)

@@ -436,9 +436,8 @@ def _check_server_carries_its_settings(server_dir):
         print("ERROR: The server was built without its settings.")
         print("=" * 70)
         print("dist/Slate_Server/ contains no default_config.json, so it "
-              "will start with no database password.")
-        print("It will then create none of the accounts, and every workstation "
-              "will be turned away at the login screen.")
+              "will not know the studio database's name or account.")
+        print("Every workstation would then be turned away at the login screen.")
         print()
         print("The spec that built this is not the one in deployment/. Check "
               "for a stray Slate_Server.spec at the project root.")
@@ -451,9 +450,11 @@ def _check_server_carries_its_settings(server_dir):
         print(f"   (settings are bundled but could not be read: {exc})")
         return
 
-    if not config.get("db_password"):
-        print("ERROR: The bundled settings carry no db_password, so the server "
-              "cannot create its accounts.")
+    if config.get("db_password"):
+        # Every studio would get the same, published password. The server
+        # makes its own at first setup and keeps it on the server PC only.
+        print("ERROR: The bundled settings carry a db_password. A shipped "
+              "password is public - remove it from slate/default_config.json.")
         sys.exit(1)
 
     print("   settings bundled: %s (database %s, account %s)"

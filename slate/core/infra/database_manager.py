@@ -124,6 +124,9 @@ class DatabaseManager:
                 # made a refused port cost about 28 s here, every start-up.
                 backend._init_pool(retry=False)
                 _remember_fallback_switch(backend)
+                from .local_secrets import after_connect
+                after_connect(backend, backend.password,
+                              getattr(backend, "password_source", ""))
                 return backend, "postgres", False
             except Exception as exc:
                 self.bootstrap_error = str(exc)

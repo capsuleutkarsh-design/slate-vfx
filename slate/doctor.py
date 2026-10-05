@@ -137,6 +137,14 @@ def check_configuration(report):
         if key in resolved:
             print("       %-18s %-28s (from %s)"
                   % (key, describe(key, resolved[key]), source_of[key]))
+        elif key == "db_password":
+            try:
+                from slate.core.infra.local_secrets import protected_password
+                held = bool(protected_password())
+            except Exception:
+                held = False
+            print("       %-18s %s" % (key, "kept in Windows Credential Manager" if held else
+                                       "NOT on this PC - use Reconfigure on the sign-in screen"))
         else:
             print("       %-18s %s" % (key, "not configured anywhere"))
 
@@ -158,6 +166,12 @@ def check_database(report, cfg):
     name = cfg.get("db_name") or ""
     user = cfg.get("db_user") or ""
     password = cfg.get("db_password") or os.environ.get("SLATE_DB_PASSWORD", "")
+    if not password:
+        try:
+            from slate.core.infra.local_secrets import protected_password
+            password = protected_password()          # Windows Credential Manager
+        except Exception:
+            password = ""
 
     # Is anything listening at all? A refused connection and a wrong password
     # are different problems and should not read the same.

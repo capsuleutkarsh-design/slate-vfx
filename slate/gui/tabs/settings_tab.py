@@ -913,7 +913,8 @@ class SettingsTab(QWidget):
             return None
         name = self.db_name_input.text().strip()
         user = self.db_user_input.text().strip()
-        password = GlobalConfig.get("db_password")
+        from slate.core.infra.local_secrets import find_db_password
+        password = find_db_password() or None
         self.btn_test_db.setEnabled(False)
         self.lbl_test.setStyleSheet("")
         self.lbl_test.setText("Connecting…")

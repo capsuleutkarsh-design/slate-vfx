@@ -91,7 +91,7 @@ def test_all_three_readers_use_it(sources, monkeypatch):
 
     sources["keyring"]("k")
     assert local_secrets.db_password() == "k"
-    assert PostgresManager._load_password_secure(None) == "k"
+    assert PostgresManager._load_password_secure(types.SimpleNamespace()) == "k"
     monkeypatch.setattr(database_manager, "database_manager",
                         types.SimpleNamespace(active_mode="postgres", fallback_used=False))
     assert db_factory.get_database_url().startswith("postgresql+psycopg2://")
@@ -105,5 +105,8 @@ def test_none_found_still_says_so(sources):
     with pytest.raises(RuntimeError):
         local_secrets.db_password()
     assert local_secrets.db_password(required=False) == ""
-    with pytest.raises(RuntimeError):
-        PostgresManager._load_password_secure(None)
+    # The client alone still tries the password older versions shipped with,
+    # and remembers that it did, so a refusal says "no password on this PC".
+    client = types.SimpleNamespace()
+    assert PostgresManager._load_password_secure(client) == local_secrets.LEGACY_PASSWORD
+    assert client.password_source == local_secrets.LEGACY_SOURCE
