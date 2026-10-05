@@ -28,6 +28,7 @@ The database is upgraded on the first start, as described under **Upgrading from
 - **Bugs found by testing with the real tools:** RV, ffmpeg, PostgreSQL, the share and the updater. Several features had never worked.
 - **Slate Server backs up on its own** every day, and keeps to the retention set on the Operations screen.
 - **Olive is removed.** The Timeline Viewer plays the lineup in RV and exports EDLs for editorial.
+- **OpenRV is updated to 4.0.2.** The 2.0.0 build shipped before was missing RV's Python plug-ins, so no RV add-on, including the Slate verdict menu, could load.
 
 ## Security
 
@@ -98,7 +99,7 @@ These were checked against the real programs, not stand-ins, and each check now 
 
 **RV**
 - **Review in RV and the Timeline Viewer's Open in RV never opened RV.** Slate used an RV command that does not exist. They now open RV, with several clips as one playlist.
-- **The Slate menu inside RV failed on every verdict.** It also sent back the wrong frame number (1 instead of 1001) and never exported notes. It is fixed and now ships with the installer. RV can only load it once OpenRV's Python plug-ins folder is restored; see **Known limits**.
+- **The Slate menu inside RV failed on every verdict.** It also sent back the wrong frame number (1 instead of 1001) and never exported notes. It is fixed and now ships with the installer.
 
 **Pictures and playback**
 - **Dashboard shot thumbnails were always the red placeholder.** They looked one folder too shallow under `01_Scan`.
@@ -177,7 +178,6 @@ The test database no longer has its own copy of the dashboard's save code, so th
 
 ## Known limits of 2.2.0
 
-- **The bundled OpenRV is missing its Python plug-ins folder** (`OpenRV\PlugIns\Python`). RV plays everything, but RV's Python add-ons cannot load, and that includes the Slate verdict menu. Restore that folder from the original OpenRV build.
 - **The automatic punch-in at sign-in** still punches in on a day of approved full-day leave.
 - See also **Still open** under Security, and the **Known limits** from 2.1.0 below.
 

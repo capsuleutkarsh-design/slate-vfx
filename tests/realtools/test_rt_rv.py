@@ -210,12 +210,8 @@ def test_verdict_from_rv_python_lands_on_the_shot(tmp_path):
 
 
 @pytest.mark.skipif(not OPENRV.exists(), reason="OpenRV not bundled here")
-@pytest.mark.xfail(strict=True, reason=(
-    "FOUND, NOT FIXED: the bundled OpenRV has an empty PlugIns/Python - no 'rv' "
-    "package (rvtypes, qtutils, extra_commands) and none of the Python rvpkg "
-    "files - so RV's Python, and with it the Slate menu, cannot load. Restore "
-    "PlugIns/Python from the OpenRV build."))
 def test_bundled_openrv_has_its_python_package():
+    """OpenRV 2.0.0 was bundled without PlugIns/Python, so no RV add-on (the Slate menu included) loaded."""
     python = OPENRV / "PlugIns" / "Python" / "rv"
     for name in ("__init__.py", "rvtypes.py", "qtutils.py", "extra_commands.py"):
         assert (python / name).exists(), name
