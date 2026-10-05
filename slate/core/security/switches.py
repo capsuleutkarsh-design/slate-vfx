@@ -243,7 +243,12 @@ def ensure_table(db=None) -> bool:
 
 def _read_db(db=None) -> Dict[str, str]:
     try:
-        rows = (db or _default_db()).execute_query(
+        db = db or _default_db()
+        # A fresh database is read (database_manager, on connect) before the
+        # one-time steps create the table: the missing table logged an ERROR
+        # with a traceback on every first start. Creating it is harmless.
+        ensure_table(db)
+        rows = db.execute_query(
             "SELECT name, mode FROM security_switches", fetch="all") or []
     except Exception as exc:
         logger.debug("Security switches not read (treated as off): %s", exc)

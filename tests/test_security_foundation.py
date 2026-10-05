@@ -258,3 +258,14 @@ def test_can_still_get_in_tries_the_real_connection():
 
 def test_nothing_to_check_is_not_a_yes():
     assert not can_still_get_in().ok
+
+
+def test_reading_switches_on_a_fresh_database_logs_no_error(tmp_path, caplog):
+    """The first start read security_switches before anything created it: an ERROR every time."""
+    import logging
+    from slate.core.infra.sqlite_manager import SQLiteManager
+    from slate.core.security import switches
+    db = SQLiteManager(str(tmp_path / "fresh.db"))
+    with caplog.at_level(logging.WARNING):
+        assert switches._read_db(db) == {}
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
