@@ -230,6 +230,99 @@ def test_batch_edit_applies_what_was_ticked(qtbot, monkeypatch):
     assert applied and "status" in applied[0]
 
 
+def test_shot_panel_verdict_moves_the_shot(qtbot, monkeypatch):
+    """The panel re-emitted verdict_given, but the dashboard never listened."""
+    from types import SimpleNamespace
+    from PySide6.QtCore import QObject, Signal
+    from PySide6.QtWidgets import QVBoxLayout, QWidget
+    from slate.gui.tabs.vfx_dashboard_pro.ui import dashboard_widget as module
+
+    class FakePanel(QWidget):
+        close_requested = Signal()
+        show_only_requested = Signal(object)
+        apply_requested = Signal(object, dict)
+        quick_look_requested = Signal(object)
+        rv_review_requested = Signal(object)
+        history_requested = Signal(object)
+        verdict_given = Signal(object, str)
+
+        def __init__(self, shot, *a, **k):
+            super().__init__()
+            self.shot = shot
+
+    verdicts = []
+    container = QWidget()
+    qtbot.addWidget(container)
+    container.resize(400, 300)
+    host = SimpleNamespace(
+        detail_widget=None, user_roles=[], project_manager=None, all_shots=[], user_data={},
+        current_project=None, inherit_app_theme=False, detail_layout=QVBoxLayout(container),
+        detail_container=container, _get_user_list=lambda: [], _department_scope=lambda: None,
+        _artist_identity_candidates=lambda: [], _allowed_statuses=lambda: None,
+        _load_detail_thumbnail=lambda shot: None, close_detail_dock=lambda: None,
+        show_only_shots=lambda s: None, on_detail_apply=lambda *a: None,
+        open_quick_look=lambda s: None, review_in_rv=lambda s: None,
+        show_history_dialog=lambda s: None,
+        on_version_verdict=lambda version, status: verdicts.append(status))
+    monkeypatch.setattr(module, "ShotDetailWidget", FakePanel)
+    module.DashboardWidget.open_detail_dock(host, SimpleNamespace(shot_name="sh010"))
+    host.detail_widget.verdict_given.emit(object(), "Approved")
+    assert verdicts == ["Approved"]
+
+
+def test_timeline_viewer_opens_your_dashboard_project(monkeypatch, tmp_path):
+    """It asked for a default_project that was always None, so the first project won."""
+    from types import SimpleNamespace
+    from PySide6.QtCore import QSettings
+    from slate.gui.tabs import vfx_review_dual_mode_tab as tab_module
+    from slate.gui.tabs.vfx_dashboard_pro.core import project_manager, sqlite_handler
+    from slate.gui.tabs.vfx_dashboard_pro.ui.components import column_layout_manager as clm
+
+    store = QSettings(str(tmp_path / "s.ini"), QSettings.Format.IniFormat)
+    store.setValue("dashboard/last_project/ana", "BBB")
+    monkeypatch.setattr(clm, "settings_factory", lambda: store)
+    projects = [SimpleNamespace(code="AAA", folder_base=""), SimpleNamespace(code="BBB", folder_base="")]
+
+    class Manager:
+        def get_all_projects(self):
+            return projects
+
+        def get_project(self, code):
+            return next((p for p in projects if p.code == code), None)
+
+    class Handler:
+        def __init__(self, code):
+            self.code = code
+
+        def read_shots(self):
+            return [self.code]
+
+    monkeypatch.setattr(project_manager, "ProjectManager", Manager)
+    monkeypatch.setattr(sqlite_handler, "SQLiteHandler", Handler)
+    loaded = []
+    tab = SimpleNamespace(user_data={"username": "ana"},
+                          lineup_editor=SimpleNamespace(_set_status=lambda m: None),
+                          set_shots=lambda shots, **k: loaded.append(k["project_name"]))
+    assert tab_module.VFXReviewDualModeTab._refresh_from_database(tab)
+    assert loaded == ["BBB"]
+
+
+def test_refresh_shortcut_refreshes_the_timeline_viewer(monkeypatch):
+    """F5 looked for refresh/reload/load_data; the Timeline Viewer had none and said it kept itself up to date."""
+    from types import SimpleNamespace
+    from slate.gui.main_window import VFXFolderCreatorApp
+    from slate.gui.tabs.vfx_review_dual_mode_tab import VFXReviewDualModeTab
+
+    calls = []
+    monkeypatch.setattr(VFXReviewDualModeTab, "_on_refresh_clicked", lambda self, quiet=False: calls.append(1))
+    tab = VFXReviewDualModeTab.__new__(VFXReviewDualModeTab)
+    window = SimpleNamespace(
+        tab_coordinator=SimpleNamespace(get_current_tab=lambda: tab, get_current_tab_name=lambda: "Timeline"),
+        show_status=lambda *a: calls.append(a[0]))
+    VFXFolderCreatorApp.refresh_current_tab(window)
+    assert calls == [1, "Refreshed"]
+
+
 def test_dashboard_retry_reconnects(monkeypatch):
     """The offline banner's Retry asked for a reconnect() nothing has, so it never retried."""
     from slate.core.domain import access

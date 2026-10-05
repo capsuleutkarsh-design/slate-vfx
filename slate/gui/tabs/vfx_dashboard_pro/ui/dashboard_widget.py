@@ -1288,6 +1288,8 @@ class DashboardWidget(
         self.detail_widget.quick_look_requested.connect(self.open_quick_look)
         self.detail_widget.rv_review_requested.connect(self.review_in_rv)
         self.detail_widget.history_requested.connect(self.show_history_dialog)
+        # A verdict in the panel's Versions box moves the shot, as one from the review queue does.
+        self.detail_widget.verdict_given.connect(self.on_version_verdict)
         self.detail_layout.addWidget(self.detail_widget)
         self.detail_container.show()
         self._load_detail_thumbnail(shot)
