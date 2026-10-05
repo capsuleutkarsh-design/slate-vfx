@@ -62,6 +62,22 @@ does and whether it is off, log only or on.
   why, and changes nothing. If the check after the change fails, the change is undone at once.
 - **Turn off** puts the old behaviour back. For `split_superuser_password` the superuser gets
   the workstations' password again. For `strict_pg_hba` the previous access rules come back.
+  For `hide_password_hashes` the password hashes go back into the accounts table. These three
+  need the database: if it could not be reached, press **Turn off** again once it can (people
+  can sign in meanwhile).
+
+Before turning these on:
+
+- `hide_password_hashes`: every workstation must run 2.2.0 or later first. An older Slate
+  cannot check a hidden password, so nobody could sign in on it. The check makes a temporary
+  account (`slate-signin-check`), signs in with it the way a workstation does, before and after,
+  and removes it. While it is on, a workstation cut off from the server cannot sign anybody in
+  from its local copy.
+- `signed_fleet_commands`: every admin's Slate must be 2.2.0 or later. The admin types their own
+  password once per session, before the first broadcast, restart or shut down. That unlocks
+  the studio's signing key, which otherwise never leaves the database.
+- `signed_updates`: the build must carry the owner's release key (see `docs/development.md`,
+  "Signing updates"). Updates can always be installed by hand with the installer.
 
 ### Changing the workstations' password (app password)
 

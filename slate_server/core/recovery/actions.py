@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import socket
 from datetime import date, datetime
 from pathlib import Path
 from typing import Iterable, List, Optional
@@ -203,9 +204,14 @@ def restore_admin(conn, username: str, new_password: str, app_role: Optional[str
 
 
 def _audit(db: ConnectionDB, username: str, what: str) -> None:
-    """Best effort: a line in the audit table, if it exists. Never the password."""
+    """Best effort: a line in the audit trail, if it exists. Never the password."""
     try:
-        if db.table_exists("audit_log"):
+        if db.execute_query("SELECT to_regclass('slate_secure.audit_trail') AS t",
+                            fetch="one").get("t"):
+            db.execute_update("INSERT INTO slate_secure.audit_trail (kind, username, status, "
+                              "details, pc) VALUES ('RECOVERY', 'recovery-tool', 'SUCCESS', "
+                              "%s, %s)", ("%s (%s)" % (what, username), socket.gethostname()))
+        elif db.table_exists("audit_log"):
             cols = {r["column_name"] for r in db.execute_query(
                 "SELECT column_name FROM information_schema.columns WHERE table_name='audit_log'",
                 fetch="all") or []}
@@ -334,7 +340,23 @@ def switches_off(layout, names: Optional[Iterable[str]] = None, conn=None,
         done.append("The database is updated from this when the server next starts.")
     if conn is not None and (names is None or "split_superuser_password" in names):
         done += _unsplit_superuser(conn, layout)
+    if conn is not None and (names is None or "hide_password_hashes" in names):
+        done += _unhide_passwords(conn)
     return done
+
+
+def _unhide_passwords(conn) -> List[str]:
+    """hide_password_hashes off: every hash back in ut_users, as before."""
+    from slate_server.core import secure_schema
+    if not secure_schema.is_installed(conn):
+        return []
+    was_on = secure_schema.is_hiding(conn)
+    left = secure_schema.unhide_passwords(conn)
+    if not was_on:
+        return []
+    return ["The password hashes are back in the accounts table, as before "
+            "hide_password_hashes." + (" %d account(s) still show 'hidden:' and need their "
+                                       "password reset here." % left if left else "")]
 
 
 def _unsplit_superuser(conn, layout) -> List[str]:

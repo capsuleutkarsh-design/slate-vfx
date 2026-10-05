@@ -107,6 +107,13 @@ def apply_hardening_step(name: str, apply: Callable[[], object], *, precheck: di
 #                             both logins are proved before and after.
 #   strict_pg_hba             postgres from this PC only; workstations only into the
 #                             studio database with the app account.
+#   hide_password_hashes      the hashes move to slate_secure.passwords; a throwaway
+#                             account proves a real sign-in through the workstations'
+#                             login before and after, and every stored hash is
+#                             proved unchanged. Turning it off moves them back.
+#   signed_fleet_commands     slate_secure and the studio's fleet key exist, and the
+#                             workstations can read its public half only.
+#   signed_updates            (on) this build carries the owner's release key.
 #   anything else             the switch is all there is to it: at least one
 #                             active administrator must still be able to sign in.
 #
@@ -117,10 +124,6 @@ SERVER_SWITCHES = ("split_superuser_password", "strict_pg_hba")
 NOT_BUILT = {
     "pgbouncer_hba": "PgBouncer does not check addresses yet, so there is nothing for this "
                      "switch to turn on. Nothing was changed.",
-    "signed_fleet_commands": "Fleet commands are not signed yet, so turning this on would "
-                             "only stop every command. Nothing was changed.",
-    "signed_updates": "Updates are not signed yet, so turning this on would only stop every "
-                      "update. Nothing was changed.",
 }
 STRICT_MARK = "# strict_pg_hba:"
 BEFORE_STRICT = "pg_hba.conf.before-strict"
@@ -241,11 +244,23 @@ def turn_on(layout, name: str, mode: str = "on", by: str = "recovery tool") -> S
                           "database (%s). Run the health check and fix that first."
                           % (str(exc).strip().splitlines() or ["?"])[0])
     db = ConnectionDB(conn)
+    probe = None
     try:
         apply, verify, rollback = (lambda: None), None, None
-        if name not in SERVER_SWITCHES:
+        if name == "hide_password_hashes" and mode == switches.ON:
+            from slate_server.core import secure_schema
+            probe = secure_schema.make_probe(conn)
+            precheck, apply, verify, rollback = _hide_hashes(conn, client, probe)
+        elif name not in SERVER_SWITCHES:
             precheck = {"db": db}
             verify = lambda: can_still_get_in(db=db)                       # noqa: E731
+            if name == "signed_fleet_commands":
+                from slate_server.core import secure_schema
+                apply = lambda: secure_schema.install(conn, client["user"])  # noqa: E731
+                verify = lambda: can_still_get_in(db=db, extra={            # noqa: E731
+                    "the fleet key": lambda: secure_schema.fleet_key_problem(client)})
+            elif name == "signed_updates" and mode == switches.ON:
+                precheck["extra"] = {"a release key in this build": _release_key_problem}
         else:
             precheck = {"client": client, "server": server}
             if name == "strict_pg_hba":
@@ -284,8 +299,47 @@ def turn_on(layout, name: str, mode: str = "on", by: str = "recovery tool") -> S
                     "when it starts, and until then still accepts the old one for postgres.")
         return result
     finally:
+        if probe:
+            try:
+                secure_schema.drop_probe(conn, probe[0])
+            except Exception as exc:
+                logger.warning("The sign-in check account was not removed: %s", exc)
         conn.close()
         db_credentials.reload()
+
+
+def _release_key_problem() -> str:
+    from slate.core.updater.release_key import PUBLIC_KEY
+    return "" if PUBLIC_KEY else (
+        "this build has no release key, so every update would be refused. Make one with "
+        "tools/release_publisher.py --new-key, and install that build everywhere first")
+
+
+def _hide_hashes(conn, client, probe):
+    """precheck, apply, verify, rollback for hide_password_hashes = on."""
+    from slate.core.security.dbapi import ConnectionDB
+    from slate.core.security.precheck import can_still_get_in
+    from slate_server.core import secure_schema
+    db = ConnectionDB(conn)
+    before = secure_schema.effective_hashes(conn)
+    signin = {"a real sign-in through the workstations' login":
+              lambda: secure_schema.signin_problem(client, *probe)}
+
+    def apply():
+        secure_schema.install(conn, client["user"])
+        secure_schema.hide_passwords(conn)
+
+    def kept():
+        return "" if secure_schema.effective_hashes(conn) == before else             "a stored password changed while it was moved"
+
+    def verify():
+        return can_still_get_in(db=db, extra=dict(signin, **{
+            "every stored password kept": kept,
+            "no hash readable by the workstations":
+                lambda: secure_schema.readable_hashes(client)}))
+
+    return ({"db": db, "extra": signin}, apply, verify,
+            lambda: secure_schema.unhide_passwords(conn))
 
 
 def _split_superuser(layout, conn):
