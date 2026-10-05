@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from conftest import REAL_DISCOVER
+from tests.realtools.conftest import REAL_DISCOVER
 
 pytestmark = pytest.mark.realtools
 

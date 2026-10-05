@@ -7,7 +7,7 @@ suite uses. A step that needs more than the database owner's rights fails here.
 
 import pytest
 
-from conftest import APP_PASSWORD
+from tests.realtools.conftest import APP_PASSWORD
 
 pytestmark = pytest.mark.realtools
 

@@ -18,7 +18,7 @@ from pathlib import Path
 import psycopg2
 import pytest
 
-from conftest import APP_PASSWORD, BIN, DBNAME
+from tests.realtools.conftest import APP_PASSWORD, BIN, DBNAME
 
 pytestmark = [pytest.mark.realtools,
               pytest.mark.skipif(not (BIN / "pg_dump.exe").exists(),
