@@ -149,7 +149,9 @@ class TestALeadIsConfinedToTheirDepartment:
 
         assert self._lead(mock_db).write_shots(shots)
 
-    def test_the_grid_opens_only_their_columns(self):
+    def test_the_grid_opens_only_their_columns(self, mock_db):
+        # Its own test database: alone, the real manager tried the studio
+        # server, fell back offline, and nothing was editable.
         model = ShotTableModel(user_role=["lead"])
         model.department_scope = {"roto"}
         shot = Shot(shot_name="SH020", reel_episode="ReelA")
