@@ -139,6 +139,7 @@ class AdminPanelTab(QWidget):
             verify_callback=self.verify_admin_action,
             read_only=not self.can_manage_system,
             log_action=self.log_action,
+            admin_user=self.current_username or "",
         )
         self.live_dashboard_worker_controller = QueuedWorkerController(
             self.live_dashboard.worker,
@@ -221,7 +222,8 @@ class AdminPanelTab(QWidget):
         if not msg: return
         # "message" is what the workstations show (gatekeeper_main); they
         # dropped "alert" as an unknown command, so no broadcast ever arrived.
-        self.hub.post_command("message", "all", msg)
+        self.hub.post_command("message", "all", msg,
+                              admin_user=self.current_username or "")
         self.inp_broadcast.clear()
         QMessageBox.information(self, "Sent", "Broadcast alert sent to all active stations.")
         self.log_action(f"Broadcast Alert: {msg}")

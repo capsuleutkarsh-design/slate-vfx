@@ -105,16 +105,20 @@ class ServerHub:
         return False
     
     # --- BROADCAST SYSTEM ---
-    def post_command(self, cmd_type, target="all", message=""):
+    def post_command(self, cmd_type, target="all", message="", admin_user="", reason=""):
         # One file per command. Named by the second alone, a second command to
         # the same target in the same second (Restart then Shut down, two
         # broadcasts) overwrote the first, which was never seen.
         cmd_id = f"cmd_{int(time.time())}_{target}_{uuid.uuid4().hex[:8]}"
         cmd_file = self.dirs["commands"] / f"{cmd_id}.json"
         data = {
-            "command": cmd_type, 
-            "target": target, 
-            "message": message, 
+            "command": cmd_type,
+            "target": target,
+            "message": message,
+            # Who asked and why: the workstation's question showed
+            # "Administrator ... No reason provided" because neither was sent.
+            "admin_user": admin_user,
+            "reason": reason,
             "timestamp": time.time(),
             "expires": time.time() + 60 # Command valid for 60s
         }
@@ -123,30 +127,50 @@ class ServerHub:
         except Exception as e:
             logging.exception(f"Failed to post command {cmd_type}: {e}")
 
+    def _share_now(self) -> float:
+        """
+        Now, by the share's clock. A command's age is its file's time on the
+        share against this: "expires" is by the admin PC's clock, so a
+        workstation more than 60 s ahead of it dropped every command. The
+        offset is measured with a small probe file, at most every 10 minutes.
+        """
+        now = time.time()
+        if now - getattr(self, "_clock_at", 0) > 600:
+            import socket
+            probe = self.dirs["commands"] / f".clock_{socket.gethostname()}"
+            try:
+                probe.write_bytes(b"")
+                self._clock_offset = probe.stat().st_mtime - time.time()
+                self._clock_at = now
+            except OSError as exc:
+                logging.debug("Share clock not measured (%s); using this PC's.", exc)
+        return now + getattr(self, "_clock_offset", 0.0)
+
     def get_active_commands(self):
         """Reads all commands valid for this PC."""
         try:
             import socket
             my_pc = socket.gethostname()
             commands = []
-            now = time.time()
-            
+
             # Directory Check (Avoid crash if network drive lost)
             if not self.dirs["commands"].exists():
                 return []
+            now = self._share_now()
 
             # Cleanup old commands
             for f in self.dirs["commands"].glob("*.json"):
                 try:
+                    age = now - f.stat().st_mtime
                     # Basic cleanup of old files
-                    if now - f.stat().st_mtime > 120: 
+                    if age > 120:
                         os.remove(f)
                         continue
-                        
+
                     with open(f, 'r') as file:
                         data = json.load(file)
-                        
-                    if data['expires'] > now:
+
+                    if age <= 60:
                         if data['target'] == 'all' or data['target'].lower() == my_pc.lower():
                             commands.append(data)
                 except Exception:

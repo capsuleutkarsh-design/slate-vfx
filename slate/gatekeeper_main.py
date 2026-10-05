@@ -200,7 +200,7 @@ class CommandCheckWorker(QThread):
         self.hub = hub
         self.processed_cmds = processed_cmds
         self.running = True
-        self.ALLOWED_COMMANDS = {'message', 'shutdown', 'restart', 'update_notify'}
+        self.ALLOWED_COMMANDS = {'message', 'shutdown', 'restart'}
 
     def run(self):
         while self.running:
@@ -511,8 +511,8 @@ class ApplicationEntry:
             cmd: Command dictionary with 'command', 'admin_user', 'reason', etc.
         """
         action = "shutdown" if cmd['command'] == "shutdown" else "restart"
-        admin = cmd.get('admin_user', 'Administrator')
-        reason = cmd.get('reason', 'No reason provided')
+        admin = cmd.get('admin_user') or 'An administrator'
+        reason = cmd.get('reason') or 'No reason given'
         verb = "shut down" if action == "shutdown" else "restart"
         button_text = "Shut down" if action == "shutdown" else "Restart"
 

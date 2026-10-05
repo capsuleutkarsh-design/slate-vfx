@@ -27,8 +27,8 @@ class FakeHub:
     def get_attendance_dir(self):
         return self.root / "Attendance"
 
-    def post_command(self, command, target, payload=None):
-        self.posted.append((command, target, payload))
+    def post_command(self, command, target, payload=None, admin_user="", reason=""):
+        self.posted.append((command, target, payload, admin_user, reason))
 
 
 def _report(name, age=5, now=None, **extra):
@@ -166,13 +166,15 @@ def test_restart_asks_logs_and_is_hidden_read_only(monkeypatch, qtbot, hub):
         return True
 
     monkeypatch.setattr(admin_widgets, "confirm", fake_confirm)
+    monkeypatch.setattr(admin_widgets, "ask_reason", lambda *a: "Driver update")
     logged = []
-    card = admin_widgets.PCCard("COMP-01", hub, verify_callback=lambda: True, log_action=logged.append)
+    card = admin_widgets.PCCard("COMP-01", hub, verify_callback=lambda: True, log_action=logged.append,
+                                admin_user="boss")
     qtbot.addWidget(card)
     assert card.request_power("restart")
     assert asked["title"] == "Restart COMP-01?" and asked["destructive"] and asked["parent"] is not None
     assert "unsaved work" in asked["text"]
-    assert hub.posted == [("restart", "COMP-01", None)]
+    assert hub.posted == [("restart", "COMP-01", None, "boss", "Driver update")]
     assert any("COMP-01" in line for line in logged)
 
     menu, _details, rst, off = card.build_menu()
@@ -402,6 +404,7 @@ def test_restart_is_confirmed_on_the_card(monkeypatch, qtbot, hub):
     """SYS2-009."""
     from slate.gui import admin_widgets
     monkeypatch.setattr(admin_widgets, "confirm", lambda *a, **k: True)
+    monkeypatch.setattr(admin_widgets, "ask_reason", lambda *a: "")
     toasts = []
     monkeypatch.setattr(admin_widgets, "toast", lambda parent, msg, *a, **k: toasts.append(msg))
     card = admin_widgets.PCCard("COMP-01", hub, verify_callback=lambda: True)
