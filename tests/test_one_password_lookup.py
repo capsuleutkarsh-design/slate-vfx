@@ -55,8 +55,9 @@ def sources(tmp_path, monkeypatch):
 
 
 # Highest first - the documented order.
-ORDER = ["DB_PASSWORD env", "SLATE_DB_PASSWORD env", "settings db_password", "settings password",
-         "keyring", "encrypted file", "db_config password", "local config file"]
+ORDER = ["DB_PASSWORD env", "settings db_password", "settings password",
+         "keyring", "encrypted file", "SLATE_DB_PASSWORD env", "db_config password",
+         "local config file"]
 
 
 @pytest.mark.parametrize("source", ORDER)

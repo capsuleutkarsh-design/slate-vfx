@@ -86,19 +86,20 @@ def _from_db_config():
     return (GlobalConfig.get("db_config", {}) or {}).get("password")
 
 
-# The one order. 1, 3, 4 and 5 are the order the client has always used to
-# connect at start-up (PostgresManager), unchanged. The others were each read
-# by only one of the three lookups this replaces, and are kept so that nothing
-# which found a password before finds none now: SLATE_DB_PASSWORD is placed
-# beside DB_PASSWORD because it is documented to win over every config file
-# (a one-off maintenance session); db_config's password (the SQLAlchemy
-# factory) and the first local config file (the maintenance scripts) come last.
+# The one order. The first four are the order the client has always used to
+# connect at start-up (PostgresManager), unchanged - a workstation must find
+# exactly the password it found before (never lock a studio out). The others
+# were each read by only one of the three lookups this replaces, and are kept
+# so that nothing which found a password before finds none now:
+# SLATE_DB_PASSWORD (a one-off maintenance session on a machine with no saved
+# password), db_config's password (the SQLAlchemy factory) and the first local
+# config file (the maintenance scripts).
 PASSWORD_SOURCES = (
     ("the DB_PASSWORD environment variable", lambda: os.environ.get("DB_PASSWORD")),
-    ("the %s environment variable" % ENV_VAR, lambda: os.environ.get(ENV_VAR)),
     ("the settings (config.json): db_password or password", _from_settings),
     ("Windows Credential Manager", _from_keyring),
     ("the encrypted credentials file", _from_encrypted_file),
+    ("the %s environment variable" % ENV_VAR, lambda: os.environ.get(ENV_VAR)),
     ("db_config in the settings", _from_db_config),
     ("the local config file", lambda: setting("db_password", "")),
 )
