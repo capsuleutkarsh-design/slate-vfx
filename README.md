@@ -17,7 +17,7 @@ the IT queue, the machines, the licences, and who is joining or leaving this wee
 
 **[Get the installers from the latest release](https://github.com/capsuleutkarsh-design/slate-vfx/releases/latest)** — no Python, no setup scripts, nothing else to download.
 
-The current version is **BETA 2.1.0**. What changed in each version is in the
+The current version is **BETA 2.2.0**. What changed in each version is in the
 [release notes](deployment/release_notes/).
 
 | Installer | Install on |
@@ -263,7 +263,7 @@ files. Send the newest one with your question (see below).
 - **Email:** [capsuleutkarsh@gmail.com](mailto:capsuleutkarsh@gmail.com)
 
 Please say which version you have (it is in the installer's name, for example
-`setup_Slate_Studio_vBETA 2.1.0.exe`), what you did, and what happened.
+`setup_Slate_Studio_vBETA 2.2.0.exe`), what you did, and what happened.
 A screenshot helps.
 
 ---

@@ -117,6 +117,10 @@ SERVER_SWITCHES = ("split_superuser_password", "strict_pg_hba")
 NOT_BUILT = {
     "pgbouncer_hba": "PgBouncer does not check addresses yet, so there is nothing for this "
                      "switch to turn on. Nothing was changed.",
+    "signed_fleet_commands": "Fleet commands are not signed yet, so turning this on would "
+                             "only stop every command. Nothing was changed.",
+    "signed_updates": "Updates are not signed yet, so turning this on would only stop every "
+                      "update. Nothing was changed.",
 }
 STRICT_MARK = "# strict_pg_hba:"
 BEFORE_STRICT = "pg_hba.conf.before-strict"

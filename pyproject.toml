@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "ut-vfx"
-version = "2.1.0b0"
+version = "2.2.0b0"
 description = "Slate Production Tools & Dashboard"
 authors = ["Utkarsh Tripathi <utkarshtripathi771@gmail.com>"]
 readme = "README.md"

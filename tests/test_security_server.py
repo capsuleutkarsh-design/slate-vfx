@@ -1,5 +1,6 @@
 """Server switches without a database: what strict_pg_hba allows, and what log_only reports."""
 
+import pytest
 from slate.core.security.precheck import check_hba, hba_decision
 from slate_server.core.db_engine import DatabaseEngine
 from slate_server.core.recovery import hardening
@@ -38,7 +39,8 @@ def test_would_refuse_names_network_connections_only(monkeypatch):
         ["postgres from 10.0.0.5 into ut_vfx", "ut_vfx_app from 10.0.0.7 into postgres"]
 
 
-def test_a_switch_with_nothing_built_behind_it_is_refused(tmp_path):
+@pytest.mark.parametrize("name", ["pgbouncer_hba", "signed_fleet_commands", "signed_updates"])
+def test_a_switch_with_nothing_built_behind_it_is_refused(tmp_path, name):
     from slate_server.core.recovery.layout import ServerLayout
-    result = hardening.turn_on(ServerLayout(data_dir=tmp_path), "pgbouncer_hba")
+    result = hardening.turn_on(ServerLayout(data_dir=tmp_path), name)
     assert not result.applied and "Nothing was changed" in result.message

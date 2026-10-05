@@ -15,7 +15,6 @@ from ..core.domain import access
 from ..core.domain.user_manager import UserManager
 from ..core.infra.config_manager import ConfigManager
 from ..core.infra.database_manager import DatabaseManager
-from ..core.infra.network_manager import NetworkManager
 from ..core.infra.performance_monitor import performance_monitor
 
 

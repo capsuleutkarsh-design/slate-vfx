@@ -116,7 +116,7 @@ class FirstRunSetupDialog(QDialog):
         self.db_name_input = QLineEdit(str(GlobalConfig.get("db_name", "ut_vfx")))
         form.addRow("Database name", self.db_name_input)
 
-        self.db_user_input = QLineEdit(str(GlobalConfig.get("db_user", "postgres")))
+        self.db_user_input = QLineEdit(str(GlobalConfig.get("db_user", "ut_vfx_app")))
         form.addRow("Database user", self.db_user_input)
 
         self.db_password_input = QLineEdit(str(GlobalConfig.get("db_password", "")))

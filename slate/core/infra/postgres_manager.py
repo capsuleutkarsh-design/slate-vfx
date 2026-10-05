@@ -257,7 +257,7 @@ class PostgresManager:
         self.connected_via = ""
 
         self.dbname = config.get('name') or get_from_keyring("db_name") or "ut_vfx"
-        self.user = config.get('user') or get_from_keyring("db_user") or "postgres"
+        self.user = config.get('user') or get_from_keyring("db_user") or "ut_vfx_app"
 
         maxconn_cfg = config.get('maxconn') or config.get('max_db_connections') or 2  # noqa: E501
         minconn_cfg = config.get('minconn') or config.get('min_db_connections') or 1
