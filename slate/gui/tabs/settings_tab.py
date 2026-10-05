@@ -1024,6 +1024,9 @@ class SettingsTab(QWidget):
         getter = getattr(window, "_get_tab_instance", None)
         tab = getter("Admin Panel", create=True) if callable(getter) else None
         if tab is None:
+            # Slate VFX has no Admin Panel: the card used to do nothing at all.
+            self._toast("The studio logs are in the Admin Panel, in Slate Operations. "
+                        "Open them there.", "warning")
             return False
         try:
             window.tab_coordinator.select_tab(tab)

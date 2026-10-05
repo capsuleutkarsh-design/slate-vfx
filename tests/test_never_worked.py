@@ -59,7 +59,7 @@ def test_dcc_plugins_find_the_shot_the_launcher_names(monkeypatch, tmp_path):
         assert data == {"shot_name": "sh010", "scan_path": scan}, rel
 
 
-def test_settings_project_root_reaches_build_and_ingest(qtbot, monkeypatch, tmp_path):
+def test_settings_project_root_reaches_build_and_ingest(qtbot, monkeypatch, tmp_path, mock_db):
     """
     Settings' "Project root" (the folder Build & Ingest opens with) was saved
     under a key Build & Ingest reads only until it has been used once; its
@@ -82,7 +82,7 @@ def test_settings_project_root_reaches_build_and_ingest(qtbot, monkeypatch, tmp_
             return True
 
     monkeypatch.setattr(st.SettingsTab, "_toast", lambda *a, **k: None)
-    tab = st.SettingsTab(Config(), roles=["Admin"])
+    tab = st.SettingsTab(Config(), roles=["Artist"])
     qtbot.addWidget(tab)
     assert not hasattr(tab, "excel_tracking_input")
     tab.project_root_input.setText(str(tmp_path))
@@ -348,6 +348,22 @@ def test_saving_an_archived_project_keeps_it_archived(pg_db):
     pg_db.save_tracking_project("ARC", "Archived", '{"x": 1}')
     row = pg_db.execute_query("SELECT active FROM tracking_projects WHERE code = %s", ("ARC",), fetch="one")
     assert row["active"] == 0
+
+
+def test_studio_logs_card_says_where_the_logs_are(qtbot, monkeypatch, mock_db):
+    """In Slate VFX there is no Admin Panel; the Studio logs card did nothing and said nothing."""
+    from slate.gui.tabs import settings_tab as st
+
+    class Config:
+        settings = {"global_settings": {}}
+        default_global_settings = {}
+
+    said = []
+    monkeypatch.setattr(st.SettingsTab, "_toast", lambda self, m, level="success": said.append(level))
+    tab = st.SettingsTab(Config(), roles=["Artist"])
+    qtbot.addWidget(tab)
+    assert tab.open_audit_logs() is False
+    assert said == ["warning"]
 
 
 def test_dashboard_retry_reconnects(monkeypatch):
