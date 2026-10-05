@@ -451,17 +451,24 @@ class ProjectManager:
         if code not in {p["code"] for p in self.archived_projects()}:
             self.last_error = f"{code} is not archived."
             return False
+        # Read before it is made active. A bare stand-in for settings that
+        # could not be read would be saved over the real ones on the next edit,
+        # so the project stays archived instead.
+        try:
+            data = database_manager.get_tracking_project(code) or {}
+            valid_fields = ProjectConfig.__dataclass_fields__.keys()
+            project = ProjectConfig(**{k: v for k, v in data.items() if k in valid_fields})
+        except Exception as exc:
+            logging.error("ProjectManager: settings of %s not read, not restored: %s", code, exc)
+            self.last_error = (f"The settings of {code} could not be read, so it stays archived. "
+                               "Ask IT to check the database.")
+            return False
         result = database_manager.execute_update(
             "UPDATE tracking_projects SET active = 1 WHERE code = %s", (code,))
         if not getattr(result, "changed", result):
             self.last_error = getattr(result, "error", "") or "There is no archived project by that code."
             return False
-        data = database_manager.get_tracking_project(code) or {}
-        valid_fields = ProjectConfig.__dataclass_fields__.keys()
-        try:
-            self.projects[code] = ProjectConfig(**{k: v for k, v in data.items() if k in valid_fields})
-        except Exception:
-            self.projects[code] = ProjectConfig(code=code, name=data.get("name", code))
+        self.projects[code] = project
         self._audit(code, by, "RESTORE", "archived", "active")
         return True
 
