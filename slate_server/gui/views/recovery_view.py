@@ -353,6 +353,9 @@ class RecoveryView(QWidget):
         job.said.connect(self.say)
 
         def finished(result, error):
+            from shiboken6 import isValid
+            if not isValid(self):        # the page was closed while the job ran
+                return
             self._busy(False)
             if error:
                 self.say("Not done: " + error)
