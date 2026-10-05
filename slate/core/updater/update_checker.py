@@ -9,6 +9,7 @@ from PySide6.QtCore import QThread, Signal
 
 from ... import __version__ as CURRENT_VERSION
 from ..infra.global_config import GlobalConfig
+from .manifest import signature_refusal
 
 class UpdateChecker(QThread):
     """
@@ -65,6 +66,9 @@ class UpdateChecker(QThread):
                 manifest = json.load(f)
                 
             remote_version_str = manifest.get("version", "")
+            # signed_updates: on, an unsigned manifest is not offered at all.
+            if remote_version_str and signature_refusal(manifest):
+                remote_version_str = ""
             if not remote_version_str:
                 self.last_result_reason = "invalid_manifest"
                 if self.manual_mode and not self._should_stop():

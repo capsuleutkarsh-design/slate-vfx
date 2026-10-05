@@ -101,8 +101,8 @@ CATALOGUE: Dict[str, str] = {
     "readonly_sql_console":
         "The Data Center SQL console is read-only (SEC-016, SEC-017).",
     "hide_password_hashes":
-        "Password hashes are never shown or editable in the Data Center "
-        "(SEC-039).",
+        "Password hashes move out of the accounts table to where workstations "
+        "cannot read them; the database checks passwords itself (SEC-039).",
     "no_default_accounts":
         "admin/admin123, tester and artist are not seeded or brought back "
         "(SEC-009, SEC-030, SEC-031).",

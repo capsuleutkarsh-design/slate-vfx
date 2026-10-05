@@ -12,6 +12,8 @@ class ServerHub:
     Manages centralized server resources and commands.
     Now uses SafeJsonIO for concurrency and GlobalConfig for paths.
     """
+    signing_key = None      # fleet commands are signed with this when it is set
+
     def __init__(self):
         self.server_root = GlobalConfig.server_root()
         self.config_dir = self.server_root / "Config"
@@ -74,6 +76,11 @@ class ServerHub:
             "timestamp": time.time(),
             "expires": time.time() + 60 # Command valid for 60s
         }
+        # signed_fleet_commands: the Admin Panel holds the studio's key once an
+        # administrator has given their password (slate.core.security.signing).
+        if self.signing_key:
+            from slate.core.security.signing import sign
+            data = sign(data, self.signing_key)
         try:
             with open(cmd_file, 'w') as f: json.dump(data, f)
         except Exception as e:

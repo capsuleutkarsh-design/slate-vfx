@@ -60,6 +60,7 @@ from slate.gui.components.qt_safety import safe_single_shot
 from slate.utils.startup_manager import StartupManager
 from slate.utils.resource_manager import ResourcePathManager
 from slate.core.infra.server_hub import ServerHub
+from slate.core.security.signing import command_allowed
 from slate.core.domain.central_attendance import CentralAttendance  
 from slate.core.domain.live_reporter import LiveReporter 
 from slate.core.domain.backup_service import AutoBackupThread
@@ -217,6 +218,10 @@ class CommandCheckWorker(QThread):
                         continue
                     
                     self.processed_cmds.append(cmd_id)
+                    # signed_fleet_commands: off acts as before; log_only logs an
+                    # unsigned one and acts; on refuses it (logged once).
+                    if not command_allowed(cmd):
+                        continue
                     self.command_received.emit(cmd)
                     
             except Exception as e:

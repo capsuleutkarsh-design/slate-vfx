@@ -51,6 +51,7 @@ The database is upgraded on the first start, as described under **Upgrading from
 - **The test accounts artist/artist123 and tester/tester123 are no longer created** on a new database.
 - **Old password formats are upgraded at sign-in.** A password stored as plain text, or in the old unsalted format, is re-stored securely the next time that person signs in.
 - **Every sign-in is recorded** in the audit log: success, and each failure with the reason, but never the password.
+- **The audit trail is in the database, and nothing can change or delete it.** Workstations can only add lines and read them; the database refuses edits and deletions, even by accident, and stamps each line with the server's clock. Only when the database cannot take a line (an older server, an outage) does it go to the file on the share, as before, and the Audit Logs screen shows both. A share that is down no longer slows signing in. Slate Server sets this up when it starts, so **start Slate Server 2.2.0 once before the workstations**.
 - **Resetting someone's password needs 8 characters and makes them choose their own at their next sign-in.** New passwords need 8 characters. Existing shorter passwords still work.
 - **A wrong password waits one second before you can try again.** Nobody is ever locked out for wrong tries.
 - The sign-in screen no longer names the default login.
@@ -76,8 +77,11 @@ Open **Recover Slate** on the server PC, unlock it with the Recovery Key, and us
 | `no_plaintext_passwords` | Passwords in the old formats no longer open an account. | Refused while any active account still has one: let everybody sign in once first. |
 | `no_default_accounts` | admin/admin123 is never created or brought back. The first-run screen points to Recover Slate instead. | Make sure you have the Recovery Key. |
 | `no_sqlite_fallback` | When the server is down, workstations do not open the local copy, which has its own admin/admin123. | With this on, nobody can work while the server is down. |
+| `hide_password_hashes` | Password hashes leave the accounts table for a part of the database the workstations cannot read; the database checks passwords itself. The Data Center, the SQL console and tricks like `row_to_json` show nothing. | **Every workstation must run 2.2.0 first:** an older Slate cannot check a hidden password. A workstation cut off from the server cannot sign anybody in from its local copy while this is on. Turning it on proves a real sign-in before and after with a temporary account, and that no stored password changed; turning it off moves the hashes back. |
+| `signed_fleet_commands` | Broadcasts, restarts and shut downs carry a signature; workstations ignore any command file without a valid one. Anyone who can only write to the share can no longer send them. | Every admin's Slate must be 2.2.0. The admin types their own password once per session before the first command; only active administrators get the studio's signing key. Use **Log only** first and look for "would be refused" in the workstations' logs. |
+| `signed_updates` | Workstations install only updates signed with the owner's release key. | Make the release key and ship its public half in a build first (`docs/development.md`, "Signing updates"); turning this on is refused until the build has one. The installer always works by hand. |
 
-`signed_fleet_commands`, `signed_updates` and `pgbouncer_hba` are listed but not built yet; turning them on is refused.
+`pgbouncer_hba` is listed but not built yet; turning it on is refused.
 
 ### Still open (planned)
 
@@ -88,10 +92,8 @@ Open **Recover Slate** on the server PC, unlock it with the Recovery Key, and us
   4. it is removed from the repository's history.
 
   Doing it in any other order disconnects every PC.
-- **Fleet commands and updates on the share are not yet signed**, so anyone who can write to that share folder can post them.
-- **Permissions are checked in the app, not by the database.** Anyone with the database password can bypass them. This changes after the password is protected.
-- **The audit trail is still a file on the share.** It moves to the database together with that change.
-- **A crafted SQL console query can still show a password hash** (for example `row_to_json`). This needs a database account that cannot read that column.
+- **Permissions are checked in the app, not by the database.** Anyone with the database password can bypass them, including making themselves an administrator, which would also get them the fleet signing key. This changes after the password is protected.
+- **The workstations' database account still owns the studio's tables,** so someone with the database password could drop or empty them (backups are the way back). Taking that away means the database changes Slate makes on upgrade must run on the server instead of the workstations; planned with the password change. It already cannot create accounts, databases or roles.
 
 ## Found by testing with the real tools
 

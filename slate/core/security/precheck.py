@@ -24,6 +24,7 @@ What it checks, each only when it is given what it needs:
     client     (client=...)      a real connection with the new settings works
                                  and can read ut_users
     server     (server=...)      the same, for the server's own superuser login
+    extra      ({label: fn})     a step's own proof; fn() returns '' or why not
     pg_hba     (hba_text=...)    the proposed rules still start with Slate's
                                  signature line, still let the superuser in
                                  from this PC, and still let the workstations'
@@ -41,7 +42,7 @@ from __future__ import annotations
 import ipaddress
 import logging
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional
+from typing import Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -222,7 +223,8 @@ def try_connect(settings: dict, connect: Optional[Callable] = None) -> str:
 def can_still_get_in(*, db=None, client: Optional[dict] = None,
                      server: Optional[dict] = None, hba_text: Optional[str] = None,
                      hba_context: Optional[dict] = None,
-                     connect: Optional[Callable] = None) -> GetInResult:
+                     connect: Optional[Callable] = None,
+                     extra: Optional[Dict[str, Callable[[], str]]] = None) -> GetInResult:
     """
     Whether people can still get in with the proposed settings. See the module
     docstring. Every hardening step calls this BEFORE it applies anything, and
@@ -243,6 +245,15 @@ def can_still_get_in(*, db=None, client: Optional[dict] = None,
             result.fail("The server could not log in with the new settings: %s" % why)
     if hba_text is not None:
         check_hba(hba_text, result=result, **(hba_context or {}))
+    for label, check in (extra or {}).items():
+        # A step's own proof, e.g. a real sign-in: '' when it holds, else why not.
+        result.checked.append(label)
+        try:
+            why = check()
+        except Exception as exc:
+            why = "the check failed: %s" % (str(exc).splitlines() or [exc])[0]
+        if why:
+            result.fail("%s: %s" % (label, why))
     if not result.checked:
         result.fail("Nothing was given to check, so nothing can be shown to be safe.")
     if not result.ok:

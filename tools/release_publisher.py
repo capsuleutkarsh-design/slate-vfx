@@ -69,8 +69,40 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from slate.core.updater.manifest import (          # noqa: E402
     build as build_manifest,
     manifest_name,
+    sign as sign_manifest,
     TARGETS,
 )
+
+# The owner's private release key: a file kept off the studio's PCs and out of
+# git (a USB stick, a password manager). --key or SLATE_RELEASE_KEY.
+RELEASE_KEY = os.environ.get("SLATE_RELEASE_KEY", "")
+PUBLIC_KEY_FILE = PROJECT_ROOT / "slate" / "core" / "updater" / "release_key.py"
+
+
+def make_key(private_path):
+    """
+    A new release key: the private half into private_path (never inside this
+    repository), the public half into slate/core/updater/release_key.py, which
+    ships in the next build. Updates signed with an older key are refused by
+    builds that carry the new one.
+    """
+    from slate.core.security.signing import new_keypair
+    target = Path(private_path).resolve()
+    if target == PROJECT_ROOT or PROJECT_ROOT in target.parents:
+        raise SystemExit("Keep the private key outside the Slate folder, so it can "
+                         "never be committed: %s" % target)
+    if target.exists():
+        raise SystemExit("%s already exists; not overwritten." % target)
+    private, public = new_keypair()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(private + "\n", encoding="utf-8")
+    text = PUBLIC_KEY_FILE.read_text(encoding="utf-8")
+    import re
+    PUBLIC_KEY_FILE.write_text(re.sub(r'(?m)^PUBLIC_KEY = .*$', 'PUBLIC_KEY = "%s"' % public,
+                                      text), encoding="utf-8")
+    print("Private key: %s  (keep it safe; never on the share, never in git)" % target)
+    print("Public key written to %s - build and install that version, then sign "
+          "updates with --key." % PUBLIC_KEY_FILE)
 
 # Which half of the product this package is for. The application updates its
 # client and its server separately and asks for them by name, so a publisher
@@ -202,6 +234,14 @@ def publish():
         critical=False,
         notes=release_notes,      # shown in the update prompt
     )
+    # signed_updates: signed with the owner's key, which never lives in the
+    # repository or on the share (see make_key below).
+    if RELEASE_KEY:
+        manifest = sign_manifest(manifest, RELEASE_KEY)
+        print("🔏 Manifest signed.")
+    else:
+        print("⚠️  Not signed (no --key / SLATE_RELEASE_KEY). With signed_updates on, "
+              "workstations refuse this update.")
 
     with open(manifest_path, "w") as f:
         json.dump(manifest, f, indent=4)
@@ -230,6 +270,14 @@ if __name__ == "__main__":
         description="Publish a built package where the application looks for it.")
     parser.add_argument("--target", choices=list(TARGETS), default="client",
                         help="Which half of the product this package updates.")
+    parser.add_argument("--key", default=RELEASE_KEY,
+                        help="The private release key file (or set SLATE_RELEASE_KEY).")
+    parser.add_argument("--new-key", metavar="FILE",
+                        help="Make a new release key: the private half into FILE.")
     args = parser.parse_args()
+    if args.new_key:
+        make_key(args.new_key)
+        sys.exit(0)
     TARGET = args.target
+    RELEASE_KEY = args.key
     publish()

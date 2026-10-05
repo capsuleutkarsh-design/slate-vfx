@@ -465,7 +465,22 @@ class UserManager:
         hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
         return hashed.decode('utf-8')
 
-    def _check_password(self, stored_hash: str, password: str) -> bool:
+    # hide_password_hashes: ut_users then holds only this marker ('hidden:bcrypt'
+    # or 'hidden:legacy'); the hash is in slate_secure.passwords, which the
+    # workstations cannot read, and the database compares it.
+    HIDDEN = "hidden:"
+
+    def _check_password(self, stored_hash: str, password: str, uid=None) -> bool:
+        if stored_hash.startswith(self.HIDDEN):
+            try:
+                row = self._get_db().execute_query(
+                    "SELECT slate_secure.check_password(%s, %s) AS kind",
+                    (str(uid or ""), password), fetch="one")
+                return bool(row and row.get("kind"))
+            except Exception as exc:
+                # The local copy (SQLite) cannot check it: no way in there.
+                logging.warning("A hidden password could not be checked: %s", exc)
+                return False
         # 1. Plaintext fallback (for manually edited users.json during migration)
         # Ensure it's not a bcrypt hash or a 64-char hex SHA256 hash
         if not (stored_hash.startswith("$2b$") or stored_hash.startswith("$2a$") or 
@@ -507,14 +522,14 @@ class UserManager:
             return f"Use at least {self.MIN_PASSWORD_LENGTH} characters."
         return None
 
-    def _password_matches(self, stored_hash, password) -> bool:
+    def _password_matches(self, stored_hash, password, uid=None) -> bool:
         cleaned = self.clean_password(password)
-        if cleaned and self._check_password(stored_hash, cleaned):
+        if cleaned and self._check_password(stored_hash, cleaned, uid):
             return True
         # A password saved with outer spaces before the rule above existed
         # still opens its account when typed exactly.
         raw = str(password or "")
-        return bool(raw.strip()) and raw != cleaned and self._check_password(stored_hash, raw)
+        return bool(raw.strip()) and raw != cleaned and self._check_password(stored_hash, raw, uid)
 
     def authenticate(self, username: str, password: str) -> Optional[Dict[str, Any]]:
         db = self._get_db()
@@ -537,7 +552,7 @@ class UserManager:
         uid = user_row['username']
         stored_hash = user_row['password_hash']
         
-        if self._password_matches(stored_hash, password):
+        if self._password_matches(stored_hash, password, uid):
             refused = self._signin_refusal(uid, dict(user_row))
             if refused:
                 self.last_error = refused
@@ -583,7 +598,8 @@ class UserManager:
 
     @staticmethod
     def _is_bcrypt(stored_hash) -> bool:
-        return str(stored_hash or "").startswith(("$2b$", "$2a$", "$2y$"))
+        return (str(stored_hash or "").startswith(("$2b$", "$2a$", "$2y$"))
+                or stored_hash == UserManager.HIDDEN + "bcrypt")
 
     def _rehash(self, uid, password):
         """A plain-text or unsalted SHA-256 password that just matched, stored with bcrypt (HR-144)."""
