@@ -11,6 +11,7 @@ from PySide6.QtCore import Qt  # Moved from line 149
 
 from slate.utils.resource_manager import ResourcePathManager
 from slate.utils.media_capabilities import is_image
+from slate.utils.sequence_utils import sequence_for
 
 class ProxyManager:
     """
@@ -339,6 +340,29 @@ class ProxyManager:
             logging.exception(f"FFmpeg Exception: {e}")
             self._discard(partial)
 
+    @classmethod
+    def _sequence_input(cls, seq, partial: Path) -> list:
+        """
+        ffmpeg input arguments for every frame of a sequence, at 24 fps.
+
+        ffmpeg's image reader stops at the first missing frame: a render with
+        one frame missing made a proxy of the frames before it, reported it
+        made, and the lineup played that instead of the shot. A gap now holds
+        the frame before it, as RV does, so the proxy runs the whole shot.
+        """
+        if not seq.missing_frames:
+            return ["-framerate", "24", "-start_number", str(seq.start), "-i", seq.pattern]
+        present, held = set(seq.frames), None
+        lines = ["ffconcat version 1.0"]
+        for frame in range(seq.start, seq.end + 1):
+            if frame in present:
+                held = str(seq.frame_path(frame)).replace("'", "'\\''")
+            lines += [f"file '{held}'", "duration 0.041666667"]
+        listing = partial.with_suffix(".txt")
+        with open(cls.long_path(listing), "w", encoding="utf-8") as handle:
+            handle.write("\n".join(lines) + "\n")
+        return ["-f", "concat", "-safe", "0", "-i", str(listing), "-r", "24"]
+
     def parse_resolution(self, res_str: str) -> Tuple[int, int]:
         """Parse resolution string into (width, height) tuple."""
         parts = str(res_str or "").lower().split('x')
@@ -364,12 +388,11 @@ class ProxyManager:
 
     def generate_proxy(self, input_path: Path = None, is_seq: bool = False, source_path: Path = None,
                        proxy_path: Path = None, target_resolution: str = "1920x1080",
-                       sequence=None, overwrite: bool = False) -> Tuple[bool, Path]:
+                       overwrite: bool = False) -> Tuple[bool, Path]:
         """
         A review proxy: a JPG for a still, an H.264 MP4 for a movie or sequence.
 
-        sequence=(printf pattern, first frame) reads a known sequence directly;
-        without it a sequence is found from the frame named. overwrite=True
+        A sequence is found from the frame named (is_seq). overwrite=True
         makes it again over one already there - "Rebuild all" used to hand
         back the old file untouched.
         """
@@ -411,33 +434,14 @@ class ProxyManager:
                 ])
             else:
                 # Generate MP4 proxy
-                if is_seq and sequence:
-                    pattern, start_number = sequence
-                    cmd.extend(["-framerate", "24", "-start_number", str(int(start_number)),
-                                "-i", str(pattern)])
-                elif is_seq:
-                    try:
-                        import re
-                        stem = input_path.stem
-                        match = re.search(r'(\d+)$', stem)
-                        base = stem[:match.start()] if match else stem
-                        glob_pattern = f"{base}*{input_path.suffix}"
-                        
-                        from slate.utils.sequence_detector import detect_sequence
-                        seq_info = detect_sequence(input_path.parent, glob_pattern)
-                        if seq_info:
-                            start_number = seq_info['first_frame']
-                            pattern = seq_info['pattern']
-                            cmd.extend(["-framerate", "24", "-start_number", str(start_number)])
-                            cmd.extend(["-i", str(input_path.parent / pattern)])
-                        else:
-                            cmd.extend(["-i", str(input_path)])
-                    except Exception as e:
-                        logging.debug(f"Seq proxy error, fallback to single: {e}")
-                        cmd.extend(["-i", str(input_path)])
+                # Long-path form: past 260 characters the frames were not found
+                # and a one-frame proxy was made of the frame named.
+                seq = sequence_for(Path(self.long_path(input_path))) if is_seq else None
+                if seq is not None:
+                    cmd.extend(self._sequence_input(seq, partial))
                 else:
                     cmd.extend(["-i", str(input_path)])
-                
+
                 cmd.extend([
                     "-vf", self.fit_filter(*self.parse_resolution(target_resolution)) + ",format=yuv420p",
                     "-c:v", "libx264",
@@ -458,7 +462,10 @@ class ProxyManager:
                 creationflags = subprocess.BELOW_NORMAL_PRIORITY_CLASS | subprocess.CREATE_NO_WINDOW
 
             # Add timeout to prevent hang
-            result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, startupinfo=startupinfo, creationflags=creationflags, timeout=60)
+            try:
+                result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, startupinfo=startupinfo, creationflags=creationflags, timeout=60)
+            finally:
+                self._discard(partial.with_suffix(".txt"))  # a gap-filling frame list
             if result.returncode == 0 and self._commit_partial(partial, output_proxy):
                 return True, output_proxy
             self._discard(partial)
