@@ -51,33 +51,7 @@ def _row(um, name):
     return um._row(name)
 
 
-# ------------------------------------------------------------------ the API
-
-def test_api_login_checks_the_password(um, mock_db, monkeypatch):
-    from fastapi import HTTPException
-    from slate.api.routers import users as router
-    monkeypatch.setattr(router, "create_access_token", lambda data: "token-for-" + data["sub"])
-    form = lambda pw: SimpleNamespace(username="aarav", password=pw)
-    with pytest.raises(HTTPException) as refused:
-        router.login_for_access_token(form("wrong-password"), db=mock_db)
-    assert refused.value.status_code == 401
-    assert router.login_for_access_token(form("Password1"), db=mock_db)["access_token"] == "token-for-aarav"
-
-
-def test_api_has_no_unauthenticated_writes_and_no_credentialed_cors():
-    from slate.api import main
-    paths = [r.path for r in main.app.routes]
-    assert "/api/users/sync" not in paths
-    assert not any(p.endswith("/batch") for p in paths)
-    cors = main.app.user_middleware[0]
-    options = getattr(cors, "kwargs", None) or getattr(cors, "options", {})
-    assert options["allow_credentials"] is False
-    html = main.get_admin_dashboard().body.decode("utf-8")
-    assert "innerHTML = `<span" not in html and "textContent = `▶ ${msg}`" in html
-    assert "api_auth_required" not in switches.CATALOGUE
-
-
-# ------------------------------------------------------- users.json (NEW-2)
+# ------------------------------------------------------------- users.json
 
 def _json_files(um, tmp_path, users):
     um.users_file = tmp_path / "users.json"

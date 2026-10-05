@@ -41,7 +41,7 @@ The database is upgraded on the first start, as described under **Upgrading from
 ### Fixed in this release (no switch needed)
 
 **The server**
-- **Slate Server no longer starts the web API.** Anyone on the network could use it to make themselves an administrator. Nothing in Slate used it. The "Open web dashboard" button and the "Web API port" setting are gone. The API's sign-in now checks the password, and its routes that could create users or overwrite shots are deleted.
+- **Slate Server no longer starts the web API.** Anyone on the network could use it to make themselves an administrator. Nothing in Slate used it. The "Open web dashboard" button and the "Web API port" setting are gone. The web API itself is removed (see **Removed**).
 - **"Disconnect session" disconnects the session you selected.** The list showed one set of connections while the button acted on another, so it could end the wrong person's session. The list also refreshes without freezing the window.
 - **Settings say "NOT saved" when they were not saved.** This includes the database password. A damaged `slate_server_config.json` is no longer overwritten; you are told to fix it or move it aside.
 
@@ -174,6 +174,7 @@ The test database no longer has its own copy of the dashboard's save code, so th
 
   The Studio installer is about 70 MB smaller.
 - **Wipe caches** in the Admin Panel. It never reached any workstation. The Wipe fleet caches permission went with it.
+- **The web API**, with the Admin Panel's "Start API gateway" and Slate Server's web dashboard. Nothing in Slate used it, and it was a way into the studio network. Two web libraries (FastAPI and uvicorn) went with it.
 - **Code that nothing used,** including an unused "similar assets" search.
 
 ## Known limits of 2.2.0
@@ -680,7 +681,6 @@ On each machine, a settings file damaged by the old `&` / apostrophe bug is also
 - **Fleet report** (CSV/Excel/JSON) has readable headers and totals that add up, and numbers are real numbers. Disk figures are refreshed every five minutes.
 - If the shared folder cannot be read for a moment, the cards stay and a line says when the last good read was.
 - **Restart** and **Shut down** confirm that the request was sent. Admins can **Remove from Live Ops** a machine that is gone for good.
-- **Start API gateway** runs the API inside Slate, and says it started only once it answers.
 
 **Audit Logs**
 - **Workstation logs** can be read in every format Slate writes, with level and source split out, filters, and a detail pane for errors.
@@ -958,7 +958,6 @@ On each machine, a settings file damaged by the old `&` / apostrophe bug is also
 - A studio logo was painted over the SLATE wordmark.
 - **A moment's trouble reading the shared folder wiped every Live Ops card** and said "No workstations have reported yet". A workstation whose clock ran fast stayed Online after it stopped reporting. The freshness dot beside each machine was invisible.
 - Problem machines were sorted to the bottom. Export PDF always said "Saved", even when the file was not written.
-- **Start API gateway** failed in the installed build.
 - **Tester Panel:** any folder became "made by the Tester Panel" after one generator run, and could then be deleted with everything in it. The Workflow simulation could write about 500 GB with no space check and no question. The config sandbox's banner claimed Live Ops used the new folder when it did not.
 - **The studio's working week was stored twice**, and the two could disagree. IT saw the currency, rates and hours card but could not edit even its own working hours.
 - Clearing the server folder said "Saved" but kept the old one. The policy accepted an auto punch-out time before the start of the day.
@@ -984,7 +983,6 @@ On each machine, a settings file damaged by the old `&` / apostrophe bug is also
 - The **Coordinator** role does not get "Force-save over others" by default. Tick it on the role if your studio wants it.
 - Older shot history for a shot name that exists in two reels cannot always be tied to the right reel.
 - The unread-feedback dots are remembered on each machine, not per person across machines.
-- Shots changed through the Slate API (the API gateway) are not written to shot history.
 
 **Build & Ingest, CAP Rename and media**
 - Another person's ingest lock that is still fresh can only be cleared by an admin.

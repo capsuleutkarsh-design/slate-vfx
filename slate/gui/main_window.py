@@ -1248,7 +1248,7 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         except Exception:
             pass
 
-        # 7. Terminate any tracked child subprocesses (FFmpeg, uvicorn, etc.)
+        # 7. Terminate any tracked child subprocesses (FFmpeg etc.)
         try:
             from ..utils.process_manager import subprocess_tracker
             subprocess_tracker.terminate_all(timeout=1.0)

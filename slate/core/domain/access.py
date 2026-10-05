@@ -143,7 +143,7 @@ _DEFAULTS = {
     "view_licences": [
         "admin", "developer", "production head", "it", "it support",
     ],
-    # Data Center, table editing, the SQL console, purge, the API gateway,
+    # Data Center, table editing, the SQL console, purge,
     # Audit Logs and every remote workstation action.
     "manage_system": [
         "admin", "developer",
