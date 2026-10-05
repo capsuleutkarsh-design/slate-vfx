@@ -14,6 +14,33 @@ import logging
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
+    # "Slate_Server.exe --recover [command ...]": the recovery tool, for when
+    # nobody can sign in. It runs instead of the server window, so it works
+    # when that window cannot start. See docs/RECOVERY.md.
+    if "--recover" in sys.argv[1:]:
+        from slate_server.core.recovery.cli import main as recover
+        rest = [a for a in sys.argv[1:] if a != "--recover"]
+        commands = [a for a in rest if not a.startswith("-")]
+        if commands and getattr(sys, "frozen", False):
+            # The installed server has no console of its own; a command-line
+            # recovery needs one for the key prompt and the answers.
+            try:
+                import ctypes
+                ctypes.windll.kernel32.AllocConsole()
+                sys.stdout = open("CONOUT$", "w", encoding="utf-8", errors="replace")
+                sys.stderr = sys.stdout
+                sys.stdin = open("CONIN$", "r", encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+        code = recover(rest) or 0
+        if commands and getattr(sys, "frozen", False):
+            try:
+                input("
+Press Enter to close.")
+            except Exception:
+                pass
+        os._exit(code)
+
     # The server installer asks where the studio's shared folder is and writes
     # the answer beside the program. The clients pick that up through
     # GlobalConfig; the server never constructs one, so on a machine that runs

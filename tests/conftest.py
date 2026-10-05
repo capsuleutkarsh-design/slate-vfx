@@ -125,6 +125,9 @@ def pytest_configure(config):
     Values still change in memory, so the tests behave exactly as before. Only
     the write to disk is stopped.
     """
+    config.addinivalue_line(
+        "markers", "slow: starts a real throwaway PostgreSQL (the recovery lab)")
+
     from slate.core.infra.global_config import GlobalConfig
 
     if not getattr(GlobalConfig, "_save_disabled_for_tests", False):

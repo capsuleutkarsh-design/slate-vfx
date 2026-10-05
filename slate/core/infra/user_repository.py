@@ -25,6 +25,13 @@ class UserRepository:
         try:
             if not users_dict:
                 return True
+            # The last administrator is protected here too, in the repository
+            # every bulk write of ut_users goes through (the web API included).
+            from slate.core.security import admin_guard
+            why = admin_guard.check(self.db, admin_guard.sync_change(users_dict))
+            if why:
+                logging.warning("Sync Users refused: %s", why)
+                raise admin_guard.LastAdminRefused(why)
             timestamp = datetime.now().isoformat()
             
             sql = """
@@ -61,7 +68,7 @@ class UserRepository:
                     execute_values(cur, sql, values)
                     conn.commit()
             return True
-        except DatabaseUnavailableError:
+        except (DatabaseUnavailableError, PermissionError):
             raise
         except Exception as e:
             logging.exception(f"Sync Users Failed: {e}")

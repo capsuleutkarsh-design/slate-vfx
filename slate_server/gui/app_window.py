@@ -15,6 +15,7 @@ from .views.dashboard_view import DashboardView
 from .views.settings_view import SettingsView
 from .views.analytics_view import AnalyticsView
 from .views.operations_view import OperationsView
+from .views.recovery_view import RecoveryView
 from slate_server.core.db_engine import DatabaseEngine
 from slate_server.core.pgbouncer_engine import PgBouncerEngine
 from slate_server.core.db_credentials import connect_kwargs
@@ -68,72 +69,30 @@ def _server_home():
     Running from a checkout: the checkout. Installed: the per-user folder.
     They used to be the same folder for both, which is how uninstalling the
     installed build - with "delete its data" - deleted the settings file the
-    development server was using, and the development server then went looking
-    for a database somewhere else and built a new empty one when it got there.
-    An installer must have no way of reaching a checkout's server.
+    development server was using. The answer lives in slate_server.core.
+    server_home now, so the recovery tool reaches the same one without Qt.
     """
-    if getattr(sys, "frozen", False):
-        return os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
-                            "Slate_Central")
-    from pathlib import Path
-    return str(Path(__file__).resolve().parents[2])
+    from slate_server.core.server_home import server_home
+    return server_home()
 
 
 def _default_data_dir(appdata_dir):
     """
-    Where the database is when the settings do not say.
-
-    One answer, fixed, and it is not derived from anything else. This used to be
-    worked out from SERVER_ROOT, a drive letter, and whether a folder existed -
-    inputs that change - and every time the answer changed the server quietly
-    built a new empty cluster at the new one. Four were found on one machine in
-    a day. The studio's real database was a fifth folder that nothing pointed at.
-
-    SLATE_DB_PATH still wins, because it is an explicit instruction. Nothing
-    else is.
+    Where the database is when the settings do not say: SLATE_DB_PATH, or
+    <server home>\LocalDatabase. One answer, fixed, derived from nothing that
+    changes - every time it used to change, a new empty cluster was built.
     """
-    from_env = os.environ.get("SLATE_DB_PATH")
-    if from_env:
-        return from_env
-    return os.path.join(appdata_dir, "LocalDatabase")
+    from slate_server.core.server_home import default_data_dir
+    return default_data_dir(appdata_dir)
 
 
 def _settings_path(appdata_dir):
     """
-    Where the server keeps its settings, carrying forward an older install's.
-
-    The folder and the file were both named after the product, so renaming the
-    product moved both at once. A machine that upgrades therefore finds no
-    settings at all - and the code below treats "no settings" as "first run",
-    falls back to a default path that is not there, falls back again to a local
-    one, and runs initdb. The result is a server that starts cleanly onto an
-    empty database while the real one sits untouched somewhere else, which is
-    the worst of both worlds: nothing errors, and nothing is there.
-
-    So before deciding this is a first run, look where the previous name kept
-    its settings and bring them across. The old file is copied, not moved, so
-    an older build on the same machine still finds what it expects.
+    The server's settings file, carrying forward an older install's so an
+    upgrade is not mistaken for a first run (see server_home.settings_path).
     """
-    import shutil
-
-    current = os.path.join(appdata_dir, "slate_server_config.json")
-    if os.path.exists(current):
-        return current
-
-    local = os.path.dirname(appdata_dir)
-    for folder, name in (("UT_Central", "ut_server_config.json"),):
-        previous = os.path.join(local, folder, name)
-        if os.path.exists(previous):
-            try:
-                shutil.copy2(previous, current)
-                print(f"Carried settings forward from {previous}")
-            except OSError as exc:
-                # Not fatal - the server can still be pointed at a database by
-                # hand in Settings. But say so, because the alternative is a
-                # silently empty one.
-                print(f"Could not carry settings forward from {previous}: {exc}")
-            return current
-    return current
+    from slate_server.core.server_home import settings_path
+    return settings_path(appdata_dir)
 
 
 class DBWorker(QThread):
@@ -305,8 +264,10 @@ class UTServerWindow(QMainWindow):
             self.settings_view.input_db_name.setText("ut_vfx")
         self.settings_view.input_max_conn.setText(str(cfg_max_conn))
         try:
-            from slate_server.core.db_credentials import admin_password
-            self.settings_view.input_db_password.setText(admin_password())
+            # The workstations' password - not the superuser's, once that
+            # has one of its own (db_admin_password).
+            from slate_server.core.db_credentials import app_password
+            self.settings_view.input_db_password.setText(app_password())
         except Exception:
             pass
         # Which file these came from. It did not exist on the machine where all
@@ -380,6 +341,11 @@ class UTServerWindow(QMainWindow):
         self._set_running_controls(False)
         self._show_configured_data_dir()
 
+        # Recovery: for when nobody can sign in. The same page as the
+        # standalone Recover Slate window (slate_server/core/recovery).
+        self.recovery_view = RecoveryView(self._recovery_layout)
+        self.stacked_widget.addWidget(_scrollable(self.recovery_view))
+
         # Setup Analytics Polling
         self.poll_timer = QTimer(self)
         self.poll_timer.timeout.connect(self._poll_database_stats)
@@ -394,6 +360,11 @@ class UTServerWindow(QMainWindow):
 
         # Setup Sidebar after views are ready
         self.setup_sidebar()
+
+        # The safety net: a Recovery Key for this server (made once, shown
+        # once) and a first snapshot, as soon as there is a database here.
+        if not os.environ.get("HEADLESS_TESTING"):
+            QTimer.singleShot(1500, self._prepare_recovery)
 
     # ------------------------------------------------------------ geometry
     DEFAULT_SIZE = (1200, 820)
@@ -729,9 +700,11 @@ class UTServerWindow(QMainWindow):
         self.btn_nav_analytics = QPushButton("Analytics")
         self.btn_nav_operations = QPushButton("Operations")
         self.btn_nav_settings = QPushButton("Settings")
+        self.btn_nav_recovery = QPushButton("Recovery")
 
         for btn in (self.btn_nav_dash, self.btn_nav_analytics,
-                    self.btn_nav_operations, self.btn_nav_settings):
+                    self.btn_nav_operations, self.btn_nav_settings,
+                    self.btn_nav_recovery):
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setFixedHeight(40)
             btn.setStyleSheet(f"""
@@ -758,6 +731,7 @@ class UTServerWindow(QMainWindow):
         self.btn_nav_settings.clicked.connect(lambda: self.switch_view(1))
         self.btn_nav_analytics.clicked.connect(lambda: self.switch_view(2))
         self.btn_nav_operations.clicked.connect(lambda: self.switch_view(3))
+        self.btn_nav_recovery.clicked.connect(lambda: self.switch_view(4))
 
         # Initial State
         self.switch_view(0)
@@ -775,6 +749,9 @@ class UTServerWindow(QMainWindow):
         self.btn_nav_settings.setStyleSheet(active_style if index == 1 else inactive_style)
         self.btn_nav_analytics.setStyleSheet(active_style if index == 2 else inactive_style)
         self.btn_nav_operations.setStyleSheet(active_style if index == 3 else inactive_style)
+        recovery = getattr(self, "btn_nav_recovery", None)
+        if recovery is not None:
+            recovery.setStyleSheet(active_style if index == 4 else inactive_style)
 
     def _on_save_settings(self):
         """
@@ -899,6 +876,79 @@ class UTServerWindow(QMainWindow):
                     self._log(f"CRITICAL ERROR initializing engine: {e}")
         except Exception as e:
             self._log(f"Failed to save settings: {e}")
+
+    # ------------------------------------------------------------ recovery
+    def _recovery_layout(self):
+        """Where this server's database and recovery folder are, as the window knows them."""
+        from pathlib import Path
+        from slate_server.core.recovery.layout import ServerLayout, credentials_file
+        try:
+            credentials = credentials_file()
+        except Exception:
+            credentials = None
+        return ServerLayout(
+            data_dir=Path(str(self._db_path)), port=int(self._db_port),
+            pooler_port=int(self._db_pooler_port), server_home=Path(_server_home()),
+            settings_path=Path(self.config_path), credentials_path=credentials)
+
+    def _prepare_recovery(self, show=True):
+        """
+        Once there is a database here: tell the switches where this PC's
+        override file is, make the Recovery Key if there is none (and show it,
+        once), and take a first snapshot so there is always one to go back to.
+        """
+        try:
+            layout = self._recovery_layout()
+            if not (layout.data_dir / "PG_VERSION").exists():
+                return None
+            from slate.core.security import switches
+            switches.set_override_file(layout.switches_file)
+            from slate_server.core.recovery import key as recovery_key
+            made = recovery_key.create_first_key(layout)
+            if made and show:
+                from .views.recovery_view import RecoveryKeyDialog
+                dialog = RecoveryKeyDialog(made, self, first_time=True)
+                dialog.open()
+                self._recovery_key_dialog = dialog
+                self._log("> A Recovery Key was made for this server. Print it and keep it "
+                          "safe (see the Recovery page).")
+            from slate_server.core.recovery import snapshots
+            if snapshots.latest_snapshot(layout) is None:
+                import threading
+                threading.Thread(target=lambda: snapshots.before_security_change(
+                    "first snapshot", layout), daemon=True).start()
+            return made
+        except Exception as exc:
+            logging.warning("The recovery safety net was not prepared: %s", exc)
+            return None
+
+    def _after_start_safety_net(self):
+        """After every successful start: what the recovery tool reads later."""
+        try:
+            layout = self._recovery_layout()
+            from slate_server.core import server_home
+            from slate_server.core.recovery import health
+            server_home.remember_last_good(_server_home(), layout.data_dir, layout.port,
+                                           layout.pooler_port)
+            health.record_server_state(layout)
+            # Switches forced off on this PC reach the workstations through the
+            # database.
+            from slate.core.security import switches
+            from slate.core.security.dbapi import ConnectionDB
+            switches.set_override_file(layout.switches_file)
+            if switches.local_overrides(layout.switches_file):
+                conn = psycopg2.connect(**connect_kwargs(layout.port, connect_timeout=4))
+                try:
+                    changed = switches.apply_local_overrides(ConnectionDB(conn),
+                                                             layout.switches_file)
+                    if changed:
+                        self._log("> %d security switch(es) turned off, as set on this PC."
+                                  % changed)
+                finally:
+                    conn.close()
+        except Exception as exc:
+            logging.warning("Recovery bookkeeping after start failed: %s", exc)
+        self._prepare_recovery()
 
     def server_running(self) -> bool:
         """The database is up (the power switch is on)."""
@@ -1109,6 +1159,7 @@ class UTServerWindow(QMainWindow):
                 self._set_running_controls(True)
 
                 self.poll_timer.start(3000)
+                self._after_start_safety_net()
             else:
                 self.dashboard.status_badge.set_status("Server Offline", "error")
                 self._log("> Server stopped gracefully.")
