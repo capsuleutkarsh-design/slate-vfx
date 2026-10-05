@@ -544,6 +544,12 @@ class ProjectManager:
         # 3. Format Path
         # Try with cleaned names first (Most likely correct for folders)
         path = template.format(reel=reel_clean, shot=shot_clean)
+        from slate.core.domain.naming import path_inside
+        try:
+            path_inside(project.folder_base, path)      # a stored name with '..' stops here
+        except ValueError as exc:
+            logging.error("ProjectManager: %s", exc)
+            return ""
         full_path = os.path.join(project.folder_base, path)
         
         # 4. Smart/Fuzzy Find (Fix for strict naming mismatch)

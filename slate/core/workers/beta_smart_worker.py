@@ -11,6 +11,7 @@ from slate.utils.security import SecurityValidator
 from slate.core.services.path_template_manager import get_path_manager
 from ..domain.ingest.analyzer import SmartIngestAnalyzer
 from slate.core.infra.config_manager import ConfigManager
+from slate.core.domain.naming import path_inside
 
 # --- JUNK FILE FILTER LIST ---
 IGNORED_FILES = {
@@ -96,6 +97,7 @@ class BetaSmartInternalWorker(QThread):
                     return
 
             base_folders, prod_subs, _, shot_subs = self.template_data
+            path_inside(self.target_dir, self.project_name)
             project_path = self.target_dir / self.project_name
             
             # 1. Structure Creation
@@ -134,6 +136,7 @@ class BetaSmartInternalWorker(QThread):
         
         # Determine Destination Reel
         if self.target_reel_name:
+            path_inside(root, self.target_reel_name)
             dest_reel = root / self.target_reel_name
             if not self.dry_run: SafeFileOperations.safe_create_directory(dest_reel)
             self.reels_count += 1
@@ -160,6 +163,7 @@ class BetaSmartInternalWorker(QThread):
         Analyzes files in the shot folder and sorts them using Smart Analyzer.
         """
         shot_name = src_shot.name
+        path_inside(dest_reel, shot_name)
         dest_shot = dest_reel / shot_name
         
         if not self.dry_run: SafeFileOperations.safe_create_directory(dest_shot)
