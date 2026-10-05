@@ -33,6 +33,17 @@ class ReviewPlayerDialog(QDialog):
 
     verdict_submitted = Signal(object, str, str)  # (version, status, note_text)
 
+    def _project_rate(self) -> float:
+        """The rate this version's project plays image sequences at (24 when unknown)."""
+        from slate.core.domain.lineup import project_fps
+        from slate.core.infra.database_manager import database_manager, is_connected
+        try:
+            if is_connected() and self.version.project_code:
+                return project_fps(database_manager.get_tracking_project(self.version.project_code) or {})
+        except Exception as exc:
+            logging.debug("Project frame rate not read: %s", exc)
+        return project_fps(None)
+
     def __init__(self, version: Version, queue_versions: Optional[List[Version]] = None,
                  current_index: int = 0, store: Optional[VersionStore] = None,
                  current_user: str = "", parent=None):
@@ -140,6 +151,7 @@ class ReviewPlayerDialog(QDialog):
         player_layout.setSpacing(4)
 
         self.player = AdvancedPlayer(player_container)
+        self.player.sequence_fps = self._project_rate()
         player_layout.addWidget(self.player, 1)
         self.no_media_label = QLabel()
         self.no_media_label.setAlignment(Qt.AlignmentFlag.AlignCenter)

@@ -228,7 +228,8 @@ class DashboardActionsMixin:
                         data['folder_base'],
                         sheet_name=data.get('sheet_name'),
                         header_row=data.get('header_row'),
-                        data_start_row=data.get('data_start_row')
+                        data_start_row=data.get('data_start_row'),
+                        fps=data.get('fps'),
                     )
                     if success:
                         self._notify("Project updated.", "success")

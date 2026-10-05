@@ -166,3 +166,20 @@ def test_still_metadata(tmp_path, ext):
     meta = SmartMetadataManager.extract_tech_metadata(str(path))
     assert (meta["width"], meta["height"]) == (640, 360)
     assert meta["is_still"] and meta["fps"] == 0 and meta["duration_sec"] == 0
+
+
+@pytest.mark.parametrize("gap", [False, True])
+def test_a_25_fps_project_makes_25_fps_sequence_proxies(isolated_proxy_manager, tmp_path, gap):
+    """
+    Image sequences were taken as 24 fps everywhere. A project's own rate
+    (Edit project > Frame rate) now reaches the proxy, with or without a gap.
+    """
+    from slate.core.domain.proxy_builder import ProxyJob, build
+    pattern = make_sequence(tmp_path / "plate", count=10)
+    if gap:
+        Path(str(pattern) % 1005).unlink()
+    job = ProxyJob(shot_name="SH010", department="scan", source=Path(str(pattern) % 1001),
+                   target=tmp_path / "p.mp4", is_sequence=True)
+    result = build([job], manager=isolated_proxy_manager, fps=25.0)
+    assert result.built == [job.label]
+    assert probe(job.target)["r_frame_rate"] == "25/1" and _frames(job.target) == 10

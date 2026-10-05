@@ -192,6 +192,8 @@ class AdvancedPlayer(QWidget):
         self.is_slider_dragging = False
         self.total_frames = 1
         self.current_fps = 24.0
+        # The rate an image sequence plays at: its project's (lineup.project_fps).
+        self.sequence_fps = 24.0
         self.frame_offset = 0          # first frame number of a sequence
         self.show_timecode = False
         self.current_path = None
@@ -544,7 +546,7 @@ class AdvancedPlayer(QWidget):
                 engine_key = 'sequence'
                 # The whole range: a missing frame is held, not skipped.
                 self.engines['sequence'].set_sequence_details(
-                    seq.pattern, seq.start, seq.end - seq.start + 1, seq)
+                    seq.pattern, seq.start, seq.end - seq.start + 1, seq, fps=self.sequence_fps)
             elif is_image(path_obj.suffix.lower()):
                 engine_key = 'image'
 

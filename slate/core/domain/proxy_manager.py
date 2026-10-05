@@ -351,20 +351,21 @@ class ProxyManager:
             self._discard(partial)
 
     @classmethod
-    def _sequence_input(cls, seq, partial: Path) -> list:
+    def _sequence_input(cls, seq, partial: Path, fps: float = 24.0) -> list:
         """
-        ffmpeg input arguments for every frame of a sequence, at 24 fps.
+        ffmpeg input arguments for every frame of a sequence, at the project's
+        rate (it was always 24).
 
         A render with one frame missing made a proxy of the frames before the
         gap, reported it made, and the lineup played that instead of the shot:
         with a gap the frames are read through FrameSequence.ffconcat.
         """
         if not seq.missing_frames:
-            return ["-framerate", "24", "-start_number", str(seq.start), "-i", seq.pattern]
+            return ["-framerate", f"{fps:g}", "-start_number", str(seq.start), "-i", seq.pattern]
         listing = partial.with_suffix(".txt")
         with open(cls.long_path(listing), "w", encoding="utf-8") as handle:
-            handle.write(seq.ffconcat(seq.start))
-        return ["-f", "concat", "-safe", "0", "-i", str(listing), "-r", "24"]
+            handle.write(seq.ffconcat(seq.start, fps))
+        return ["-f", "concat", "-safe", "0", "-i", str(listing), "-r", f"{fps:g}"]
 
     def parse_resolution(self, res_str: str) -> Tuple[int, int]:
         """Parse resolution string into (width, height) tuple."""
@@ -391,9 +392,10 @@ class ProxyManager:
 
     def generate_proxy(self, input_path: Path = None, is_seq: bool = False, source_path: Path = None,
                        proxy_path: Path = None, target_resolution: str = "1920x1080",
-                       overwrite: bool = False) -> Tuple[bool, Path]:
+                       overwrite: bool = False, fps: float = 24.0) -> Tuple[bool, Path]:
         """
-        A review proxy: a JPG for a still, an H.264 MP4 for a movie or sequence.
+        A review proxy: a JPG for a still, an H.264 MP4 for a movie or sequence
+        (a sequence at fps, its project's rate).
 
         A sequence is found from the frame named (is_seq). overwrite=True
         makes it again over one already there - "Rebuild all" used to hand
@@ -441,7 +443,7 @@ class ProxyManager:
                 # and a one-frame proxy was made of the frame named.
                 seq = sequence_for(Path(self.long_path(input_path))) if is_seq else None
                 if seq is not None:
-                    cmd.extend(self._sequence_input(seq, partial))
+                    cmd.extend(self._sequence_input(seq, partial, fps))
                 else:
                     cmd.extend(["-i", str(input_path)])
 

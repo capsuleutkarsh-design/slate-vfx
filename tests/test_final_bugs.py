@@ -282,3 +282,27 @@ def test_a_leads_department_comes_from_their_own_record(mock_db):
     mine = lead.read_shots()[0]
     mine.dept("roto").status = "WIP"
     assert lead.write_shots([mine])
+
+
+def test_a_projects_frame_rate_reaches_the_lineup_and_the_edl(tmp_path):
+    """
+    Item 10. Image sequences were 24 fps everywhere. The project's rate
+    (ProjectConfig.fps, default 24) now sets the lineup entry and the EDL
+    timebase; a movie keeps its own.
+    """
+    from slate.core.domain import lineup
+    from slate.gui.tabs.vfx_dashboard_pro.core.project_manager import ProjectConfig
+
+    assert ProjectConfig(code="P", name="P").fps == 24.0
+    assert lineup.project_fps(ProjectConfig(code="P", name="P", fps=25)) == 25.0
+    assert lineup.project_fps({"fps": None}) == lineup.project_fps(None) == 24.0
+
+    from slate.core.domain.shot_media import MediaClip
+    plate = MediaClip(path=tmp_path / "SH010.%04d.exr", is_sequence=True,
+                      first_frame=1001, last_frame=1048)
+    assert lineup.plate_facts(plate, 25.0) == (25.0, 0)
+    entry = lineup.LineupShot(name="SH010", fps=lineup.plate_facts(plate, 25.0)[0],
+                              frame_range=(1001, 1048), clips={"scan": plate})
+    assert lineup.lineup_fps([entry]) == 25.0
+    # Frame 1001 is 40 s 1 frame at 25 fps (it was written as 41 s 17 frames, at 24).
+    assert "00:00:40:01" in lineup.edl_text([entry], "P")

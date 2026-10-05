@@ -25,6 +25,9 @@ class ProjectConfig:
     folder_template: Dict[str, str] = field(default_factory=dict)
     column_mapping: Dict[str, str] = field(default_factory=dict)
     status: str = "active"
+    # The rate this project's image sequences play at (lineup, EDL, proxies,
+    # player). Every sequence was taken as 24; movies keep their own rate.
+    fps: float = 24.0
 
 def _default_folder_template() -> Dict[str, str]:
     """Per-department folder paths, matching the project folder template."""
@@ -340,7 +343,8 @@ class ProjectManager:
         return new_project
 
     def update_project(self, code: str, name: str, excel_path: str, folder_base: str,
-                       sheet_name: str = None, header_row: int = None, data_start_row: int = None):
+                       sheet_name: str = None, header_row: int = None, data_start_row: int = None,
+                       fps: float = None):
         """Updates an existing project in the database."""
         self.last_error = ""
         if code not in self.projects:
@@ -357,6 +361,8 @@ class ProjectManager:
             project.header_row = int(header_row)
         if data_start_row is not None:
             project.data_start_row = int(data_start_row)
+        if fps:
+            project.fps = float(fps)
         if not project.folder_template:
             project.folder_template = _default_folder_template()
         try:
