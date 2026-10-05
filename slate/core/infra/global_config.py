@@ -147,10 +147,13 @@ class GlobalConfig:
                 pass
 
         # 4. Try Machine Config (Local AppData)
+        saved_host = ""
         if self.config_path.exists():
             try:
                 with open(self.config_path, 'r') as f:
-                    self.data.update(json.load(f))
+                    machine = json.load(f)
+                    self.data.update(machine)
+                    saved_host = str(machine.get('db_host') or "")
             except Exception as e:
                 logging.warning("GlobalConfig: could not load local config %s (%s)", self.config_path, e)
 
@@ -174,7 +177,13 @@ class GlobalConfig:
                 from .network_discovery import discover_server_details
                 logging.info("GlobalConfig: No db_host configured. Attempting UDP Network Discovery...")
                 found = discover_server_details(timeout=1.5)
-                if found:
+                if found and saved_host and found["host"] != saved_host:
+                    # NEW-4: the first PC that answers never replaces the saved server.
+                    logging.warning("GlobalConfig: %s answered as the server, but this machine is "
+                                    "set up for %s; keeping %s. Use Reconfigure if the server moved.",
+                                    found["host"], saved_host, saved_host)
+                    self.data['db_host'] = saved_host
+                elif found:
                     self.data['db_host'] = found["host"]
                     self.data['db_port'] = found["db_port"]
                     if found.get("pooler_port"):
