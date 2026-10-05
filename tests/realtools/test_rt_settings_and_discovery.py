@@ -56,6 +56,7 @@ def test_a_config_json_written_by_setup_bat_is_read_by_every_reader(tmp_path, mo
 
     # The workstation's maintenance scripts and backups.
     monkeypatch.setattr(local_secrets, "_candidates", lambda: iter([config]))
+    monkeypatch.setattr(GlobalConfig, "_instance", None)     # the client's settings, read afresh
     assert local_secrets.db_password() == PASSWORD
     assert local_secrets.db_settings()["host"] == "10.0.0.5"
 

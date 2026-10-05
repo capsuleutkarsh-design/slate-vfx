@@ -3,20 +3,19 @@ Where the studio's password actually lives.
 
 It used to be a literal in half a dozen maintenance scripts. That is merely
 untidy in a private checkout and a disclosure in a public one, so it now comes
-from the machine instead:
-
-    1. the SLATE_DB_PASSWORD environment variable, if it is set
-    2. slate/config.json - written by setup.bat, and git-ignored
-
-The password itself has not changed. It moved.
+from the machine instead - see find_db_password() for the one order every
+reader uses.
 
 These scripts run outside the application, often before it can start, so this
-module deliberately depends on nothing but the standard library.
+module deliberately depends on nothing but the standard library at import
+time; the application's settings, keyring and cryptography are each tried
+only if they import.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -61,15 +60,80 @@ def setting(key: str, default=None):
     return default if value in (None, "") else value
 
 
+def _from_settings():
+    from slate.core.infra.global_config import GlobalConfig
+    value = GlobalConfig.get("db_password") or GlobalConfig.get("password")
+    return value if value and str(value).strip() else None
+
+
+def _from_keyring():
+    import keyring
+    return keyring.get_password("Slate", "db_password")
+
+
+def _from_encrypted_file():
+    """What tools/setup_credentials.py writes: a Fernet-encrypted JSON and its key."""
+    folder = Path(os.getenv("LOCALAPPDATA", "")) / "Slate"
+    secret, key = folder / ".db_credentials", folder / ".encryption_key"
+    if not (secret.exists() and key.exists()):
+        return None
+    from cryptography.fernet import Fernet
+    return json.loads(Fernet(key.read_bytes()).decrypt(secret.read_bytes()).decode()).get("db_password")
+
+
+def _from_db_config():
+    from slate.core.infra.global_config import GlobalConfig
+    return (GlobalConfig.get("db_config", {}) or {}).get("password")
+
+
+# The one order. 1, 3, 4 and 5 are the order the client has always used to
+# connect at start-up (PostgresManager), unchanged. The others were each read
+# by only one of the three lookups this replaces, and are kept so that nothing
+# which found a password before finds none now: SLATE_DB_PASSWORD is placed
+# beside DB_PASSWORD because it is documented to win over every config file
+# (a one-off maintenance session); db_config's password (the SQLAlchemy
+# factory) and the first local config file (the maintenance scripts) come last.
+PASSWORD_SOURCES = (
+    ("the DB_PASSWORD environment variable", lambda: os.environ.get("DB_PASSWORD")),
+    ("the %s environment variable" % ENV_VAR, lambda: os.environ.get(ENV_VAR)),
+    ("the settings (config.json): db_password or password", _from_settings),
+    ("Windows Credential Manager", _from_keyring),
+    ("the encrypted credentials file", _from_encrypted_file),
+    ("db_config in the settings", _from_db_config),
+    ("the local config file", lambda: setting("db_password", "")),
+)
+
+
+def find_db_password() -> str:
+    """
+    The database password for this machine, from the first source in
+    PASSWORD_SOURCES that has one; '' when none does. Never stripped -
+    passwords may have spaces. A source that cannot be read is skipped.
+    """
+    for name, read in PASSWORD_SOURCES:
+        try:
+            value = read()
+        except ImportError as exc:
+            logging.debug("Password source %s not available: %s", name, exc)
+            continue
+        except Exception as exc:
+            logging.warning("Could not read the database password from %s: %s", name, exc)
+            continue
+        if value:
+            logging.info("Database password loaded from %s", name)
+            return value
+    return ""
+
+
 def db_password(required: bool = True) -> str:
     """
-    The database password for this machine.
+    The database password for this machine (find_db_password()).
 
     With required=True a missing password raises rather than silently
     connecting as nobody - a maintenance script that quietly does nothing is
     worse than one that stops and says why.
     """
-    password = os.environ.get(ENV_VAR) or setting("db_password", "")
+    password = find_db_password()
     if not password and required:
         raise RuntimeError(
             "No database password on this machine.\n"

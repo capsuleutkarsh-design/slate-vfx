@@ -135,7 +135,8 @@ from slate.core.infra.local_secrets import db_password
 password = db_password()
 ```
 
-That checks `SLATE_DB_PASSWORD` first, then the git-ignored local configs. It
+That checks the environment (`DB_PASSWORD`, `SLATE_DB_PASSWORD`) first, then the
+settings and the other places listed in `find_db_password()`. It
 raises with an explanation when there is nothing configured, rather than
 connecting as nobody and failing later.
 

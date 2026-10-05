@@ -4,7 +4,6 @@ from psycopg2 import pool
 from psycopg2.pool import PoolError
 from psycopg2.extras import RealDictCursor, execute_values
 import logging
-import json
 import threading
 import atexit
 from collections import OrderedDict
@@ -310,72 +309,14 @@ class PostgresManager(ManagerFacade):
     
     def _load_password_secure(self) -> str:
         """
-        Load database password from secure storage.
-        Priority: Environment Variable > Keyring > Encrypted File > Error
+        The database password (local_secrets.find_db_password - one order for
+        every reader). None found is an error with guidance.
         """
-        import os
-        from pathlib import Path
-        
-        # 1. Try environment variable (highest priority)
-        password = os.getenv('DB_PASSWORD')
+        from .local_secrets import find_db_password
+        password = find_db_password()
         if password:
-            logging.info("Database password loaded from environment variable")
             return password
-            
-        # 2. Try GlobalConfig (User requested "Zero Config" Deployment Priority)
-        # If a password is set in config.json/default_config.json, it should override local cache
-        from .global_config import GlobalConfig
-        config_password = GlobalConfig.get('db_password') or GlobalConfig.get('password')
-        if config_password:
-             # Basic sanity check to avoid empty strings if they somehow got in
-             if str(config_password).strip():
-                 logging.info("Database password loaded from GlobalConfig (config.json)")
-                 return config_password
-        
-        # 3. Try Windows Credential Manager via keyring
-        try:
-            import keyring
-            password = keyring.get_password("Slate", "db_password")
-            if password:
-                logging.info("Database password loaded from Windows Credential Manager")
-                return password
-        except ImportError:
-            logging.debug("keyring library not available")
-        except Exception as e:
-            logging.debug(f"Could not access keyring: {e}")
-        
-        # 4. Try encrypted file (fallback)
-        local_appdata = Path(os.getenv('LOCALAPPDATA', '')) / "Slate"
-        encrypted_creds_file = local_appdata / ".db_credentials"
-        
-        if encrypted_creds_file.exists():
-            try:
-                from cryptography.fernet import Fernet
-                
-                # Load encryption key
-                key_file = local_appdata / ".encryption_key"
-                if key_file.exists():
-                    with open(key_file, 'rb') as f:
-                        key = f.read()
-                    
-                    cipher = Fernet(key)
-                    
-                    # Decrypt credentials
-                    with open(encrypted_creds_file, 'rb') as f:
-                        encrypted_data = f.read()
-                    
-                    decrypted_data = cipher.decrypt(encrypted_data)
-                    import json
-                    credentials = json.loads(decrypted_data.decode())
-                    
-                    password = credentials.get('db_password')
-                    if password:
-                        logging.info("Database password loaded from encrypted file")
-                        return password
-            except Exception as e:
-                logging.warning(f"Could not read encrypted credentials file: {e}")
 
-        # 5. No password found - fail with explicit guidance.
         error_msg = (
             "\n" + "="*70 + "\n"
             "DATABASE PASSWORD NOT CONFIGURED\n"

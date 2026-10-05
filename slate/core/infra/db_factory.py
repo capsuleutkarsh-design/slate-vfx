@@ -67,22 +67,8 @@ def get_database_url() -> str:
             # which tried the best-known default password for the best-known
             # default superuser - silently, and with nothing recorded when it
             # worked. A missing credential is now a missing credential.
-            password = config.get("password")
-            if not password:
-                try:
-                    import keyring
-                    password = keyring.get_password("Slate", "db_password")
-                except Exception:
-                    logger.warning(
-                        "Could not read the credential store; falling back to "
-                        "the local config.", exc_info=True)
-                    password = None
-            if not password:
-                try:
-                    from slate.core.infra.local_secrets import db_password
-                    password = db_password(required=False)
-                except Exception:
-                    password = None
+            from slate.core.infra.local_secrets import find_db_password
+            password = find_db_password()
             if not password:
                 logger.error(
                     "No database password on this machine, so no PostgreSQL URL "
