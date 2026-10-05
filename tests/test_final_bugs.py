@@ -66,3 +66,37 @@ def test_roles_editor_shows_what_access_json_gives_by_name(mock_db, qapp):
     (row,) = [r for r in TesterPanel.permission_rows({"Lead": ["Settings"]})]
     assert "Edit the dashboard" in row[2]
     access.reset_cache()
+
+
+def test_server_comp_off_job_runs_on_the_studio_database(monkeypatch, tmp_path):
+    """
+    Item 4. Slate Server's daily comp-off job never loaded the studio policy
+    (comp off always looked switched off) and used the client database
+    manager. It now reads the studio's rules from the studio database,
+    credits there, and lapses expired comp off in the same run.
+    """
+    from slate.core.domain import leave_policy as lp
+    from slate_server.core.maintenance import Maintenance
+
+    asked = []
+
+    class StudioDb:
+        conn = type("Conn", (), {"close": lambda self: asked.append("closed")})()
+
+        def execute_query(self, sql, params=None, fetch="all", strict=False):
+            asked.append(sql)
+            if "studio_settings" in sql:
+                return [{"key": "attendance_policy", "value": '{"comp_off_enabled": true}'}]
+            return []
+
+        def execute_update(self, sql, params=None):
+            return True
+
+    monkeypatch.setattr(lp, "_OVERRIDES", {})
+    jobs = Maintenance(tmp_path / "bin", tmp_path / "data", port=55999, dbname="studio")
+    monkeypatch.setattr(jobs, "_studio_db", StudioDb)
+    result = jobs.credit_comp_off()
+    assert result["ok"] and not result.get("skipped"), result
+    assert any("FROM attendance_log" in a for a in asked), "the attendance record was never reviewed"
+    assert any("expires_on IS NOT NULL" in a for a in asked), "expired comp off was never lapsed"
+    assert asked[-1] == "closed"

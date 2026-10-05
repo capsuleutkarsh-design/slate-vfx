@@ -289,9 +289,18 @@ def test_comp_off_is_skipped_not_failed_when_the_studio_does_not_operate_it(tmp_
     """
     from slate.core.domain import leave_policy as lp
 
-    lp.set_overrides({"comp_off_enabled": False})
+    class StudioDb:
+        """The studio's own setting, read from its database (never port 5440 here)."""
+        conn = type("Conn", (), {"close": lambda self: None})()
+
+        def execute_query(self, sql, params=None, fetch="all", strict=False):
+            if "studio_settings" in sql:
+                return [{"key": "attendance_policy", "value": '{"comp_off_enabled": false}'}]
+            return []
+
     try:
         jobs = Maintenance(tmp_path / "bin", tmp_path / "LocalDatabase", dbname="ut_vfx")
+        jobs._studio_db = StudioDb
         result = jobs.credit_comp_off()
         assert result["ok"] is True
         assert result.get("skipped") is True
