@@ -122,17 +122,21 @@ def test_old_cached_pictures_that_could_not_be_removed_are_logged(monkeypatch, t
 # 5 ------------------------------------------------------ permission cache
 
 def test_a_failed_role_read_keeps_the_last_answer_and_is_never_cached(monkeypatch):
+    from types import SimpleNamespace
     from slate.core.domain import access
-    from slate.core.infra.database_manager import database_manager
+    from slate.core.infra import database_manager as dbm
 
+    # The module attribute is swapped, never the shared proxy's methods: a
+    # patched proxy stays pinned to this test's database afterwards.
     answer = [{"role_name": "Lead", "permissions": '["can:dashboard_write"]'}]
-    monkeypatch.setattr(database_manager, "execute_query", lambda *a, **k: answer)
+    monkeypatch.setattr(dbm, "database_manager",
+                        SimpleNamespace(execute_query=lambda *a, **k: answer))
     access.reset_cache()
     try:
         good = access._role_abilities()
         assert "dashboard_write" in good["lead"]
 
-        monkeypatch.setattr(database_manager, "execute_query", StrictFails().execute_query)
+        monkeypatch.setattr(dbm, "database_manager", StrictFails())
         monkeypatch.setattr(access, "_db_cache_at", 0.0)          # expired
         assert access._role_abilities() == good                  # last answer kept
 
@@ -165,14 +169,18 @@ def test_a_shot_that_cannot_be_read_is_reported_not_dropped_silently():
 # 7 ------------------------------------------------- restore with bad config
 
 def test_a_project_whose_settings_cannot_be_read_stays_archived(monkeypatch):
+    from types import SimpleNamespace
     from slate.gui.tabs.vfx_dashboard_pro.core.project_manager import ProjectManager
-    from slate.core.infra.database_manager import database_manager
+    from slate.core.infra import database_manager as dbm
+
+    def unreadable(code):
+        raise ValueError("bad json")
 
     updates = []
     monkeypatch.setattr(ProjectManager, "archived_projects", staticmethod(lambda: [{"code": "PRJ"}]))
-    monkeypatch.setattr(database_manager, "get_tracking_project",
-                        lambda code: (_ for _ in ()).throw(ValueError("bad json")))
-    monkeypatch.setattr(database_manager, "execute_update", lambda *a, **k: updates.append(a))
+    monkeypatch.setattr(dbm, "database_manager", SimpleNamespace(
+        get_tracking_project=unreadable,
+        execute_update=lambda *a, **k: updates.append(a)))
     pm = ProjectManager.__new__(ProjectManager)
     pm.projects, pm.last_error = {}, ""
 
