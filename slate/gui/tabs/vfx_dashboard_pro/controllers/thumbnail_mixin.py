@@ -152,9 +152,6 @@ class DashboardThumbnailMixin:
     def _schedule_visible_thumbnail_refresh(self, *_args):
         return
 
-    def _queue_visible_thumbnails(self):
-        return
-
     def start_thumbnail_loading(self):
         """Nothing to preload: the grid shows no thumbnails (kept for older callers)."""
         return

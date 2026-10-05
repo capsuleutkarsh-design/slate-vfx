@@ -850,13 +850,6 @@ class SettingsTab(QWidget):
         self._toast(" ".join(notes))
         return True
 
-    # Kept for older callers: both now save the whole page.
-    def save_global_settings(self):
-        return self.save_all()
-
-    def save_paths_and_connections(self):
-        return self.save_all()
-
     def _check_studio_fields(self, values) -> bool:
         logo = values["branding_logo_path"]
         if logo and not Path(logo).exists():
@@ -966,15 +959,6 @@ class SettingsTab(QWidget):
         line = QFrame(); line.setFrameShape(QFrame.HLine); line.setFrameShadow(QFrame.Sunken); line.setStyleSheet(f"background: {C.BG_ELEVATED}; margin-top: {S.XS}px; margin-bottom: {S.XS}px;")
         return line
 
-    def choose_theme(self, name):
-        """Kept for older callers: the theme is now chosen and then saved with the page."""
-        if name:
-            self.theme_combo.setCurrentText(name)
-
-    def toggle_theme_mode(self, checked=None):
-        # Kept for anything still connected to the old switch.
-        ThemeManager.toggle_mode()
-
     def _browse_directory(self, target_input: QLineEdit, title: str):
         start_dir = target_input.text().strip() or str(Path.home())
         selected = QFileDialog.getExistingDirectory(self, title, start_dir)
@@ -990,10 +974,6 @@ class SettingsTab(QWidget):
             self._show_start(target_input)
 
     # -------------------------------------------------------- studio policy
-    def save_studio_policy(self):
-        """Save the studio policy for everybody and apply it now."""
-        return self.studio_policy_editor.save()
-
     def _on_policy_saved(self):
         """Recount Attendance at once if it is open, instead of asking people to re-open it."""
         self.studio_policy_saved.emit()

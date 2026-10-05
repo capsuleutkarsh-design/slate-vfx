@@ -211,9 +211,6 @@ class FilterHeaderView(QHeaderView):
         finally:
             self.blockSignals(False)
 
-    # Kept for older callers: values now come from the provider.
-    def update_filters(self, shots=None):
-        pass
 
 
 class _FilterPanel(QWidget):

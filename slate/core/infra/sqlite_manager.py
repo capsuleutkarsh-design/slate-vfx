@@ -1137,17 +1137,3 @@ class SQLiteManager:
         except Exception as e:
             logger.exception(f"Failed to fetch history for project={project_code}, shot={shot_name}: {e}")
             return []
-
-    # ── Stubs for less critical features ────────────────────────────────────
-
-    def get_error_statistics(self):
-        return {'total_errors': 0, 'recent_errors': []}
-
-    def get_asset_statistics(self):
-        return {'total_assets': 0, 'recent_assets': []}
-
-    def get_compliance_data(self):
-        return {'audit_trail': []}
-
-    def export_data(self, table, path):
-        return True
