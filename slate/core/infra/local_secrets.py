@@ -105,12 +105,8 @@ PASSWORD_SOURCES = (
 )
 
 
-def find_db_password() -> str:
-    """
-    The database password for this machine, from the first source in
-    PASSWORD_SOURCES that has one; '' when none does. Never stripped -
-    passwords may have spaces. A source that cannot be read is skipped.
-    """
+def find_db_password_and_source():
+    """(password, the PASSWORD_SOURCES name it came from); ('', '') when none has one."""
     for name, read in PASSWORD_SOURCES:
         try:
             value = read()
@@ -122,8 +118,176 @@ def find_db_password() -> str:
             continue
         if value:
             logging.info("Database password loaded from %s", name)
-            return value
-    return ""
+            return value, name
+    return "", ""
+
+
+def find_db_password() -> str:
+    """
+    The database password for this machine, from the first source in
+    PASSWORD_SOURCES that has one; '' when none does. Never stripped -
+    passwords may have spaces. A source that cannot be read is skipped.
+    """
+    return find_db_password_and_source()[0]
+
+
+# ------------------------------------------------- the protected store (SYS-110)
+#
+# The password is kept in Windows Credential Manager (keyring "Slate"), never
+# written to config.json in plain text. A password found in a config.json is
+# moved there once it has been used to connect: stored, read back, and only
+# then removed from the file - so a PC whose Credential Manager does not work
+# keeps the file exactly as it was.
+#
+# Rotation: Slate Server publishes the studio's next password in the database
+# (table app_password_next). A workstation that can connect reads it, keeps it
+# as "db_password_next" and says so in app_password_learned. When the server
+# switches over, the current password is refused; the workstation then tries
+# the next one, and keeps it.
+
+KEYRING_SERVICE = "Slate"
+NEXT_KEY = "db_password_next"
+NEXT_TABLE = "app_password_next"
+LEARNED_TABLE = "app_password_learned"
+
+# Every Slate before 2.2.0 shipped this password in default_config.json, and it
+# is public. A workstation set up without one of its own still tries it - only
+# when it has no other password at all - so updating it never cuts it off from
+# a studio that has not switched yet. A studio that has switched (or was set up
+# with 2.2.0) does not accept it. ponytail: delete once every studio has switched.
+LEGACY_PASSWORD = "Tango$"
+LEGACY_SOURCE = "the password older Slate versions shipped with"
+
+
+def protected_password(name: str = "db_password") -> str:
+    """The value in Credential Manager; '' when there is none or it cannot be read."""
+    try:
+        import keyring
+        return keyring.get_password(KEYRING_SERVICE, name) or ""
+    except Exception as exc:
+        logging.debug("Credential Manager not readable (%s): %s", name, exc)
+        return ""
+
+
+def _protect(name: str, value: str) -> bool:
+    """Into Credential Manager; True only when it reads back the same."""
+    try:
+        import keyring
+        keyring.set_password(KEYRING_SERVICE, name, value)
+        return keyring.get_password(KEYRING_SERVICE, name) == value
+    except Exception as exc:
+        logging.warning("Could not keep the database password in Credential Manager: %s", exc)
+        return False
+
+
+def _forget(name: str) -> None:
+    try:
+        import keyring
+        if keyring.get_password(KEYRING_SERVICE, name) is not None:
+            keyring.delete_password(KEYRING_SERVICE, name)
+    except Exception as exc:
+        logging.debug("Could not remove %s from Credential Manager: %s", name, exc)
+
+
+def _password_files():
+    """Every settings file on this PC a password can be read from."""
+    yield from _candidates()
+    yield Path.home() / "RuntimeData" / "Slate" / "config.json"
+    if getattr(sys, "frozen", False):
+        yield Path(sys.executable).resolve().parent / "client_config.json"
+
+
+def _strip_password_from_files() -> None:
+    """Remove db_password from each settings file that has one. Unwritable ones stay."""
+    for path in _password_files():
+        try:
+            if not path.is_file():
+                continue
+            with open(path, "r", encoding="utf-8-sig") as handle:
+                data = json.load(handle)
+            if not isinstance(data, dict) or "db_password" not in data:
+                continue
+            data.pop("db_password")
+            tmp = path.with_name(path.name + ".writing")
+            with open(tmp, "w", encoding="utf-8") as handle:
+                json.dump(data, handle, indent=4)
+            os.replace(tmp, path)
+            logging.info("The database password was removed from %s; it is kept in "
+                         "Credential Manager now.", path)
+        except (OSError, ValueError) as exc:
+            logging.warning("%s still holds the database password (%s). Slate tries the "
+                            "one in Credential Manager when that one is refused.", path, exc)
+
+
+def save_db_password(password: str) -> bool:
+    """
+    Keep this PC's database password: Credential Manager first, read back,
+    then out of every config.json. True when protected. When Credential
+    Manager does not work it goes into config.json as before (False) - a PC
+    must never be left without the password it was just given.
+    """
+    if not password:
+        return False
+    if _protect("db_password", password):
+        _strip_password_from_files()
+        if protected_password(NEXT_KEY) == password:
+            _forget(NEXT_KEY)
+        return True
+    write_local_config({"db_password": password})
+    return False
+
+
+def passwords_to_try(tried) -> list:
+    """After a refusal: every other password this PC knows, the studio's next one first."""
+    found = [protected_password(NEXT_KEY), protected_password("db_password")]
+    return [p for p in dict.fromkeys(found) if p and p not in tried]
+
+
+def machine_name() -> str:
+    """This PC and Windows account, as app_password_learned lists it."""
+    import getpass
+    import socket
+    try:
+        user = getpass.getuser()
+    except Exception:
+        user = "?"
+    return "%s\\%s" % (socket.gethostname(), user)
+
+
+def after_connect(db, password: str, source: str) -> None:
+    """
+    ``password`` (from ``source``) has just connected this PC. Keep it in
+    Credential Manager (moving it out of config.json), and learn the password
+    the studio has published to switch to next. Never raises.
+    """
+    try:
+        if password and source and "environment" not in source \
+                and source != LEGACY_SOURCE and protected_password() != password:
+            save_db_password(password)
+        _learn_published_password(db, password)
+    except Exception as exc:
+        logging.warning("Database password housekeeping skipped: %s", exc)
+
+
+def _learn_published_password(db, current: str) -> None:
+    row = db.execute_query("SELECT to_regclass(%s) AS t", ("public." + NEXT_TABLE,),
+                           fetch="one")
+    if not row or not row.get("t"):
+        return                                    # a server older than 2.2.0
+    row = db.execute_query("SELECT password FROM %s" % NEXT_TABLE, fetch="one") or {}
+    published = row.get("password") or ""
+    if not published or published == current:
+        _forget(NEXT_KEY)
+        return
+    if protected_password(NEXT_KEY) != published and not _protect(NEXT_KEY, published):
+        return                                    # not kept, so not reported as learned
+    from datetime import datetime
+    db.execute_update(
+        "INSERT INTO %s (machine, learned_at) VALUES (%%s, %%s) ON CONFLICT (machine) "
+        "DO UPDATE SET learned_at = EXCLUDED.learned_at" % LEARNED_TABLE,
+        (machine_name(), datetime.now().isoformat(timespec="seconds")))
+    logging.info("This PC has the studio's next database password, for when the server "
+                 "switches to it.")
 
 
 def db_password(required: bool = True) -> str:

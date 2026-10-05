@@ -138,6 +138,52 @@ def pytest_configure(config):
         GlobalConfig.save = lambda self: None
         GlobalConfig._save_disabled_for_tests = True
 
+    # The database password now lives in Windows Credential Manager. The suite
+    # never reads or writes the developer's real one: an in-memory store here,
+    # and none at all for any program a test starts.
+    os.environ["PYTHON_KEYRING_BACKEND"] = "keyring.backends.null.Keyring"
+    try:
+        import keyring
+        keyring.set_keyring(_MemoryKeyring())
+    except ImportError:
+        pass
+
+
+try:
+    import keyring.backend as _keyring_backend
+
+    class _MemoryKeyring(_keyring_backend.KeyringBackend):
+        priority = 1
+        store = {}
+
+        def get_password(self, service, username):
+            return self.store.get((service, username))
+
+        def set_password(self, service, username, password):
+            self.store[(service, username)] = password
+
+        def delete_password(self, service, username):
+            if self.store.pop((service, username), None) is None:
+                import keyring.errors
+                raise keyring.errors.PasswordDeleteError(username)
+except ImportError:                                         # pragma: no cover
+    _MemoryKeyring = None
+
+
+@pytest.fixture(autouse=True)
+def _empty_keyring():
+    """Every test starts with nothing in the (in-memory) Credential Manager."""
+    if _MemoryKeyring is not None:
+        _MemoryKeyring.store.clear()
+    # Nor does a test leave its server's passwords for the next one (a
+    # module-wide server, set up before this, is kept).
+    from slate_server.core import db_credentials
+    before = (getattr(db_credentials, "_secrets_path", None),
+              getattr(db_credentials, "_adopted", ""))
+    yield
+    db_credentials._secrets_path, db_credentials._adopted = before
+    db_credentials._cache = None
+
 
 def pytest_unconfigure(config):
     from slate.core.infra.global_config import GlobalConfig

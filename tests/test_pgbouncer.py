@@ -25,7 +25,7 @@ def engine(tmp_path):
     data = tmp_path / "Database"
     data.mkdir()
     return PgBouncerEngine(str(data), db_port=5440, listen_port=6432,
-                           db_user="ut_vfx_app", db_password="secret")
+                           db_user="ut_vfx_app")
 
 
 def _write_config(engine, verifiers=None):

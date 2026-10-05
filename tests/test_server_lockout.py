@@ -50,6 +50,7 @@ def test_no_password_means_the_access_rules_are_left_alone(engine, monkeypatch):
     it by the time anyone notices.
     """
     monkeypatch.setattr(db_credentials, "admin_password", lambda: "")
+    monkeypatch.setattr(db_credentials, "app_password", lambda: "")
     hardened = []
     monkeypatch.setattr(engine, "_harden_access", lambda: hardened.append(True))
     monkeypatch.setattr(engine, "_ensure_slate_database", lambda: None)
@@ -63,6 +64,7 @@ def test_no_password_means_the_access_rules_are_left_alone(engine, monkeypatch):
 
 def test_a_failed_account_setup_also_leaves_the_access_rules_alone(engine, monkeypatch):
     monkeypatch.setattr(db_credentials, "admin_password", lambda: "secret")
+    monkeypatch.setattr(db_credentials, "app_password", lambda: "secret")
     monkeypatch.setattr(engine, "_can_authenticate", lambda: True)
     monkeypatch.setattr(engine, "_ensure_slate_database", lambda: None)
     monkeypatch.setattr(engine, "_ensure_application_role", lambda: False)
@@ -77,6 +79,7 @@ def test_a_failed_account_setup_also_leaves_the_access_rules_alone(engine, monke
 def test_a_healthy_first_run_still_hardens(engine, monkeypatch):
     """The protection above must not turn into never securing anything."""
     monkeypatch.setattr(db_credentials, "admin_password", lambda: "secret")
+    monkeypatch.setattr(db_credentials, "app_password", lambda: "secret")
     monkeypatch.setattr(engine, "_can_authenticate", lambda: True)
     monkeypatch.setattr(engine, "_ensure_slate_database", lambda: None)
     monkeypatch.setattr(engine, "_ensure_application_role", lambda: True)
@@ -220,6 +223,7 @@ def test_a_refused_account_says_what_the_database_said(engine, monkeypatch):
     between a fresh install and a working studio.
     """
     monkeypatch.setattr(db_credentials, "admin_password", lambda: "secret")
+    monkeypatch.setattr(db_credentials, "app_password", lambda: "secret")
     monkeypatch.setattr(engine, "_can_authenticate", lambda: True)
     monkeypatch.setattr(engine, "_ensure_slate_database", lambda: None)
     monkeypatch.setattr(engine, "_ensure_application_role", lambda: False)

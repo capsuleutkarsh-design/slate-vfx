@@ -42,7 +42,9 @@ out for good.
 |---|---|
 | Somebody forgot their password, or was switched off by mistake | **Accounts**: type the username and a new password twice, then press **Reset password and switch the account back on**. They must choose their own password the next time they sign in. |
 | No administrator is left (deleted, switched off or demoted) | **Accounts**: type a username (for example `admin`) and a new password, then press **Create or restore administrator**. |
-| Workstations say the database password is wrong | **Database passwords**: type the password the workstations **already have**, then press **Set app password (workstations)**. |
+| Workstations say the database password is wrong | **Database passwords**: press **Show app password**. It shows the password in use and the one before the last change. Either give the one in use to those workstations (Reconfigure, below), or type the one they **already have** and press **Set app password (workstations)**. |
+| The database folder was moved to a new server PC | The passwords the old PC kept cannot be read on the new one (the health check says so). **Database passwords**: type the password the workstations have (keep it with the Recovery Key), then press **Set app password (workstations)**. |
+| A new workstation needs the database password | **Database passwords** > **Show app password**, then on that PC: **Reconfigure server / database** on the sign-in screen. |
 | The server says it cannot log in to its own database | **Database passwords**: type a new password, then press **Set superuser password (this server)**. Workstations are not affected. Keep this password with the Recovery Key. |
 | People stopped being able to work after a security setting was turned on | **Security switches**: choose the switch, or **Every security switch**, then press **Turn off**. This works even when the database is down. |
 | A settings file or the access rules got damaged | **Restore the last snapshot**. Tick **Also put the users and roles back** only if accounts were damaged too. |
@@ -81,17 +83,32 @@ Before turning these on:
 
 ### Changing the workstations' password (app password)
 
-Every workstation must have the same database password. If you change it, do this on **every**
-workstation:
+Every studio has its own database password. Slate Server makes it, and keeps it on the server
+PC only (in `slate_recovery\db_secrets.dat`, encrypted by Windows). Workstations keep it in
+Windows Credential Manager, never in a file.
 
-- open Slate, click **Reconfigure server / database** on the sign-in screen, and type the new
-  password; **or**
-- open `%LOCALAPPDATA%\Slate\config.json` in Notepad and set `"db_password": "..."`, or run
-  `setup.bat` again.
+To change it without cutting anybody off:
 
-A workstation without the new password cannot open Slate. If you only want people working
-again, the quickest fix is usually to set the password back to the one the workstations already
-have.
+1. **Publish a new app password.** Nothing changes yet. Each workstation on Slate 2.2.0 or
+   later learns it the next time it connects.
+2. **Show app password** lists the workstations that have it. Wait until every one is there
+   (each has to open Slate once).
+3. **Switch to the published password.** It is checked first, and undone on its own if the
+   server cannot get in afterwards. The workstations that learned it follow on their own.
+4. Any workstation that did not learn it: click **Reconfigure server / database** on its
+   sign-in screen and type the password **Show app password** gives.
+
+**Set app password (workstations)** changes it at once instead: every workstation without the
+new password is cut off until it is typed in there. If you only want people working again, set
+it back to the one the workstations already have (**Show app password** lists the previous
+one).
+
+### Upgrading a studio that used the old shipped password
+
+Slate before 2.2.0 shipped one database password with every copy, and it is public. On its
+first start, Slate Server 2.2.0 keeps using it (nobody is cut off) and publishes the studio's
+own new password (step 1 above). The health check warns until you switch. So: update the
+server, update every workstation and open Slate on each, then steps 2 to 4.
 
 ### The server PC's address changed
 
@@ -139,7 +156,7 @@ These details are here for IT staff.
   - the access rules;
   - `postgresql.conf`;
   - the server's settings;
-  - the password settings file;
+  - the password settings file and `db_secrets.dat` (the passwords, encrypted);
   - the PgBouncer files;
   - the accounts (`pg_dump` plus JSON).
 

@@ -139,6 +139,9 @@ class DatabaseEngine:
         
         # Ensure base directories exist
         self.data_dir.parent.mkdir(parents=True, exist_ok=True)
+        # This database's passwords are kept beside it (db_credentials.store).
+        from slate_server.core import db_credentials
+        db_credentials.use_data_dir(self.data_dir)
         
     def is_installed(self) -> bool:
         """Check if Postgres binaries exist"""
@@ -351,6 +354,7 @@ class DatabaseEngine:
         nothing can reach it. So hardening is now conditional, and a cluster
         already in that state is let back in rather than left there.
         """
+        from slate_server.core import db_credentials
         from slate_server.core.db_credentials import admin_password
 
         def say(message):
@@ -358,13 +362,19 @@ class DatabaseEngine:
             if progress_callback:
                 progress_callback("> " + message)
 
-        if not admin_password():
+        try:
+            db_credentials.keep_in_protected_store()
+        except Exception as exc:
+            say("The database passwords could not be moved into this PC's protected store "
+                "(%s); they are read from the settings files as before." % exc)
+
+        if not db_credentials.app_password() and not self._first_password(say):
             # Deliberately not hardened. An unhardened cluster on a studio
             # network is a problem; a hardened one with no accounts is a
             # database nobody will ever open again.
-            say("No database password is configured, so the accounts cannot be "
-                "created and access has been left as it is. Set the password in "
-                "Settings and restart the server.")
+            say("No database password is kept on this server, so the accounts cannot be "
+                "set up and access has been left as it is. In Recover Slate, use Set app "
+                "password with the password the workstations already have.")
             self._ensure_slate_database()
             return False
 
@@ -383,6 +393,7 @@ class DatabaseEngine:
             if self._ensure_application_role():
                 self._ensure_secure_schema()
                 hardened = self._harden_access() is not False
+                self._publish_if_shared(say)
                 return True
 
             reason = getattr(self, "_last_role_error", "")
@@ -396,6 +407,81 @@ class DatabaseEngine:
                 # it; if hardening did not happen, put the rules back exactly as
                 # they were rather than leave the window open.
                 self._close_repair_window(hardened)
+
+    def _first_password(self, say) -> bool:
+        """
+        No workstation password anywhere. A new studio gets one of its own,
+        made here and kept on this PC only. An older install that used the
+        password every Slate used to ship keeps it - proved by the
+        workstations' account logging in with it - until the workstations
+        have learned the new one (_publish_if_shared). Anything else is left
+        alone: False.
+        """
+        import secrets
+        import psycopg2
+        from slate.core.infra.local_secrets import LEGACY_PASSWORD
+        from slate_server.core import db_credentials as creds
+
+        def login(user, password, dbname="postgres"):
+            return psycopg2.connect(host="127.0.0.1", port=int(self.port), dbname=dbname,
+                                    user=user, password=password, connect_timeout=5,
+                                    application_name="Slate Central Server")
+        try:
+            conn = login(creds.admin_user(), creds.admin_password() or LEGACY_PASSWORD)
+        except Exception:
+            return False
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM pg_roles WHERE rolname = %s",
+                            (creds.application_user(),))
+                existing = cur.fetchone() is not None
+        finally:
+            conn.close()
+        if existing:
+            try:
+                login(creds.application_user(), LEGACY_PASSWORD, creds.database_name()).close()
+            except Exception:
+                return False
+            creds.adopt(LEGACY_PASSWORD)
+            say("This studio still uses the database password older Slate versions shipped "
+                "with. It keeps working while the workstations learn the studio's own one "
+                "(Recover Slate > Database passwords).")
+            return True
+        try:
+            creds.store(app_password=secrets.token_urlsafe(24))
+        except Exception as exc:
+            say("A database password for this studio could not be kept on this PC (%s), "
+                "so none was made." % exc)
+            return False
+        say("This studio's own database password was made and is kept on this PC only. To "
+            "set up a workstation, see Recover Slate > Database passwords > Show app password.")
+        return True
+
+    def _publish_if_shared(self, say) -> None:
+        """
+        Still on the shipped password: publish the studio's own in the database,
+        for the workstations to learn before anything changes (never raises).
+        """
+        from slate.core.infra.local_secrets import LEGACY_PASSWORD
+        from slate_server.core import db_credentials as creds
+        if creds.app_password() != LEGACY_PASSWORD:
+            return
+        try:
+            import psycopg2
+            from slate_server.core.recovery import actions
+            conn = psycopg2.connect(**creds.connect_kwargs(self.port, connect_timeout=10))
+            conn.autocommit = True
+            try:
+                fresh = not creds.stored().get("app_password_next")
+                actions.publish_app_password(conn)
+            finally:
+                conn.close()
+            if fresh:
+                say("A new database password for this studio was published. Workstations on "
+                    "this version learn it when they connect; nothing changes until you "
+                    "switch in Recover Slate > Database passwords.")
+        except Exception as exc:
+            logging.warning("The studio's new database password was not published: %s", exc)
 
     def _can_authenticate(self) -> bool:
         """Whether this server can log in to its own database at all."""
@@ -572,6 +658,7 @@ class DatabaseEngine:
         it re-asserts the password from the settings and the ownership, and
         changes nothing else.
         """
+        from slate.core.infra.local_secrets import LEGACY_PASSWORD
         from slate_server.core.db_credentials import (
             admin_password, admin_user, app_password, application_user, database_name)
 
@@ -615,11 +702,19 @@ class DatabaseEngine:
                 literal = sql.Literal(password)
 
                 cur.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,))
-                if cur.fetchone():
+                exists = cur.fetchone() is not None
+                if exists and password == LEGACY_PASSWORD:
+                    # Never set the public password, only keep using it while it
+                    # is the one that works (_first_password proved it).
+                    cur.execute(sql.SQL("ALTER ROLE {} LOGIN").format(ident))
+                elif exists:
                     cur.execute(sql.SQL("ALTER ROLE {} LOGIN PASSWORD {}")
                                 .format(ident, literal))
                     logging.info("Application account %s already existed; "
                                  "password re-asserted from the settings.", role)
+                elif password == LEGACY_PASSWORD:
+                    raise RuntimeError("a new account is never given the password older "
+                                       "Slate versions shipped with")
                 else:
                     cur.execute(sql.SQL("CREATE ROLE {} LOGIN PASSWORD {}")
                                 .format(ident, literal))
@@ -673,11 +768,12 @@ class DatabaseEngine:
             # start demanding a password for. Setting it here, while the cluster
             # still trusts local connections, is the only moment this can be done
             # without asking somebody to do it by hand.
-            with conn.cursor() as cur:
-                cur.execute(sql.SQL("ALTER ROLE {} PASSWORD {}")
-                            .format(sql.Identifier(admin_user()),
-                                    sql.Literal(superuser_password)))
-            logging.info("Administrator password set from the settings.")
+            if superuser_password != LEGACY_PASSWORD:
+                with conn.cursor() as cur:
+                    cur.execute(sql.SQL("ALTER ROLE {} PASSWORD {}")
+                                .format(sql.Identifier(admin_user()),
+                                        sql.Literal(superuser_password)))
+                logging.info("Administrator password set from the settings.")
             return True
         except Exception as exc:
             first = str(exc).strip().splitlines()

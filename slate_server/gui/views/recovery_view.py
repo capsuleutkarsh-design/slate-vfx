@@ -259,6 +259,21 @@ class RecoveryView(QWidget):
         row.addWidget(self.btn_super_pw)
         row.addStretch()
         box.addLayout(row)
+        box.addWidget(_note(
+            "Changing the app password without cutting anybody off: Publish a new one; each "
+            "workstation learns it when it connects. Show app password lists who has it. "
+            "When all have it, Switch."))
+        row = QHBoxLayout()
+        self.btn_show_pw = _button("Show app password")
+        self.btn_show_pw.clicked.connect(lambda: self._in_session(lambda s: s.show_app_password()))
+        self.btn_publish_pw = _button("Publish a new app password")
+        self.btn_publish_pw.clicked.connect(self._publish_app_password)
+        self.btn_switch_pw = _button("Switch to the published password")
+        self.btn_switch_pw.clicked.connect(self._switch_app_password)
+        for button in (self.btn_show_pw, self.btn_publish_pw, self.btn_switch_pw):
+            row.addWidget(button)
+        row.addStretch()
+        box.addLayout(row)
         root.addWidget(panel)
 
         # Switches + snapshots + key
@@ -475,6 +490,17 @@ class RecoveryView(QWidget):
             return
         self._clear(self.db_pw, self.db_pw2)
         self._in_session(lambda s: s.set_app_password(password))
+
+    def _publish_app_password(self):
+        if self._confirm("Publish a new app password? Workstations learn it when they connect; "
+                         "nothing changes until you press Switch."):
+            self._in_session(lambda s: s.publish_app_password())
+
+    def _switch_app_password(self):
+        if self._confirm("Switch every workstation to the published password? Those that have "
+                         "not learned it (see Show app password) must be given it by hand. It "
+                         "is checked first and undone on its own if the server could not get in."):
+            self._in_session(lambda s: s.switch_app_password())
 
     def _set_superuser_password(self):
         password = self._matching(self.db_pw, self.db_pw2)

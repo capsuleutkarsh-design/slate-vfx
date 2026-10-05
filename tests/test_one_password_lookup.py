@@ -90,7 +90,7 @@ def test_both_readers_use_it(sources):
 
     sources["keyring"]("k")
     assert local_secrets.db_password() == "k"
-    assert PostgresManager._load_password_secure(None) == "k"
+    assert PostgresManager._load_password_secure(types.SimpleNamespace()) == "k"
 
 
 def test_none_found_still_says_so(sources):
@@ -100,5 +100,8 @@ def test_none_found_still_says_so(sources):
     with pytest.raises(RuntimeError):
         local_secrets.db_password()
     assert local_secrets.db_password(required=False) == ""
-    with pytest.raises(RuntimeError):
-        PostgresManager._load_password_secure(None)
+    # The client alone still tries the password older versions shipped with,
+    # and remembers that it did, so a refusal says "no password on this PC".
+    client = types.SimpleNamespace()
+    assert PostgresManager._load_password_secure(client) == local_secrets.LEGACY_PASSWORD
+    assert client.password_source == local_secrets.LEGACY_SOURCE

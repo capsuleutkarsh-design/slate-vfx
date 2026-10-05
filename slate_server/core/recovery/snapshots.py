@@ -70,6 +70,8 @@ def _sources(layout) -> dict:
         "pgbouncer.ini": layout.pgbouncer_dir / "pgbouncer.ini",
         "userlist.txt": layout.pgbouncer_dir / "userlist.txt",
         "security_switches.json": layout.switches_file,
+        "db_secrets.dat": layout.secrets_file,
+        "pgbouncer_hba.conf": layout.pgbouncer_dir / "pgbouncer_hba.conf",
     }
     if layout.settings_path:
         found["slate_server_config.json"] = Path(layout.settings_path)

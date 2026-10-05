@@ -121,6 +121,7 @@ def server(tmp_path_factory):
             pass
         lab.pg_stop()
         mp.undo()
+        db_credentials._secrets_path = None             # its protected store goes with it
         db_credentials._cache = None
 
 

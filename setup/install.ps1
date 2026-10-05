@@ -298,7 +298,23 @@ function Write-LocalConfig {
         "db_port"    = [int]$port
         "db_name"    = $dbname
         "db_user"    = $dbuser
-        "db_password"    = $dbpass
+    }
+
+    # The password goes into Windows Credential Manager, not this file. Only if
+    # that does not work is it written here in plain text, as it used to be.
+    $py = Join-Path $Root "runtime\python\python.exe"
+    $kept = $false
+    if ($dbpass -and (Test-Path $py)) {
+        $env:SLATE_SETUP_DB_PASSWORD = $dbpass
+        Push-Location $Root
+        & $py -c "import os, sys; from slate.core.infra.local_secrets import save_db_password; sys.exit(0 if save_db_password(os.environ['SLATE_SETUP_DB_PASSWORD']) else 1)"
+        $kept = ($LASTEXITCODE -eq 0)
+        Pop-Location
+        Remove-Item Env:\SLATE_SETUP_DB_PASSWORD -ErrorAction SilentlyContinue
+    }
+    if ($dbpass -and -not $kept) {
+        Warn "Windows Credential Manager did not keep the password, so it goes in slate\config.json."
+        $config["db_password"] = $dbpass
     }
 
     New-Item -ItemType Directory -Force -Path (Split-Path $target) | Out-Null

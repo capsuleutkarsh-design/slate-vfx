@@ -17,6 +17,7 @@ Nothing needs an internet connection. Every dependency is inside the installer, 
 1. Back up the studio database (Slate Server → Operations → Back up now).
 2. Install **Slate Server 2.2.0** on the server PC. The first start shows the **Recovery Key once**. Write it down and keep it with a printed copy of `docs/RECOVERY.md`. It is the way back in if nobody can sign in.
 3. Install Studio or Ops 2.2.0 on one HR or admin workstation, sign in, and check Users & Roles and Attendance. Then install the rest.
+4. When every workstation is on 2.2.0 and has opened Slate once, switch the studio to its own database password. See **The database password** under Security.
 
 The database is upgraded on the first start, as described under **Upgrading from 2.0.32** below.
 
@@ -37,6 +38,28 @@ The database is upgraded on the first start, as described under **Upgrading from
 - **A fix that cannot stop anybody signing in is simply made.**
 - **A fix that could stop somebody is behind a switch, and every switch starts OFF.** You turn switches on yourself, one at a time, from **Recover Slate** on the server PC with the Recovery Key. Turning one on first checks that people can still get in. It takes a snapshot so it can be undone, and it is rolled back by itself if the check afterwards fails.
 - **The Recovery Key is the way back in when nothing else works.** Read `docs/RECOVERY.md` and keep a printed copy with the key.
+
+### The database password
+
+Every copy of Slate before 2.2.0 shipped with the same database password, and it is public. Now:
+
+- **Each studio has its own password.** Slate Server makes a strong random one when it sets up a new database. It is kept on the server PC only, encrypted by Windows (`slate_recovery\db_secrets.dat` beside the database). No password ships with Slate any more.
+- **Workstations keep the password in Windows Credential Manager, not in `config.json`.** A password already in a `config.json` is moved there the first time the workstation connects. It is removed from the file only after Credential Manager has read it back, so a PC whose Credential Manager does not work keeps its file as it was.
+- **PgBouncer holds no password.** `pgbouncer.ini` used to carry the workstations' password in plain text. The pool now logs in to the database with each person's own proof, and its user list holds only one-way verifiers.
+- **A workstation without the password says so**, and says where to get it: on the server PC, **Recover Slate > Database passwords > Show app password**; on the workstation, **Reconfigure server / database** on the sign-in screen.
+- **Recover Slate can show, publish and switch the password.** **Publish a new app password** lets workstations learn a new one; **Show app password** lists who has it; **Switch to the published password** changes it once they all do. It is checked before and after, a snapshot is taken first, and it undoes itself if the server cannot get in afterwards. **Set app password (workstations)** still changes it at once.
+
+**When you upgrade an existing studio, in this order:**
+
+1. Install **Slate Server 2.2.0** and start it. It keeps the old shipped password for now, so nobody is cut off, and it publishes a new password of the studio's own. The health check warns "Studio password" until step 4.
+2. Install 2.2.0 on **every** workstation and open Slate on each one once. Each one moves its password into Credential Manager and learns the new one. Nothing changes for the person using it.
+3. On the server PC, open **Recover Slate**, unlock it, and press **Show app password**. It lists the workstations that have the new password. Wait until every one is listed. A workstation that is off is not listed: open Slate on it first.
+4. Write the new password down and keep it with the Recovery Key. Press **Switch to the published password**, best at a quiet moment. The workstations that learned it carry on by themselves. Anyone who had Slate open may need to restart it.
+5. Any workstation that missed it says it does not have the password. Click **Reconfigure server / database** on its sign-in screen and type the password **Show app password** gives.
+
+If something goes wrong after step 4, **Show app password** also lists the previous password. **Set app password (workstations)** with that one puts everything back as it was.
+
+A **new** studio needs none of this: the server makes the studio's password itself. Give it to each new workstation with **Reconfigure server / database**.
 
 ### Fixed in this release (no switch needed)
 
@@ -71,7 +94,7 @@ Open **Recover Slate** on the server PC, unlock it with the Recovery Key, and us
 
 | Switch | What it does when on | Before turning it on |
 |---|---|---|
-| `split_superuser_password` | The database superuser gets its own password, kept on the server PC only. Workstations keep theirs. | Press **Restart pool** afterwards. |
+| `split_superuser_password` | The database superuser gets its own password, kept on the server PC only. Workstations keep theirs. | Nothing: the running pool picks it up. If Recover Slate says it did not, press **Restart pool**. |
 | `strict_pg_hba` | The superuser can connect only from the server PC. Workstations can reach only the studio database. | Refused while a workstation is connected as the superuser. |
 | `refuse_inactive_signin` | People who are deactivated, or past their last working day, cannot sign in. `admin` and `developer` are always exempt. | Check Users & Roles for anyone wrongly marked as left. |
 | `no_plaintext_passwords` | Passwords in the old formats no longer open an account. | Refused while any active account still has one: let everybody sign in once first. |
@@ -80,20 +103,13 @@ Open **Recover Slate** on the server PC, unlock it with the Recovery Key, and us
 | `hide_password_hashes` | Password hashes leave the accounts table for a part of the database the workstations cannot read; the database checks passwords itself. The Data Center, the SQL console and tricks like `row_to_json` show nothing. | **Every workstation must run 2.2.0 first:** an older Slate cannot check a hidden password. A workstation cut off from the server cannot sign anybody in from its local copy while this is on. Turning it on proves a real sign-in before and after with a temporary account, and that no stored password changed; turning it off moves the hashes back. |
 | `signed_fleet_commands` | Broadcasts, restarts and shut downs carry a signature; workstations ignore any command file without a valid one. Anyone who can only write to the share can no longer send them. | Every admin's Slate must be 2.2.0. The admin types their own password once per session before the first command; only active administrators get the studio's signing key. Use **Log only** first and look for "would be refused" in the workstations' logs. |
 | `signed_updates` | Workstations install only updates signed with the owner's release key. | Make the release key and ship its public half in a build first (`docs/development.md`, "Signing updates"); turning this on is refused until the build has one. The installer always works by hand. |
-
-`pgbouncer_hba` is listed but not built yet; turning it on is refused.
+| `pgbouncer_hba` | The connection pool's admin console works from the server PC only, and workstations reach only the studio database through the pool. The running pool picks it up at once. | Refused while somebody uses the pool's console from another PC. |
 
 ### Still open (planned)
 
-- **The database password `Tango$`** is still the shipped default. It is public. Changing it safely is planned for **2.3**:
-  1. workstations read the password from Windows' protected store;
-  2. the new password is rolled out to every workstation;
-  3. it is changed on the server;
-  4. it is removed from the repository's history.
-
-  Doing it in any other order disconnects every PC.
-- **Permissions are checked in the app, not by the database.** Anyone with the database password can bypass them, including making themselves an administrator, which would also get them the fleet signing key. This changes after the password is protected.
-- **The workstations' database account still owns the studio's tables,** so someone with the database password could drop or empty them (backups are the way back). Taking that away means the database changes Slate makes on upgrade must run on the server instead of the workstations; planned with the password change. It already cannot create accounts, databases or roles.
+- **The old shipped database password is still in the repository's history.** No studio needs it once it has switched (see **The database password**). Removing it from the history is the owner's decision.
+- **Permissions are checked in the app, not by the database.** Anyone with the database password can bypass them, including making themselves an administrator, which would also get them the fleet signing key. The password is now each studio's own and kept in Windows' protected store, which makes it much harder to get.
+- **The workstations' database account still owns the studio's tables,** so someone with the database password could drop or empty them (backups are the way back). Taking that away means the database changes Slate makes on upgrade must run on the server instead of the workstations. It already cannot create accounts, databases or roles.
 
 ## Found by testing with the real tools
 
