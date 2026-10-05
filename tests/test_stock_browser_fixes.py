@@ -309,32 +309,6 @@ class TestTheCacheFolderStaysUsable:
 
         assert manager.cache_path_for("aaa", "_thumb.jpg", identity).name.startswith(identity)
 
-    def test_earlier_pictures_of_the_same_file_are_cleared(self, manager):
-        source = "/stock/clip.mov"
-        identity = manager.identity_hash(source)
-        old = manager.cache_path_for("oldhash", "_thumb.jpg", identity)
-        old.write_bytes(b"stale")
-        current = manager.cache_path_for("newhash", "_thumb.jpg", identity)
-        current.write_bytes(b"fresh")
-
-        removed = manager.forget_previous(source, keep=current)
-
-        assert removed == 1
-        assert not old.exists()
-        assert current.exists()
-
-    def test_another_file_is_left_alone(self, manager):
-        mine = manager.cache_path_for("h1", "_thumb.jpg",
-                                      manager.identity_hash("/stock/mine.mov"))
-        mine.write_bytes(b"mine")
-        theirs = manager.cache_path_for("h2", "_thumb.jpg",
-                                        manager.identity_hash("/stock/theirs.mov"))
-        theirs.write_bytes(b"theirs")
-
-        manager.forget_previous("/stock/mine.mov")
-
-        assert theirs.exists()
-
 
 class TestRemovingAnAssetActuallyRemovesIt:
 

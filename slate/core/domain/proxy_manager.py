@@ -217,38 +217,6 @@ class ProxyManager:
         # found and cleared; the changing part follows it.
         return folder / f"{identity}_{file_hash}{suffix}"
 
-    def forget_previous(self, path: Path, keep: Path = None) -> int:
-        """
-        Delete cached pictures left over from earlier versions of this file.
-
-        Without this the cache only ever grows: every edit or re-sync produces a
-        new name and abandons the old one.
-
-        Returns how many were removed. What could not be removed is logged
-        with the reason rather than passed over in silence.
-        """
-        identity = self.identity_hash(path)
-        folder = self.cache_dir / identity[:2]
-        removed = 0
-        not_removed = []
-        try:
-            if not folder.is_dir():
-                return 0
-            for existing in folder.glob(f"{identity}_*"):
-                if keep and existing == keep:
-                    continue
-                try:
-                    existing.unlink()
-                    removed += 1
-                except OSError as exc:
-                    not_removed.append(f"{existing} ({exc})")
-        except OSError as exc:
-            not_removed.append(f"{folder} ({exc})")
-        if not_removed:
-            logging.warning("Old cached pictures of %s could not be removed: %s",
-                            path, "; ".join(not_removed))
-        return removed
-
     def generate_thumbnail(self, input_path: Path, is_seq: bool = False) -> Tuple[bool, Path]:
         """Generate JPG. Retries at frame 0 for short clips."""
         if not self.ffmpeg_path: return False, None
