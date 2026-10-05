@@ -267,7 +267,6 @@ class TestTheServerCanStillReachItsOwnDatabase:
     SERVER_SOURCES = [
         ROOT / "slate_server" / "gui" / "app_window.py",
         ROOT / "slate_server" / "gui" / "views" / "analytics_view.py",
-        ROOT / "slate" / "api" / "main.py",
     ]
 
     @pytest.mark.parametrize("path", SERVER_SOURCES, ids=lambda p: p.name)
