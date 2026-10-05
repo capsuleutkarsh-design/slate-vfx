@@ -51,7 +51,7 @@ class PaginationLoaderMixin:
 
     def _on_loader_finished(self, result):
         worker = self.sender()
-        if worker is not getattr(self, "loader_thread", None):
+        if worker is None or worker is not getattr(self, "loader_thread", None):
             return
         append = bool(getattr(worker, "_append_mode", False))
         self.loader_thread = None
