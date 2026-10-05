@@ -282,6 +282,11 @@ COLUMNS = [
     # Set for people created by an import with a shared first password: they
     # choose their own at first sign-in. 1 = must change, 0 or empty = no.
     ("ut_users", "must_change_password", "INTEGER", "INTEGER"),
+    # Deactivation (UserManager.deactivate_user). NULL means active, so every
+    # existing account stays as it was. UserManager used to add these itself.
+    ("ut_users", "active", "INTEGER", "INTEGER"),
+    ("ut_users", "deactivated_on", "TEXT", "TEXT"),
+    ("ut_users", "deactivated_by", "TEXT", "TEXT"),
 
     # Readings were matched to a purchase by software name, so two contracts
     # for the same product shared one peak and both were reported as
@@ -408,6 +413,31 @@ def _one_credit_per_day(db) -> None:
                      getattr(made, "error", ""))
 
 
+def add_columns(db, only_table: str = None) -> int:
+    """
+    Add the COLUMNS this database lacks (only one table's, when named).
+    Returns how many were added. UserManager asks this for ut_users, which
+    may not have existed when the migration ran on a new database - so the
+    column list has one owner, here.
+    """
+    postgres = _is_postgres(db)
+    added = 0
+    for table, column, pg_type, lite_type in COLUMNS:
+        if only_table and table != only_table:
+            continue
+        if not _table_exists(db, table):
+            continue
+        if _column_exists(db, table, column):
+            continue
+        try:
+            db.execute_update("ALTER TABLE %s ADD COLUMN %s %s" % (
+                table, column, pg_type if postgres else lite_type))
+            added += 1
+        except Exception as exc:
+            logger.debug("Column %s.%s skipped: %s", table, column, exc)
+    return added
+
+
 def apply_migration(db) -> bool:
     """Bring the workplace tables up to date. Returns True when in shape."""
     if db is None:
@@ -428,18 +458,7 @@ def apply_migration(db) -> bool:
         except Exception as exc:
             logger.debug("Workplace table %s skipped: %s", name, exc)
 
-    added = 0
-    for table, column, pg_type, lite_type in COLUMNS:
-        if not _table_exists(db, table):
-            continue
-        if _column_exists(db, table, column):
-            continue
-        try:
-            db.execute_update("ALTER TABLE %s ADD COLUMN %s %s" % (
-                table, column, pg_type if postgres else lite_type))
-            added += 1
-        except Exception as exc:
-            logger.debug("Column %s.%s skipped: %s", table, column, exc)
+    added = add_columns(db)
 
     # Columns whose type drifted between the database this software created
     # a year ago and the one it creates today. PostgreSQL is strict about

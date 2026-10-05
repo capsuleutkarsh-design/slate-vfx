@@ -106,3 +106,14 @@ def test_the_grid_and_the_handler_share_the_department_scope(mock_db):
                             department_family=grid._department_family())
     assert DashboardWidget._department_scope(grid) == handler._scoped_department_keys() == roto
     assert handler._family_name() == DashboardWidget._family_name("roto") == departments.family_name("roto")
+
+
+# ---------------------------------------------- user_manager duplicates (item 6)
+def test_the_account_columns_have_one_owner():
+    import inspect
+    from slate.core.domain.user_manager import UserManager
+    from slate.core.infra.migrations.workplace_schema import COLUMNS
+    owned = {c for t, c, _pg, _lite in COLUMNS if t == "ut_users"}
+    assert {"must_change_password", "active", "deactivated_on", "deactivated_by"} <= owned
+    assert "ALTER TABLE" not in inspect.getsource(UserManager._ensure_schema)
+    assert not hasattr(UserManager, "load_users")

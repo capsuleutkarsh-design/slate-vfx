@@ -74,24 +74,14 @@ class UserManager:
             """)
         except Exception as e:
             logging.error(f"Failed to initialize Auth Schema: {e}")
-        # Normally added by the workplace migration when the database opens;
-        # ut_users may not have existed yet at that moment on a new database.
+        # The account columns (must_change_password, active, last_day, ...) are
+        # the workplace migration's; it ran when the database opened, but
+        # ut_users may not have existed yet then on a new database, so ask it again.
         try:
-            from ..infra.migrations.workplace_schema import _column_exists
-            if not _column_exists(db, "ut_users", "must_change_password"):
-                db.execute_update("ALTER TABLE ut_users ADD COLUMN must_change_password INTEGER")
+            from ..infra.migrations.workplace_schema import add_columns
+            add_columns(db, "ut_users")
         except Exception as e:
-            logging.warning("Could not add must_change_password: %s", e)
-        # Deactivation (see deactivate_user). Additive, and NULL means active,
-        # so every existing account stays exactly as it was.
-        try:
-            from ..infra.migrations.workplace_schema import _column_exists
-            for column, kind in (("active", "INTEGER"), ("deactivated_on", "TEXT"),
-                                 ("deactivated_by", "TEXT")):
-                if not _column_exists(db, "ut_users", column):
-                    db.execute_update(f"ALTER TABLE ut_users ADD COLUMN {column} {kind}")
-        except Exception as e:
-            logging.warning("Could not add the account status columns: %s", e)
+            logging.warning("Could not add the account columns: %s", e)
         # Sign-in reads security switches; without the table every read logs an error.
         from slate.core.security import switches
         switches.ensure_table(db)
@@ -649,15 +639,6 @@ class UserManager:
             return True
         return (admin_guard.has_full_access(admin_guard.parse_roles(row.get("roles")), perms)
                 and not admin_guard.administrators(users, perms))
-
-    @property
-    def users(self) -> Dict[str, Dict[str, Any]]:
-        """Backward-compatibility property returning dictionary of users."""
-        return self.get_all_users()
-
-    def load_users(self):
-        """Backward-compatibility stub."""
-        pass
 
     def get_all_users(self) -> Dict[str, Dict[str, Any]]:
         db = self._get_db()
