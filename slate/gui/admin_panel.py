@@ -362,7 +362,9 @@ class AdminPanelTab(QWidget):
     def send_broadcast(self):
         msg = self.inp_broadcast.text().strip()
         if not msg: return
-        self.hub.post_command("alert", "all", msg)
+        # "message" is what the workstations show (gatekeeper_main); they
+        # dropped "alert" as an unknown command, so no broadcast ever arrived.
+        self.hub.post_command("message", "all", msg)
         self.inp_broadcast.clear()
         QMessageBox.information(self, "Sent", "Broadcast alert sent to all active stations.")
         self.log_action(f"Broadcast Alert: {msg}")

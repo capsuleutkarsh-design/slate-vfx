@@ -121,9 +121,12 @@ class DBWorker(QThread):
                     pooler.stop(progress_callback=self.progress.emit)
                 except Exception as exc:
                     logging.debug("Pool stop reported: %s", exc)
+                # start() rewrites the configuration itself, and needs psql to
+                # read the verifiers: without it, it wrote an empty user list
+                # over the one just written and the pool never came back.
                 psql = self.engine.bin_dir / "psql.exe"
-                pooler.write_config(psql if psql.exists() else None)
-                if not pooler.start(progress_callback=self.progress.emit):
+                if not pooler.start(progress_callback=self.progress.emit,
+                                    psql_exe=psql if psql.exists() else None):
                     raise RuntimeError("The pool did not come up.")
             else:
                 pooler = getattr(self.engine, "pooler", None)
@@ -269,7 +272,7 @@ class UTServerWindow(QMainWindow):
 
         if os.path.exists(self.config_path):
             try:
-                with open(self.config_path, "r") as f:
+                with open(self.config_path, "r", encoding="utf-8-sig") as f:
                     cfg = json.load(f)
                     db_path = cfg.get("db_path", db_path)
                     port = cfg.get("port", port)
@@ -943,7 +946,7 @@ class UTServerWindow(QMainWindow):
         if not os.path.exists(self.config_path):
             return {}
         try:
-            with open(self.config_path, "r") as f:
+            with open(self.config_path, "r", encoding="utf-8-sig") as f:
                 loaded = json.load(f)
         except (OSError, ValueError) as exc:
             logging.error("%s cannot be read, so it is not overwritten: %s",

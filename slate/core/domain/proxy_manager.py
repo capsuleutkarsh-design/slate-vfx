@@ -41,13 +41,23 @@ class ProxyManager:
         try:
             from slate.core.infra.global_config import GlobalConfig
             server_root = GlobalConfig.server_root()
-            
+            configured = str(GlobalConfig.get("SERVER_ROOT") or "").strip()
+
             # Use a centralized 'Cache' folder on the server
             cache_path = server_root / "Cache"
-            
-            # Ensure it exists (or try to create)
+
             try:
+                # server_root() hands back a folder on this PC when the share
+                # is not mounted; pictures made there are this PC's alone.
+                if configured and Path(configured) != server_root:
+                    raise OSError("the studio folder %s is not reachable" % configured)
                 cache_path.mkdir(parents=True, exist_ok=True)
+                # mkdir passes on a folder that is there but read-only; a
+                # write is the real test. (Not tempfile: on Windows it retries
+                # 10,000 names in a folder it may not write to.)
+                probe = cache_path / (".write_test_%d" % os.getpid())
+                probe.write_bytes(b"")
+                probe.unlink()
                 return cache_path
             except Exception as e:
                 # Fallback to local if network is unwritable. Pictures made

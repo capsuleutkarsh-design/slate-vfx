@@ -76,7 +76,7 @@ class GlobalConfig:
             if config_path.exists():
                 try:
                     logging.info(f"Loading bundled config from: {config_path}")
-                    with open(config_path, 'r') as f:
+                    with open(config_path, 'r', encoding='utf-8-sig') as f:
                         loaded = json.load(f)
                         self.data.update(loaded)
                         logging.info(f"Configuration Loaded. DB_HOST: {self.data.get('db_host')}")
@@ -131,7 +131,7 @@ class GlobalConfig:
         for p in client_configs:
             if p.exists():
                 try:
-                    with open(p, 'r') as f:
+                    with open(p, 'r', encoding='utf-8-sig') as f:
                         client_data = json.load(f)
                         self.data.update(client_data)
                     break
@@ -141,7 +141,7 @@ class GlobalConfig:
         # 3. Try Legacy RuntimeData Config
         if self.legacy_config_path.exists():
             try:
-                with open(self.legacy_config_path, 'r') as f:
+                with open(self.legacy_config_path, 'r', encoding='utf-8-sig') as f:
                     self.data.update(json.load(f))
             except Exception as e:
                 pass
@@ -150,7 +150,7 @@ class GlobalConfig:
         saved_host = ""
         if self.config_path.exists():
             try:
-                with open(self.config_path, 'r') as f:
+                with open(self.config_path, 'r', encoding='utf-8-sig') as f:
                     machine = json.load(f)
                     self.data.update(machine)
                     saved_host = str(machine.get('db_host') or "")
@@ -165,7 +165,7 @@ class GlobalConfig:
         # months-old copy under LOCALAPPDATA was still winning.
         if self.dev_config_path.exists():
             try:
-                with open(self.dev_config_path, 'r') as f:
+                with open(self.dev_config_path, 'r', encoding='utf-8-sig') as f:
                     self.data.update(json.load(f))
             except Exception as e:
                 logging.warning("GlobalConfig: could not load %s (%s)",

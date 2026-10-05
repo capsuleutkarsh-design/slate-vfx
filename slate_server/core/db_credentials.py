@@ -106,7 +106,7 @@ def _settings() -> dict:
         try:
             if not path.is_file():
                 continue
-            loaded = json.loads(path.read_text(encoding="utf-8"))
+            loaded = json.loads(path.read_text(encoding="utf-8-sig"))
         except Exception as exc:
             logger.debug("Could not read %s: %s", path, exc)
             continue

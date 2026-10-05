@@ -68,7 +68,7 @@ def read_settings(path) -> dict:
     target = Path(path)
     if not target.exists():
         return {}
-    data = json.loads(target.read_text(encoding="utf-8"))
+    data = json.loads(target.read_text(encoding="utf-8-sig"))
     if not isinstance(data, dict):
         raise ValueError("%s does not hold a settings object" % target)
     return data

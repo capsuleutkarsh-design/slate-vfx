@@ -44,7 +44,10 @@ def local_config() -> dict:
     for path in _candidates():
         try:
             if path.is_file():
-                with open(path, "r", encoding="utf-8") as handle:
+                # utf-8-sig: setup.bat writes this file with Windows
+                # PowerShell's "Set-Content -Encoding UTF8", which puts a BOM
+                # first, and plain utf-8 refused the whole file. Notepad too.
+                with open(path, "r", encoding="utf-8-sig") as handle:
                     data = json.load(handle)
                 if isinstance(data, dict):
                     return data
@@ -123,7 +126,7 @@ def write_local_config(values: dict) -> Path:
     existing = {}
     try:
         if path.is_file():
-            with open(path, "r", encoding="utf-8") as handle:
+            with open(path, "r", encoding="utf-8-sig") as handle:
                 loaded = json.load(handle)
             if isinstance(loaded, dict):
                 existing = loaded
