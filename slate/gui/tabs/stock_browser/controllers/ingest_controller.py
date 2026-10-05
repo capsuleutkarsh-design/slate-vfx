@@ -22,6 +22,8 @@ def summary_sentence(summary: dict) -> tuple:
     """(message, level) for what an ingest did."""
     from .....core.domain.lineup import plural
     summary = summary or {}
+    if summary.get("error"):
+        return summary["error"], "error"
     added = int(summary.get("added") or 0)
     refreshed = int(summary.get("refreshed") or 0)
     skipped = int(summary.get("skipped") or 0)
@@ -155,6 +157,11 @@ class StockIngestController(QObject):
         if len(folders) > 1:
             label += f" and {len(folders) - 1} more"
         self.status_updated.emit(f"Scanning {label}…", True)
+        from .....core.domain.proxy_manager import proxy_manager
+        if proxy_manager.local_only:
+            self.notice.emit("The server's Cache folder could not be written, so thumbnails "
+                             "are kept on this computer only and other computers will not see "
+                             "them. Ask IT to check the server share, then Rescan.", "warning")
         self.ingest_started.emit()
         self.worker.start()
         return True

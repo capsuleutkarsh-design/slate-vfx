@@ -18,6 +18,10 @@ class ProxyManager:
     SMART UPDATE: Retries thumbnail at frame 0 if seeking 1s fails (fixes short clips).
     """
 
+    # True when the server Cache folder could not be used and pictures are
+    # made in a cache on this computer that other computers cannot see.
+    local_only = False
+
     def __init__(self):
         self.ffmpeg_path = self._find_ffmpeg()
         self.cache_dir = self._get_cache_dir()
@@ -46,12 +50,18 @@ class ProxyManager:
                 cache_path.mkdir(parents=True, exist_ok=True)
                 return cache_path
             except Exception as e:
-                logging.warning(f"Failed to create Network Cache at {cache_path}: {e}")
-                # Fallback to local if network is unwritable
+                # Fallback to local if network is unwritable. Pictures made
+                # here exist on this computer only, so their paths are not
+                # stored in the shared library (see LibraryManager._shareable).
+                logging.warning("Thumbnails and proxies are kept on this computer only: "
+                                "the server Cache folder %s could not be written: %s",
+                                cache_path, e)
+                self.local_only = True
                 return GlobalConfig.local_cache_dir()
-                
+
         except Exception as e:
             logging.exception(f"Error resolving cache path: {e}")
+            self.local_only = True
             return Path.cwd() / "Cache"
 
     # Proxies are never made bigger than this, and never bigger than the
@@ -202,10 +212,14 @@ class ProxyManager:
 
         Without this the cache only ever grows: every edit or re-sync produces a
         new name and abandons the old one.
+
+        Returns how many were removed. What could not be removed is logged
+        with the reason rather than passed over in silence.
         """
         identity = self.identity_hash(path)
         folder = self.cache_dir / identity[:2]
         removed = 0
+        not_removed = []
         try:
             if not folder.is_dir():
                 return 0
@@ -215,10 +229,13 @@ class ProxyManager:
                 try:
                     existing.unlink()
                     removed += 1
-                except OSError:
-                    pass
-        except OSError:
-            pass
+                except OSError as exc:
+                    not_removed.append(f"{existing} ({exc})")
+        except OSError as exc:
+            not_removed.append(f"{folder} ({exc})")
+        if not_removed:
+            logging.warning("Old cached pictures of %s could not be removed: %s",
+                            path, "; ".join(not_removed))
         return removed
 
     def generate_thumbnail(self, input_path: Path, is_seq: bool = False) -> Tuple[bool, Path]:

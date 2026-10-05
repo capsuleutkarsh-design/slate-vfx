@@ -1317,6 +1317,20 @@ class FolderCreatorTab(QWidget):
         target_root = project_path.parent
         register_existing = untracked if dialog.add_untracked() else []
 
+        # The drive could not say how much room it has: asked, not assumed.
+        from slate.core.workers.structure import free_space
+        if not dry_run and free_space(target_root) is None:
+            from slate.gui.components.feedback import confirm
+            if not confirm(self, "Build project",
+                           f"Slate could not tell how much free space there is on "
+                           f"{target_root.anchor or target_root}.",
+                           yes_label="Start anyway",
+                           informative=f"Make sure there is room for about "
+                                       f"{size_text(survey.total_bytes)} before you start."):
+                self.log_message("[STOP] Cancelled: free space unknown - nothing was copied.")
+                self._reset_run_ui()
+                return
+
         # One ingest per project: two runs would both claim the same scan
         # version. Taken before anything on screen says "running".
         if not dry_run:

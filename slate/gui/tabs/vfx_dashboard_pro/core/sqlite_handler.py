@@ -96,6 +96,8 @@ class SQLiteHandler:
         self.project_code = project_code
         # Why the last write was refused, for the person who asked for it.
         self.last_error = ""
+        # Shots the last read found but could not show, as "name: reason".
+        self.read_problems = []
         # The numeric id is kept for callers that still pass it, but history
         # is written under the username - the identity the rest of the app
         # uses. It used to be "get_user_id(display name) or 1", so any
@@ -230,11 +232,14 @@ class SQLiteHandler:
                 self._apply_task_overrides(shot, tasks_by_shot.get(shot.id, {}))
                 shots.append(shot)
             except Exception as e:
-                logging.exception(f"Failed to deserialize shot {row.get('shot_name', row.get('id'))}: {e}")
+                name = row.get('shot_name') or row.get('id')
+                logging.exception(f"Failed to deserialize shot {name}: {e}")
+                self.read_problems.append(f"{name}: {e}")
         return shots
 
     def read_shots(self) -> List[Shot]:
         """Every shot of the project. Raises when the database could not be read."""
+        self.read_problems = []
         return self._read()
 
     def read_shots_by_id(self, shot_ids) -> List[Shot]:
@@ -248,6 +253,7 @@ class SQLiteHandler:
         """
         ids = sorted({int(i) for i in shot_ids if str(i).strip().lstrip("-").isdigit()})
         shots: List[Shot] = []
+        self.read_problems = []
         for start in range(0, len(ids), 500):
             chunk = ids[start:start + 500]
             marks = ",".join(["%s"] * len(chunk))

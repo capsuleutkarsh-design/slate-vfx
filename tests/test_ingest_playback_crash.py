@@ -108,6 +108,9 @@ class TestTheIngestHandsTheInterfaceItsOwnCopies:
             def add_assets_batch(self, assets):
                 pass
 
+            def update_assets_batch(self, assets):
+                pass
+
         monkeypatch.setattr(asset_ingestor, "create_asset_api", lambda **kw: QuietLibrary())
         return asset_ingestor.IngestWorker(root_path=tmp_path)
 
@@ -134,7 +137,7 @@ class TestTheIngestHandsTheInterfaceItsOwnCopies:
 
     def test_the_analysis_batch_is_a_copy_too(self, worker):
         original = self._asset("b.mov")
-        worker._update_buffer = [original]
+        worker._update_buffer = [(original, False)]
         received = []
         worker.assets_update_batch_signal.connect(received.append)
 

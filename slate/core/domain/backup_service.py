@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
+import socket
 import subprocess
 import time
 from datetime import datetime
@@ -59,13 +60,24 @@ def backup_dir() -> Path:
     return Path(local) / "Slate" / "Backups" / "Database"
 
 
+def _record(ok: bool, message: str) -> None:
+    """The outcome on the Audit Logs screen, where an admin will see it."""
+    try:
+        from slate.core.infra.audit_logger import AuditLogger
+        AuditLogger().log_event("BACKUP", "SYSTEM", f"{socket.gethostname()}: {message}",
+                                "SUCCESS" if ok else "FAILURE")
+    except Exception as exc:
+        logger.warning("Backup outcome not written to the audit log: %s", exc)
+
+
 def take_backup(pg_dump: Path, target_dir: Path) -> Path | None:
     """One dump of the studio database. Returns the file, or None with the reason logged."""
     from slate.core.infra.local_secrets import db_settings
 
     settings = db_settings()
     if not settings.get("password"):
-        logger.info("Backup skipped: no database password on this machine.")
+        logger.warning("Backup skipped: no database password on this machine.")
+        _record(False, "Workstation backup skipped: no database password on this machine.")
         return None
 
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -83,15 +95,19 @@ def take_backup(pg_dump: Path, target_dir: Path) -> Path | None:
     except (OSError, subprocess.SubprocessError) as exc:
         partial.unlink(missing_ok=True)
         logger.error("Backup could not run pg_dump: %s", exc)
+        _record(False, f"Workstation backup could not run pg_dump: {exc}")
         return None
     if result.returncode != 0 or not partial.exists() or partial.stat().st_size == 0:
         partial.unlink(missing_ok=True)
         detail = (result.stderr or result.stdout or "").strip().splitlines()
-        logger.error("Backup failed: %s", detail[-1] if detail else "pg_dump gave no reason")
+        reason = detail[-1] if detail else "pg_dump gave no reason"
+        logger.error("Backup failed: %s", reason)
+        _record(False, f"Workstation backup failed: {reason}")
         return None
 
     partial.replace(target)
     logger.info("Backup written: %s", target)
+    _record(True, f"Workstation backup written: {target}")
     return target
 
 
@@ -152,6 +168,7 @@ class AutoBackupThread(QThread):
                     logger.info("Removed %d backup(s) older than %d days.", gone, RETENTION_DAYS)
         except Exception as exc:
             logger.error("AutoBackupThread: backup did not run: %s", exc)
+            _record(False, f"Workstation backup did not run: {exc}")
 
     def stop(self):
         self.running = False

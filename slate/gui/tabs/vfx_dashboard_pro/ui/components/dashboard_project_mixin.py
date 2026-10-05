@@ -101,6 +101,7 @@ class DashboardProjectMixin:
                 logging.exception("Could not read project %s", project_code)
                 self._show_read_failure(project, exc)
                 return
+            self._report_read_problems()
             shots = self._filter_shots_for_current_user(shots)
             # Other people's changes arrive shot by shot from here on.
             self._start_live_updates(project_code)
@@ -152,6 +153,15 @@ class DashboardProjectMixin:
         self._notify(f"{project.name} could not be read.", "error", 15000, details=str(exc),
                      action=("Retry", lambda code=project.code: self.switch_project(code)))
 
+    def _report_read_problems(self):
+        """Stored shots the read could not show: said, not just missing from the grid."""
+        problems = list(getattr(self.data_handler, "read_problems", None) or [])
+        if problems:
+            n = len(problems)
+            self._notify(f"{n} shot{'s' if n != 1 else ''} could not be shown: "
+                         "the stored data is damaged. Tell a supervisor or IT.",
+                         "warning", 15000, details="\n".join(problems[:200]))
+
     def reload_shots(self) -> bool:
         """
         Read the project again and merge it in: shots with pending edits keep
@@ -176,6 +186,7 @@ class DashboardProjectMixin:
             logging.exception("Reload failed: %s", exc)
             self._notify("The project could not be read again.", "error", details=str(exc))
             return False
+        self._report_read_problems()
         checked = {_shot_id(s) for s in current} | {_shot_id(s) for s in fresh}
         checked.discard(None)
         result = merge_shots(current, fresh, checked,
