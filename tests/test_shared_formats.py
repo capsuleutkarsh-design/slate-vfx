@@ -220,7 +220,7 @@ def test_xlsx_keeps_numbers_as_numbers(tmp_path):
     table_export.export_rows(path, ["Name", "Seats"], [["Nuke", 12], ["=evil()", Decimal("2.5")]])
     ws = load_workbook(path).active
     assert ws["B2"].value == 12 and ws["B3"].value == 2.5
-    assert ws["A3"].value == "'=evil()"
+    assert (ws["A3"].value, ws["A3"].data_type) == ("=evil()", "s")
 
 
 def test_export_takes_what_the_table_shows(qapp):

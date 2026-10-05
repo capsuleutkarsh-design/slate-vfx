@@ -4,7 +4,7 @@ Fleet report export helpers for Admin Panel.
 
 from datetime import datetime
 
-from slate.core.domain.table_export import neutralise
+from slate.core.domain.table_export import put
 
 
 def export_fleet_xlsx(output_path, records, summary, skipped, columns=None, header_for=None):
@@ -150,7 +150,7 @@ def export_fleet_xlsx(output_path, records, summary, skipped, columns=None, head
         for col_idx, key in enumerate(all_keys, start=1):
             val = record.get(key, "")
             # A PC report is written by the PC: its text must not become a formula (SYS2-004).
-            cell = ws.cell(row=row_idx, column=col_idx, value=neutralise(val))
+            cell = put(ws.cell(row=row_idx, column=col_idx), val)
             cell.fill = row_fill
             cell.font = row_font
             cell.border = border_thin

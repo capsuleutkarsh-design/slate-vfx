@@ -4,7 +4,7 @@ from openpyxl.utils import column_index_from_string
 from typing import List, Optional, Any
 from ..models.shot_model import Shot, DepartmentInfo, FeedbackEntry, ArtistLogEntry
 from slate.core.domain.departments import load_departments
-from slate.core.domain.table_export import neutralise, restore
+from slate.core.domain.table_export import append_row, put, restore
 import os
 from datetime import datetime
 import shutil
@@ -257,7 +257,7 @@ class ExcelHandler:
                     self.skipped_cells.append(cell.coordinate)
                     continue
                 # Text that Excel would run as a formula is written as text (DSH2-024).
-                cell.value = neutralise(value) if value is not None else ""
+                put(cell, value if value is not None else "")
                 wrote = True
         return wrote
 
@@ -663,15 +663,15 @@ class ExcelHandler:
             row_idx = existing.get((reel.casefold(), shot.shot_name.casefold())) \
                 or existing.pop(("", shot.shot_name.casefold()), None)
             if row_idx:
-                ws.cell(row=row_idx, column=2, value=neutralise(shot.shot_type))
+                put(ws.cell(row=row_idx, column=2), shot.shot_type)
                 ws.cell(row=row_idx, column=3, value=shot.priority)
                 ws.cell(row=row_idx, column=4, value=shot.is_hero)
-                ws.cell(row=row_idx, column=5, value=neutralise(similar_str))
+                put(ws.cell(row=row_idx, column=5), similar_str)
                 ws.cell(row=row_idx, column=7, value=now)
-                ws.cell(row=row_idx, column=8, value=neutralise(reel))
+                put(ws.cell(row=row_idx, column=8), reel)
             else:
-                ws.append([neutralise(v) for v in (shot.shot_name, shot.shot_type, shot.priority, shot.is_hero,
-                                                   similar_str, now, now, reel)])
+                append_row(ws, (shot.shot_name, shot.shot_type, shot.priority, shot.is_hero,
+                                similar_str, now, now, reel))
                 existing[(reel.casefold(), shot.shot_name.casefold())] = ws.max_row
 
     def _write_feedback_log(self, shots: List[Shot]):
@@ -697,14 +697,14 @@ class ExcelHandler:
         if ws.max_row > 1:
             ws.delete_rows(2, ws.max_row - 1)
         for row in kept:
-            ws.append([neutralise(v) for v in row])
-        clean = lambda v: neutralise(ILLEGAL_CHARACTERS_RE.sub("", str(v or "")))
+            append_row(ws, row)
+        clean = lambda v: ILLEGAL_CHARACTERS_RE.sub("", str(v or ""))
         for shot in shots:
             for entries, source in ((shot.feedback_client, "Client"), (shot.feedback_director, "Director"),
                                     (shot.feedback_internal, "Internal")):
                 for e in entries:
-                    ws.append([neutralise(shot.shot_name), clean(e.date), clean(e.source or source),
-                               clean(e.text), clean(e.logged_by), neutralise(str(shot.reel_episode or ""))])
+                    append_row(ws, [shot.shot_name, clean(e.date), clean(e.source or source),
+                                    clean(e.text), clean(e.logged_by), str(shot.reel_episode or "")])
 
     def _label_new_columns(self):
         """A mapped column with no heading (added to the mapping later) gets one."""
