@@ -291,10 +291,6 @@ function Write-LocalConfig {
     $dbpass   = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
                     [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
 
-    $secure2  = Read-Host "  Admin password (for Slate's own admin panel)" -AsSecureString
-    $adminpw  = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-                    [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure2))
-
     $config = [ordered]@{
         "_comment"   = "Written by setup.bat. Local to this machine and ignored by git - do not commit it."
         "db_mode"    = if ($dbpass) { "postgres" } else { "sqlite" }
@@ -303,7 +299,6 @@ function Write-LocalConfig {
         "db_name"    = $dbname
         "db_user"    = $dbuser
         "db_password"    = $dbpass
-        "admin_password" = $adminpw
     }
 
     New-Item -ItemType Directory -Force -Path (Split-Path $target) | Out-Null
