@@ -267,7 +267,10 @@ class BackupEngine:
             "--username", self._username(),
             "--dbname", self.dbname,
             "--clean", "--if-exists",
-            "--no-owner",
+            # Owners as the dump recorded them: the workstations' account owns
+            # the studio's tables. With --no-owner everything came back owned
+            # by the superuser doing the restore, and every workstation got
+            # "permission denied" on every table.
             "--no-password",
             str(dump_path),
         ]

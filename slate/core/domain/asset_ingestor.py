@@ -335,13 +335,6 @@ class IngestWorker(QThread):
         if not all_files:
             return self._finish(True, "No media files found in that folder.")
 
-        # Remember where the library comes from, so Rescan can look again.
-        for root in self.root_paths:
-            remember = getattr(self.lib_manager, "remember_root", None)
-            if callable(remember):
-                remember(str(root))
-            self.summary["roots"].append(str(root))
-
         from slate.utils.media_capabilities import is_video
         movies = [f for f in all_files if is_video(f.suffix.lower())]
         others = [f for f in all_files if not is_video(f.suffix.lower())]
@@ -364,8 +357,21 @@ class IngestWorker(QThread):
                 if p:
                     self.existing_map[_normalise_path(p)] = a
         except Exception as e:
-            logging.exception(f"Ingest Dedupe Init Failed: {e}")
-            self.existing_map = {}
+            # Without this list every file looks new: the save would bring
+            # deleted assets back and analyse the whole library again. So
+            # nothing is written.
+            logging.exception("Ingest stopped: the library's paths could not be read: %s", e)
+            message = ("Nothing was added: Slate could not read what the library already "
+                       "holds. Check the connection to the server and try again.")
+            self.summary["error"] = message
+            return self._finish(False, message)
+
+        # Remember where the library comes from, so Rescan can look again.
+        for root in self.root_paths:
+            remember = getattr(self.lib_manager, "remember_root", None)
+            if callable(remember):
+                remember(str(root))
+            self.summary["roots"].append(str(root))
 
         # --- PHASE 1: store everything new as "being analysed" ---
         pending = []
@@ -493,11 +499,8 @@ class IngestWorker(QThread):
                     if updated.get('status') == 'corrupt':
                         self.summary["failed"] += 1
                         self.summary["failed_names"].append(updated.get('file_name') or "")
-                    elif refresh:
-                        self.summary["refreshed"] += 1
-                    else:
-                        self.summary["added"] += 1
-                    self._update_buffer.append(updated)
+                    # Added / re-analysed are counted once they are saved.
+                    self._update_buffer.append((updated, refresh))
                     if len(self._update_buffer) >= self.BATCH:
                         self._flush_update_buffer()
                     done += 1
@@ -585,17 +588,28 @@ class IngestWorker(QThread):
     def _flush_update_buffer(self):
         if self._update_buffer:
             # Written first, in one transaction, then shown.
+            batch, self._update_buffer = self._update_buffer, []
+            assets = [asset for asset, _refresh in batch]
             writer = getattr(self.lib_manager, "update_assets_batch", None)
             try:
                 if callable(writer):
-                    writer(self._update_buffer)
+                    writer(assets)
                 else:
-                    for asset in self._update_buffer:
+                    for asset in assets:
                         self.lib_manager.update_asset(asset.get('id'), asset)
             except Exception as e:
+                # Not stored, so not shown as done either.
                 logging.exception("Analysed assets were not saved: %s", e)
-            self.assets_update_batch_signal.emit(self._handover(self._update_buffer))
-            self._update_buffer = []
+                for asset in assets:
+                    if asset.get('status') != 'corrupt':  # already counted
+                        self.summary["failed"] += 1
+                        self.summary["failed_names"].append(
+                            f"{asset.get('file_name') or ''} (not saved)")
+                return
+            for asset, refresh in batch:
+                if asset.get('status') != 'corrupt':
+                    self.summary["refreshed" if refresh else "added"] += 1
+            self.assets_update_batch_signal.emit(self._handover(assets))
 
     def _perform_deep_analysis(self, asset, f_path, is_seq=False, seq=None):
         """Thumbnail, proxy, metadata and tags for one asset (runs on the pool)."""
@@ -624,8 +638,7 @@ class IngestWorker(QThread):
             if not self.fast_mode:
                 try:
                     if seq is not None:
-                        _ok, proxy_path = proxy_manager.generate_proxy(
-                            f_path, is_seq=True, sequence=(seq.pattern, seq.start))
+                        _ok, proxy_path = proxy_manager.generate_proxy(f_path, is_seq=True)
                     else:
                         _ok, proxy_path = proxy_manager.generate_proxy(f_path)
                 except Exception as e:

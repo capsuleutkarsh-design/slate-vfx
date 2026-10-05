@@ -11,12 +11,17 @@ from PySide6.QtCore import Qt  # Moved from line 149
 
 from slate.utils.resource_manager import ResourcePathManager
 from slate.utils.media_capabilities import is_image
+from slate.utils.sequence_utils import sequence_for
 
 class ProxyManager:
     """
     Handles generation of thumbnails and video proxies.
     SMART UPDATE: Retries thumbnail at frame 0 if seeking 1s fails (fixes short clips).
     """
+
+    # True when the server Cache folder could not be used and pictures are
+    # made in a cache on this computer that other computers cannot see.
+    local_only = False
 
     def __init__(self):
         self.ffmpeg_path = self._find_ffmpeg()
@@ -37,21 +42,37 @@ class ProxyManager:
         try:
             from slate.core.infra.global_config import GlobalConfig
             server_root = GlobalConfig.server_root()
-            
+            configured = str(GlobalConfig.get("SERVER_ROOT") or "").strip()
+
             # Use a centralized 'Cache' folder on the server
             cache_path = server_root / "Cache"
-            
-            # Ensure it exists (or try to create)
+
             try:
+                # server_root() hands back a folder on this PC when the share
+                # is not mounted; pictures made there are this PC's alone.
+                if configured and Path(configured) != server_root:
+                    raise OSError("the studio folder %s is not reachable" % configured)
                 cache_path.mkdir(parents=True, exist_ok=True)
+                # mkdir passes on a folder that is there but read-only; a
+                # write is the real test. (Not tempfile: on Windows it retries
+                # 10,000 names in a folder it may not write to.)
+                probe = cache_path / (".write_test_%d" % os.getpid())
+                probe.write_bytes(b"")
+                probe.unlink()
                 return cache_path
             except Exception as e:
-                logging.warning(f"Failed to create Network Cache at {cache_path}: {e}")
-                # Fallback to local if network is unwritable
+                # Fallback to local if network is unwritable. Pictures made
+                # here exist on this computer only, so their paths are not
+                # stored in the shared library (see LibraryManager._shareable).
+                logging.warning("Thumbnails and proxies are kept on this computer only: "
+                                "the server Cache folder %s could not be written: %s",
+                                cache_path, e)
+                self.local_only = True
                 return GlobalConfig.local_cache_dir()
-                
+
         except Exception as e:
             logging.exception(f"Error resolving cache path: {e}")
+            self.local_only = True
             return Path.cwd() / "Cache"
 
     # Proxies are never made bigger than this, and never bigger than the
@@ -202,10 +223,14 @@ class ProxyManager:
 
         Without this the cache only ever grows: every edit or re-sync produces a
         new name and abandons the old one.
+
+        Returns how many were removed. What could not be removed is logged
+        with the reason rather than passed over in silence.
         """
         identity = self.identity_hash(path)
         folder = self.cache_dir / identity[:2]
         removed = 0
+        not_removed = []
         try:
             if not folder.is_dir():
                 return 0
@@ -215,10 +240,13 @@ class ProxyManager:
                 try:
                     existing.unlink()
                     removed += 1
-                except OSError:
-                    pass
-        except OSError:
-            pass
+                except OSError as exc:
+                    not_removed.append(f"{existing} ({exc})")
+        except OSError as exc:
+            not_removed.append(f"{folder} ({exc})")
+        if not_removed:
+            logging.warning("Old cached pictures of %s could not be removed: %s",
+                            path, "; ".join(not_removed))
         return removed
 
     def generate_thumbnail(self, input_path: Path, is_seq: bool = False) -> Tuple[bool, Path]:
@@ -322,6 +350,22 @@ class ProxyManager:
             logging.exception(f"FFmpeg Exception: {e}")
             self._discard(partial)
 
+    @classmethod
+    def _sequence_input(cls, seq, partial: Path) -> list:
+        """
+        ffmpeg input arguments for every frame of a sequence, at 24 fps.
+
+        A render with one frame missing made a proxy of the frames before the
+        gap, reported it made, and the lineup played that instead of the shot:
+        with a gap the frames are read through FrameSequence.ffconcat.
+        """
+        if not seq.missing_frames:
+            return ["-framerate", "24", "-start_number", str(seq.start), "-i", seq.pattern]
+        listing = partial.with_suffix(".txt")
+        with open(cls.long_path(listing), "w", encoding="utf-8") as handle:
+            handle.write(seq.ffconcat(seq.start))
+        return ["-f", "concat", "-safe", "0", "-i", str(listing), "-r", "24"]
+
     def parse_resolution(self, res_str: str) -> Tuple[int, int]:
         """Parse resolution string into (width, height) tuple."""
         parts = str(res_str or "").lower().split('x')
@@ -347,12 +391,11 @@ class ProxyManager:
 
     def generate_proxy(self, input_path: Path = None, is_seq: bool = False, source_path: Path = None,
                        proxy_path: Path = None, target_resolution: str = "1920x1080",
-                       sequence=None, overwrite: bool = False) -> Tuple[bool, Path]:
+                       overwrite: bool = False) -> Tuple[bool, Path]:
         """
         A review proxy: a JPG for a still, an H.264 MP4 for a movie or sequence.
 
-        sequence=(printf pattern, first frame) reads a known sequence directly;
-        without it a sequence is found from the frame named. overwrite=True
+        A sequence is found from the frame named (is_seq). overwrite=True
         makes it again over one already there - "Rebuild all" used to hand
         back the old file untouched.
         """
@@ -394,33 +437,14 @@ class ProxyManager:
                 ])
             else:
                 # Generate MP4 proxy
-                if is_seq and sequence:
-                    pattern, start_number = sequence
-                    cmd.extend(["-framerate", "24", "-start_number", str(int(start_number)),
-                                "-i", str(pattern)])
-                elif is_seq:
-                    try:
-                        import re
-                        stem = input_path.stem
-                        match = re.search(r'(\d+)$', stem)
-                        base = stem[:match.start()] if match else stem
-                        glob_pattern = f"{base}*{input_path.suffix}"
-                        
-                        from slate.utils.sequence_detector import detect_sequence
-                        seq_info = detect_sequence(input_path.parent, glob_pattern)
-                        if seq_info:
-                            start_number = seq_info['first_frame']
-                            pattern = seq_info['pattern']
-                            cmd.extend(["-framerate", "24", "-start_number", str(start_number)])
-                            cmd.extend(["-i", str(input_path.parent / pattern)])
-                        else:
-                            cmd.extend(["-i", str(input_path)])
-                    except Exception as e:
-                        logging.debug(f"Seq proxy error, fallback to single: {e}")
-                        cmd.extend(["-i", str(input_path)])
+                # Long-path form: past 260 characters the frames were not found
+                # and a one-frame proxy was made of the frame named.
+                seq = sequence_for(Path(self.long_path(input_path))) if is_seq else None
+                if seq is not None:
+                    cmd.extend(self._sequence_input(seq, partial))
                 else:
                     cmd.extend(["-i", str(input_path)])
-                
+
                 cmd.extend([
                     "-vf", self.fit_filter(*self.parse_resolution(target_resolution)) + ",format=yuv420p",
                     "-c:v", "libx264",
@@ -441,7 +465,10 @@ class ProxyManager:
                 creationflags = subprocess.BELOW_NORMAL_PRIORITY_CLASS | subprocess.CREATE_NO_WINDOW
 
             # Add timeout to prevent hang
-            result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, startupinfo=startupinfo, creationflags=creationflags, timeout=60)
+            try:
+                result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, startupinfo=startupinfo, creationflags=creationflags, timeout=60)
+            finally:
+                self._discard(partial.with_suffix(".txt"))  # a gap-filling frame list
             if result.returncode == 0 and self._commit_partial(partial, output_proxy):
                 return True, output_proxy
             self._discard(partial)

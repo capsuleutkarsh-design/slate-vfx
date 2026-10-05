@@ -1,5 +1,7 @@
 # Slate BETA 2.1.0
 
+**Not released on its own.** Everything here ships in BETA 2.2.0; see BETA_2.2.0.md.
+
 Three installers, one per machine role. Install the server first, then the workstations.
 
 | Installer | Install on | What it holds |
@@ -352,7 +354,8 @@ On each machine, a settings file damaged by the old `&` / apostrophe bug is also
 - Every department gets a layer once it has a render, including DMP, CG, Roto, Matchmove and Slapcomp.
 - **Open in RV** plays the ticked shots in RV, in edit order, at the layer chosen beside the player (the plate where a shot has no render of it yet). **Use proxies in RV** plays up-to-date review proxies instead of the frames.
 - **Export EDL** writes the ticked shots as EDLs of that layer, one per reel and one with every reel. Each event names its clip and file for relinking; a sequence keeps its frame numbers as source timecode.
-- Where a department keeps versions (`Output002`, or `_v002` in the file name), the newest is shown. Before, `v001` came first by name.
+- Where a department keeps versions (`Output
+002`, or `_v002` in the file name), the newest is shown. Before, `v001` came first by name.
 
 **RV picker** shows layer, version and frames in a table, with tick boxes you can see in Dark and **Tick all / Untick all**. A render's version is read from its file name when nothing else gives it.
 

@@ -240,17 +240,7 @@ def arrived_late(entry, day: date, holidays=None, leave=None, rules=None) -> boo
     return is_late(day, sessions[0][0], holidays, rules)
 
 
-def _as_day(value):
-    if not value:
-        return None
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
-    try:
-        return date.fromisoformat(str(value)[:10])
-    except ValueError:
-        return None
+from .dates import as_date as _as_day  # noqa: E402  (the shared stored-date reader)
 
 
 def expected_window(record=None, service: bool = False) -> tuple:

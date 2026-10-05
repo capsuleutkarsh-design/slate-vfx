@@ -131,13 +131,6 @@ class SessionManagerMixin:
                         except Exception as e:
                             logging.exception(f"Error cleaning up page {i}: {e}")
             
-            # Cleanup network manager
-            if hasattr(self, 'network_manager') and self.network_manager:
-                try:
-                    self.network_manager.stop()
-                except Exception as e:
-                    logging.exception(f"Error stopping network manager: {e}")
-
             # Cleanup DB Monitor (Fixes Zombie Process)
             if hasattr(self, 'db_monitor') and self.db_monitor:
                 try:
@@ -188,7 +181,7 @@ class SessionManagerMixin:
             except Exception as e:
                 logging.debug(f"Telemetry shutdown skipped: {e}")
             try:
-                from ...core.infra.error_reporting import error_handler
+                from ...utils.error_handler import error_handler
                 error_handler.cleanup()
             except Exception as e:
                 logging.debug(f"Error handler cleanup skipped: {e}")

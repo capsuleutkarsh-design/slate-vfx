@@ -396,6 +396,9 @@ class AttendanceTab(QWidget):
         self._team_data = {}
         self._holiday_cache = {}
         self._location_cache = {}
+        self._unread = None      # what could not be read this time (_holidays, _leave)
+        self._punch_worker = None
+        self._today = {}
 
         # Handle roles array (new format) and role string (legacy)
         roles_data = user_data.get('roles', user_data.get('role', ['Artist']))
@@ -473,18 +476,7 @@ class AttendanceTab(QWidget):
             except Exception as exc:
                 logging.warning("Could not read who reports to %s: %s", self.username, exc)
                 return set()
-        under = {}
-        for uid, rec in users.items():
-            boss = str((rec or {}).get("reports_to") or "").strip().lower()
-            under.setdefault(boss, set()).add(str(uid).lower())
-        me = str(self.username).lower()
-        team, todo = set(), [me]
-        while todo:
-            for uid in under.get(todo.pop(), ()):
-                if uid != me and uid not in team:      # a loop in the records ends here
-                    team.add(uid)
-                    todo.append(uid)
-        return team
+        return people.reports_under(users, self.username, all_the_way_down=True)
 
     def _notify(self, message: str, level: str = "info", details: str = ""):
         """Use host feedback API when available, fallback to dialogs."""
@@ -911,8 +903,11 @@ class AttendanceTab(QWidget):
                 self._holiday_cache[key] = (repo.holidays(year, place),
                                             repo.holiday_names(year, None if place == "All" else place))
             except Exception as exc:
-                logging.debug("Attendance could not read the holidays: %s", exc)
-                self._holiday_cache[key] = (set(), {})
+                # Not cached: an empty set showed every holiday as Absent for
+                # the rest of the session, and in the export.
+                logging.warning("Attendance could not read the holidays: %s", exc)
+                self._unread = "the holiday calendar"
+                return set()
         return self._holiday_cache[key][0]
 
     def _holiday_name(self, day, location=None) -> str:
@@ -956,8 +951,17 @@ class AttendanceTab(QWidget):
             from slate.core.infra.leave_repository import LeaveRepository
             return LeaveRepository().approved_leave(start, end, users)
         except Exception as exc:
-            logging.debug("Attendance could not read approved leave: %s", exc)
+            logging.warning("Attendance could not read approved leave: %s", exc)
+            self._unread = "approved leave"
             return {}
+
+    def _report_unread(self) -> bool:
+        """Say so when holidays or approved leave could not be read; True if so."""
+        what, self._unread = self._unread, None
+        if what:
+            self._notify("Could not read %s, so some days may show as Absent that are not. "
+                         "Refresh to try again; if it keeps happening, tell IT." % what, "warning")
+        return bool(what)
 
     def calculate_streak(self, user_log=None, year=None, month=None):
         """On-time days in a row, across month ends, leave and days off neutral."""
@@ -1072,6 +1076,7 @@ class AttendanceTab(QWidget):
         self.lbl_monthly_late_value.setText(f"{summary['late']}")
         self.lbl_monthly_hours_value.setText(f"{summary['hours']:.1f}")
         self.lbl_monthly_wfh_value.setText(f"{summary['wfh']}")
+        self._report_unread()
 
     def _refresh_today(self, now):
         try:
@@ -1095,16 +1100,8 @@ class AttendanceTab(QWidget):
         self.lbl_status.style().unpolish(self.lbl_status)
         self.lbl_status.style().polish(self.lbl_status)
 
-        # Only the valid next step is offered.
         kind = state.get("state")
-        self.btn_punch_in.setEnabled(kind in ("out", "done"))
-        self.btn_punch_in.setText("Punch in again" if kind == "done" else "Punch in")
-        self.btn_punch_out.setEnabled(kind == "working")
-        self.btn_punch_in.setToolTip(
-            "Starts a second session today." if kind == "done" else
-            ("You are punched in." if kind == "working" else ""))
-        self.btn_punch_out.setToolTip(
-            "" if kind == "working" else "Punch in first.")
+        self._offer_punch(kind)
 
         # The WFH box shows today's record once there is one. Before the
         # punch-in it is the person's choice for it, kept - the refresh used
@@ -1113,6 +1110,17 @@ class AttendanceTab(QWidget):
             self.chk_wfh_box.blockSignals(True)
             self.chk_wfh_box.setChecked(bool(state.get("wfh")))
             self.chk_wfh_box.blockSignals(False)
+
+    def _offer_punch(self, kind):
+        """Only the valid next step is offered (kind: today_state's "state")."""
+        self.btn_punch_in.setEnabled(kind in ("out", "done"))
+        self.btn_punch_in.setText("Punch in again" if kind == "done" else "Punch in")
+        self.btn_punch_out.setEnabled(kind == "working")
+        self.btn_punch_in.setToolTip(
+            "Starts a second session today." if kind == "done" else
+            ("You are punched in." if kind == "working" else ""))
+        self.btn_punch_out.setToolTip(
+            "" if kind == "working" else "Punch in first.")
 
     def _on_wfh_toggled(self, checked):
         state = getattr(self, "_today", {}) or {}
@@ -1133,8 +1141,15 @@ class AttendanceTab(QWidget):
             self.lbl_punch_note.setText(
                 "You will be marked as working from home when you punch in." if checked else "")
 
-    def manual_punch(self, action):
-        """Punch in or out, and say what was stored."""
+    def manual_punch(self, action, on_leave_ok=False):
+        """
+        Punch in or out, and say what was stored. The punch (and the approved
+        leave check before a punch-in) runs on a worker through
+        CentralAttendance.punch - Home's button makes the same call. It used
+        to run here, on the click, and froze the window on a slow link.
+        """
+        if self._punch_worker is not None:
+            return None
         if action == "out":
             # No time in the question: the punch is stored at the database
             # server's time, which the workstation's clock may not match.
@@ -1142,44 +1157,63 @@ class AttendanceTab(QWidget):
                     self, "Punch out", "Punch out now?",
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
             ) != QMessageBox.StandardButton.Yes:
-                return
-        else:
-            today = date.today()
-            on_leave = self._leave(today, today, [self.username]).get(
-                self.username.lower(), {}).get(today)
-            # A half day is meant to be worked for the other half.
-            if on_leave and not on_leave.get("half") and QMessageBox.question(
+                return None
+        meta = {"wfh": True} if action == "in" and self.chk_wfh_box.isChecked() else {}
+        self.btn_punch_in.setEnabled(False)
+        self.btn_punch_out.setEnabled(False)
+        attendance, username = self.attendance, self.username
+
+        def work():
+            return attendance.punch(username, action, metadata=meta, on_leave_ok=on_leave_ok)
+
+        from slate.core.infra.db_worker import run_db_async
+        self._punch_worker = run_db_async(work, on_success=lambda result: self._punched(action, result),
+                                          on_error=lambda text: self._punched(action, {"error": text}),
+                                          owner=self)
+        return self._punch_worker
+
+    def punch_busy(self) -> bool:
+        return self._punch_worker is not None
+
+    def _punched(self, action, result):
+        self._punch_worker = None
+        result = result or {}
+        if result.get("on_leave"):
+            self._offer_punch((self._today or {}).get("state"))
+            on_leave = result["on_leave"]
+            if QMessageBox.question(
                     self, "Punch in",
                     "You are on approved leave today (%s). Punch in anyway?\n\n"
                     "Ask HR to cancel the leave if you are working." % on_leave.get("type", "Leave"),
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
-            ) != QMessageBox.StandardButton.Yes:
-                return
-        try:
-            meta = {}
-            if action == 'in' and self.chk_wfh_box.isChecked():
-                meta['wfh'] = True
-            stored = self.attendance.log_action(self.username, action, metadata=meta) or {}
-            self.refresh_personal_view()
-            if self.has_team_view() and self.sync_enabled and self.team_table is not None:
-                self.refresh_team_view()
-            at = str(stored.get("time") or datetime.now().strftime("%H:%M:%S"))[:5]
-            if action == "in":
-                session = stored.get("session") or 1
-                msg = "Punched in at %s." % at if session == 1 else \
-                    "Punched in again at %s (session %d)." % (at, session)
-            else:
-                msg = "Punched out at %s." % at
-            self.lbl_punch_note.setText(msg)
-            self._notify(msg, "success")
-        except ValueError as ve:
-            # Refused: already in, not punched in, already out.
-            self.lbl_punch_note.setText(str(ve))
-            self._notify(str(ve), "warning")
-            self.refresh_personal_view()
-        except Exception as e:
+            ) == QMessageBox.StandardButton.Yes:
+                self.manual_punch("in", on_leave_ok=True)
+            return
+        if result.get("error"):
+            self._offer_punch((self._today or {}).get("state"))
             self.lbl_punch_note.setText("The punch was not saved.")
-            self._notify("The punch was not saved.", "error", details=f"Failed to punch: {e}")
+            self._notify("The punch was not saved.", "error",
+                         details=f"Failed to punch: {result['error']}")
+            return
+        if result.get("rule"):
+            # Refused: already in, not punched in, already out.
+            self.lbl_punch_note.setText(result["rule"])
+            self._notify(result["rule"], "warning")
+            self.refresh_personal_view()
+            return
+        stored = result.get("stored") or {}
+        self.refresh_personal_view()
+        if self.has_team_view() and self.sync_enabled and self.team_table is not None:
+            self.refresh_team_view()
+        at = str(stored.get("time") or datetime.now().strftime("%H:%M:%S"))[:5]
+        if action == "in":
+            session = stored.get("session") or 1
+            msg = "Punched in at %s." % at if session == 1 else \
+                "Punched in again at %s (session %d)." % (at, session)
+        else:
+            msg = "Punched out at %s." % at
+        self.lbl_punch_note.setText(msg)
+        self._notify(msg, "success")
 
     def _day_tooltip(self, entry, day, state, leave=None, location=None, late=False) -> str:
         lines = [format_date(day, weekday=True)]
@@ -1309,6 +1343,7 @@ class AttendanceTab(QWidget):
         with KeepSelection(self.team_table):
             self._fill_team_view(reload)
         self.team_empty.refresh()
+        self._report_unread()
 
     def _fill_team_view(self, reload=True):
         from slate.gui.components.table_tools import KEY_ROLE
@@ -1325,7 +1360,8 @@ class AttendanceTab(QWidget):
             cached = ((year, month), self.user_manager.get_all_users() or {},
                       self.attendance.get_full_month_data(year, month),
                       self._leave(first, last))
-            self._team_read = cached
+            # A failed leave read is not kept for the next filter change.
+            self._team_read = None if self._unread else cached
         _, users, data, leave = cached
         chosen = self.team_people(year, month, users)
         self._team_users = dict(chosen)
@@ -1576,6 +1612,7 @@ class AttendanceTab(QWidget):
         chosen = self.team_people(year, month)
         days = calendar.monthrange(year, month)[1]
         first, last = date(year, month, 1), date(year, month, days)
+        self._unread = None
         rows = []
         for uid, rec in chosen:
             location = rec.get("location") or ""
@@ -1584,11 +1621,18 @@ class AttendanceTab(QWidget):
                          "expected": self._expected(uid, rec)})
         data = self.attendance.get_full_month_data(year, month)
         leave = self._leave(first, last, [u for u, _ in chosen])
+        studio_holidays = self._holidays(year, "All")
+        what, self._unread = self._unread, None
+        if what:
+            self._notify("The export was not made: %s could not be read, so those days would "
+                         "have gone into the file as Absent. Try again in a moment." % what,
+                         "error")
+            return
 
         self._cleanup_export_worker()
         self._export_worker = ExcelExportWorker(path, year, month, rows, data, leave,
                                                 now=datetime.now(),
-                                                studio_holidays=self._holidays(year, "All"))
+                                                studio_holidays=studio_holidays)
         self._export_worker.finished_export.connect(self._on_export_finished)
         self._export_worker.finished.connect(self._on_export_worker_done)
         self._export_worker.finished.connect(self._export_worker.deleteLater)

@@ -27,14 +27,7 @@ from . import leave_policy as lp
 # come back empty; catching it here and returning a fallback puts the fault
 # straight back. So it is re-raised, and anything else is logged before the
 # fallback is used.
-try:
-    from .postgres_manager import DatabaseUnavailableError
-except ImportError:                                  # pragma: no cover
-    try:
-        from ..infra.postgres_manager import DatabaseUnavailableError
-    except ImportError:
-        class DatabaseUnavailableError(ConnectionError):
-            """Fallback when the manager cannot be imported."""
+from ..infra.db_results import DatabaseUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -117,16 +110,15 @@ class CompOffService:
             return []
 
     def _already_credited(self) -> set:
-        """(user, day) pairs the ledger has already paid for."""
-        try:
-            rows = self.db.execute_query(
-                "SELECT user_id, earned_on FROM comp_off_ledger "
-                "WHERE source = 'attendance'", fetch="all") or []
-        except DatabaseUnavailableError:
-            raise
-        except Exception:
-            logger.exception("_already_credited failed")
-            return set()
+        """
+        (user, day) pairs the ledger has already paid for.
+
+        Strict: an empty set on a failed read credited every day again, so
+        the run fails instead (the unique index on the ledger is the backstop).
+        """
+        rows = self.db.execute_query(
+            "SELECT user_id, earned_on FROM comp_off_ledger "
+            "WHERE source = 'attendance'", fetch="all", strict=True) or []
         out = set()
         for row in rows:
             row = dict(row)
@@ -221,9 +213,9 @@ class CompOffService:
         return {"found": len(entries), "credited": self.credit(entries)}
 
     # ----------------------------------------------------------------- expiry
-    def expire(self, rules=None) -> int:
+    def expire(self, rules=None) -> dict:
         """
-        Lapse comp-off nobody used in time.
+        Lapse comp-off nobody used in time. Returns {"lapsed", "failed"}.
 
         Consuming the remainder is how it lapses: the row stays, so the ledger
         still shows it was earned and why it went - which is what somebody will
@@ -237,10 +229,10 @@ class CompOffService:
             raise
         except Exception:
             logger.exception("expire failed")
-            return 0
+            return {"lapsed": 0, "failed": 0}
 
         today = date.today()
-        lapsed = 0
+        lapsed = failed = 0
         for row in rows:
             row = dict(row)
             expires = _parse_day(row.get("expires_on"))
@@ -249,14 +241,13 @@ class CompOffService:
             remaining = float(row.get("days") or 0) - float(row.get("consumed") or 0)
             if remaining <= 0:
                 continue
-            try:
-                self.db.execute_update(
+            # A refused update used to be counted as lapsed.
+            if self.db.execute_update(
                     "UPDATE comp_off_ledger SET consumed = days, "
-                    "reason = reason || ' (lapsed unused)' WHERE id = %s", (row["id"],))
+                    "reason = reason || ' (lapsed unused)' WHERE id = %s", (row["id"],)):
                 lapsed += 1
-            except DatabaseUnavailableError:
-                raise
-            except Exception:
-                logger.exception("expire failed")
-                continue
-        return lapsed
+            else:
+                failed += 1
+        if failed:
+            logger.error("Comp off: %d ledger row(s) could not be lapsed.", failed)
+        return {"lapsed": lapsed, "failed": failed}

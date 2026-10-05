@@ -9,7 +9,6 @@ rather than through arithmetic typed into a widget.
 
 from __future__ import annotations
 
-import json
 import logging
 
 from datetime import date, datetime
@@ -30,7 +29,15 @@ except ImportError:                                  # pragma: no cover
         class DatabaseUnavailableError(ConnectionError):
             """Fallback when the manager cannot be imported."""
 
+from .db_results import DatabaseReadError
+from .transaction import atomic
+
 logger = logging.getLogger(__name__)
+
+# Said when a check could not be read (strict reads), rather than guessing
+# "no clash" or "no holidays" and charging the wrong days.
+NOT_READ = ("The leave records could not be read, so nothing was saved. "
+            "Try again in a moment; if it keeps happening, tell IT.")
 
 
 def _days(value) -> str:
@@ -39,29 +46,11 @@ def _days(value) -> str:
     return "%g day%s" % (value, "" if value == 1 else "s")
 
 
-def as_date(value):
-    """
-    Whatever the driver handed back, as a date. None when it is not one.
-
-    The two backends do not agree about dates. PostgreSQL returns a date
-    object; SQLite returns the text it stored. Every comparison in this module
-    used to assume the first, so on the local database the holiday set came
-    back empty - each row was dropped for not being a date - and comparing a
-    comp-off expiry against today raised TypeError outright.
-
-    One place to convert means the rest of the module can just use dates.
-    """
-    if value is None or value == "":
-        return None
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
-    try:
-        return datetime.fromisoformat(str(value)[:10]).date()
-    except (TypeError, ValueError):
-        return None
-
+# The shared helpers, not private copies of them (several had drifted):
+# as_date stays importable from here, as callers and tests use it.
+from ..domain.dates import as_date  # noqa: F401
+from ..domain.people import account_active, is_service_record, switched_off
+from ..security.admin_guard import parse_roles
 
 
 class LeaveRepository:
@@ -107,14 +96,10 @@ class LeaveRepository:
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
 
-        try:
-            rows = self.db.execute_query(sql, tuple(params) if params else None,
-                                         fetch="all")
-        except DatabaseUnavailableError:
-            raise
-        except Exception:
-            logger.exception("holidays failed")
-            return set()
+        # Strict: an empty set on a failed read charged the holidays as leave
+        # days, and the stored charge never changed back.
+        rows = self.db.execute_query(sql, tuple(params) if params else None,
+                                     fetch="all", strict=True)
 
         out = set()
         for row in rows or []:
@@ -334,25 +319,18 @@ class LeaveRepository:
         of them - which is not a queue, it is a free-for-all that happens to be
         sorted by date.
         """
-        manager = str(manager or "").strip()
-        if not manager:
+        if not str(manager or "").strip():
             return set()
         try:
             rows = self.db.execute_query(
-                "SELECT username FROM ut_users WHERE LOWER(reports_to) = LOWER(%s)",
-                (manager,), fetch="all") or []
+                "SELECT username, reports_to FROM ut_users", fetch="all") or []
         except DatabaseUnavailableError:
             raise
         except Exception:
             logger.exception("reports_to failed")
             return set()
-
-        out = set()
-        for row in rows:
-            name = (row["username"] if isinstance(row, dict) else row[0]) or ""
-            if str(name).strip():
-                out.add(str(name).strip().lower())
-        return out
+        from slate.core.domain.people import reports_under
+        return reports_under({dict(row)["username"]: dict(row) for row in rows}, manager)
 
     # ---------------------------------------------------------------- requests
     def for_user(self, username: str) -> list:
@@ -405,17 +383,12 @@ class LeaveRepository:
         again. An approved one is, because it has already been spent - and so
         is one waiting on a withdrawal, which is still approved until HR agree.
         """
-        try:
-            rows = self.db.execute_query(
-                "SELECT id, start_date, end_date, type, status FROM leave_requests "
-                "WHERE LOWER(user_id) = LOWER(%s) "
-                "AND start_date <= %s AND end_date >= %s",
-                (username, end, start), fetch="all") or []
-        except DatabaseUnavailableError:
-            raise
-        except Exception:
-            logger.exception("clash failed")
-            return []
+        # Strict: "no clash" on a failed read let overlapping leave through.
+        rows = self.db.execute_query(
+            "SELECT id, start_date, end_date, type, status FROM leave_requests "
+            "WHERE LOWER(user_id) = LOWER(%s) "
+            "AND start_date <= %s AND end_date >= %s",
+            (username, end, start), fetch="all", strict=True) or []
 
         out = []
         for row in rows:
@@ -470,27 +443,6 @@ class LeaveRepository:
             return {}
         return dict(row) if row else {}
 
-    @staticmethod
-    def _roles_of(record) -> list:
-        raw = record.get("roles")
-        if isinstance(raw, list):
-            return raw
-        if isinstance(raw, str) and raw.strip():
-            try:
-                value = json.loads(raw)
-                return [value] if isinstance(value, str) else list(value or [])
-            except ValueError:
-                return [raw]
-        return []
-
-    @staticmethod
-    def _is_active_record(record) -> bool:
-        value = record.get("active")
-        if value is not None and str(value).strip().lower() in ("0", "false", "f", "no"):
-            return False
-        left = as_date(record.get("last_day"))
-        return not (left and left < date.today())
-
     def approver_kind(self, username) -> str:
         """
         Which stage of the leave chain this person works: "hr", "supervisor"
@@ -505,22 +457,18 @@ class LeaveRepository:
         return self._kind_of(self._user_row(username))
 
     def _kind_of(self, record, stored=None) -> str:
-        """approver_kind for a ut_users row already read."""
-        if not record or not self._is_active_record(record):
+        """approver_kind for a ut_users row already read: workplace_access.leave_stage, lower-cased."""
+        if not record or not account_active(record):
             return ""
-        roles = self._roles_of(record)
+        roles = parse_roles(record.get("roles"))
         from slate.core.domain import access
-        from slate.core.domain.workplace_access import manages_leave
+        from slate.core.domain.workplace_access import leave_stage
         if stored is None:
             stored = access._role_permission_lists()
         tabs = set()
         for role in roles:
             tabs.update(stored.get(str(role).strip().lower(), []))
-        if manages_leave(roles, tabs):
-            return "hr"
-        if access.can(roles, "approve_leave"):
-            return "supervisor"
-        return ""
+        return leave_stage(roles, tabs).lower()
 
     def first_stage(self, username) -> dict:
         """
@@ -645,7 +593,13 @@ class LeaveRepository:
         refusal = self.dates_refusal(username, start, end)
         if refusal:
             return Outcome(False, refusal, "dates")
-        if self.clash(username, start, end):
+        try:
+            clashes = self.clash(username, start, end)
+            holidays = self.holidays_for(username, start, end)
+        except DatabaseReadError:
+            logger.exception("submit: the checks could not be read")
+            return Outcome(False, NOT_READ, "not_saved")
+        if clashes:
             logger.info("Refused an overlapping leave request for %s", username)
             return Outcome(False, "You already have a request covering those days.", "clash")
 
@@ -660,8 +614,7 @@ class LeaveRepository:
         if half_day and part is None:
             part = "first"
 
-        charge = lp.days_charged(start, end, self.holidays_for(username, start, end),
-                                 rules, half_day=half_day)
+        charge = lp.days_charged(start, end, holidays, rules, half_day=half_day)
         # A request for days nobody works costs nothing and decides nothing.
         # Only the dialog refused it; a Sunday-only request sent another way
         # sat in the queue as "0 days" for somebody to approve.
@@ -713,9 +666,14 @@ class LeaveRepository:
         refusal = self.dates_refusal(username, start, end)
         if refusal:
             return Outcome(False, refusal, "dates")
-        if self.clash(username, start, end):
+        try:
+            clashes = self.clash(username, start, end)
+            charge = lp.days_charged(start, end, self.holidays_for(username, start, end))
+        except DatabaseReadError:
+            logger.exception("grant_project_rest: the checks could not be read")
+            return Outcome(False, NOT_READ, "not_saved")
+        if clashes:
             return Outcome(False, "They already have leave covering those days.", "clash")
-        charge = lp.days_charged(start, end, self.holidays_for(username, start, end))
         if not charge["working_days"]:
             return Outcome(False, "Those dates contain no working days.", "no_working_days")
         now = datetime.now()
@@ -782,7 +740,7 @@ class LeaveRepository:
                 if current != lp.STATUS_PENDING_SUPERVISOR:
                     return STALE
                 new_status = lp.next_status(current, stage, approved)
-                written = self.db.execute_update(
+                update = (
                     "UPDATE leave_requests SET status = %s, supervisor_by = %s, "
                     "supervisor_at = %s, supervisor_note = %s, decision_note = %s "
                     "WHERE id = %s AND LOWER(status) = LOWER(%s)",
@@ -792,7 +750,7 @@ class LeaveRepository:
             elif current == lp.STATUS_PENDING_SUPERVISOR:
                 # HR deciding for the supervisor: both stages at once.
                 new_status = lp.STATUS_APPROVED if approved else lp.STATUS_REJECTED
-                written = self.db.execute_update(
+                update = (
                     "UPDATE leave_requests SET status = %s, supervisor_by = %s, "
                     "supervisor_at = %s, supervisor_note = %s, hr_by = %s, hr_at = %s, "
                     "hr_note = %s, decision_note = %s "
@@ -801,7 +759,7 @@ class LeaveRepository:
                      request_id, current))
             elif current == lp.STATUS_PENDING_HR:
                 new_status = lp.next_status(current, stage, approved)
-                written = self.db.execute_update(
+                update = (
                     "UPDATE leave_requests SET status = %s, hr_by = %s, hr_at = %s, "
                     "hr_note = %s, decision_note = %s "
                     "WHERE id = %s AND LOWER(status) = LOWER(%s)",
@@ -809,20 +767,19 @@ class LeaveRepository:
             else:
                 return STALE
 
-            if not written:
-                # A decision that did not reach the database is not a decision.
-                logger.error("The %s decision on request %s was not saved.", stage, request_id)
-                return Outcome(False, "The decision was not saved.", "not_saved")
-            if not getattr(written, "changed", True):
-                return STALE
-
             # Comp-off is the one type with its own ledger, and approving it
             # used to leave that ledger untouched: the days were granted and
             # the balance never went down, so the same comp-off day could be
-            # spent for ever.
-            if new_status == lp.STATUS_APPROVED:
-                self.spend_comp_off(request_id)
+            # spent for ever. The decision and the spend are one unit: a
+            # refused write (or a short ledger) undoes both, and says so.
+            with atomic(self.db) as tx:
+                if not tx.write(*update).changed:
+                    return STALE
+                if new_status == lp.STATUS_APPROVED:
+                    self.spend_comp_off(tx, existing)
             return Outcome(True, "", "decided", status=new_status)
+        except _Refused as stop:
+            return stop.outcome
         except DatabaseUnavailableError:
             raise
         except Exception:
@@ -907,7 +864,7 @@ class LeaveRepository:
         request_id = row.get("id")
         now = datetime.now()
         if approved:
-            written = self.db.execute_update(
+            update = (
                 "UPDATE leave_requests SET status = %s, cancelled_by = %s, cancelled_at = %s, "
                 "hr_note = %s, decision_note = %s "
                 "WHERE id = %s AND LOWER(status) = LOWER(%s)",
@@ -915,16 +872,16 @@ class LeaveRepository:
                  note or "Withdrawal agreed.", request_id, lp.STATUS_CANCEL_REQUESTED))
         else:
             text = "Withdrawal refused" + (": " + note if note else ".")
-            written = self.db.execute_update(
+            update = (
                 "UPDATE leave_requests SET status = %s, hr_note = %s, decision_note = %s "
                 "WHERE id = %s AND LOWER(status) = LOWER(%s)",
                 (lp.STATUS_APPROVED, text, text, request_id, lp.STATUS_CANCEL_REQUESTED))
-        if not written:
-            return Outcome(False, "The decision was not saved.", "not_saved")
-        if not getattr(written, "changed", True):
-            return STALE
-        if approved:
-            self.unspend_comp_off(request_id)
+        # The status and the refund together (decide() reports a refusal).
+        with atomic(self.db) as tx:
+            if not tx.write(*update).changed:
+                return STALE
+            if approved:
+                self.unspend_comp_off(tx, request_id)
         return Outcome(True, "", "decided",
                        status=lp.STATUS_CANCELLED if approved else lp.STATUS_APPROVED)
 
@@ -945,17 +902,22 @@ class LeaveRepository:
         current = lp.normalise_status(row.get("status"))
         if current not in lp.GRANTED_STATUSES:
             return STALE
-        written = self.db.execute_update(
-            "UPDATE leave_requests SET status = %s, cancelled_by = %s, cancelled_at = %s, "
-            "cancel_reason = %s, hr_note = %s, decision_note = %s "
-            "WHERE id = %s AND LOWER(status) = LOWER(%s)",
-            (lp.STATUS_CANCELLED, by_whom, datetime.now(), reason,
-             "Revoked by HR: " + reason, "Revoked by HR: " + reason, request_id, current))
-        if not written:
+        try:
+            with atomic(self.db) as tx:
+                if not tx.write(
+                        "UPDATE leave_requests SET status = %s, cancelled_by = %s, cancelled_at = %s, "
+                        "cancel_reason = %s, hr_note = %s, decision_note = %s "
+                        "WHERE id = %s AND LOWER(status) = LOWER(%s)",
+                        (lp.STATUS_CANCELLED, by_whom, datetime.now(), reason,
+                         "Revoked by HR: " + reason, "Revoked by HR: " + reason, request_id,
+                         current)).changed:
+                    return STALE
+                self.unspend_comp_off(tx, request_id)
+        except DatabaseUnavailableError:
+            raise
+        except Exception:
+            logger.exception("revoke failed")
             return Outcome(False, "The change was not saved.", "not_saved")
-        if not getattr(written, "changed", True):
-            return STALE
-        self.unspend_comp_off(request_id)
         return Outcome(True, "", "revoked")
 
     # ------------------------------------------------------------ recharging
@@ -1006,15 +968,11 @@ class LeaveRepository:
         approved leave raised no question.
         """
         wanted = {str(u).strip().lower() for u in users} if users else None
-        try:
-            rows = self.db.execute_query(
-                "SELECT * FROM leave_requests WHERE start_date <= %s AND end_date >= %s",
-                (end, start), fetch="all") or []
-        except DatabaseUnavailableError:
-            raise
-        except Exception:
-            logger.exception("approved_leave failed")
-            return {}
+        # Strict: an empty answer showed approved leave as Absent, on screen
+        # and in the monthly export.
+        rows = self.db.execute_query(
+            "SELECT * FROM leave_requests WHERE start_date <= %s AND end_date >= %s",
+            (end, start), fetch="all", strict=True) or []
         out, holidays_of = {}, {}
         for row in rows:
             row = dict(row)
@@ -1110,13 +1068,14 @@ class LeaveRepository:
         return out
 
     # ---------------------------------------------------------------- comp-off
+    _LEDGER_SQL = (
+        "SELECT id, days, consumed, expires_on FROM comp_off_ledger "
+        "WHERE LOWER(user_id) = LOWER(%s) "
+        "ORDER BY CASE WHEN expires_on IS NULL THEN 1 ELSE 0 END, expires_on, id")
+
     def _comp_off_ledger(self, username) -> list:
         try:
-            rows = self.db.execute_query(
-                "SELECT id, days, consumed, expires_on FROM comp_off_ledger "
-                "WHERE LOWER(user_id) = LOWER(%s) "
-                "ORDER BY CASE WHEN expires_on IS NULL THEN 1 ELSE 0 END, expires_on, id",
-                (username,), fetch="all") or []
+            rows = self.db.execute_query(self._LEDGER_SQL, (username,), fetch="all") or []
             return [dict(r) for r in rows]
         except DatabaseUnavailableError:
             raise
@@ -1153,6 +1112,9 @@ class LeaveRepository:
         have = self.comp_off_balance(row.get("user_id"), on=start)
         if have + 1e-9 >= wanted:
             return ""
+        return self._short_text(row, have, start, wanted)
+
+    def _short_text(self, row, have, start, wanted) -> str:
         from slate.core.domain import people
         from slate.core.domain.dates import format_date
         return ("%s has only %s of comp off left for %s, and this needs %s. Reject it and "
@@ -1160,7 +1122,7 @@ class LeaveRepository:
                     people.display_name(row.get("user_id"), self.db), _days(have),
                     format_date(start), _days(wanted)))
 
-    def spend_comp_off(self, request_id) -> float:
+    def spend_comp_off(self, tx, row) -> float:
         """
         Draw an approved Comp Off request down against the ledger.
 
@@ -1176,13 +1138,10 @@ class LeaveRepository:
         Each spend is recorded against the request (comp_off_spends) so a
         withdrawn or revoked request gives back exactly what it took.
 
-        Returns how much was actually spent, which can be less than the request
-        if the ledger is short - the shortfall is logged rather than invented,
-        because a negative comp-off balance is a conversation, not a number.
+        Runs inside the decision's unit of work (tx). A ledger too short to
+        pay for the request raises _Refused, so the approval is undone with
+        it: it used to be approved anyway with the shortfall only logged.
         """
-        row = self.request(request_id)
-        if not row:
-            return 0.0
         if str(row.get("type") or "").strip().title() != "Comp Off":
             return 0.0
 
@@ -1193,7 +1152,7 @@ class LeaveRepository:
         taken_on = as_date(row.get("start_date")) or date.today()
 
         spent = 0.0
-        for entry in self._comp_off_ledger(username):
+        for entry in tx.query(self._LEDGER_SQL, (username,)):
             if spent >= wanted:
                 break
             expires = as_date(entry.get("expires_on"))
@@ -1205,50 +1164,37 @@ class LeaveRepository:
                 continue
 
             take = min(available, wanted - spent)
-            try:
-                written = self.db.execute_update(
-                    "UPDATE comp_off_ledger SET consumed = %s WHERE id = %s",
-                    (float(entry.get("consumed") or 0) + take, entry.get("id")))
-                if not written:
-                    continue
-                spent += take
-                self.db.execute_update(
-                    "INSERT INTO comp_off_spends (request_id, ledger_id, days) VALUES (%s, %s, %s)",
-                    (request_id, entry.get("id"), take))
-            except DatabaseUnavailableError:
-                raise
-            except Exception:
-                logger.exception("spend_comp_off failed to write the ledger")
+            tx.write("UPDATE comp_off_ledger SET consumed = consumed + %s WHERE id = %s",
+                     (take, entry.get("id")), expect_rows=True)
+            tx.write("INSERT INTO comp_off_spends (request_id, ledger_id, days) "
+                     "VALUES (%s, %s, %s)", (row.get("id"), entry.get("id"), take))
+            spent += take
 
-        if spent < wanted:
-            logger.warning(
-                "Comp Off request %s approved for %g day(s) but only %g were in "
-                "%s's ledger", request_id, wanted, spent, username)
+        if spent + 1e-9 < wanted:
+            logger.warning("Comp Off request %s needs %g day(s) but only %g were in %s's "
+                           "ledger - not approved", row.get("id"), wanted, spent, username)
+            raise _Refused(Outcome(False, self._short_text(row, spent, taken_on, wanted),
+                                   "comp_off_short"))
         return spent
 
-    def unspend_comp_off(self, request_id) -> float:
-        """Give back what a cancelled Comp Off request took from the ledger."""
-        try:
-            rows = self.db.execute_query(
-                "SELECT id, ledger_id, days FROM comp_off_spends WHERE request_id = %s",
-                (request_id,), fetch="all") or []
-        except DatabaseUnavailableError:
-            raise
-        except Exception:
-            logger.exception("unspend_comp_off failed")
-            return 0.0
+    def unspend_comp_off(self, tx, request_id) -> float:
+        """
+        Give back what a cancelled Comp Off request took from the ledger,
+        inside the cancellation's unit of work (tx). Each spend row is deleted
+        before its days go back, and must still be there: a refund whose
+        delete failed was left in place to be refunded a second time.
+        """
         returned = 0.0
-        for spend in rows:
-            spend = dict(spend)
+        for spend in tx.query(
+                "SELECT id, ledger_id, days FROM comp_off_spends WHERE request_id = %s",
+                (request_id,)):
             days = float(spend.get("days") or 0)
-            written = self.db.execute_update(
-                "UPDATE comp_off_ledger SET consumed = CASE WHEN consumed - %s < 0 THEN 0 "
-                "ELSE consumed - %s END WHERE id = %s",
-                (days, days, spend.get("ledger_id")))
-            if written:
-                returned += days
-                self.db.execute_update("DELETE FROM comp_off_spends WHERE id = %s",
-                                       (spend.get("id"),))
+            tx.write("DELETE FROM comp_off_spends WHERE id = %s", (spend.get("id"),),
+                     expect_rows=True)
+            tx.write("UPDATE comp_off_ledger SET consumed = CASE WHEN consumed - %s < 0 THEN 0 "
+                     "ELSE consumed - %s END WHERE id = %s",
+                     (days, days, spend.get("ledger_id")))
+            returned += days
         return returned
 
     def credit_comp_off(self, username, earned_on, days, reason, rules=None) -> bool:
@@ -1364,15 +1310,6 @@ class LeaveRepository:
         wanted = (latest + 1) if latest is not None else today.year - 1
         return wanted if wanted < today.year else None
 
-    @staticmethod
-    def _is_service(record) -> bool:
-        from slate.core.domain.people import SERVICE_USERNAMES
-        name = str(record.get("username") or "").strip().lower()
-        flag = record.get("is_service")
-        if flag is not None and str(flag).strip().lower() not in ("", "0", "false", "f", "no"):
-            return True
-        return name in SERVICE_USERNAMES
-
     def preview_close(self, year: int, rules=None, include_no_joining: bool = False) -> list:
         """
         What closing a year would do to everybody, without doing it.
@@ -1388,15 +1325,10 @@ class LeaveRepository:
         closed unless HR include them: their balance would otherwise be made
         up from 1 January.
         """
-        try:
-            # SELECT *: last_day / deactivated_on may not exist on an old table.
-            rows = self.db.execute_query(
-                "SELECT * FROM ut_users ORDER BY username", fetch="all") or []
-        except DatabaseUnavailableError:
-            raise
-        except Exception:
-            logger.exception("preview_close failed")
-            return []
+        # SELECT *: last_day / deactivated_on may not exist on an old table.
+        # Strict: an empty list on a failed read showed "nothing to close".
+        rows = self.db.execute_query(
+            "SELECT * FROM ut_users ORDER BY username", fetch="all", strict=True) or []
 
         as_of = date(year, 12, 31)
         year_start = date(year, 1, 1)
@@ -1404,7 +1336,7 @@ class LeaveRepository:
         for row in rows:
             record = dict(row) if hasattr(row, "keys") else {"username": row[0]}
             name = record.get("username") or ""
-            if not name or self._is_service(record):
+            if not name or is_service_record(record):
                 continue
             # Somebody who had left (or was deactivated) before the year began
             # has nothing to close: their balance stopped with their last day.
@@ -1413,9 +1345,7 @@ class LeaveRepository:
             ended = [d for d in ended if d]
             if ended and min(ended) < year_start:
                 continue
-            active = record.get("active")
-            if active is not None and str(active).strip().lower() in ("0", "false", "f") \
-                    and not ended:
+            if switched_off(record.get("active")) and not ended:
                 continue
             joined = as_date(record.get("joined_on"))
             if joined and joined > as_of:
@@ -1439,14 +1369,17 @@ class LeaveRepository:
 
         Idempotent by (user, year) - running it twice does not lapse anybody's
         leave a second time. Refused (dict["refused"]) for a year that has not
-        finished or is out of order (close_refusal).
+        finished or is out of order (close_refusal). dict["failed"] lists the
+        people whose close was not saved - they used to vanish from the count.
         """
         refusal = self.close_refusal(year, today)
         if refusal:
-            return {"closed": 0, "skipped": 0, "no_joining_date": 0, "refused": refusal}
+            return {"closed": 0, "skipped": 0, "no_joining_date": 0, "refused": refusal,
+                    "failed": []}
         already = {str(r["user_id"]).lower() for r in self.closes(year)}
         written = 0
         no_date = 0
+        failed = []
         for entry in self.preview_close(year, rules):
             if entry["user_id"].lower() in already:
                 continue
@@ -1464,13 +1397,14 @@ class LeaveRepository:
                     written += 1
                 else:
                     logger.error("Year close for %s was not saved.", entry["user_id"])
+                    failed.append(entry["user_id"])
             except DatabaseUnavailableError:
                 raise
             except Exception:
                 logger.exception("close_year failed")
-                continue
+                failed.append(entry["user_id"])
         return {"closed": written, "skipped": len(already), "no_joining_date": no_date,
-                "refused": ""}
+                "refused": "", "failed": failed}
 
     # ----------------------------------------------------------------- balance
     def balance(self, username: str, rules=None, as_of: date = None) -> dict:
@@ -1624,6 +1558,14 @@ class LeaveRepository:
 
 
 # ------------------------------------------------------------------ outcomes
+
+class _Refused(Exception):
+    """Leaves a unit of work - rolling it back - with the Outcome to report."""
+
+    def __init__(self, outcome):
+        super().__init__(outcome.reason)
+        self.outcome = outcome
+
 
 class Outcome:
     """

@@ -75,7 +75,8 @@ def test_delete_and_rename_wait_for_a_role(users):
     users.update_role_permissions("Runner", ["Settings"])
     editor.refresh_roles(select="Runner")
     assert editor.btn_delete.isEnabled() and editor.btn_rename.isEnabled()
-    editor.refresh_roles(select="Artist")             # the seeded artist holds it
+    users.add_user("artist1", "pw123456", ["Artist"], "Artist", "")
+    editor.refresh_roles(select="Artist")             # somebody holds it
     assert editor.btn_rename.isEnabled() and not editor.btn_delete.isEnabled()
     assert "another role" in editor.btn_delete.toolTip()
     editor.refresh_roles(select="Developer")
@@ -97,6 +98,7 @@ def test_heading_keeps_the_role_name_and_counts_active_people(users):
     """HR2-072."""
     users.add_user("a1", "pw1234", ["Artist"], "A", "Comp")
     users.add_user("a2", "pw1234", ["Artist"], "B", "Comp")
+    users.add_user("a3", "pw1234", ["Artist"], "C", "Comp")   # no seeded artist any more
     users.deactivate_user("a2")
     editor = _editor(users)
     editor.refresh_roles(select="Artist")

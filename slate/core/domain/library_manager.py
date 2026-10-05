@@ -62,7 +62,7 @@ class LibraryManager:
         self.username = username or ""
         self.server_root = GlobalConfig.server_root()
 
-        # Local cache file a remote "wipe cache" command removes.
+        # The library cached on this PC.
         self.local_cache = GlobalConfig.local_cache_dir() / "Library_Cache.caplib"
 
         self.assets = []
@@ -124,9 +124,6 @@ class LibraryManager:
         )
         return self._convert_db_assets_to_legacy_format(rows)
 
-    def save_library(self):
-        """Legacy no-op: every change is written to the database as it happens."""
-        pass
 
     def _convert_db_assets_to_legacy_format(self, db_rows):
         """Converts Database rows to the list-of-dicts format expected by UI."""
@@ -302,7 +299,7 @@ class LibraryManager:
         if 'metadata' in data or 'tags' in data or 'category' in data:
             from .stock_search import build_search_text
             data['search_text'] = build_search_text(data)
-        changed = self.repo.update_assets_by_path([data]) > 0
+        changed = self.repo.update_assets_by_path([self._shareable(data)]) > 0
         for i, asset in enumerate(self.assets):
             if str(asset.get('id')) == str(asset_id):
                 self.assets[i].update(updated_data)
@@ -316,8 +313,22 @@ class LibraryManager:
             data = dict(update)
             if 'metadata' in data or 'tags' in data:
                 data['search_text'] = build_search_text(data)
-            prepared.append(data)
+            prepared.append(self._shareable(data))
         return self.repo.update_assets_by_path(prepared)
+
+    @staticmethod
+    def _shareable(data):
+        """
+        Without the picture paths when they point into a cache only this
+        computer has (the server Cache folder could not be written). Stored,
+        every other computer would show those assets without a picture; left
+        out, the asset is analysed again once the server cache works.
+        """
+        from .proxy_manager import proxy_manager
+        if proxy_manager.local_only:
+            data.pop('thumb_path', None)
+            data.pop('proxy_path', None)
+        return data
 
     def update_asset_metadata(self, asset_path, metadata, tags):
         """Update an asset's details by path. Returns whether the change was stored."""

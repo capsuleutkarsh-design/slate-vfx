@@ -12,8 +12,10 @@ is wrong and fixes it.
 
 from __future__ import annotations
 
+import os
 import re
 import unicodedata
+from pathlib import Path
 from typing import Optional
 
 # Characters Windows will not take in a file or folder name, plus controls.
@@ -109,6 +111,27 @@ def folder_path_problem(path, what: str = "A folder") -> Optional[str]:
         if problem:
             return problem
     return None
+
+
+def path_inside(root, *parts) -> Path:
+    """
+    root joined with parts, refused (ValueError) if it would land outside root.
+
+    New names are checked when typed, but a name stored before those checks -
+    'SH010/../../x' - is not, and folders are built from stored names. Every
+    such path goes through here. Lexical (no symlinks followed), so a project
+    whose 05_Reels is a junction to another drive still works.
+    """
+    base = os.path.abspath(str(root or "."))
+    full = os.path.abspath(os.path.join(base, *(str(p) for p in parts)))
+    try:
+        inside = os.path.normcase(os.path.commonpath([base, full])) == os.path.normcase(base)
+    except ValueError:              # another drive
+        inside = False
+    if not inside:
+        raise ValueError(f"'{os.path.join(*(str(p) for p in parts))}' would be outside "
+                         f"the project folder {base}, so it was not used. Rename the shot or project.")
+    return Path(full)
 
 
 # --------------------------------------------------------------- shot names

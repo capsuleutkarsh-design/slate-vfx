@@ -268,6 +268,12 @@ def shot_folder(shot, project_root, key: str) -> Optional[Path]:
         return candidate
     if not project_root:
         return None
+    from slate.core.domain.naming import path_inside
+    try:
+        path_inside(project_root, candidate)
+    except ValueError as exc:
+        logger.error("Shot folder refused: %s", exc)
+        return None
     return Path(project_root) / candidate
 
 

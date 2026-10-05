@@ -13,6 +13,7 @@ just being told something is wrong.
 
 import rv
 import rv.commands as commands
+import rv.extra_commands as extra_commands
 import rv.rvtypes as rvtypes
 import rv.qtutils as qtutils
 import os
@@ -60,7 +61,7 @@ class SlateLinkMode(rvtypes.MinorMode):
         """
         frame = commands.frame()
         try:
-            info = commands.sourceFrame(frame)
+            info = extra_commands.sourceFrame(frame)
             return int(info)
         except Exception:
             return int(frame)
@@ -70,8 +71,7 @@ class SlateLinkMode(rvtypes.MinorMode):
     def has_annotation(self):
         """Whether anything has been drawn on the current frame."""
         try:
-            return bool(commands.findAnnotatedFrames()
-                        and commands.frame() in commands.findAnnotatedFrames())
+            return commands.frame() in extra_commands.findAnnotatedFrames()
         except Exception:
             return False
 
@@ -95,13 +95,7 @@ class SlateLinkMode(rvtypes.MinorMode):
                 ANNOTATION_DIR, "%s_%s_%d.jpg" % (base, stamp, commands.frame())
             )
 
-            frame = commands.frame()
             commands.exportCurrentFrame(out_path)
-            if os.path.exists(out_path):
-                return out_path
-
-            # Some builds export through the session writer instead.
-            commands.writeAnnotatedFrames([frame], out_path, True)
             return out_path if os.path.exists(out_path) else ""
         except Exception:
             return ""
@@ -129,7 +123,7 @@ class SlateLinkMode(rvtypes.MinorMode):
         try:
             media_path = self.current_media()
             if not media_path:
-                commands.displayFeedback("No media loaded", 2.0)
+                extra_commands.displayFeedback("No media loaded", 2.0)
                 return
 
             shot_hint = os.path.splitext(os.path.basename(media_path))[0]
@@ -155,9 +149,9 @@ class SlateLinkMode(rvtypes.MinorMode):
             message = "Slate: %s" % status.upper()
             if annotation_path:
                 message += " (with annotation)"
-            commands.displayFeedback(message, 2.0)
+            extra_commands.displayFeedback(message, 2.0)
         except Exception as e:
-            commands.displayFeedback("Slate Error: %s" % str(e), 3.0)
+            extra_commands.displayFeedback("Slate Error: %s" % str(e), 3.0)
 
     # ---------------------------------------------------------------- actions
 
@@ -176,7 +170,7 @@ class SlateLinkMode(rvtypes.MinorMode):
         if note is None:
             return
         if not note:
-            commands.displayFeedback("Nothing typed - no note sent", 2.0)
+            extra_commands.displayFeedback("Nothing typed - no note sent", 2.0)
             return
         self.send("note", note)
 

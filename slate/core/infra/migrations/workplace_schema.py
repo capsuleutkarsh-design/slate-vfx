@@ -282,6 +282,11 @@ COLUMNS = [
     # Set for people created by an import with a shared first password: they
     # choose their own at first sign-in. 1 = must change, 0 or empty = no.
     ("ut_users", "must_change_password", "INTEGER", "INTEGER"),
+    # Deactivation (UserManager.deactivate_user). NULL means active, so every
+    # existing account stays as it was. UserManager used to add these itself.
+    ("ut_users", "active", "INTEGER", "INTEGER"),
+    ("ut_users", "deactivated_on", "TEXT", "TEXT"),
+    ("ut_users", "deactivated_by", "TEXT", "TEXT"),
 
     # Readings were matched to a purchase by software name, so two contracts
     # for the same product shared one peak and both were reported as
@@ -382,6 +387,57 @@ def _column_type(db, table: str, column: str) -> str:
         return ""
 
 
+def _one_credit_per_day(db) -> None:
+    """
+    A day of attendance is credited as comp-off once (a partial unique index,
+    so hand-made entries with another source are not limited).
+
+    A day credited twice before the index existed would stop it being built.
+    The later copies are relabelled 'attendance-duplicate' rather than deleted:
+    a spend may point at them and the days may already be taken, so whether
+    to take them back is for HR to decide, not for an upgrade. Repeatable:
+    once the index exists there is nothing left to relabel.
+    """
+    if not _table_exists(db, "comp_off_ledger"):
+        return
+    db.execute_update(
+        "UPDATE comp_off_ledger SET source = 'attendance-duplicate' "
+        "WHERE source = 'attendance' AND id NOT IN ("
+        "SELECT MIN(id) FROM comp_off_ledger WHERE source = 'attendance' "
+        "GROUP BY LOWER(user_id), earned_on)")
+    made = db.execute_update(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_comp_off_attendance_day "
+        "ON comp_off_ledger (LOWER(user_id), earned_on) WHERE source = 'attendance'")
+    if not made:
+        logger.error("Comp-off: the one-credit-per-day index was not made: %s",
+                     getattr(made, "error", ""))
+
+
+def add_columns(db, only_table: str = None) -> int:
+    """
+    Add the COLUMNS this database lacks (only one table's, when named).
+    Returns how many were added. UserManager asks this for ut_users, which
+    may not have existed when the migration ran on a new database - so the
+    column list has one owner, here.
+    """
+    postgres = _is_postgres(db)
+    added = 0
+    for table, column, pg_type, lite_type in COLUMNS:
+        if only_table and table != only_table:
+            continue
+        if not _table_exists(db, table):
+            continue
+        if _column_exists(db, table, column):
+            continue
+        try:
+            db.execute_update("ALTER TABLE %s ADD COLUMN %s %s" % (
+                table, column, pg_type if postgres else lite_type))
+            added += 1
+        except Exception as exc:
+            logger.debug("Column %s.%s skipped: %s", table, column, exc)
+    return added
+
+
 def apply_migration(db) -> bool:
     """Bring the workplace tables up to date. Returns True when in shape."""
     if db is None:
@@ -402,18 +458,7 @@ def apply_migration(db) -> bool:
         except Exception as exc:
             logger.debug("Workplace table %s skipped: %s", name, exc)
 
-    added = 0
-    for table, column, pg_type, lite_type in COLUMNS:
-        if not _table_exists(db, table):
-            continue
-        if _column_exists(db, table, column):
-            continue
-        try:
-            db.execute_update("ALTER TABLE %s ADD COLUMN %s %s" % (
-                table, column, pg_type if postgres else lite_type))
-            added += 1
-        except Exception as exc:
-            logger.debug("Column %s.%s skipped: %s", table, column, exc)
+    added = add_columns(db)
 
     # Columns whose type drifted between the database this software created
     # a year ago and the one it creates today. PostgreSQL is strict about
@@ -454,6 +499,7 @@ def apply_migration(db) -> bool:
             db.execute_update("CREATE INDEX IF NOT EXISTS %s ON %s" % (name, definition))
         except Exception as exc:
             logger.debug("Index %s skipped: %s", name, exc)
+    _one_credit_per_day(db)
 
     logger.info("Workplace schema checked (%d table(s), %d column(s) added, %d column type(s) converted).",
                 made, added, converted)

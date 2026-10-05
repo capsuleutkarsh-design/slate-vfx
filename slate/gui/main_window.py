@@ -36,8 +36,6 @@ from ..utils.backup_recovery import BackupManager, RecoveryManager
 from ..core.updater.update_checker import UpdateChecker
 
 from ..core.domain.central_attendance import CentralAttendance
-from ..core.infra.network_manager import NetworkManager
-from ..gui.notification_overlay import NotificationOverlay
 from ..core.infra.telemetry import telemetry
 from ..core.system.adaptation_engine import system_engine # [NEW] Adaptation Engine
 from ..core.services.sweeper_engine import SweeperEngine
@@ -191,24 +189,6 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         # Initialize Sweeper Service
         self.sweeper_engine = SweeperEngine(self)
         self.sweeper_engine.register_sweeper(TempFileSweeper(max_age_days=1))  # Daily cleanup of temps > 24h
-
-        # --- NETWORK & NOTIFICATION (SAFE INIT) ---
-        if self._is_sqlite_fallback_mode():
-            # Fallback mode should avoid central-sync listeners to prevent misleading behavior.
-            self.network_manager = None
-            self.overlay = None
-            logging.warning("Network manager disabled in SQLite fallback mode.")
-        else:
-            try:
-                self.network_manager = NetworkManager(username=self.user_display_name)
-                self.network_manager.message_received.connect(self.on_network_message)
-                self.network_manager.start()
-                self.overlay = NotificationOverlay(self)
-                logging.info("Network Manager & Overlay initialized successfully.")
-            except Exception as e:
-                logging.exception(f"Failed to init Network/Notification systems: {e}", exc_info=True)
-                self.network_manager = None
-                self.overlay = None
 
         self.backup_manager = BackupManager()
         self.recovery_manager = RecoveryManager(self.backup_manager)
@@ -785,11 +765,7 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         # Only log attendance automatically in Ops or All mode (VFX has attendance removed)
         if getattr(self, "app_mode", "all") != "vfx":
             self._log_attendance_async()
-        
-        # E. Start Background Workers
-        if hasattr(self, 'worker_manager'):
-            self.worker_manager.start_workers()
-        
+
         if self.user_has_navigated():
             # They have already opened something: leave them there.
             logging.info("Start-up: staying on %s - opened before start-up finished",
@@ -938,18 +914,6 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
 
 
 
-
-
-    # --- NETWORK LISTENERS ---
-    def on_network_message(self, msg: dict):
-        """Delegated to NetworkHandler."""
-        if not hasattr(self, 'network_handler'):
-            from .components.network_handler import NetworkHandler
-            self.network_handler = NetworkHandler(self)
-            
-        self.network_handler.on_network_message(msg)
-
-    # perform_remote_wipe moved to NetworkHandler
 
 
     def center_window(self):
@@ -1277,14 +1241,6 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         except Exception as e:
             logging.debug(f"Error stopping db monitor: {e}")
 
-        # 5. Stop network manager
-        try:
-            from ..core.infra.network_manager import network_manager
-            if network_manager:
-                network_manager.stop()
-        except Exception:
-            pass
-
         # 6. Stop sweeper engine
         try:
             if hasattr(self, 'sweeper_engine') and self.sweeper_engine:
@@ -1292,7 +1248,7 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         except Exception:
             pass
 
-        # 7. Terminate any tracked child subprocesses (FFmpeg, uvicorn, etc.)
+        # 7. Terminate any tracked child subprocesses (FFmpeg etc.)
         try:
             from ..utils.process_manager import subprocess_tracker
             subprocess_tracker.terminate_all(timeout=1.0)

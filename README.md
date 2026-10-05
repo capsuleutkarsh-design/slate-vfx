@@ -17,7 +17,7 @@ the IT queue, the machines, the licences, and who is joining or leaving this wee
 
 **[Get the installers from the latest release](https://github.com/capsuleutkarsh-design/slate-vfx/releases/latest)** — no Python, no setup scripts, nothing else to download.
 
-The current version is **BETA 2.1.0**. What changed in each version is in the
+The current version is **BETA 2.2.0**. What changed in each version is in the
 [release notes](deployment/release_notes/).
 
 | Installer | Install on |
@@ -199,11 +199,10 @@ The server computer must accept these:
 | 5440 | TCP | the database (PostgreSQL) |
 | 6432 | TCP | the connection pool (PgBouncer). Workstations try this first |
 | 54320 | UDP | discovery: workstations asking "where is the server?" |
-| 8000 | TCP | the web API and admin dashboard — only needed if you open it from another computer |
 
 In **Slate Server → Settings**, the **Allow Firewall** button adds Windows
 Firewall rules for the database, pool and discovery ports (Windows asks for
-administrator permission). It does not open 8000. The database and pool port
+administrator permission). The database and pool port
 numbers can be changed on the same screen; if you change them, open the new
 numbers instead.
 
@@ -264,7 +263,7 @@ files. Send the newest one with your question (see below).
 - **Email:** [capsuleutkarsh@gmail.com](mailto:capsuleutkarsh@gmail.com)
 
 Please say which version you have (it is in the installer's name, for example
-`setup_Slate_Studio_vBETA 2.1.0.exe`), what you did, and what happened.
+`setup_Slate_Studio_vBETA 2.2.0.exe`), what you did, and what happened.
 A screenshot helps.
 
 ---

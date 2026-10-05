@@ -24,7 +24,7 @@ def fresh_access_cache():
 
 WORKPLACE_ACTIONS = (
     "manage_leave", "manage_it", "manage_users",
-    "view_team_attendance", "ingest_stock", "wipe_fleet_caches",
+    "view_team_attendance", "ingest_stock",
 )
 
 

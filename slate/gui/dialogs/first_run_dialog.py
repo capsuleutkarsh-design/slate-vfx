@@ -116,7 +116,7 @@ class FirstRunSetupDialog(QDialog):
         self.db_name_input = QLineEdit(str(GlobalConfig.get("db_name", "ut_vfx")))
         form.addRow("Database name", self.db_name_input)
 
-        self.db_user_input = QLineEdit(str(GlobalConfig.get("db_user", "postgres")))
+        self.db_user_input = QLineEdit(str(GlobalConfig.get("db_user", "ut_vfx_app")))
         form.addRow("Database user", self.db_user_input)
 
         self.db_password_input = QLineEdit(str(GlobalConfig.get("db_password", "")))
@@ -127,7 +127,8 @@ class FirstRunSetupDialog(QDialog):
         root.addLayout(form)
 
         test_row = QHBoxLayout()
-        self.test_button = make_button("Test connection", "secondary", on_click=self.test_connection)
+        self.test_button = make_button("Test connection", "secondary",
+                                       on_click=lambda: self.test_connection())
         self.test_result = QLabel("")
         self.test_result.setWordWrap(True)
         test_row.addWidget(self.test_button)

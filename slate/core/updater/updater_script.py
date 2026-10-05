@@ -194,8 +194,11 @@ def main():
     log("Extracting files...")
     try:
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_namelist = zip_ref.namelist()
-            
+            # Windows names ignore case: an old "Qt6Core.DLL" IS the new
+            # "Qt6Core.dll", and a case-sensitive check deleted the file it
+            # had just unpacked.
+            zip_namelist = {name.lower() for name in zip_ref.namelist()}
+
             # Scan current install_dir BEFORE extracting for smart cleanup
             old_files = []
             for root, dirs, files in os.walk(install_dir):
@@ -209,7 +212,7 @@ def main():
             
             for old_file in old_files:
                 top_level = old_file.split("/")[0]
-                if not is_persistent(top_level) and old_file not in zip_namelist:
+                if not is_persistent(top_level) and old_file.lower() not in zip_namelist:
                     file_to_remove = install_dir / old_file
                     if file_to_remove.exists():
                         try:

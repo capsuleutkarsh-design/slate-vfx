@@ -48,9 +48,17 @@ def neutralise(value):
     if value is None or isinstance(value, (bool, int, float, Decimal, date, datetime)):
         return value
     text = str(value)
-    if text.startswith(_DANGEROUS_START):
+    # Apostrophes already in front are quoted too, so restore() gives back exactly this text.
+    if text.lstrip("'").startswith(_DANGEROUS_START):
         return "'" + text
     return text
+
+
+def restore(value):
+    """What neutralise() was given: its apostrophe taken off, for reading a sheet back."""
+    if isinstance(value, str) and value.startswith("'") and value.lstrip("'").startswith(_DANGEROUS_START):
+        return value[1:]
+    return value
 
 
 def default_filename(name: str, extension: str = "csv") -> str:
@@ -83,23 +91,25 @@ def write_csv(path, headers: Sequence[str], rows: Iterable[Sequence]) -> int:
 
 def write_xlsx(path, headers: Sequence[str], rows: Iterable[Sequence], sheet: str = "Export") -> int:
     from openpyxl import Workbook
+    from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
     from openpyxl.styles import Font
+
+    def cell(value):
+        value = neutralise(value)
+        if isinstance(value, Decimal):
+            return float(value)
+        # A control character pasted from a mail made openpyxl refuse the whole export.
+        return ILLEGAL_CHARACTERS_RE.sub("", value) if isinstance(value, str) else value
 
     book = Workbook()
     ws = book.active
     ws.title = (sheet or "Export")[:31]
-    ws.append([neutralise(h) for h in headers])
-    for cell in ws[1]:
-        cell.font = Font(bold=True)
+    ws.append([cell(h) for h in headers])
+    for header in ws[1]:
+        header.font = Font(bold=True)
     count = 0
     for row in rows:
-        out = []
-        for value in row:
-            value = neutralise(value)
-            if isinstance(value, Decimal):
-                value = float(value)
-            out.append(value)
-        ws.append(out)
+        ws.append([cell(v) for v in row])
         count += 1
     # A header row that stays put, and columns wide enough to read.
     ws.freeze_panes = "A2"

@@ -95,9 +95,6 @@ _DEFAULTS = {
     "ingest_stock": [
         "admin", "lead", "supervisor", "developer", "dev",
     ],
-    "wipe_fleet_caches": [
-        "admin", "developer",
-    ],
     # Works the first (supervisor) stage of the leave queue. This was the
     # literal {"supervisor", "lead"} inside the Leave tab.
     "approve_leave": [
@@ -146,7 +143,7 @@ _DEFAULTS = {
     "view_licences": [
         "admin", "developer", "production head", "it", "it support",
     ],
-    # Data Center, table editing, the SQL console, purge, the API gateway,
+    # Data Center, table editing, the SQL console, purge,
     # Audit Logs and every remote workstation action.
     "manage_system": [
         "admin", "developer",
@@ -223,7 +220,7 @@ def _role_abilities() -> dict:
     try:
         from slate.core.infra.database_manager import database_manager
         rows = database_manager.execute_query(
-            "SELECT role_name, permissions FROM ut_roles", fetch="all") or []
+            "SELECT role_name, permissions FROM ut_roles", fetch="all", strict=True) or []
         for row in rows:
             try:
                 perms = json.loads(row["permissions"] or "[]")
@@ -234,7 +231,14 @@ def _role_abilities() -> dict:
                 found |= set(ABILITY_KEYS) - NOT_IMPLIED_BY_ALL
             result[str(row["role_name"]).strip().lower()] = found
     except Exception as exc:
-        logging.debug("Role abilities not read from the database: %s", exc)
+        # A failed read is not "no role has any ticks": keep the last answer,
+        # and never cache the failure as one.
+        logging.warning("Role abilities not read from the database (%s); "
+                        "using the last ones read.", exc)
+        if _db_cache is not None:
+            _db_cache_at = now
+            return _db_cache
+        return result
     _db_cache, _db_cache_at = result, now
     return result
 
@@ -360,7 +364,7 @@ def _role_permission_lists() -> dict:
     try:
         from slate.core.infra.database_manager import database_manager
         rows = database_manager.execute_query(
-            "SELECT role_name, permissions FROM ut_roles", fetch="all") or []
+            "SELECT role_name, permissions FROM ut_roles", fetch="all", strict=True) or []
         for row in rows:
             try:
                 perms = json.loads(row["permissions"] or "[]")
@@ -368,7 +372,13 @@ def _role_permission_lists() -> dict:
                 perms = []
             result[str(row["role_name"]).strip().lower()] = list(perms or [])
     except Exception as exc:
-        logging.debug("Role permissions not read from the database: %s", exc)
+        # As _role_abilities: keep the last answer, never cache a failure.
+        logging.warning("Role permissions not read from the database (%s); "
+                        "using the last ones read.", exc)
+        if _perm_cache is not None:
+            _perm_cache_at = now
+            return _perm_cache
+        return result
     _perm_cache, _perm_cache_at = result, now
     return result
 

@@ -187,6 +187,125 @@ def test_a_session_can_be_picked_for_disconnection(app, qtbot):
     assert view.selected_pid()["pid"] == 101
 
 
+def _session(pid, client):
+    return {"pid": pid, "client": client, "application": "Slate", "state": "idle",
+            "idle_seconds": 1, "transaction_seconds": 0, "query": "", "user": "ut_vfx_app",
+            "database": "ut_vfx"}
+
+
+def test_disconnect_ends_the_session_shown_in_the_selected_row(app, qtbot, monkeypatch):
+    """
+    B1: the poll drew the table from server_facts.sessions() and then overwrote
+    it from a second query in another order, so the selected row's pid was not
+    the session on screen - Disconnect could end somebody else's connection.
+    """
+    import types
+    from PySide6.QtWidgets import QMessageBox
+    from slate_server.core import server_facts
+    from slate_server.gui import app_window as module
+    from slate_server.gui.views.analytics_view import AnalyticsView
+
+    view = AnalyticsView()
+    qtbot.addWidget(view)
+    logged = []
+    fake = types.SimpleNamespace(analytics_view=view, _log=logged.append, _db_port=5999,
+                                 _poll_database_stats=lambda: None)
+    show = lambda facts: module.UTServerWindow._show_poll(fake, facts)   # noqa: E731
+    show({"sessions": [_session(101, "192.168.0.31"), _session(202, "192.168.0.32")],
+          "stats": None, "refusals": []})
+    view.table.selectRow(1)
+    # A refresh that puts a new session first: the selection follows 202.
+    show({"sessions": [_session(303, "192.168.0.33"), _session(101, "192.168.0.31"),
+                       _session(202, "192.168.0.32")], "stats": None, "refusals": []})
+    selected = {i.row() for i in view.table.selectedIndexes()}
+    assert len(selected) == 1
+    shown = view.table.item(selected.pop(), 0).text()
+    assert shown == "202" and view.selected_pid()["pid"] == 202
+
+    ended = []
+    monkeypatch.setattr(server_facts, "terminate",
+                        lambda port, pid: (ended.append(pid), (True, "ok"))[1])
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Yes)
+    module.UTServerWindow._on_disconnect_session(fake)
+    assert ended == [int(shown)] == [202]
+    assert fake._client_count == 3
+
+
+def test_the_poll_takes_its_rows_from_server_facts_only(monkeypatch):
+    from slate_server.core import server_facts
+    from slate_server.gui import app_window as module
+    rows = [_session(7, "10.0.0.5")]
+    monkeypatch.setattr(server_facts, "sessions", lambda port: rows)
+    monkeypatch.setattr(module.psycopg2, "connect",
+                        lambda **k: (_ for _ in ()).throw(RuntimeError("no database")))
+    facts = module.poll_facts(5999)
+    assert facts["sessions"] is rows and facts["stats"] is None
+
+
+def test_the_poll_logs_what_a_log_only_server_switch_would_refuse(app, qtbot):
+    import types
+    from slate_server.gui import app_window as module
+    from slate_server.gui.views.analytics_view import AnalyticsView
+    view = AnalyticsView()
+    qtbot.addWidget(view)
+    logged = []
+    fake = types.SimpleNamespace(analytics_view=view, _log=logged.append)
+    facts = {"sessions": [], "stats": None,
+             "refusals": ["strict_pg_hba would refuse postgres from 10.0.0.5 into ut_vfx"]}
+    module.UTServerWindow._show_poll(fake, facts)
+    module.UTServerWindow._show_poll(fake, facts)
+    assert len(logged) == 1 and "10.0.0.5" in logged[0], "once, not every three seconds"
+
+
+# ------------------------------------------------- saving settings never lies
+
+def _settings_fake(tmp_path, qtbot, config_text):
+    import types
+    from slate_server.gui import app_window as module
+    from slate_server.gui.views.settings_view import SettingsView
+    view = SettingsView()
+    qtbot.addWidget(view)
+    view.input_db_path.setText(str(tmp_path / "not-there-yet"))
+    view.input_db_password.setText("typed-password")
+    config = tmp_path / "slate_server_config.json"
+    config.write_text(config_text, encoding="utf-8")
+    notes, logged = [], []
+    fake = types.SimpleNamespace(settings_view=view, config_path=str(config),
+                                 _settings_saved_note=notes.append, _log=logged.append,
+                                 server_running=lambda: False,
+                                 _build_engine=lambda *a, **k: object())
+    fake._server_config = lambda: module.UTServerWindow._server_config(fake)
+    return module, fake, config, notes
+
+
+def test_a_damaged_server_settings_file_is_not_overwritten(app, qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    module, fake, config, notes = _settings_fake(tmp_path, qtbot, '{"db_path": "D:\\\\Stu')
+    warned = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warned.append(a[2]))
+    module.UTServerWindow._on_save_settings(fake)
+    assert config.read_text(encoding="utf-8") == '{"db_path": "D:\\\\Stu', "left as it was"
+    assert warned and "not overwritten" in warned[0]
+    assert notes and notes[-1].startswith("NOT saved")
+
+
+def test_settings_that_could_not_be_written_do_not_say_saved(app, qtbot, tmp_path,
+                                                             monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    from slate.core.infra import local_secrets
+    module, fake, config, notes = _settings_fake(tmp_path, qtbot, '{"keep": 1}')
+    warned = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warned.append(a[2]))
+    monkeypatch.setattr(local_secrets, "write_local_config",
+                        lambda values: (_ for _ in ()).throw(PermissionError("read-only")))
+    module.UTServerWindow._on_save_settings(fake)
+    assert notes[-1].startswith("NOT saved"), notes
+    assert warned and "password" in warned[0] and "NOT" in warned[0]
+    import json
+    assert json.loads(config.read_text(encoding="utf-8"))["keep"] == 1, "other keys kept"
+
+
 # ----------------------------------------------------------------- the settings
 
 def test_the_settings_screen_exposes_what_the_server_actually_runs_on(app, qtbot):
@@ -296,3 +415,41 @@ def test_every_screen_scrolls_rather_than_crushing_itself():
                  "self.operations_view"):
         assert "_scrollable(%s)" % view in source, \
             "%s is added to the stack unwrapped" % view
+
+
+def test_the_daily_backup_runs_by_itself_and_keeps_to_the_retention(qtbot):
+    """Maintenance.due() had no caller: the daily backup was only ever taken by hand."""
+    from types import SimpleNamespace
+    from slate_server.gui import app_window as module
+    calls = []
+
+    class Engine:
+        def is_available(self): return True
+        def back_up(self): return {"ok": True, "message": "Backed up x.dump"}
+        def prune(self, days, least, apply=False):
+            calls.append(("prune", days, least, apply))
+            return []
+
+    class Jobs:
+        def __init__(self, due): self._due = due
+        def due(self): return self._due
+        def record_backup(self, ok, message): calls.append(("record", ok, message))
+
+    spin = lambda n: SimpleNamespace(value=lambda: n)  # noqa: E731
+    fake = SimpleNamespace(_backup_worker=None, server_running=lambda: True,
+                           _maintenance=lambda: Jobs(["backup"]), _backup_engine=Engine,
+                           _log=lambda message: None, _refresh_operations=lambda: calls.append("refresh"),
+                           operations_view=SimpleNamespace(spin_keep_days=spin(30), spin_keep_least=spin(7)))
+    fake._on_scheduled_backup_done = lambda r: module.UTServerWindow._on_scheduled_backup_done(fake, r)
+
+    assert module.UTServerWindow._scheduled_backup(fake) is not None
+    qtbot.waitUntil(lambda: "refresh" in calls, timeout=10000)
+    assert ("record", True, "Scheduled: Backed up x.dump") in calls
+    assert ("prune", 30, 7, True) in calls
+
+    fake._backup_worker = None
+    fake._maintenance = lambda: Jobs([])                 # backed up today: nothing to do
+    assert module.UTServerWindow._scheduled_backup(fake) is None
+    fake.server_running = lambda: False                  # database down: not attempted
+    fake._maintenance = lambda: Jobs(["backup"])
+    assert module.UTServerWindow._scheduled_backup(fake) is None

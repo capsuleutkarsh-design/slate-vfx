@@ -103,9 +103,12 @@ def test_another_kind_of_fault_still_falls_back_but_leaves_a_trace(caplog):
     """A bad statement is a bug. The screen survives it; the log records it."""
     repo = LeaveRepository(Broken())
     with caplog.at_level(logging.ERROR):
-        assert repo.holidays() == set()
         assert repo.for_user("someone") == []
     assert caplog.records, "the reason was discarded"
+    # Not holidays(): an empty set there charges holidays as leave, so it
+    # raises instead (a strict read, tests/test_hidden_errors_leave.py).
+    with pytest.raises(ValueError):
+        repo.holidays()
 
 
 # ------------------------------------------------------------------ licences

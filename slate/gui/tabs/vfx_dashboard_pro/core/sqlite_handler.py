@@ -96,6 +96,8 @@ class SQLiteHandler:
         self.project_code = project_code
         # Why the last write was refused, for the person who asked for it.
         self.last_error = ""
+        # Shots the last read found but could not show, as "name: reason".
+        self.read_problems = []
         # The numeric id is kept for callers that still pass it, but history
         # is written under the username - the identity the rest of the app
         # uses. It used to be "get_user_id(display name) or 1", so any
@@ -230,11 +232,14 @@ class SQLiteHandler:
                 self._apply_task_overrides(shot, tasks_by_shot.get(shot.id, {}))
                 shots.append(shot)
             except Exception as e:
-                logging.exception(f"Failed to deserialize shot {row.get('shot_name', row.get('id'))}: {e}")
+                name = row.get('shot_name') or row.get('id')
+                logging.exception(f"Failed to deserialize shot {name}: {e}")
+                self.read_problems.append(f"{name}: {e}")
         return shots
 
     def read_shots(self) -> List[Shot]:
         """Every shot of the project. Raises when the database could not be read."""
+        self.read_problems = []
         return self._read()
 
     def read_shots_by_id(self, shot_ids) -> List[Shot]:
@@ -248,6 +253,7 @@ class SQLiteHandler:
         """
         ids = sorted({int(i) for i in shot_ids if str(i).strip().lstrip("-").isdigit()})
         shots: List[Shot] = []
+        self.read_problems = []
         for start in range(0, len(ids), 500):
             chunk = ids[start:start + 500]
             marks = ",".join(["%s"] * len(chunk))
@@ -292,10 +298,8 @@ class SQLiteHandler:
         return str(dept_key or "").title()
 
     def _family_name(self) -> str:
-        from slate.core.domain.departments import families
-        members = families().get(self.department_family, [])
-        lead = next((d for d in members if d.key == self.department_family), members[0] if members else None)
-        return lead.name if lead else self.department_family.title()
+        from slate.core.domain.departments import family_name
+        return family_name(self.department_family)
 
     def _notify_assignment(self, shot_name: str, old_artist: str, new_artist: str, dept_key: str = ""):
         if not self.notifier:
@@ -601,14 +605,9 @@ class SQLiteHandler:
     # ------------------------------------------------------------------
 
     def _scoped_department_keys(self):
-        """The department keys this person may edit, or None if unrestricted."""
-        from slate.core.domain.access import is_department_scoped
-        from slate.core.domain.departments import families
-
-        if not is_department_scoped(self.user_roles):
-            return None
-        members = families().get(self.department_family, [])
-        return {dept.key for dept in members}
+        """The department keys this person may edit, or None if unrestricted (departments.scope_keys)."""
+        from slate.core.domain.departments import scope_keys
+        return scope_keys(self.user_roles, self.department_family)
 
     @staticmethod
     def _shot_level_fields(shot: Shot) -> dict:

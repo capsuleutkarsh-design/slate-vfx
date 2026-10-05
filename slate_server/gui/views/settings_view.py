@@ -21,7 +21,7 @@ class SettingsView(QWidget):
         """
         for field in (self.input_db_path, self.input_port, self.input_pooler_port,
                       self.input_db_name, self.input_db_password,
-                      self.input_max_conn, self.input_api_port):
+                      self.input_max_conn):
             field.ensurePolished()
             field.setMinimumHeight(field.sizeHint().height())
 
@@ -147,18 +147,6 @@ class SettingsView(QWidget):
         lbl_max_conn = QLabel("Most connections")
         lbl_max_conn.setStyleSheet(lbl_port.styleSheet())
         form_layout.addRow(lbl_max_conn, self.input_max_conn)
-
-        # The web API and the dashboard link use this port (it was 8000,
-        # written into the code).
-        self.input_api_port = QLineEdit()
-        self.input_api_port.setPlaceholderText("8000")
-        self.input_api_port.setText("8000")
-        self.input_api_port.setFixedWidth(self.PORT_WIDTH)
-        self.input_api_port.setToolTip("The port the web API and its dashboard listen on. "
-                                       "Restart the server to apply a change.")
-        lbl_api_port = QLabel("Web API port")
-        lbl_api_port.setStyleSheet(lbl_port.styleSheet())
-        form_layout.addRow(lbl_api_port, self.input_api_port)
 
         # Nothing here may be shrunk below the height its own text needs. A
         # QLineEdit's minimum is smaller than that, so a window a little too

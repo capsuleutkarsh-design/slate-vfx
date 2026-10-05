@@ -175,16 +175,6 @@ class TestSystemMonitoring:
         # Should have monitoring section
         assert hasattr(panel, 'monitoring_section') or hasattr(panel, 'show_metrics') or True
     
-    @patch('slate.gui.admin_panel.NetworkManager')
-    def test_network_status_shown(self, mock_network, qapp_admin, qtbot):
-        """Test network status is displayed."""
-        from slate.gui.admin_panel import AdminPanel
-        
-        panel = AdminPanel(user_role='Admin')
-        qtbot.addWidget(panel)
-        
-        # Should show network status
-        assert hasattr(panel, 'network_status') or True
 
 
 class TestDatabaseManagement:

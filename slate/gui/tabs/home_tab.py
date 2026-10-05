@@ -60,7 +60,7 @@ except ImportError:
     HAS_WEBENGINE = False
 
 from ..components.qt_safety import safe_single_shot
-from slate.core.domain.central_attendance import CentralAttendance, _is_postgres
+from slate.core.domain.central_attendance import CentralAttendance
 from slate.core.infra.database_manager import database_manager
 from slate.gui.core.offline_notice import TITLE as OFFLINE_TITLE, BODY as OFFLINE_BODY, on_database_error
 
@@ -148,19 +148,11 @@ def shot_artists(data: dict) -> set:
 
 def db_today(db=None) -> date:
     """Today by the database's clock - the one punches are written with."""
-    db = db or database_manager
-    # Local date, as CentralAttendance writes it: date('now') alone is UTC, so from
-    # midnight to 05:30 IST Home read yesterday's punch and offered Punch In again.
-    sql = "SELECT CURRENT_DATE AS d" if _is_postgres(db) else "SELECT date('now','localtime') AS d"
-    row = db.execute_query(sql, fetch="one")
-    value = _value(row, "d")
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
+    # CentralAttendance's clock, not a copy of it: the copy read UTC and from
+    # midnight to 05:30 IST Home read yesterday's punch.
     try:
-        return datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
-    except (TypeError, ValueError):
+        return CentralAttendance(db or database_manager).server_today() or date.today()
+    except RuntimeError:                  # the database gave no time back
         return date.today()
 
 
@@ -434,28 +426,21 @@ class HomeLoaderWorker(QThread):
         uid = (self.username or "").lower().strip()
         if not uid:
             return {}
-        db = self._db()
+        # CentralAttendance.today_state - the Attendance tab's reading of the
+        # day, by the database's date - rather than Home's own copy of its SQL.
         try:
-            row = db.execute_query(
-                "SELECT punch_in, punch_out, metadata FROM attendance_log "
-                "WHERE user_id = %s AND day_date = %s",
-                (uid, db_today(db).isoformat()), fetch="one")
+            state = CentralAttendance(self._db()).today_state(uid)
         except DatabaseUnavailableError:
             raise
         except Exception as exc:
             logging.debug("Home: today's punch not read: %s", exc)
             return {}
-        if not row:
+        if state.get("state") not in ("working", "done"):
             return {}
-        record = {"punch_in": _value(row, "punch_in", 0), "punch_out": _value(row, "punch_out", 1),
-                  "metadata": _value(row, "metadata", 2)}
-        # A second punch-in the same day is a new session (kept in the
-        # metadata): "In since" is the open session's start, not the first
-        # arrival - the lunch break is not time worked.
-        sessions = CentralAttendance._sessions(record)
-        since = sessions[-1]["in"] if sessions else record["punch_in"]
-        return {"punch_in": since, "punch_out": record["punch_out"],
-                "first_in": record["punch_in"], "sessions": len(sessions)}
+        # A second punch-in the same day is a new session: "In since" is the
+        # open session's start, not the first arrival - lunch is not time worked.
+        return {"punch_in": state["since"], "punch_out": state["out"] or None,
+                "first_in": state["in"], "sessions": state["sessions"]}
 
     def _leave_rows(self) -> list:
         """
@@ -1381,11 +1366,13 @@ class HomeTab(QWidget):
             self.attendance = context.attendance() if context is not None and hasattr(context, "attendance")                 else CentralAttendance()
         return self.attendance
 
-    def do_punch(self, action: str):
+    def do_punch(self, action: str, on_leave_ok: bool = False):
         """
         Punch in or out on a worker: the write and the re-read used to run in
         the click handler and froze the window on a slow link. Punch out asks
         first - one stray click ended the day, and only HR could undo it.
+        A punch-in on a day of approved leave asks too (CentralAttendance.punch),
+        as the Attendance tab always did.
         """
         if not self.has_punch_panel or self._attendance() is None or self._punch_worker is not None:
             return None
@@ -1401,13 +1388,11 @@ class HomeTab(QWidget):
         attendance, username = self.attendance, self.username
 
         def work():
-            out = {}
             try:
-                out["stored"] = attendance.log_action(username, action)
-            except ValueError as exc:
-                out["rule"] = str(exc)      # "Already punched in at 09:42."
+                # {"stored"}, {"rule": "Already punched in at 09:42."} or {"on_leave"}
+                out = attendance.punch(username, action, on_leave_ok=on_leave_ok)
             except Exception as exc:
-                out["error"] = str(exc)
+                out = {"error": str(exc)}
             try:
                 out["status"] = self._read_todays_punch()
             except Exception as exc:
@@ -1430,6 +1415,17 @@ class HomeTab(QWidget):
         status = result.get("status")
         if status is not None:
             self._refresh_punch_buttons(status)
+        if result.get("on_leave"):
+            if status is None:
+                self.btn_punch_in.setEnabled(True)
+            from ..components.feedback import confirm
+            if confirm(self, "Punch in",
+                       "You are on approved leave today (%s). Punch in anyway?"
+                       % result["on_leave"].get("type", "Leave"),
+                       yes_label="Punch in", no_label="Cancel",
+                       informative="Ask HR to cancel the leave if you are working."):
+                self.do_punch("in", on_leave_ok=True)
+            return
         if result.get("rule"):
             if say:
                 say(result["rule"], "warning", 5000)

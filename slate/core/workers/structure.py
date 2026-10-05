@@ -38,7 +38,7 @@ from slate.core.services.path_template_manager import get_path_manager
 from slate.core.domain.ingest_survey import (
     IGNORED_FILES, IGNORED_SUFFIXES, IngestSurvey, client_folder_for, is_junk_file, survey_drive,
 )
-from slate.core.domain.naming import name_problem, shot_name_problem
+from slate.core.domain.naming import name_problem, path_inside, shot_name_problem
 from slate.utils.sequence_utils import group_frames
 
 __all__ = ["FolderCreationWorker", "ShotSubfoldersWorker", "is_junk_file",
@@ -123,6 +123,15 @@ def reels_root_for(project_path, project_code: str, target_root=None) -> Path:
     except Exception as exc:
         logging.debug("reels_root template not usable (%s); using 05_Reels", exc)
         return project_path / "05_Reels"
+
+
+def free_space(dest):
+    """Free bytes on dest's drive, or None when that cannot be told."""
+    try:
+        return psutil.disk_usage(Path(dest).anchor or str(dest)).free
+    except Exception as exc:
+        logging.warning("Free space on %s unknown: %s", dest, exc)
+        return None
 
 
 class FolderCreationWorker(QThread):
@@ -415,10 +424,11 @@ class FolderCreationWorker(QThread):
                                   self.folders_created, message)
 
     def _enough_space(self, size, dest):
-        try:
-            anchor = Path(dest).anchor or str(dest)
-            free = psutil.disk_usage(anchor).free
-        except Exception:
+        anchor = Path(dest).anchor or str(dest)
+        free = free_space(dest)
+        if free is None:
+            # Build & Ingest asked before starting; said in the run log too.
+            self.log_signal.emit(f"[WARN] Free space on {anchor} is unknown - carrying on.")
             return True, ""
         if free > size * 1.1:
             return True, ""
@@ -480,11 +490,11 @@ class FolderCreationWorker(QThread):
         for reel in self.excel_df[reel_col].dropna().unique():
             if not self._should_go_on():
                 break
-            reel_path = root / str(reel).strip()
+            reel_path = path_inside(root, str(reel).strip())
             self._mkdir(reel_path)
             self.reels_count += 1
             for shot in self.excel_df[self.excel_df[reel_col] == reel][shot_col].dropna():
-                shot_path = reel_path / str(shot).strip()
+                shot_path = path_inside(reel_path, str(shot).strip())
                 self._mkdir(shot_path)
                 self.shots_count += 1
                 self._create_subs(shot_path, subs)

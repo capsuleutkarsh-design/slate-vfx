@@ -368,22 +368,33 @@ class DatabaseEngine:
             self._ensure_slate_database()
             return False
 
+        recovered = False
         if not self._can_authenticate():
             if not self._recover_locked_out_cluster(say):
                 say("The database will not accept this server's own password. "
-                    "Nothing has been changed. Check the password in Settings.")
+                    "Nothing has been changed. Check the password in Settings, or "
+                    "use Recover Slate on this PC.")
                 return False
+            recovered = True
 
-        self._ensure_slate_database()
-        if self._ensure_application_role():
-            self._harden_access()
-            return True
+        hardened = False
+        try:
+            self._ensure_slate_database()
+            if self._ensure_application_role():
+                hardened = self._harden_access() is not False
+                return True
 
-        reason = getattr(self, "_last_role_error", "")
-        say("The application account could not be set up, so access has been "
-            "left as it is rather than locking the database to credentials it "
-            "does not have." + (" The database said: %s" % reason if reason else ""))
-        return False
+            reason = getattr(self, "_last_role_error", "")
+            say("The application account could not be set up, so access has been "
+                "left as it is rather than locking the database to credentials it "
+                "does not have." + (" The database said: %s" % reason if reason else ""))
+            return False
+        finally:
+            if recovered:
+                # The repair opened a loopback trust window. Hardening replaced
+                # it; if hardening did not happen, put the rules back exactly as
+                # they were rather than leave the window open.
+                self._close_repair_window(hardened)
 
     def _can_authenticate(self) -> bool:
         """Whether this server can log in to its own database at all."""
@@ -451,6 +462,16 @@ class DatabaseEngine:
         say("This database was locked before it had any accounts. Repairing it.")
         keep = hba_path.with_suffix(".conf.locked-out")
         recovered = False
+        # Written BEFORE the file is loosened: if this process dies with the
+        # window open, the next start finds this and puts the rules back.
+        from slate_server.core.recovery import marker
+        try:
+            marker.open_marker(self.data_dir, current,
+                               "automatic repair of a database locked before it had accounts")
+        except OSError as exc:
+            logging.error("Could not record the access rules before repairing them, so "
+                          "they were not changed: %s", exc)
+            return False
         try:
             try:
                 if not keep.exists():
@@ -477,6 +498,7 @@ class DatabaseEngine:
                 try:
                     hba_path.write_text(current, encoding="utf-8")
                     self._reload_configuration()
+                    marker.clear_marker(self.data_dir)
                 except OSError as exc:
                     logging.error("Could not restore %s: %s", hba_path, exc)
 
@@ -500,6 +522,35 @@ class DatabaseEngine:
         time.sleep(0.5)
         return True
 
+    def _close_repair_window(self, hardened: bool) -> None:
+        """End the automatic repair's trust window, one way or the other."""
+        from slate_server.core.recovery import marker
+        try:
+            if hardened:
+                marker.clear_marker(self.data_dir)
+            elif marker.restore_original(self.data_dir):
+                self._reload_configuration()
+                marker.clear_marker(self.data_dir)
+                logging.warning("The repair did not finish, so the access rules were put "
+                                "back as they were.")
+        except Exception as exc:
+            logging.error("Could not close the repair window (the next start will): %s", exc)
+
+    def close_stale_trust_window(self, progress_callback=None) -> bool:
+        """
+        A trust window left open by a recovery that never finished - the PC
+        died, the tool was killed - is closed before anything else happens.
+        """
+        from slate_server.core.recovery import marker
+        say = (lambda m: progress_callback("> " + m)) if progress_callback else None
+        try:
+            return marker.close_stale_window(
+                self.data_dir, reload=self._reload_configuration if self.is_ready() else None,
+                say=say)
+        except Exception as exc:
+            logging.error("Could not check for an unfinished recovery: %s", exc)
+            return False
+
     def _ensure_application_role(self):
         """
         Create the account the artists' software logs in as, and give it the
@@ -521,7 +572,7 @@ class DatabaseEngine:
         changes nothing else.
         """
         from slate_server.core.db_credentials import (
-            admin_password, admin_user, application_user, database_name)
+            admin_password, admin_user, app_password, application_user, database_name)
 
         try:
             import psycopg2
@@ -532,7 +583,11 @@ class DatabaseEngine:
                           "log in until deployment/secure_database.sql is run.")
             return False
 
-        password = admin_password()
+        # Two passwords, which are the same one until a separate superuser
+        # password is set (db_admin_password): the workstations' account gets
+        # theirs, the superuser keeps its own.
+        password = app_password()
+        superuser_password = admin_password()
         if not password:
             logging.error("No database password is configured, so the "
                           "application account cannot be created. Clients will "
@@ -545,7 +600,7 @@ class DatabaseEngine:
         try:
             conn = psycopg2.connect(host="127.0.0.1", port=int(self.port),
                                     dbname=dbname, user=admin_user(),
-                                    password=password, connect_timeout=10,
+                                    password=superuser_password, connect_timeout=10,
                                     application_name="Slate Central Server")
         except Exception as exc:
             logging.error("Could not connect as %s to set up the application "
@@ -620,7 +675,7 @@ class DatabaseEngine:
             with conn.cursor() as cur:
                 cur.execute(sql.SQL("ALTER ROLE {} PASSWORD {}")
                             .format(sql.Identifier(admin_user()),
-                                    sql.Literal(password)))
+                                    sql.Literal(superuser_password)))
             logging.info("Administrator password set from the settings.")
             return True
         except Exception as exc:
@@ -631,6 +686,33 @@ class DatabaseEngine:
             return False
         finally:
             conn.close()
+
+    def standard_rules(self) -> str:
+        """The access rules a hardened server has always written (strict_pg_hba off)."""
+        rules = [
+            self.HBA_SIGNATURE,
+            "#",
+            "# The first matching line wins, which is why this file is replaced",
+            "# rather than added to. initdb writes 'trust' rules for local and",
+            "# loopback connections - 'trust' means the password is not checked",
+            "# at all - and any hardening appended below them never applies.",
+            "#",
+            "# Studio networks only, and a password every time. Do not add a",
+            "# 0.0.0.0/0 rule here, and never use 'trust'.",
+            "",
+            "local   all   all                    scram-sha-256",
+            "host    all   all   127.0.0.1/32     scram-sha-256",
+            "host    all   all   ::1/128          scram-sha-256",
+        ]
+        for network in self.STUDIO_NETWORKS:
+            rules.append("host    all   all   %-16s scram-sha-256" % network)
+        rules += [
+            "",
+            "local   replication  all                 scram-sha-256",
+            "host    replication  all  127.0.0.1/32   scram-sha-256",
+            "host    replication  all  ::1/128        scram-sha-256",
+        ]
+        return "\n".join(rules) + "\n"
 
     def _harden_access(self):
         """
@@ -659,35 +741,11 @@ class DatabaseEngine:
         if not any(l.split()[-1].lower() == "trust" for l in live if l.split()):
             return False           # already hardened, or hand-edited
 
-        rules = [
-            self.HBA_SIGNATURE,
-            "#",
-            "# The first matching line wins, which is why this file is replaced",
-            "# rather than added to. initdb writes 'trust' rules for local and",
-            "# loopback connections - 'trust' means the password is not checked",
-            "# at all - and any hardening appended below them never applies.",
-            "#",
-            "# Studio networks only, and a password every time. Do not add a",
-            "# 0.0.0.0/0 rule here, and never use 'trust'.",
-            "",
-            "local   all   all                    scram-sha-256",
-            "host    all   all   127.0.0.1/32     scram-sha-256",
-            "host    all   all   ::1/128          scram-sha-256",
-        ]
-        for network in self.STUDIO_NETWORKS:
-            rules.append("host    all   all   %-16s scram-sha-256" % network)
-        rules += [
-            "",
-            "local   replication  all                 scram-sha-256",
-            "host    replication  all  127.0.0.1/32   scram-sha-256",
-            "host    replication  all  ::1/128        scram-sha-256",
-        ]
-
         try:
             backup = hba_path.with_suffix(".conf.before-hardening")
             if not backup.exists():
                 shutil.copy2(hba_path, backup)
-            hba_path.write_text("\n".join(rules) + "\n", encoding="utf-8")
+            hba_path.write_text(self.standard_rules(), encoding="utf-8")
         except OSError as exc:
             logging.error("Could not write %s: %s", hba_path, exc)
             return False
@@ -765,6 +823,10 @@ class DatabaseEngine:
         """Starts the PostgreSQL server using pg_ctl."""
         if not self.is_installed():
             raise Exception(f"PostgreSQL binaries not found at {self.bin_dir}")
+
+        # Before anything else: a recovery that never finished must not leave
+        # its temporary way in behind (slate_server/core/recovery/marker.py).
+        self.close_stale_trust_window(progress_callback)
 
         # If already running and responsive, return immediately
         if self.is_ready():

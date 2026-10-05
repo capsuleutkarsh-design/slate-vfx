@@ -50,6 +50,26 @@ QT_TIME_FORMAT = "HH:mm"
 MISSING = "—"  # an em dash
 
 
+def as_date(value) -> Optional[date]:
+    """
+    A STORED date as a date, or None: a date, a datetime, or ISO text (what
+    SQLite hands back). PostgreSQL returns date objects and SQLite returns
+    text, so every comparison goes through this. ISO only, on purpose - a
+    last day typed some other way must not quietly start counting.
+    (parse_date below also reads what people type.)
+    """
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except (TypeError, ValueError):
+        return None
+
+
 def parse_date(value: DateLike) -> Optional[date]:
     """
     A date from whatever the database or a person handed over, or None.

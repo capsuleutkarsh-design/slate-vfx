@@ -14,7 +14,6 @@ Program Files.
 """
 
 import os
-from types import SimpleNamespace
 
 import pytest
 
@@ -223,9 +222,6 @@ class TestLaunch:
         exe = _install(program_files, r"Nuke15.1v3\Nuke15.1.exe")[0]
         cfg = FakeConfig()
         monkeypatch.setattr(dcc_launcher, "ConfigManager", lambda: cfg)
-        # Neither database backend has a db_path; the launch used to stop there.
-        monkeypatch.setattr(dcc_launcher, "database_manager",
-                            SimpleNamespace(backend=SimpleNamespace()))
         calls = []
         monkeypatch.setattr(dcc_launcher.subprocess, "Popen",
                             lambda cmd, **kw: calls.append((cmd, kw)))

@@ -166,8 +166,6 @@ class TestUserManager:
             j="Tester"
         )
         
-        # Reload to get stored hash
-        um.load_users()
         stored_hash = um.users['hashtest']['password_hash']
         
         # bcrypt hashes start with $2b$ or $2a$
@@ -199,7 +197,6 @@ class TestUserManager:
         um.delete_user("deleteme")
         
         # Verify gone
-        um.load_users()
         assert "deleteme" not in um.users
         
         # Can't authenticate deleted user

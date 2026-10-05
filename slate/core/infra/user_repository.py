@@ -2,18 +2,16 @@ import json
 import logging
 from datetime import datetime
 from typing import Dict, Optional, Any
-from psycopg2.extras import execute_values
 
 
 # A database that is down must not look like a studio with no data. The manager
 # raises DatabaseUnavailableError precisely so a read cannot quietly come back
 # empty; catching it here and returning a fallback puts the fault straight back.
 # So it is re-raised, and anything else is logged before the fallback is used.
-try:
-    from .postgres_manager import DatabaseUnavailableError
-except ImportError:                                  # pragma: no cover
-    class DatabaseUnavailableError(ConnectionError):
-        """Fallback when the manager cannot be imported."""
+# From db_results, where it is defined: importing it from postgres_manager
+# failed when this module was imported first (postgres_manager imports it
+# back), and the fallback class then matched no real outage.
+from .db_results import DatabaseUnavailableError
 
 class UserRepository:
     """User persistence methods extracted from PostgresManager."""
@@ -25,6 +23,13 @@ class UserRepository:
         try:
             if not users_dict:
                 return True
+            # The last administrator is protected here too, in the repository
+            # every bulk write of ut_users goes through (the web API included).
+            from slate.core.security import admin_guard
+            why = admin_guard.check(self.db, admin_guard.sync_change(users_dict))
+            if why:
+                logging.warning("Sync Users refused: %s", why)
+                raise admin_guard.LastAdminRefused(why)
             timestamp = datetime.now().isoformat()
             
             sql = """
@@ -56,12 +61,9 @@ class UserRepository:
                     timestamp,
                 ))
                 
-            with self.db.get_connection() as conn:
-                with conn.cursor() as cur:
-                    execute_values(cur, sql, values)
-                    conn.commit()
+            self.db.executemany(sql, values)
             return True
-        except DatabaseUnavailableError:
+        except (DatabaseUnavailableError, PermissionError):
             raise
         except Exception as e:
             logging.exception(f"Sync Users Failed: {e}")

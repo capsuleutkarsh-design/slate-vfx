@@ -136,25 +136,6 @@ class DashboardView(QWidget):
 
         self.toggle_power = ToggleSwitch()
         
-        self.btn_api_dashboard = QPushButton("Open web dashboard")
-        self.btn_api_dashboard.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {C.ACCENT_PRIMARY};
-                color: white;
-                font-weight: {T.WEIGHT_BOLD};
-                padding: 6px 16px;
-                border-radius: 4px;
-                border: none;
-            }}
-            QPushButton:hover {{
-                background-color: #3EA8BF;
-            }}
-            QPushButton:disabled {{
-                background-color: {C.BORDER_DEFAULT};
-            }}
-        """)
-        self.btn_api_dashboard.setEnabled(False)
-        
         power_row.addWidget(lbl_power)
         power_row.addWidget(self.toggle_power)
         power_row.addStretch()
@@ -171,7 +152,6 @@ class DashboardView(QWidget):
             QPushButton:disabled {{ color: {C.TEXT_SECONDARY}; }}
         """)
         button_row.addWidget(self.btn_restart_pool)
-        button_row.addWidget(self.btn_api_dashboard)
         button_row.addStretch()
 
         main_layout.addWidget(control_panel)

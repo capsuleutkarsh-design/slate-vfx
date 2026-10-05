@@ -280,8 +280,11 @@ class SafeFileOperations:
             return True, "Sufficient disk space available"
             
         except Exception as e:
-            logging.warning(f"Disk space check failed: {e}")
-            return True, "Disk space check skipped"  # Continue with warning
+            # Per file, there is nobody to ask: the run asked before it started
+            # (structure.free_space), and a copy that runs out of room fails
+            # its check and leaves no file under the real name.
+            logging.warning("Free space at %s unknown: %s", location, e)
+            return True, "Free space unknown"
     
 
     

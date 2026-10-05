@@ -75,6 +75,10 @@ class VFXReviewDualModeTab(QWidget):
             self._loaded_once = True
             self._on_refresh_clicked(quiet=True)
 
+    def refresh(self):
+        """F5 / Ctrl+R / "Refresh this screen": what the Refresh button does (it had no refresh)."""
+        self._on_refresh_clicked()
+
     def _on_refresh_clicked(self, quiet=False):
         """Busy while it reads, then say what happened."""
         from PySide6.QtWidgets import QApplication
@@ -151,7 +155,13 @@ class VFXReviewDualModeTab(QWidget):
                 self.lineup_editor._set_status(message)
                 return Result.failure(message)
 
-            code = getattr(manager, "default_project", None) or projects[0].code
+            # The project this person last had open on the dashboard. It asked
+            # the manager for a default_project that was always None, so the
+            # first project in the list won.
+            from .vfx_dashboard_pro.ui.components.column_layout_manager import settings_factory
+            from .vfx_dashboard_pro.ui.components.dashboard_project_mixin import DashboardProjectMixin
+            code = (str(settings_factory().value(DashboardProjectMixin._last_project_key(self)) or "")
+                    or projects[0].code)
             project = manager.get_project(code) or projects[0]
 
             shots = SQLiteHandler(project.code).read_shots()

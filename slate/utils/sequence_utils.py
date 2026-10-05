@@ -519,6 +519,25 @@ class FrameSequence:
         digits = str(frame).zfill(self.padding) if self.padding else str(frame)
         return self.directory / f"{self.head}{digits}{self.tail}"
 
+    def ffconcat(self, first: int, fps: float = 24.0) -> str:
+        """
+        An ffmpeg frame list from `first` to the end, a gap holding the frame before it.
+
+        ffmpeg's image reader stops at the first missing frame (and will not
+        start on one), so a render with a frame missing played, and was made
+        into a proxy, only up to the gap. Read through this list it runs the
+        whole range, as RV plays it.
+        """
+        present = set(self.frames)
+        held = max((f for f in self.frames if f <= first), default=self.start)
+        lines = ["ffconcat version 1.0"]
+        for frame in range(first, self.end + 1):
+            if frame in present:
+                held = frame
+            path = str(self.frame_path(held)).replace("'", "'\\''")
+            lines += [f"file '{path}'", f"duration {1.0 / fps:.9f}"]
+        return "\n".join(lines) + "\n"
+
     def info(self) -> Dict[str, Any]:
         """The same keys get_sequence_info() has always returned."""
         missing = self.missing_frames

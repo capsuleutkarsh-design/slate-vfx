@@ -4,6 +4,7 @@ from openpyxl.utils import column_index_from_string
 from typing import List, Optional, Any
 from ..models.shot_model import Shot, DepartmentInfo, FeedbackEntry, ArtistLogEntry
 from slate.core.domain.departments import load_departments
+from slate.core.domain.table_export import neutralise, restore
 import os
 from datetime import datetime
 import shutil
@@ -165,7 +166,13 @@ class ExcelHandler:
 
     @staticmethod
     def _normalize_text(value: Any) -> str:
-        return str(value).strip() if value is not None else ""
+        return str(restore(value)).strip() if value is not None else ""
+
+    @staticmethod
+    def _text_rows(ws, min_row):
+        """A sheet's rows as the software wrote them: neutralise()'s apostrophe taken off (DSH2-024)."""
+        for row in ws.iter_rows(min_row=min_row, values_only=True):
+            yield tuple(restore(v) for v in row) if row else row
 
     def _build_row_map(self):
         if self._row_map is not None:
@@ -249,7 +256,8 @@ class ExcelHandler:
                     # (and say so) rather than abort the whole backup.
                     self.skipped_cells.append(cell.coordinate)
                     continue
-                cell.value = value if value is not None else ""
+                # Text that Excel would run as a formula is written as text (DSH2-024).
+                cell.value = neutralise(value) if value is not None else ""
                 wrote = True
         return wrote
 
@@ -350,7 +358,7 @@ class ExcelHandler:
         if self.project_config:
             start_row = self.project_config.data_start_row
         
-        for row_idx, row in enumerate(self.worksheet.iter_rows(min_row=start_row, values_only=True), start=start_row):
+        for row_idx, row in enumerate(self._text_rows(self.worksheet, start_row), start=start_row):
             shot = self._parse_row(row, row_idx)
             if shot:
                 shots.append(shot)
@@ -412,10 +420,13 @@ class ExcelHandler:
             key = department.key
 
             if key == "comp":
-                # Comp historically shares the sheet's main artist/status columns.
-                artist = get_val("comp_artist") or get_val("assigned_artist")
-                status = (get_val("comp_status") or get_val("internal_status")
-                          or get_val("overall_status"))
+                # Comp historically shares the sheet's main artist/status columns -
+                # only on a sheet without comp's own, or a blank comp status came
+                # back as the shot's status.
+                has = lambda name: self._get_col_idx(name) >= 0  # noqa: E731
+                artist = get_val("comp_artist") if has("comp_artist") else get_val("assigned_artist")
+                status = get_val("comp_status") if has("comp_status") else (
+                    get_val("internal_status") or get_val("overall_status"))
                 bid = get_float("comp_bid") or get_float("comp_mandays")
                 eta = get_val("comp_eta") or get_val("comp_target")
                 mapped = any(self._get_col_idx(name) >= 0 for name in (
@@ -451,6 +462,9 @@ class ExcelHandler:
             curr_version=get_val("version") or get_val("latest_version"),
             prev_version=get_val("prev_version"),
             description=get_val("description"),
+            # Written to notes / shot_comment and never read back, so an
+            # Excel-only project lost every shot note on the next open.
+            notes=get_val("notes") or get_val("shot_comment"),
             target=get_val("target"),
             scan_status=get_val("scan_status"),
             edit_status=get_val("edit_status"),
@@ -505,7 +519,7 @@ class ExcelHandler:
             return
         ws = self.workbook["Slate_DATA"]
         by_key, by_name = self._keyed(shots)
-        for row in ws.iter_rows(min_row=2, values_only=True):
+        for row in self._text_rows(ws, 2):
             if not row or not row[0]:
                 continue
             shot = self._find(by_key, by_name, row[0], row[7] if len(row) > 7 else "")
@@ -526,7 +540,7 @@ class ExcelHandler:
             return
         ws = self.workbook["ARTIST_LOG"]
         by_key, by_name = self._keyed(shots)
-        for row in ws.iter_rows(min_row=2, values_only=True):
+        for row in self._text_rows(ws, 2):
             if not row or not row[0]:
                 continue
             shot = self._find(by_key, by_name, row[0], row[6] if len(row) > 6 else "")
@@ -546,7 +560,7 @@ class ExcelHandler:
         ws = self.workbook["FEEDBACK_LOG"]
         by_key, by_name = self._keyed(shots)
         logged = set()
-        for row in ws.iter_rows(min_row=2, values_only=True):
+        for row in self._text_rows(ws, 2):
             if not row or not row[0]:
                 continue
             shot = self._find(by_key, by_name, row[0], row[5] if len(row) > 5 else "")
@@ -636,7 +650,7 @@ class ExcelHandler:
         # The software's own sheet: out of the way of the people reading the passbook.
         ws.sheet_state = "hidden"
         existing = {}
-        for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+        for row_idx, row in enumerate(self._text_rows(ws, 2), start=2):
             if row and row[0]:
                 reel = str(row[7] if len(row) > 7 and row[7] else "").casefold()
                 existing[(reel, str(row[0]).casefold())] = row_idx
@@ -649,15 +663,15 @@ class ExcelHandler:
             row_idx = existing.get((reel.casefold(), shot.shot_name.casefold())) \
                 or existing.pop(("", shot.shot_name.casefold()), None)
             if row_idx:
-                ws.cell(row=row_idx, column=2, value=shot.shot_type)
+                ws.cell(row=row_idx, column=2, value=neutralise(shot.shot_type))
                 ws.cell(row=row_idx, column=3, value=shot.priority)
                 ws.cell(row=row_idx, column=4, value=shot.is_hero)
-                ws.cell(row=row_idx, column=5, value=similar_str)
+                ws.cell(row=row_idx, column=5, value=neutralise(similar_str))
                 ws.cell(row=row_idx, column=7, value=now)
-                ws.cell(row=row_idx, column=8, value=reel)
+                ws.cell(row=row_idx, column=8, value=neutralise(reel))
             else:
-                ws.append([shot.shot_name, shot.shot_type, shot.priority, shot.is_hero, similar_str, now, now,
-                           reel])
+                ws.append([neutralise(v) for v in (shot.shot_name, shot.shot_type, shot.priority, shot.is_hero,
+                                                   similar_str, now, now, reel)])
                 existing[(reel.casefold(), shot.shot_name.casefold())] = ws.max_row
 
     def _write_feedback_log(self, shots: List[Shot]):
@@ -672,7 +686,7 @@ class ExcelHandler:
         mine = {(str(s.reel_episode or "").casefold(), s.shot_name.casefold()) for s in shots}
         names = {k[1] for k in mine}
         kept = []
-        for row in ws.iter_rows(min_row=2, values_only=True):
+        for row in self._text_rows(ws, 2):
             if not row or not row[0]:
                 continue
             reel = str(row[5] if len(row) > 5 and row[5] else "").casefold()
@@ -683,14 +697,14 @@ class ExcelHandler:
         if ws.max_row > 1:
             ws.delete_rows(2, ws.max_row - 1)
         for row in kept:
-            ws.append(row)
-        clean = lambda v: ILLEGAL_CHARACTERS_RE.sub("", str(v or ""))
+            ws.append([neutralise(v) for v in row])
+        clean = lambda v: neutralise(ILLEGAL_CHARACTERS_RE.sub("", str(v or "")))
         for shot in shots:
             for entries, source in ((shot.feedback_client, "Client"), (shot.feedback_director, "Director"),
                                     (shot.feedback_internal, "Internal")):
                 for e in entries:
-                    ws.append([shot.shot_name, clean(e.date), clean(e.source or source), clean(e.text),
-                               clean(e.logged_by), str(shot.reel_episode or "")])
+                    ws.append([neutralise(shot.shot_name), clean(e.date), clean(e.source or source),
+                               clean(e.text), clean(e.logged_by), neutralise(str(shot.reel_episode or ""))])
 
     def _label_new_columns(self):
         """A mapped column with no heading (added to the mapping later) gets one."""

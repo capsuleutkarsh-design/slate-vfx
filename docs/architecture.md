@@ -127,9 +127,12 @@ Layered, lowest priority first. Each layer overrides the one above it:
 4. `client_config.json` — per-site overrides
 5. `%LOCALAPPDATA%\Slate\config.json` — per-machine
 
-`core/infra/local_secrets.py` is the one place that resolves a credential. It
-checks the `SLATE_DB_PASSWORD` environment variable first, then the local
-configs in order. Maintenance scripts import it rather than carrying a literal —
+`core/infra/local_secrets.py` is the one place that resolves a credential:
+`find_db_password()` checks, in order, the `DB_PASSWORD` and `SLATE_DB_PASSWORD`
+environment variables, the settings above (`db_password`, then `password`),
+Windows Credential Manager, the encrypted file from `tools/setup_credentials.py`,
+`db_config.password`, and the first local config file. The client, the
+maintenance scripts and the SQLAlchemy factory all use it. Maintenance scripts import it rather than carrying a literal —
 this repository is public, and a password in source is a disclosure.
 
 ---

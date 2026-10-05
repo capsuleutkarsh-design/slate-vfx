@@ -97,7 +97,7 @@ class FakeDB:
                 rows = [r for r in rows if r["user_id"].lower() == str(params[0]).lower()]
             return rows
         if "reports_to" in sql:
-            return [{"username": "rahul"}]
+            return [{"username": "rahul", "reports_to": "sam"}]
         return []
 
 
@@ -262,15 +262,14 @@ def test_server_buttons_only_while_running_and_plain_counts(qtbot):
     from slate_server.gui.views.operations_view import age, every
     view = DashboardView()
     qtbot.addWidget(view)
-    fake = types.SimpleNamespace(dashboard=view, api_server=None,
-                                 dashboard_url=lambda: "http://localhost:8000/admin")
+    fake = types.SimpleNamespace(dashboard=view)
     app_window.UTServerWindow._set_running_controls(fake, False)
-    assert not view.btn_restart_pool.isEnabled() and not view.btn_api_dashboard.isEnabled()
+    assert not view.btn_restart_pool.isEnabled()
     assert view.btn_restart_pool.toolTip() == "Start the server first"
     app_window.UTServerWindow._set_running_controls(fake, True)
-    assert view.btn_restart_pool.isEnabled() and not view.btn_api_dashboard.isEnabled()  # no API yet
-    fake.api_server = object()
-    app_window.UTServerWindow._set_running_controls(fake, True)
-    assert view.btn_api_dashboard.isEnabled()
+    assert view.btn_restart_pool.isEnabled()
+    # The web API is not started by the server any more (2.2.0), so there is no
+    # button to open it.
+    assert not hasattr(view, "btn_api_dashboard")
     assert (every(1), every(7), age(0), age(1), age(30)) == ("Every day", "Every 7 days", "today",
                                                              "1 day", "30 days")

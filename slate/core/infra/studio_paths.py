@@ -94,4 +94,12 @@ def project_folder(code: str) -> Optional[Path]:
     if not name:
         return None
     root = projects_root()
-    return (root / name) if root else None
+    if not root:
+        return None
+    from slate.core.domain.naming import path_inside
+    try:
+        path_inside(root, name)
+    except ValueError as exc:
+        logger.error("Project folder refused: %s", exc)
+        return None
+    return root / name

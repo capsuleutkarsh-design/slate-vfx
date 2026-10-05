@@ -29,15 +29,13 @@ from PyInstaller.utils.hooks import collect_submodules
 hiddenimports = [
     'PySide6.QtCore', 'PySide6.QtWidgets', 'PySide6.QtGui', 'psycopg2',
     'psutil',
-    # The web API runs inside the server process now (slate_server/core/
-    # api_server.py) instead of being launched through a Python that an
-    # installed machine does not have. uvicorn picks its event loop and
-    # protocol classes by name at run time, so they have to be collected.
-    'fastapi', 'uvicorn',
+    # The web API is no longer started by the server (2.2.0), so fastapi,
+    # uvicorn and slate.api are not bundled with it.
 ]
-hiddenimports += collect_submodules('uvicorn')
-hiddenimports += collect_submodules('slate.api')
 hiddenimports += collect_submodules('slate.core.updater')
+# The recovery tool (Slate_Server.exe --recover) and the security safety net.
+hiddenimports += collect_submodules('slate_server.core.recovery')
+hiddenimports += collect_submodules('slate.core.security')
 
 a = Analysis(
     [R('slate_server', 'main.py')],

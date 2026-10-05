@@ -15,6 +15,7 @@ from .views.dashboard_view import DashboardView
 from .views.settings_view import SettingsView
 from .views.analytics_view import AnalyticsView
 from .views.operations_view import OperationsView
+from .views.recovery_view import RecoveryView
 from slate_server.core.db_engine import DatabaseEngine
 from slate_server.core.pgbouncer_engine import PgBouncerEngine
 from slate_server.core.db_credentials import connect_kwargs
@@ -68,72 +69,30 @@ def _server_home():
     Running from a checkout: the checkout. Installed: the per-user folder.
     They used to be the same folder for both, which is how uninstalling the
     installed build - with "delete its data" - deleted the settings file the
-    development server was using, and the development server then went looking
-    for a database somewhere else and built a new empty one when it got there.
-    An installer must have no way of reaching a checkout's server.
+    development server was using. The answer lives in slate_server.core.
+    server_home now, so the recovery tool reaches the same one without Qt.
     """
-    if getattr(sys, "frozen", False):
-        return os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
-                            "Slate_Central")
-    from pathlib import Path
-    return str(Path(__file__).resolve().parents[2])
+    from slate_server.core.server_home import server_home
+    return server_home()
 
 
 def _default_data_dir(appdata_dir):
     """
-    Where the database is when the settings do not say.
-
-    One answer, fixed, and it is not derived from anything else. This used to be
-    worked out from SERVER_ROOT, a drive letter, and whether a folder existed -
-    inputs that change - and every time the answer changed the server quietly
-    built a new empty cluster at the new one. Four were found on one machine in
-    a day. The studio's real database was a fifth folder that nothing pointed at.
-
-    SLATE_DB_PATH still wins, because it is an explicit instruction. Nothing
-    else is.
+    Where the database is when the settings do not say: SLATE_DB_PATH, or
+    <server home>\LocalDatabase. One answer, fixed, derived from nothing that
+    changes - every time it used to change, a new empty cluster was built.
     """
-    from_env = os.environ.get("SLATE_DB_PATH")
-    if from_env:
-        return from_env
-    return os.path.join(appdata_dir, "LocalDatabase")
+    from slate_server.core.server_home import default_data_dir
+    return default_data_dir(appdata_dir)
 
 
 def _settings_path(appdata_dir):
     """
-    Where the server keeps its settings, carrying forward an older install's.
-
-    The folder and the file were both named after the product, so renaming the
-    product moved both at once. A machine that upgrades therefore finds no
-    settings at all - and the code below treats "no settings" as "first run",
-    falls back to a default path that is not there, falls back again to a local
-    one, and runs initdb. The result is a server that starts cleanly onto an
-    empty database while the real one sits untouched somewhere else, which is
-    the worst of both worlds: nothing errors, and nothing is there.
-
-    So before deciding this is a first run, look where the previous name kept
-    its settings and bring them across. The old file is copied, not moved, so
-    an older build on the same machine still finds what it expects.
+    The server's settings file, carrying forward an older install's so an
+    upgrade is not mistaken for a first run (see server_home.settings_path).
     """
-    import shutil
-
-    current = os.path.join(appdata_dir, "slate_server_config.json")
-    if os.path.exists(current):
-        return current
-
-    local = os.path.dirname(appdata_dir)
-    for folder, name in (("UT_Central", "ut_server_config.json"),):
-        previous = os.path.join(local, folder, name)
-        if os.path.exists(previous):
-            try:
-                shutil.copy2(previous, current)
-                print(f"Carried settings forward from {previous}")
-            except OSError as exc:
-                # Not fatal - the server can still be pointed at a database by
-                # hand in Settings. But say so, because the alternative is a
-                # silently empty one.
-                print(f"Could not carry settings forward from {previous}: {exc}")
-            return current
-    return current
+    from slate_server.core.server_home import settings_path
+    return settings_path(appdata_dir)
 
 
 class DBWorker(QThread):
@@ -162,9 +121,12 @@ class DBWorker(QThread):
                     pooler.stop(progress_callback=self.progress.emit)
                 except Exception as exc:
                     logging.debug("Pool stop reported: %s", exc)
+                # start() rewrites the configuration itself, and needs psql to
+                # read the verifiers: without it, it wrote an empty user list
+                # over the one just written and the pool never came back.
                 psql = self.engine.bin_dir / "psql.exe"
-                pooler.write_config(psql if psql.exists() else None)
-                if not pooler.start(progress_callback=self.progress.emit):
+                if not pooler.start(progress_callback=self.progress.emit,
+                                    psql_exe=psql if psql.exists() else None):
                     raise RuntimeError("The pool did not come up.")
             else:
                 pooler = getattr(self.engine, "pooler", None)
@@ -200,6 +162,74 @@ class StageUpdateWorker(QThread):
             logging.warning("Staging the update failed: %s", exc)
             ok = False
         self.done.emit(ok)
+
+
+def poll_facts(port: int) -> dict:
+    """
+    One look at the database for the Analytics screen. Runs on PollWorker.
+
+    The session rows come from server_facts.sessions() alone: the table used to
+    be drawn from it and then overwritten by a second query in another order,
+    so "Disconnect session" could end a different connection from the one shown.
+    """
+    from slate.core.security.dbapi import ConnectionDB
+    from slate_server.core.recovery.hardening import logged_refusals
+    from slate_server.core.server_facts import sessions
+    facts = {"sessions": sessions(int(port)), "stats": None, "refusals": []}
+    try:
+        conn = psycopg2.connect(**connect_kwargs(port))
+    except Exception as exc:
+        logging.debug("Poll database stats error: %s", exc)
+        return facts
+    try:
+        db = ConnectionDB(conn)                          # autocommit: no idle transaction
+        facts["refusals"] = logged_refusals(db, facts["sessions"])
+        one = lambda sql: (db.execute_query(sql, fetch="one") or {}).get("n")  # noqa: E731
+        active = one("SELECT count(*) AS n FROM pg_stat_activity "
+                     "WHERE state = 'active' OR state = 'idle'") or 0
+        most = max(1, int(one("SELECT setting AS n FROM pg_settings "
+                              "WHERE name = 'max_connections'") or 100))
+        facts["stats"] = {
+            "connections": active, "load": min(100, int(active / most * 100)),
+            "projects": one("SELECT count(*) AS n FROM tracking_projects") or 0,
+            "assets": one("SELECT count(*) AS n FROM stock_library") or 0,
+            "db_size": one("SELECT pg_size_pretty(pg_database_size(current_database())) "
+                           "AS n") or "Unknown",
+            "cpu": psutil.cpu_percent(interval=None),
+            "ram": psutil.virtual_memory().percent,
+        }
+    except Exception as exc:
+        logging.debug("Poll database stats error: %s", exc)
+    finally:
+        conn.close()
+    return facts
+
+
+class PollWorker(QThread):
+    """poll_facts() off the UI thread: a slow database must not freeze the window."""
+    done = Signal(object)
+
+    def __init__(self, port):
+        super().__init__()
+        self.port = int(port)
+
+    def run(self):
+        self.done.emit(poll_facts(self.port))
+
+
+class BackupWorker(QThread):
+    """The scheduled backup: pg_dump can take minutes, never on the UI thread."""
+    done = Signal(object)
+
+    def __init__(self, engine):
+        super().__init__()
+        self.engine = engine
+
+    def run(self):
+        try:
+            self.done.emit(self.engine.back_up())
+        except Exception as exc:
+            self.done.emit({"ok": False, "message": "Backup failed: %s" % exc})
 
 
 class UTServerWindow(QMainWindow):
@@ -254,18 +284,15 @@ class UTServerWindow(QMainWindow):
         # PostgreSQL's own limit. With the pool in front of it this rarely needs
         # raising, but it was not visible or editable anywhere at all.
         cfg_max_conn = 100
-        # The web API's port (it was 8000 in the code).
-        self._api_port = 8000
 
         if os.path.exists(self.config_path):
             try:
-                with open(self.config_path, "r") as f:
+                with open(self.config_path, "r", encoding="utf-8-sig") as f:
                     cfg = json.load(f)
                     db_path = cfg.get("db_path", db_path)
                     port = cfg.get("port", port)
                     pooler_port = cfg.get("pooler_port", pooler_port)
                     cfg_max_conn = cfg.get("max_connections", cfg_max_conn)
-                    self._api_port = int(cfg.get("api_port", self._api_port) or 8000)
             except Exception:
                 pass
 
@@ -305,8 +332,10 @@ class UTServerWindow(QMainWindow):
             self.settings_view.input_db_name.setText("ut_vfx")
         self.settings_view.input_max_conn.setText(str(cfg_max_conn))
         try:
-            from slate_server.core.db_credentials import admin_password
-            self.settings_view.input_db_password.setText(admin_password())
+            # The workstations' password - not the superuser's, once that
+            # has one of its own (db_admin_password).
+            from slate_server.core.db_credentials import app_password
+            self.settings_view.input_db_password.setText(app_password())
         except Exception:
             pass
         # Which file these came from. It did not exist on the machine where all
@@ -347,12 +376,10 @@ class UTServerWindow(QMainWindow):
         self.dashboard.btn_restart_pool.clicked.connect(self._on_restart_pool)
         self.settings_view.btn_save.clicked.connect(self._on_save_settings)
         self.settings_view.btn_firewall.clicked.connect(self._on_allow_firewall)
-        self.dashboard.btn_api_dashboard.clicked.connect(self._on_open_dashboard)
         self.settings_view.btn_check_update.clicked.connect(self._on_check_update)
 
         self.worker = None
         self.broadcaster = None
-        self.api_server = None
 
         self.update_checker = None
         self.sidecar_engine = None
@@ -376,9 +403,13 @@ class UTServerWindow(QMainWindow):
         # Force kill lives in the Operations danger zone, not beside routine
         # buttons on the Dashboard.
         self.operations_view.force_kill_requested.connect(self._on_force_kill)
-        self.settings_view.input_api_port.setText(str(self.api_port()))
         self._set_running_controls(False)
         self._show_configured_data_dir()
+
+        # Recovery: for when nobody can sign in. The same page as the
+        # standalone Recover Slate window (slate_server/core/recovery).
+        self.recovery_view = RecoveryView(self._recovery_layout)
+        self.stacked_widget.addWidget(_scrollable(self.recovery_view))
 
         # Setup Analytics Polling
         self.poll_timer = QTimer(self)
@@ -390,10 +421,22 @@ class UTServerWindow(QMainWindow):
         # Once a day is often enough: it reads yesterday's punches.
         self.comp_off_timer = QTimer(self)
         self.comp_off_timer.timeout.connect(self._credit_comp_off)
+        # The daily backup the Operations screen promised was only ever taken
+        # by hand (Maintenance.due() had no caller). Same beat, plus once soon
+        # after start so a server left off overnight catches up.
+        self.comp_off_timer.timeout.connect(self._scheduled_backup)
         self.comp_off_timer.start(6 * 60 * 60 * 1000)   # every six hours
+        self._backup_worker = None
+        if not os.environ.get("HEADLESS_TESTING"):
+            QTimer.singleShot(5 * 60 * 1000, self._scheduled_backup)
 
         # Setup Sidebar after views are ready
         self.setup_sidebar()
+
+        # The safety net: a Recovery Key for this server (made once, shown
+        # once) and a first snapshot, as soon as there is a database here.
+        if not os.environ.get("HEADLESS_TESTING"):
+            QTimer.singleShot(1500, self._prepare_recovery)
 
     # ------------------------------------------------------------ geometry
     DEFAULT_SIZE = (1200, 820)
@@ -706,6 +749,43 @@ class UTServerWindow(QMainWindow):
         except Exception as exc:
             logging.warning("Comp off crediting did not run: %s", exc)
 
+    def _scheduled_backup(self):
+        """Back up when the last one is over a day old and the database is up."""
+        if self._backup_worker is not None and self._backup_worker.isRunning():
+            return None
+        try:
+            if not self.server_running() or "backup" not in self._maintenance().due():
+                return None
+            engine = self._backup_engine()
+            if not engine.is_available():
+                return None
+        except Exception as exc:
+            logging.warning("Scheduled backup check failed: %s", exc)
+            return None
+        self._log("> Scheduled backup started.")
+        self._backup_worker = BackupWorker(engine)
+        self._backup_worker.done.connect(self._on_scheduled_backup_done)
+        self._backup_worker.start()
+        return self._backup_worker
+
+    def _on_scheduled_backup_done(self, result):
+        self._maintenance().record_backup(result["ok"], "Scheduled: " + result["message"])
+        self._log("> Scheduled backup: " + result["message"])
+        if result["ok"]:
+            # Keep to the retention shown on the Operations screen; the newest
+            # ones are always kept whatever their age.
+            try:
+                removed = self._backup_engine().prune(
+                    self.operations_view.spin_keep_days.value(),
+                    self.operations_view.spin_keep_least.value(), apply=True)
+                if removed:
+                    self._log("> Removed %d old backup(s)." % len(removed))
+            except Exception as exc:
+                logging.warning("Pruning after the scheduled backup failed: %s", exc)
+        else:
+            logging.warning("Scheduled backup failed: %s", result["message"])
+        self._refresh_operations()
+
     def setup_sidebar(self):
         sidebar = QWidget()
         sidebar.setFixedWidth(220)
@@ -729,9 +809,11 @@ class UTServerWindow(QMainWindow):
         self.btn_nav_analytics = QPushButton("Analytics")
         self.btn_nav_operations = QPushButton("Operations")
         self.btn_nav_settings = QPushButton("Settings")
+        self.btn_nav_recovery = QPushButton("Recovery")
 
         for btn in (self.btn_nav_dash, self.btn_nav_analytics,
-                    self.btn_nav_operations, self.btn_nav_settings):
+                    self.btn_nav_operations, self.btn_nav_settings,
+                    self.btn_nav_recovery):
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setFixedHeight(40)
             btn.setStyleSheet(f"""
@@ -758,6 +840,7 @@ class UTServerWindow(QMainWindow):
         self.btn_nav_settings.clicked.connect(lambda: self.switch_view(1))
         self.btn_nav_analytics.clicked.connect(lambda: self.switch_view(2))
         self.btn_nav_operations.clicked.connect(lambda: self.switch_view(3))
+        self.btn_nav_recovery.clicked.connect(lambda: self.switch_view(4))
 
         # Initial State
         self.switch_view(0)
@@ -775,6 +858,9 @@ class UTServerWindow(QMainWindow):
         self.btn_nav_settings.setStyleSheet(active_style if index == 1 else inactive_style)
         self.btn_nav_analytics.setStyleSheet(active_style if index == 2 else inactive_style)
         self.btn_nav_operations.setStyleSheet(active_style if index == 3 else inactive_style)
+        recovery = getattr(self, "btn_nav_recovery", None)
+        if recovery is not None:
+            recovery.setStyleSheet(active_style if index == 4 else inactive_style)
 
     def _on_save_settings(self):
         """
@@ -830,27 +916,22 @@ class UTServerWindow(QMainWindow):
             ) != QMessageBox.StandardButton.Yes:
                 return
 
+        existing = self._server_config()
+        if existing is None:
+            self._settings_saved_note("NOT saved - the settings file cannot be read")
+            QMessageBox.warning(
+                self, "Not saved",
+                "%s exists but cannot be read (it may be damaged), so it was not "
+                "overwritten and nothing was saved.\n\nOpen it in Notepad and fix it, or "
+                "move it aside (the server then starts from its defaults), and press "
+                "Save again." % self.config_path)
+            return
         try:
-            existing = {}
-            if os.path.exists(self.config_path):
-                try:
-                    with open(self.config_path, "r") as f:
-                        loaded = json.load(f)
-                    if isinstance(loaded, dict):
-                        existing = loaded
-                except (OSError, ValueError):
-                    existing = {}
-
-            try:
-                new_api_port = int(view.input_api_port.text().strip() or 8000)
-            except ValueError:
-                new_api_port = self.api_port()
             existing.update({
                 "db_path": new_path,
                 "port": new_port,
                 "pooler_port": new_pooler,
                 "max_connections": new_max_conn,
-                "api_port": new_api_port,
             })
             with open(self.config_path, "w") as f:
                 json.dump(existing, f, indent=4)
@@ -858,6 +939,7 @@ class UTServerWindow(QMainWindow):
             # The database name is what clients ask for, so it lives with the
             # client settings rather than the server's own.
             new_password = view.input_db_password.text()
+            client_error = ""
             try:
                 from slate.core.infra.local_secrets import write_local_config
                 written = {"db_name": new_name,
@@ -876,7 +958,9 @@ class UTServerWindow(QMainWindow):
                 from slate_server.core import db_credentials
                 db_credentials.reload()
             except Exception as exc:
-                self._log("> Could not write the client settings: %s" % exc)
+                client_error = str(exc) or exc.__class__.__name__
+                self._log("> NOT saved: the database settings (name, ports, password) could "
+                          "not be written: %s" % client_error)
 
             running = self.server_running()
             self.settings_view.lbl_config_source.setText(str(self.config_path))
@@ -885,20 +969,122 @@ class UTServerWindow(QMainWindow):
                 # The running engine is kept: replacing it while it ran left
                 # the old one serving with nothing able to stop it. The new
                 # path and ports apply when the server is next started.
-                self._pending_settings = (new_path, new_port, new_pooler, new_api_port)
+                self._pending_settings = (new_path, new_port, new_pooler)
                 self._log("> Saved. Restart the server (power off and on) to use the new path and ports.")
                 self._settings_saved_note("Saved - restart the server to apply")
             else:
                 self._db_port = new_port
                 self._db_pooler_port = new_pooler
-                self._api_port = new_api_port
                 try:
                     self.db_engine = self._build_engine(new_path, new_port, new_pooler)
                     self._settings_saved_note("Saved")
                 except Exception as e:
                     self._log(f"CRITICAL ERROR initializing engine: {e}")
+            if client_error:
+                self._settings_saved_note("NOT saved - the database settings could not be "
+                                          "written")
+                QMessageBox.warning(
+                    self, "Not saved",
+                    "The server's own settings (folder and ports) were saved, but the "
+                    "database settings - its name, ports and password - were NOT:\n\n%s\n\n"
+                    "The database password has not changed. Fix the problem and press Save "
+                    "again." % client_error)
         except Exception as e:
             self._log(f"Failed to save settings: {e}")
+            self._settings_saved_note("NOT saved")
+            QMessageBox.warning(self, "Not saved", "The settings were not saved:\n\n%s" % e)
+
+    def _server_config(self):
+        """
+        slate_server_config.json as a dict ({} when there is none). None when it
+        exists but cannot be read: that file is never overwritten, because
+        writing {} plus the fields on screen over it throws away everything else
+        it held.
+        """
+        import json
+        if not os.path.exists(self.config_path):
+            return {}
+        try:
+            with open(self.config_path, "r", encoding="utf-8-sig") as f:
+                loaded = json.load(f)
+        except (OSError, ValueError) as exc:
+            logging.error("%s cannot be read, so it is not overwritten: %s",
+                          self.config_path, exc)
+            return None
+        return loaded if isinstance(loaded, dict) else None
+
+    # ------------------------------------------------------------ recovery
+    def _recovery_layout(self):
+        """Where this server's database and recovery folder are, as the window knows them."""
+        from pathlib import Path
+        from slate_server.core.recovery.layout import ServerLayout, credentials_file
+        try:
+            credentials = credentials_file()
+        except Exception:
+            credentials = None
+        return ServerLayout(
+            data_dir=Path(str(self._db_path)), port=int(self._db_port),
+            pooler_port=int(self._db_pooler_port), server_home=Path(_server_home()),
+            settings_path=Path(self.config_path), credentials_path=credentials)
+
+    def _prepare_recovery(self, show=True):
+        """
+        Once there is a database here: tell the switches where this PC's
+        override file is, make the Recovery Key if there is none (and show it,
+        once), and take a first snapshot so there is always one to go back to.
+        """
+        try:
+            layout = self._recovery_layout()
+            if not (layout.data_dir / "PG_VERSION").exists():
+                return None
+            from slate.core.security import switches
+            switches.set_override_file(layout.switches_file)
+            from slate_server.core.recovery import key as recovery_key
+            made = recovery_key.create_first_key(layout)
+            if made and show:
+                from .views.recovery_view import RecoveryKeyDialog
+                dialog = RecoveryKeyDialog(made, self, first_time=True)
+                dialog.open()
+                self._recovery_key_dialog = dialog
+                self._log("> A Recovery Key was made for this server. Print it and keep it "
+                          "safe (see the Recovery page).")
+            from slate_server.core.recovery import snapshots
+            if snapshots.latest_snapshot(layout) is None:
+                import threading
+                threading.Thread(target=lambda: snapshots.before_security_change(
+                    "first snapshot", layout), daemon=True).start()
+            return made
+        except Exception as exc:
+            logging.warning("The recovery safety net was not prepared: %s", exc)
+            return None
+
+    def _after_start_safety_net(self):
+        """After every successful start: what the recovery tool reads later."""
+        try:
+            layout = self._recovery_layout()
+            from slate_server.core import server_home
+            from slate_server.core.recovery import health
+            server_home.remember_last_good(_server_home(), layout.data_dir, layout.port,
+                                           layout.pooler_port)
+            health.record_server_state(layout)
+            # Switches forced off on this PC reach the workstations through the
+            # database.
+            from slate.core.security import switches
+            from slate.core.security.dbapi import ConnectionDB
+            switches.set_override_file(layout.switches_file)
+            if switches.local_overrides(layout.switches_file):
+                conn = psycopg2.connect(**connect_kwargs(layout.port, connect_timeout=4))
+                try:
+                    changed = switches.apply_local_overrides(ConnectionDB(conn),
+                                                             layout.switches_file)
+                    if changed:
+                        self._log("> %d security switch(es) turned off, as set on this PC."
+                                  % changed)
+                finally:
+                    conn.close()
+        except Exception as exc:
+            logging.warning("Recovery bookkeeping after start failed: %s", exc)
+        self._prepare_recovery()
 
     def server_running(self) -> bool:
         """The database is up (the power switch is on)."""
@@ -935,15 +1121,11 @@ class UTServerWindow(QMainWindow):
         """Write the chosen folder down, so the next start does not ask again."""
         import json
 
-        existing = {}
-        if os.path.exists(self.config_path):
-            try:
-                with open(self.config_path, "r") as f:
-                    loaded = json.load(f)
-                if isinstance(loaded, dict):
-                    existing = loaded
-            except (OSError, ValueError):
-                existing = {}
+        existing = self._server_config()
+        if existing is None:
+            self._log("> The database path was NOT saved: %s cannot be read, so it was not "
+                      "overwritten. Fix or move it aside." % self.config_path)
+            return
         existing.update({"db_path": path,
                          "port": int(self._db_port),
                          "pooler_port": int(self._db_pooler_port)})
@@ -1046,18 +1228,13 @@ class UTServerWindow(QMainWindow):
 
     def _set_running_controls(self, running: bool):
         """
-        Restart pool and Open web dashboard only while the server runs: with it
-        off, the pool was started in front of nothing and the browser opened a
-        page that could not load.
+        Restart pool only while the server runs: with it off, the pool was
+        started in front of nothing.
         """
-        for button, off_tip, on_tip in (
-                (self.dashboard.btn_restart_pool, "Start the server first",
-                 "Rewrites the pool configuration and restarts it."),
-                (self.dashboard.btn_api_dashboard, "Start the server first",
-                 "Opens %s" % self.dashboard_url())):
-            button.setEnabled(bool(running) and (button is not self.dashboard.btn_api_dashboard
-                                                 or self.api_server is not None))
-            button.setToolTip(on_tip if button.isEnabled() else off_tip)
+        button = self.dashboard.btn_restart_pool
+        button.setEnabled(bool(running))
+        button.setToolTip("Rewrites the pool configuration and restarts it." if running
+                          else "Start the server first")
 
     def _show_configured_data_dir(self):
         """The data directory is known before the server starts: show it."""
@@ -1090,25 +1267,13 @@ class UTServerWindow(QMainWindow):
                 self.broadcaster.start()
                 self._log(f"> Network Discovery Broadcaster is ONLINE (UDP port {self.broadcaster.listen_port}).")
 
-                # The web API, in this process. It used to be a second Python
-                # found relative to the source tree, which an installed build
-                # does not have - so no installed server ever started it.
-                self._log("> Starting the web API on port %d..." % self.api_port())
-                try:
-                    from slate_server.core.api_server import ApiServer
-                    self.api_server = ApiServer(port=self.api_port())
-                    if self.api_server.start() and self.api_server.wait_until_ready(10):
-                        self._log("> Web API is running.")
-                    else:
-                        self._log("> Web API did NOT start."
-                                  + (f" {self.api_server.error}" if self.api_server.error else ""))
-                        self.api_server = None
-                except Exception as e:
-                    self.api_server = None
-                    self._log(f"> Failed to start the web API: {e}")
+                # The web API is no longer started here: nothing in Slate used
+                # it, and on 0.0.0.0 it let anyone on the network take over the
+                # admin account (2.2.0).
                 self._set_running_controls(True)
 
                 self.poll_timer.start(3000)
+                self._after_start_safety_net()
             else:
                 self.dashboard.status_badge.set_status("Server Offline", "error")
                 self._log("> Server stopped gracefully.")
@@ -1118,10 +1283,6 @@ class UTServerWindow(QMainWindow):
                     self.broadcaster = None
                     self._log("> Network Discovery Broadcaster stopped.")
 
-                if self.api_server:
-                    self.api_server.stop()
-                    self.api_server = None
-                    self._log("> Web API stopped.")
                 self._set_running_controls(False)
                 self._show_configured_data_dir()
 
@@ -1139,15 +1300,6 @@ class UTServerWindow(QMainWindow):
             self.dashboard.toggle_power.blockSignals(True)
             self.dashboard.toggle_power.setChecked(not state)
             self.dashboard.toggle_power.blockSignals(False)
-
-    def api_port(self) -> int:
-        return int(getattr(self, "_api_port", 8000) or 8000)
-
-    def dashboard_url(self) -> str:
-        return "http://localhost:%d/admin" % self.api_port()
-
-    def _on_open_dashboard(self):
-        webbrowser.open(self.dashboard_url())
 
     def _on_restart_pool(self):
         """
@@ -1307,12 +1459,6 @@ class UTServerWindow(QMainWindow):
         # The cluster facts and the session list come from one place each, so the
         # dashboard and the analytics table cannot disagree about them.
         self._refresh_cluster_cards()
-        try:
-            from slate_server.core.server_facts import sessions
-            self.analytics_view.set_sessions(
-                sessions(int(getattr(self, "_db_port", 5440) or 5440)))
-        except Exception as exc:
-            logging.debug("Could not refresh the session list: %s", exc)
         # Same beat as the dashboard refresh: if the pooler has died, bring it
         # back before 150 machines start connecting to the database directly.
         try:
@@ -1322,68 +1468,37 @@ class UTServerWindow(QMainWindow):
         except Exception as exc:
             logging.debug("Pooler health check skipped: %s", exc)
 
-        try:
-            # Connect directly to our embedded local DB
-            # The database now asks for a password, so these queries have to
-            # carry one. Without it this panel silently showed nothing.
-            conn = psycopg2.connect(
-                **connect_kwargs(self.settings_view.input_port.text())
-            )
+        # The queries run on a thread; a poll still running is not doubled up.
+        worker = getattr(self, "_poll_worker", None)
+        if worker is not None and worker.isRunning():
+            return worker
+        self._poll_worker = PollWorker(int(getattr(self, "_db_port", 5440) or 5440))
+        self._poll_worker.done.connect(self._show_poll)
+        self._poll_worker.start()
+        return self._poll_worker
 
-            with conn.cursor() as cur:
-                # 1. Active Connections
-                cur.execute("SELECT count(*) FROM pg_stat_activity WHERE state = 'active' OR state = 'idle'")
-                res1 = cur.fetchone()
-                active_conns = res1[0] if res1 else 0
-
-                # 2. Max Connections
-                cur.execute("SHOW max_connections")
-                res2 = cur.fetchone()
-                max_conns = max(1, int(res2[0]) if res2 else 100)
-
-                load_pct = min(100, int((active_conns / max_conns) * 100))
-
-                # 3. Connected IPs List
-                cur.execute("SELECT client_addr, application_name, state, query FROM pg_stat_activity WHERE client_addr IS NOT NULL ORDER BY state ASC LIMIT 50")
-                clients = cur.fetchall()
-                self._client_count = len({c[0] for c in clients if c and c[0]})
-
-                # 4. Total Projects
-                cur.execute("SELECT count(*) FROM tracking_projects")
-                res4 = cur.fetchone()
-                total_projects = res4[0] if res4 else 0
-
-                # 5. Total Assets
-                cur.execute("SELECT count(*) FROM stock_library")
-                res5 = cur.fetchone()
-                total_assets = res5[0] if res5 else 0
-
-                # 6. Database Size
-                cur.execute("SELECT pg_size_pretty(pg_database_size(current_database()))")
-                res6 = cur.fetchone()
-                db_size = res6[0] if res6 else "Unknown"
-
-            conn.close()
-
-            # 7. System Stats
-            cpu_usage = psutil.cpu_percent(interval=None)
-            ram_usage = psutil.virtual_memory().percent
-
-            # Update UI Cards
-            self.analytics_view.card_connections.set_value(f"{active_conns}")
-            self.analytics_view.card_load.set_value(f"{load_pct}%")
-            self.analytics_view.card_projects.set_value(f"{total_projects}")
-            self.analytics_view.card_assets.set_value(f"{total_assets}")
-            self.analytics_view.card_db_size.set_value(f"{db_size}")
-            self.analytics_view.card_cpu.set_value(f"{cpu_usage}%")
-            self.analytics_view.card_ram.set_value(f"{ram_usage}%")
-
-            # Update Data Grid
-            self.analytics_view.update_table(clients)
-
-        except Exception as e:
-            import logging
-            logging.debug(f"Poll database stats error: {e}")
+    def _show_poll(self, facts):
+        """poll_facts() on screen. The table's rows are exactly server_facts.sessions()."""
+        rows = facts.get("sessions") or []
+        self.analytics_view.set_sessions(rows)
+        self._client_count = len({r["client"] for r in rows if r.get("client")})
+        stats = facts.get("stats")
+        if stats:
+            view = self.analytics_view
+            view.card_connections.set_value("%s" % stats["connections"])
+            view.card_load.set_value("%s%%" % stats["load"])
+            view.card_projects.set_value("%s" % stats["projects"])
+            view.card_assets.set_value("%s" % stats["assets"])
+            view.card_db_size.set_value("%s" % stats["db_size"])
+            view.card_cpu.set_value("%s%%" % stats["cpu"])
+            view.card_ram.set_value("%s%%" % stats["ram"])
+        # Server switches in log_only: what they WOULD refuse, once per connection.
+        seen = self.__dict__.setdefault("_logged_refusals", set())
+        for line in facts.get("refusals") or []:
+            if line not in seen:
+                seen.add(line)
+                logging.warning("Security switch (log only): %s", line)
+                self._log("> Security switch: %s" % line)
 
     def _on_disconnect_session(self):
         """
@@ -1522,6 +1637,10 @@ class UTServerWindow(QMainWindow):
                 self._log("> Window closed; the server keeps running in the tray.")
                 return
         self._save_window_geometry()
+        backup = getattr(self, "_backup_worker", None)
+        if backup is not None and backup.isRunning():
+            self._log("> Waiting for the scheduled backup to finish…")
+            backup.wait()              # stopping the database under pg_dump spoils the backup
         if self.server_running() and not getattr(self, "_stopped_for_close", False):
             # pg_ctl stop can take seconds: on the worker, and the window
             # closes when it reports back (it froze, its log unpainted).
@@ -1555,12 +1674,11 @@ class UTServerWindow(QMainWindow):
             except Exception:
                 pass
 
-        if self.api_server:
-            try:
-                self.api_server.stop(timeout=2.0)
-            except Exception:
-                pass
-            self.api_server = None
+        if getattr(self, "poll_timer", None) is not None:
+            self.poll_timer.stop()
+        worker = getattr(self, "_poll_worker", None)
+        if worker is not None:
+            worker.wait(5000)          # a QThread destroyed while running takes the app down
 
         event.accept()
 

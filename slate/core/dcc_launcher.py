@@ -10,7 +10,6 @@ from typing import Iterable, List, Optional, Tuple
 from PySide6.QtWidgets import QFileDialog, QMessageBox, QApplication
 
 from slate.core.infra.config_manager import ConfigManager
-from slate.core.infra.database_manager import database_manager
 
 logger = logging.getLogger(__name__)
 
@@ -348,10 +347,11 @@ class DCCLauncher:
         """Saves the detected or selected DCC path back to the global settings."""
         _save_path(self.config_manager, key, path)
 
-    def launch(self, dcc_id: str, shot_id: int, file_path=None):
+    def launch(self, dcc_id: str, shot_id: int, file_path=None, shot_name="", scan_path=""):
         """
         Launches the specified DCC with the environment set up for the given shot,
-        opening file_path in it when one is given.
+        opening file_path in it when one is given. shot_name and scan_path are
+        what the Slate menu inside the program (plugins/dcc) works from.
         """
         dcc_info = self.SUPPORTED_DCCS.get(dcc_id)
         if not dcc_info:
@@ -368,18 +368,11 @@ class DCCLauncher:
 
         # Inject Slate specific variables
         env["SLATE_SHOT_ID"] = str(shot_id)
-
-        # The local database file, when there is one. Only the SQLite backend
-        # has a file, and neither backend has a db_path attribute: asking for
-        # it raised, and the launch stopped after the program had been found.
-        try:
-            backend = getattr(database_manager, "backend", None)
-            db_path = getattr(backend, "_db_path", None)
-        except Exception as exc:
-            logger.debug("No local database path to pass on: %s", exc)
-            db_path = None
-        if db_path:
-            env["SLATE_DB_PATH"] = str(db_path)
+        # The plugins used to look the shot up in a "shots" table of the local
+        # SQLite file. No such table exists (and the studio runs PostgreSQL), so
+        # every Load Scan / Save New Version said "Shot context not found".
+        env["SLATE_SHOT_NAME"] = str(shot_name or "")
+        env["SLATE_SCAN_PATH"] = str(scan_path or "")
 
         # The absolute path to our python source root so plugins can import slate directly
         src_root = str(Path(__file__).parent.parent.parent.resolve())

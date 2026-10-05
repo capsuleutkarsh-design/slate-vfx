@@ -55,7 +55,7 @@ class BidTrackingView(QWidget):
         top.addWidget(self.summary, 1)
         self.export_button = make_button("Export…", "ghost", icon="download",
                                          tooltip="Save this tracking table as CSV or Excel",
-                                         on_click=self.export)
+                                         on_click=lambda: self.export())
         top.addWidget(self.export_button)
         layout.addLayout(top)
 

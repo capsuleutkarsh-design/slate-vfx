@@ -153,7 +153,9 @@ variable instead of writing a file:
 set SLATE_DB_PASSWORD=...
 ```
 
-It wins over every config file.
+It is used when this machine has no saved password. A password saved in the
+settings, Credential Manager or the encrypted file comes first, so a workstation
+always connects the way it did before.
 
 ---
 

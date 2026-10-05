@@ -524,7 +524,7 @@ class MainWindowBuilderMixin:
                                 (self.user_data or {}).get("username", "Unknown"),
                             ),
                             app_context=self.app_context,
-                            # Who may do what inside (manage_system, wipe caches)
+                            # Who may do what inside (manage_system)
                             # from the signed-in person's roles, not a guess.
                             roles=self._screen_roles(),
                         )

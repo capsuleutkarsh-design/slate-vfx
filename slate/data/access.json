@@ -90,11 +90,6 @@
     "developer",
     "dev"
   ],
-  "_wipe_fleet_caches": "Clears thumbnail and proxy caches on every connected workstation.",
-  "wipe_fleet_caches": [
-    "admin",
-    "developer"
-  ],
   "_approve_leave": "Works the first (supervisor) stage of the leave queue.",
   "approve_leave": [
     "supervisor",
@@ -170,7 +165,7 @@
     "it",
     "it support"
   ],
-  "_manage_system": "Data Center, table editing, the SQL console, purge, the API gateway, Audit Logs and every remote workstation action.",
+  "_manage_system": "Data Center, table editing, the SQL console, purge, Audit Logs and every remote workstation action.",
   "manage_system": [
     "admin",
     "developer"

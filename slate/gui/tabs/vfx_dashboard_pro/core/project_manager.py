@@ -167,11 +167,6 @@ class ProjectManager:
         self.last_error = ""
         self.load_config()
 
-    @property
-    def default_project(self):
-        """No sample project is opened by default any more (the dashboard remembers yours)."""
-        return None
-
     def load_config(self):
         from slate.core.infra.database_manager import database_manager
 
@@ -451,17 +446,24 @@ class ProjectManager:
         if code not in {p["code"] for p in self.archived_projects()}:
             self.last_error = f"{code} is not archived."
             return False
+        # Read before it is made active. A bare stand-in for settings that
+        # could not be read would be saved over the real ones on the next edit,
+        # so the project stays archived instead.
+        try:
+            data = database_manager.get_tracking_project(code) or {}
+            valid_fields = ProjectConfig.__dataclass_fields__.keys()
+            project = ProjectConfig(**{k: v for k, v in data.items() if k in valid_fields})
+        except Exception as exc:
+            logging.error("ProjectManager: settings of %s not read, not restored: %s", code, exc)
+            self.last_error = (f"The settings of {code} could not be read, so it stays archived. "
+                               "Ask IT to check the database.")
+            return False
         result = database_manager.execute_update(
             "UPDATE tracking_projects SET active = 1 WHERE code = %s", (code,))
         if not getattr(result, "changed", result):
             self.last_error = getattr(result, "error", "") or "There is no archived project by that code."
             return False
-        data = database_manager.get_tracking_project(code) or {}
-        valid_fields = ProjectConfig.__dataclass_fields__.keys()
-        try:
-            self.projects[code] = ProjectConfig(**{k: v for k, v in data.items() if k in valid_fields})
-        except Exception:
-            self.projects[code] = ProjectConfig(code=code, name=data.get("name", code))
+        self.projects[code] = project
         self._audit(code, by, "RESTORE", "archived", "active")
         return True
 
@@ -544,6 +546,12 @@ class ProjectManager:
         # 3. Format Path
         # Try with cleaned names first (Most likely correct for folders)
         path = template.format(reel=reel_clean, shot=shot_clean)
+        from slate.core.domain.naming import path_inside
+        try:
+            path_inside(project.folder_base, path)      # a stored name with '..' stops here
+        except ValueError as exc:
+            logging.error("ProjectManager: %s", exc)
+            return ""
         full_path = os.path.join(project.folder_base, path)
         
         # 4. Smart/Fuzzy Find (Fix for strict naming mismatch)

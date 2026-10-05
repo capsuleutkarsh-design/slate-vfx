@@ -13,15 +13,24 @@ class RVLauncher:
     
     def __init__(self):
         self.rv_executable = self._find_rv_executable()
-        self.rvpush_executable = self._find_rvpush_executable()
-        
-    def _find_rvpush_executable(self) -> str:
-        """Locate rvpush.exe for single-window mode control."""
-        if self.rv_executable != "rv":
-            rvpush = Path(self.rv_executable).parent / "rvpush.exe"
-            if rvpush.exists():
-                return str(rvpush)
-        return "rvpush"
+
+    def command(self, media_args: List[str]) -> List[str]:
+        """
+        The RV command line for these media arguments, with the Slate menu.
+
+        It used to go through rvpush as "rvpush -tag slate replace ...", but
+        rvpush has no "replace" command (its own usage lists set, merge,
+        mu-eval, py-eval, py-exec and url), so with the bundled OpenRV - which
+        ships rvpush - nothing opened. The menu is loaded with one Python
+        expression, valid whether RV evaluates or executes -pyeval, and the
+        folder is written as a Python literal so a quote in it cannot break it.
+        """
+        # ponytail: one RV window per launch; reuse one window with
+        # "rvpush -tag slate set" once that is checked against a running RV.
+        core_path = str(Path(__file__).parent).replace("\\", "/")
+        pyeval = (f"__import__('sys').path.append({core_path!r}) or "
+                  "__import__('rv_plugin').createMode().activate()")
+        return [self.rv_executable, *media_args, "-pyeval", pyeval]
 
     def _find_rv_executable(self) -> str:
         """Locate the RV executable in common install paths or environment variables."""
@@ -104,20 +113,9 @@ class RVLauncher:
             return False
             
         try:
-            creationflags = 0x08000000 if os.name == 'nt' else 0 # DETACHED_PROCESS
-            
-            core_path = str(Path(__file__).parent).replace("\\", "/")
-            pyeval_cmd = f"import sys; sys.path.append('{core_path}'); import rv_plugin; m = rv_plugin.createMode(); m.activate()"
-            
-            # Use rvpush if available to avoid opening multiple windows
-            if self.rvpush_executable != "rvpush" and os.path.exists(self.rvpush_executable):
-                cmd = [self.rvpush_executable, "-tag", "slate", "replace", media_path, "-pyeval", pyeval_cmd]
-            else:
-                # -y flag skips confirmation dialogues, -play auto-plays
-                cmd = [self.rv_executable, "-play", media_path, "-pyeval", pyeval_cmd]
-            
+            cmd = self.command(["-play", media_path])
             logger.info(f"Launching RV: {' '.join(cmd)}")
-            subprocess.Popen(cmd, creationflags=creationflags)
+            subprocess.Popen(cmd, creationflags=0x08000000 if os.name == 'nt' else 0)  # no console
             return True
         except Exception as e:
             logger.error(f"Failed to launch RV: {e}")
@@ -167,26 +165,14 @@ class RVLauncher:
             cache_dir = GlobalConfig.local_cache_dir()
             cache_dir.mkdir(parents=True, exist_ok=True)
             rv_session_path = str(cache_dir / "temp_playlist.rv")
-            
-            creationflags = 0x08000000 if os.name == 'nt' else 0
-            
-            core_path = str(Path(__file__).parent).replace("\\", "/")
-            pyeval_cmd = f"import sys; sys.path.append('{core_path}'); import rv_plugin; m = rv_plugin.createMode(); m.activate()"
-            
-            if not self._generate_rv_session(valid_paths, rv_session_path):
-                # Fallback to direct launch
-                if self.rvpush_executable != "rvpush" and os.path.exists(self.rvpush_executable):
-                    cmd = [self.rvpush_executable, "-tag", "slate", "replace"] + valid_paths + ["-pyeval", pyeval_cmd]
-                else:
-                    cmd = [self.rv_executable, "-play"] + valid_paths + ["-pyeval", pyeval_cmd]
+
+            if self._generate_rv_session(valid_paths, rv_session_path):
+                cmd = self.command([rv_session_path])
             else:
-                if self.rvpush_executable != "rvpush" and os.path.exists(self.rvpush_executable):
-                    cmd = [self.rvpush_executable, "-tag", "slate", "replace", rv_session_path, "-pyeval", pyeval_cmd]
-                else:
-                    cmd = [self.rv_executable, rv_session_path, "-pyeval", pyeval_cmd]
-                
+                cmd = self.command(["-play"] + valid_paths)
+
             logger.info(f"Launching RV Playlist with {len(valid_paths)} items")
-            subprocess.Popen(cmd, creationflags=creationflags)
+            subprocess.Popen(cmd, creationflags=0x08000000 if os.name == 'nt' else 0)
             return True
         except Exception as e:
             logger.error(f"Failed to launch RV Playlist: {e}")

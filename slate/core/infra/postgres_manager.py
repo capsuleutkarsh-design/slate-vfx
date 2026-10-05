@@ -4,13 +4,11 @@ from psycopg2 import pool
 from psycopg2.pool import PoolError
 from psycopg2.extras import RealDictCursor, execute_values
 import logging
-import json
 import threading
 import atexit
 from collections import OrderedDict
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, Optional, Any
 import re
-from datetime import datetime, timedelta
 from contextlib import contextmanager
 from tenacity import retry_if_exception, retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from .circuit_breaker import CircuitBreaker, CircuitBreakerError
@@ -19,6 +17,7 @@ from .project_repository import ProjectRepository
 from .stock_repository import StockRepository
 from .tracking_repository import TrackingRepository
 from .user_repository import UserRepository
+from .manager_facade import ManagerFacade
 
 # How many database connections one machine may hold, whatever its saved
 # settings say. Every workstation that already has Slate installed carries a
@@ -33,7 +32,7 @@ MAX_POOL_PER_CLIENT = 2
 # an outage whichever database is behind the manager. Re-exported from here
 # because this is where every existing caller imports it from.
 from .db_results import (  # noqa: E402
-    DatabaseUnavailableError, DatabaseWriteError, NoRowsError, SqlResult, WriteResult,
+    DatabaseReadError, DatabaseUnavailableError, DatabaseWriteError, NoRowsError, SqlResult, WriteResult,
     classify_error, error_text, is_legacy_write_fetch, is_write_statement,
 )
 from .transaction import AtomicUnit  # noqa: E402
@@ -125,7 +124,7 @@ def what_to_do(error, host, port, dbname, user) -> str:
         "5. Verify credentials are correct" % (host, port, dbname))
 
 
-class PostgresManager:
+class PostgresManager(ManagerFacade):
     """
     Enterprise Database Manager using PostgreSQL with Connection Pooling.
     Drop-in replacement for DatabaseManager with improved performance.
@@ -225,7 +224,9 @@ class PostgresManager:
 
         # Set database connection parameters
         # Priority: Config File > Keyring > Default
-        primary_host = config.get('host') or get_from_keyring("db_host") or "127.0.0.1"
+        # The server this machine was set up with; '' on a first setup (NEW-4).
+        self.saved_host = config.get('host') or get_from_keyring("db_host") or ""
+        primary_host = self.saved_host or "127.0.0.1"
         raw_hosts = config.get('hosts') or config.get('db_hosts') or []
         if isinstance(raw_hosts, str):
             raw_hosts = [h.strip() for h in raw_hosts.split(",") if h.strip()]
@@ -255,7 +256,7 @@ class PostgresManager:
         self.connected_via = ""
 
         self.dbname = config.get('name') or get_from_keyring("db_name") or "ut_vfx"
-        self.user = config.get('user') or get_from_keyring("db_user") or "postgres"
+        self.user = config.get('user') or get_from_keyring("db_user") or "ut_vfx_app"
 
         maxconn_cfg = config.get('maxconn') or config.get('max_db_connections') or 2  # noqa: E501
         minconn_cfg = config.get('minconn') or config.get('min_db_connections') or 1
@@ -285,9 +286,6 @@ class PostgresManager:
         self.password = None
         # self._connection_pool is already managed by class/init
         
-        # Usage Stats / Cache
-        self._embedding_cache = None
-        self._vector_cache_lock = threading.RLock()
         self.project_repo = ProjectRepository(self)
         self.stock_repo = StockRepository(self)
         self.tracking_repo = TrackingRepository(self)
@@ -304,21 +302,6 @@ class PostgresManager:
         self._initialized = True
 
         
-    def invalidate_vector_cache(self):
-        """
-        Invalidate the in-memory vector cache.
-        Must be called whenever stock library assets or embeddings are modified.
-        """
-        with self._vector_cache_lock:
-            self._embedding_cache = None
-            if hasattr(self, 'ids_cache'):
-                del self.ids_cache
-            if hasattr(self, 'matrix_cache'):
-                del self.matrix_cache
-            if hasattr(self, 'norms_cache'):
-                del self.norms_cache
-        logging.debug("Vector search cache invalidated")
-
     def _ensure_not_shutting_down(self):
         """Raise a consistent error when DB access is requested during shutdown."""
         if self.__class__._is_shutting_down:
@@ -326,72 +309,14 @@ class PostgresManager:
     
     def _load_password_secure(self) -> str:
         """
-        Load database password from secure storage.
-        Priority: Environment Variable > Keyring > Encrypted File > Error
+        The database password (local_secrets.find_db_password - one order for
+        every reader). None found is an error with guidance.
         """
-        import os
-        from pathlib import Path
-        
-        # 1. Try environment variable (highest priority)
-        password = os.getenv('DB_PASSWORD')
+        from .local_secrets import find_db_password
+        password = find_db_password()
         if password:
-            logging.info("Database password loaded from environment variable")
             return password
-            
-        # 2. Try GlobalConfig (User requested "Zero Config" Deployment Priority)
-        # If a password is set in config.json/default_config.json, it should override local cache
-        from .global_config import GlobalConfig
-        config_password = GlobalConfig.get('db_password') or GlobalConfig.get('password')
-        if config_password:
-             # Basic sanity check to avoid empty strings if they somehow got in
-             if str(config_password).strip():
-                 logging.info("Database password loaded from GlobalConfig (config.json)")
-                 return config_password
-        
-        # 3. Try Windows Credential Manager via keyring
-        try:
-            import keyring
-            password = keyring.get_password("Slate", "db_password")
-            if password:
-                logging.info("Database password loaded from Windows Credential Manager")
-                return password
-        except ImportError:
-            logging.debug("keyring library not available")
-        except Exception as e:
-            logging.debug(f"Could not access keyring: {e}")
-        
-        # 4. Try encrypted file (fallback)
-        local_appdata = Path(os.getenv('LOCALAPPDATA', '')) / "Slate"
-        encrypted_creds_file = local_appdata / ".db_credentials"
-        
-        if encrypted_creds_file.exists():
-            try:
-                from cryptography.fernet import Fernet
-                
-                # Load encryption key
-                key_file = local_appdata / ".encryption_key"
-                if key_file.exists():
-                    with open(key_file, 'rb') as f:
-                        key = f.read()
-                    
-                    cipher = Fernet(key)
-                    
-                    # Decrypt credentials
-                    with open(encrypted_creds_file, 'rb') as f:
-                        encrypted_data = f.read()
-                    
-                    decrypted_data = cipher.decrypt(encrypted_data)
-                    import json
-                    credentials = json.loads(decrypted_data.decode())
-                    
-                    password = credentials.get('db_password')
-                    if password:
-                        logging.info("Database password loaded from encrypted file")
-                        return password
-            except Exception as e:
-                logging.warning(f"Could not read encrypted credentials file: {e}")
 
-        # 5. No password found - fail with explicit guidance.
         error_msg = (
             "\n" + "="*70 + "\n"
             "DATABASE PASSWORD NOT CONFIGURED\n"
@@ -423,6 +348,16 @@ class PostgresManager:
         db_port = int(found.get("db_port") or 0)
         pooler_port = int(found.get("pooler_port") or 0)
         if not host:
+            return False
+
+        if host not in self.host_candidates and getattr(self, "saved_host", ""):
+            # NEW-4: a saved server is never replaced by whoever answers first -
+            # that could be any PC on the LAN, and it would be sent the password.
+            self.discovery_warning = (
+                f"Another computer ({host}) answered as the Slate server, but this "
+                f"machine is set up for {self.saved_host}, so it was not used. If the "
+                "server has moved, use Reconfigure to enter its new address.")
+            logging.warning(self.discovery_warning)
             return False
 
         changed = False
@@ -698,6 +633,8 @@ class PostgresManager:
                                 f"Error: {e}\n\n"
                                 + what_to_do(e, self.host, self.port,
                                              self.dbname, self.user)
+                                + (f"\n\n{self.discovery_warning}"
+                                   if getattr(self, "discovery_warning", "") else "")
                             )
     
     def _close_pool(self):
@@ -1116,7 +1053,8 @@ class PostgresManager:
                 "saved. Your work has not been lost - try again in a moment."
             ) from e
 
-    def execute_query(self, query: str, params: tuple = None, fetch: str = "all") -> Any:
+    def execute_query(self, query: str, params: tuple = None, fetch: str = "all",
+                      strict: bool = False) -> Any:
         """
         Run one statement.
 
@@ -1182,6 +1120,8 @@ class PostgresManager:
             # outage to survive. The reason is kept for last_error().
             self._remember_error(error_text(e))
             logging.exception(f"Query failed after retries: {query[:100]}... Error: {e}")
+            if strict:
+                raise DatabaseReadError(error_text(e), kind="read") from e
             return None
 
     def write(self, query: str, params: tuple = None, *, strict: bool = False) -> WriteResult:
@@ -1235,35 +1175,51 @@ class PostgresManager:
         """
         return self.write(query, params)
 
+    def executemany(self, query: str, rows) -> None:
+        """
+        One INSERT for many rows, committed. query has a single "VALUES %s"
+        for the rows (psycopg2's execute_values form); SQLiteManager takes the
+        same statement, so the repositories run unchanged on both. Errors
+        propagate - the caller decides what a refused batch means.
+        """
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                execute_values(cur, query, rows)
+            conn.commit()
+
     def execute_sql(self, query: str, params: tuple = None, max_rows: Optional[int] = None) -> SqlResult:
         """
-        Run a statement somebody typed and report everything about it.
+        Run a statement somebody typed, READ ONLY, and report everything about it.
 
         Returns an SqlResult with the columns and rows of a query (at most
-        max_rows), the rows changed by a write, or the database's reason for
-        refusing. Nothing is swallowed and nothing is guessed. An unreachable
-        database raises DatabaseUnavailableError.
+        max_rows), or the database's reason for refusing. It runs inside a
+        READ ONLY transaction that is always rolled back, so nothing typed
+        can change data (SYS-002). One statement only: a second one after a
+        ';' could COMMIT the read-only transaction and write in a new one.
+        An unreachable database raises DatabaseUnavailableError.
         """
+        if ";" in query.strip().rstrip(";"):
+            return SqlResult(error="Run one statement at a time (take out the ';' in the middle).")
+
         def _execute():
             with self.get_connection() as conn:
-                with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                    cur.execute(query, params)
-                    if cur.description is not None:
-                        columns = [d[0] for d in cur.description]
-                        if max_rows is not None and max_rows >= 0:
-                            rows = cur.fetchmany(max_rows + 1)
-                            truncated = len(rows) > max_rows
-                            rows = rows[:max_rows]
-                        else:
-                            rows, truncated = cur.fetchall(), False
-                        # A data-changing statement with RETURNING still needs
-                        # its commit; a plain SELECT does not mind one.
-                        conn.commit()
-                        return SqlResult(columns, [dict(r) for r in rows],
-                                         rowcount=len(rows), truncated=truncated, is_query=True)
-                    rowcount = cur.rowcount
-                    conn.commit()
-                    return SqlResult(rowcount=max(rowcount, 0), is_query=False)
+                try:
+                    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                        cur.execute("SET TRANSACTION READ ONLY")
+                        cur.execute(query, params)
+                        if cur.description is not None:
+                            columns = [d[0] for d in cur.description]
+                            if max_rows is not None and max_rows >= 0:
+                                rows = cur.fetchmany(max_rows + 1)
+                                truncated = len(rows) > max_rows
+                                rows = rows[:max_rows]
+                            else:
+                                rows, truncated = cur.fetchall(), False
+                            return SqlResult(columns, [dict(r) for r in rows],
+                                             rowcount=len(rows), truncated=truncated, is_query=True)
+                        return SqlResult(rowcount=max(cur.rowcount, 0), is_query=False)
+                finally:
+                    conn.rollback()
 
         try:
             # Not retried: a typed statement may not be safe to run twice.
@@ -1380,265 +1336,3 @@ class PostgresManager:
                         current_pool.putconn(conn)
                 except Exception as e:
                     logging.exception(f"Error returning transaction connection to pool: {e}")
-
-    # --- PROJECT MANAGEMENT ---
-
-    def get_all_projects(self, limit: Optional[int] = 1000):
-        return self.project_repo.get_all_projects(limit=limit)
-        
-    def get_all_projects_summary(self, limit: Optional[int] = 1000) -> List[Dict[str, Any]]:
-        return self.project_repo.get_all_projects_summary(limit=limit)
-
-    def record_project(self, name: str, template_used: str, target_directory: str, total_folders: int = 0) -> int:
-        return self.project_repo.record_project(name, template_used, target_directory, total_folders)
-
-    def start_operation(self, project_id: int, operation_type: str) -> int:
-        return self.project_repo.start_operation(project_id, operation_type)
-
-    def update_operation(self, op_id: int, duration: float, items: int, errors: int, success: bool) -> None:
-        self.project_repo.update_operation(op_id, duration, items, errors, success)
-
-    def record_task_detail(self, op_id: int, name: str, src: str, dst: str, size: int, duration: float, status: str, error: str = "") -> None:
-        self.project_repo.record_task_detail(op_id, name, src, dst, size, duration, status, error)
-
-    # --- MAINTENANCE ---
-
-    def perform_maintenance(self, days_to_keep=30):
-        # Postgres is robust, but cleaning old logs is still good
-        try:
-            cutoff = (datetime.now() - timedelta(days=days_to_keep)).isoformat()
-            self.execute_query("DELETE FROM task_details WHERE timestamp < %s", (cutoff,), fetch="none")
-            
-            # VACUUM in Postgres cannot run inside a transaction block easily via execute_query
-            # but usually autovacuum handles this. We can skip explicit vacuum for now.
-        except Exception as e:
-            logging.exception(f"Maintenance error: {e}")
-
-    def cleanup_stale_sessions(self):
-        end = datetime.now().isoformat()
-        q = """
-            UPDATE operations 
-            SET end_time = %s, success = 0, errors = errors + 1 
-            WHERE end_time IS NULL
-        """
-        self.execute_query(q, (end,), fetch="none")
-
-    # --- STOCK LIBRARY ---
-
-    def add_stock_asset(self, path: str, thumb_path: str = "", proxy_path: str = "", tags: Optional[List[str]] = None, metadata: dict = None) -> int:
-        return self.stock_repo.add_stock_asset(path, thumb_path, proxy_path, tags, metadata)
-
-    def add_stock_assets_batch(self, assets_list: List[Dict[str, Any]]) -> None:
-        self.stock_repo.add_stock_assets_batch(assets_list)
-
-    def update_stock_asset_paths(self, asset_id, thumb_path=None, proxy_path=None, file_path=None):
-        self.stock_repo.update_stock_asset_paths(asset_id, thumb_path, proxy_path, file_path)
-
-    def update_asset_tags(self, asset_id, new_tags):
-        return self.stock_repo.update_asset_tags(asset_id, new_tags)
-
-    def update_asset_metadata(self, asset_id, metadata_str, tags_str):
-        return self.stock_repo.update_asset_metadata(asset_id, metadata_str, tags_str)
-
-    def count_stock_assets(self, search_query=None, file_types=None, asset_ids=None) -> int:
-        """How many assets match the filter, so the count agrees with the list."""
-        return self.stock_repo.count_stock_assets(search_query, file_types, asset_ids)
-
-    def list_stock_paths(self):
-        """Just the paths, for the ingest to tell what it already holds."""
-        return self.stock_repo.list_stock_paths()
-
-    def get_stock_count(self) -> int:
-        """Returns total number of assets in the stock_library table."""
-        return self.stock_repo.get_stock_count()
-
-    def get_all_stock_assets(self, limit: int = None, offset: int = 0, search_query: str = None, file_types: List[str] = None, asset_ids: List[str] = None) -> List[Dict]:
-        return self.stock_repo.get_all_stock_assets(limit, offset, search_query, file_types, asset_ids)
-
-    def get_stock_file_types(self) -> List[str]:
-        """Returns list of unique file extensions in the library."""
-        return self.stock_repo.get_stock_file_types()
-
-    def get_stock_tags(self) -> List[str]:
-        """Returns list of unique tags in the library."""
-        return self.stock_repo.get_stock_tags()
-
-    def remove_stock_asset(self, asset_id) -> bool:
-        """Delete one stock asset by database id."""
-        return self.stock_repo.remove_stock_asset(asset_id)
-
-    def remove_stock_asset_by_path(self, file_path: str) -> bool:
-        """Delete one stock asset by file path."""
-        return self.stock_repo.remove_stock_asset_by_path(file_path)
-
-    def clear_stock_library(self):
-        return self.stock_repo.clear_stock_library()
-
-    def clear_stock_assets(self):
-        """Legacy compatibility alias."""
-        return self.clear_stock_library()
-
-    # --- VECTOR SEARCH (Postgres Implementation) ---
-    
-    def update_asset_embedding(self, asset_id, embedding_json):
-        # Postgres JSONB
-        q = "UPDATE stock_assets SET embedding_json=%s WHERE id=%s"
-        success = (self.execute_query(q, (embedding_json, asset_id), fetch="rowcount") or 0) > 0
-        if success:
-            self.invalidate_vector_cache()
-        return success
-        
-    def search_similar_assets(self, query_embedding: List[float], limit: int = 50) -> List[Dict]:
-        """
-        Hybrid Approach: Fetch vectors and do numpy logic in Python (Proven fast for <100k items)
-        pgvector extension is better but requires installation. We stick to Python for "No Install" requirement on server side plugins.
-        """
-        # Reuse the exact logic from DatabaseManager regarding numpy caching
-        # Just fetching data from Postgres
-        
-        import numpy as np
-        
-        with self._vector_cache_lock:
-            if self._embedding_cache is None:
-                q = "SELECT id, embedding FROM stock_library WHERE embedding IS NOT NULL"
-                rows = self.execute_query(q) or []
-                if not rows:
-                    return []
-
-                ids = []
-                vecs = []
-                for r in rows:
-                    try:
-                        # embedding col in Postgres is JSONB, so psycopg2 adapters might auto-convert to list/dict
-                        # Check type
-                        v = r['embedding']
-                        if isinstance(v, str):
-                            v = json.loads(v)
-
-                        if len(v) > 0:
-                            ids.append(r['id'])
-                            vecs.append(v)
-                    except Exception:
-                        continue
-
-                if not vecs:
-                    return []
-
-                matrix = np.array(vecs, dtype=np.float32)
-                norms = np.linalg.norm(matrix, axis=1)
-                norms[norms == 0] = 1e-10
-
-                self.ids_cache = np.array(ids)
-                self.matrix_cache = matrix
-                self.norms_cache = norms
-                self._embedding_cache = True
-
-            ids_cache = self.ids_cache
-            matrix_cache = self.matrix_cache
-            norms_cache = self.norms_cache
-            
-        # Perform Dot Product (Cosine Similarity)
-        # Cosine Sim = (A . B) / (||A|| * ||B||)
-        
-        query_vec = np.array(query_embedding, dtype=np.float32)
-        query_norm = np.linalg.norm(query_vec)
-        if query_norm == 0: query_norm = 1e-10
-        
-        # Dot product of query vs all items
-        dot_products = np.dot(matrix_cache, query_vec)
-        
-        # Calculate similarities
-        result_norms = norms_cache * query_norm
-        similarities = dot_products / result_norms
-        
-        # Get top N indices
-        # argsort returns indices that would sort the array (ascending), so we take tail and reverse
-        top_indices = np.argsort(similarities)[-limit:][::-1]
-        
-        results = []
-        for idx in top_indices:
-            score = float(similarities[idx])
-            # Filter out weak matches if needed, but for now return all top N
-            if score > 0.0:
-                asset_id = int(ids_cache[idx])
-                results.append({'id': asset_id, 'score': score})
-                
-        return results
-
-    # --- DASHBOARD / TRACKING ---
-
-    def save_tracking_project(self, code: str, name: str, config_json: str):
-        return self.tracking_repo.save_tracking_project(code, name, config_json)
-
-    def get_tracking_project(self, code: str) -> Optional[Dict]:
-        return self.tracking_repo.get_tracking_project(code)
-
-    def get_all_tracking_projects(self) -> List[Dict]:
-        return self.tracking_repo.get_all_tracking_projects()
-
-    def delete_tracking_project(self, code: str) -> bool:
-        return self.tracking_repo.delete_tracking_project(code)
-
-    def save_tracking_shots(self, project_code: str, shots_data: List[Tuple[str, str, int, str]]):
-        return self.tracking_repo.save_tracking_shots(project_code, shots_data)
-
-    def get_tracking_shots(self, project_code: str) -> List[Dict]:
-        return self.tracking_repo.get_tracking_shots(project_code)
-
-    def update_tracking_shot_safe(self, project_code: str, shot_name: str, data_json: str,
-                                  current_version: int, reel: str = None) -> bool:
-        # The reel is part of a shot's identity - two reels may hold a shot of
-        # the same name. This wrapper used to drop it, so every dashboard save
-        # against PostgreSQL failed outright with a TypeError. The repository
-        # below has always accepted it.
-        return self.tracking_repo.update_tracking_shot_safe(
-            project_code, shot_name, data_json, current_version, reel=reel)
-
-    def _get_tracking_tasks_columns(self) -> set:
-        return self.tracking_repo._get_tracking_tasks_columns()
-
-    def get_tracking_tasks(self, project_code: str) -> List[Dict]:
-        return self.tracking_repo.get_tracking_tasks(project_code)
-
-    def save_tracking_tasks(self, project_code: str, tasks_data: List[Dict]):
-        return self.tracking_repo.save_tracking_tasks(project_code, tasks_data)
-
-    def sync_users(self, users_dict: Dict[str, Any]):
-        return self.user_repo.sync_users(users_dict)
-
-    def get_user_profile_pic(self, username: str) -> Optional[str]:
-        return self.user_repo.get_user_profile_pic(username)
-
-    def update_user_profile_pic(self, username: str, path: str) -> bool:
-        return self.user_repo.update_user_profile_pic(username, path)
-
-    def get_user_id(self, name_or_user: str) -> Optional[int]:
-        return self.user_repo.get_user_id(name_or_user)
-
-    # Stubs for less critical stats
-    def get_error_statistics(self): return {'total_errors': 0, 'recent_errors': []}
-    def get_asset_statistics(self): return {'total_assets': 0, 'recent_assets': []}
-    def get_compliance_data(self): return {'audit_trail': []}
-    def export_data(self, table, path): return True
-
-    def log_change_event(self, project_code, entity_type, entity_id, user_id, action_type,
-                         field, old_val, new_val, **shot):
-        """
-        One line of change history. user_id is the author's username (see
-        change_history.py); shot may carry shot_id, shot_name, reel and
-        department. Returns the WriteResult.
-        """
-        from .change_history import log_change
-        return log_change(self, project_code, entity_type, entity_id, user_id, action_type,
-                          field, old_val, new_val, **shot)
-
-    def get_history(self, project_code=None, shot_name=None, limit=200, **shot):
-        """History, newest first - see change_history.read_history()."""
-        from .change_history import read_history
-        try:
-            return read_history(self, project_code, shot_name, limit, **shot)
-        except DatabaseUnavailableError:
-            raise
-        except Exception as e:
-            logging.exception(f"Failed to fetch history for project={project_code}, shot={shot_name}: {e}")
-            return []

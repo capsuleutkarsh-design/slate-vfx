@@ -3,7 +3,7 @@
 ; Features: Auto-Updater, Cleanup Old Configs, Bundled Dependencies.
 
 #define MyAppName "Slate Server"
-#define MyAppVersion "BETA 2.1.0"
+#define MyAppVersion "BETA 2.2.0"
 #define MyAppPublisher "UT Studio"
 #define MyAppURL "https://github.com/capsuleutkarsh-design/slate-vfx"
 #define MyAppExeName "Slate_Server.exe"
@@ -85,6 +85,8 @@ Source: "{#SourceDistDir}\Slate\SlateUpdater.exe"; DestDir: "{app}"; Flags: igno
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppExeName}"; Components: central_server
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppExeName}"; Tasks: desktopicon; Components: central_server
+; For when nobody can sign in: the recovery tool (needs the Recovery Key). docs/RECOVERY.md
+Name: "{autoprograms}\Recover Slate"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--recover"; IconFilename: "{app}\{#MyAppExeName}"; Components: central_server
 
 [Registry]
 ; --- AUTO-STARTUP CONFIGURATION ---
