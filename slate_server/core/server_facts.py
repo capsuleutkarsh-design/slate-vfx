@@ -287,11 +287,12 @@ def sessions(port: int) -> list:
                     "SELECT pid, client_addr, application_name, state, "
                     "       COALESCE(EXTRACT(EPOCH FROM (now() - state_change)), 0), "
                     "       COALESCE(EXTRACT(EPOCH FROM (now() - xact_start)), 0), "
-                    "       LEFT(COALESCE(query, ''), 200) "
+                    "       LEFT(COALESCE(query, ''), 200), usename, datname "
                     "FROM pg_stat_activity "
                     "WHERE pid <> pg_backend_pid() AND client_addr IS NOT NULL "
                     "ORDER BY state, state_change")
-                for pid, addr, app, state, idle_for, xact_for, query in cur.fetchall():
+                for (pid, addr, app, state, idle_for, xact_for, query, user,
+                     database) in cur.fetchall():
                     rows.append({
                         "pid": int(pid),
                         "client": str(addr or ""),
@@ -300,6 +301,8 @@ def sessions(port: int) -> list:
                         "idle_seconds": float(idle_for or 0),
                         "transaction_seconds": float(xact_for or 0),
                         "query": str(query or "").strip(),
+                        "user": str(user or ""),
+                        "database": str(database or ""),
                     })
     except Exception as exc:
         logger.debug("Could not read the session list: %s", exc)

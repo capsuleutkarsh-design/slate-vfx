@@ -331,4 +331,25 @@ def switches_off(layout, names: Optional[Iterable[str]] = None, conn=None,
                         "local file when it next starts." % str(exc).splitlines()[0])
     else:
         done.append("The database is updated from this when the server next starts.")
+    if conn is not None and (names is None or "split_superuser_password" in names):
+        done += _unsplit_superuser(conn, layout)
     return done
+
+
+def _unsplit_superuser(conn, layout) -> List[str]:
+    """split_superuser_password off: postgres shares the workstations' password again."""
+    from psycopg2 import sql
+    from slate_server.core import db_credentials as creds
+    import os
+    creds.reload()
+    if os.environ.get("SLATE_DB_ADMIN_PASSWORD"):
+        return ["The superuser keeps its own password: SLATE_DB_ADMIN_PASSWORD sets it."]
+    if not creds.has_separate_admin_password() or not creds.app_password():
+        return []
+    with conn.cursor() as cur:
+        cur.execute(sql.SQL("ALTER ROLE {} PASSWORD {}").format(
+            sql.Identifier(creds.admin_user()), sql.Literal(creds.app_password())))
+    _write_setting(layout, "db_admin_password", "")      # blank = "not set" (db_credentials)
+    return ["The superuser (%s) has the workstations' database password again, as before "
+            "split_superuser_password. If Slate Server is running in another window, "
+            "restart it." % creds.admin_user()]

@@ -687,6 +687,33 @@ class DatabaseEngine:
         finally:
             conn.close()
 
+    def standard_rules(self) -> str:
+        """The access rules a hardened server has always written (strict_pg_hba off)."""
+        rules = [
+            self.HBA_SIGNATURE,
+            "#",
+            "# The first matching line wins, which is why this file is replaced",
+            "# rather than added to. initdb writes 'trust' rules for local and",
+            "# loopback connections - 'trust' means the password is not checked",
+            "# at all - and any hardening appended below them never applies.",
+            "#",
+            "# Studio networks only, and a password every time. Do not add a",
+            "# 0.0.0.0/0 rule here, and never use 'trust'.",
+            "",
+            "local   all   all                    scram-sha-256",
+            "host    all   all   127.0.0.1/32     scram-sha-256",
+            "host    all   all   ::1/128          scram-sha-256",
+        ]
+        for network in self.STUDIO_NETWORKS:
+            rules.append("host    all   all   %-16s scram-sha-256" % network)
+        rules += [
+            "",
+            "local   replication  all                 scram-sha-256",
+            "host    replication  all  127.0.0.1/32   scram-sha-256",
+            "host    replication  all  ::1/128        scram-sha-256",
+        ]
+        return "\n".join(rules) + "\n"
+
     def _harden_access(self):
         """
         Replace initdb's rules rather than adding to them.
@@ -714,35 +741,11 @@ class DatabaseEngine:
         if not any(l.split()[-1].lower() == "trust" for l in live if l.split()):
             return False           # already hardened, or hand-edited
 
-        rules = [
-            self.HBA_SIGNATURE,
-            "#",
-            "# The first matching line wins, which is why this file is replaced",
-            "# rather than added to. initdb writes 'trust' rules for local and",
-            "# loopback connections - 'trust' means the password is not checked",
-            "# at all - and any hardening appended below them never applies.",
-            "#",
-            "# Studio networks only, and a password every time. Do not add a",
-            "# 0.0.0.0/0 rule here, and never use 'trust'.",
-            "",
-            "local   all   all                    scram-sha-256",
-            "host    all   all   127.0.0.1/32     scram-sha-256",
-            "host    all   all   ::1/128          scram-sha-256",
-        ]
-        for network in self.STUDIO_NETWORKS:
-            rules.append("host    all   all   %-16s scram-sha-256" % network)
-        rules += [
-            "",
-            "local   replication  all                 scram-sha-256",
-            "host    replication  all  127.0.0.1/32   scram-sha-256",
-            "host    replication  all  ::1/128        scram-sha-256",
-        ]
-
         try:
             backup = hba_path.with_suffix(".conf.before-hardening")
             if not backup.exists():
                 shutil.copy2(hba_path, backup)
-            hba_path.write_text("\n".join(rules) + "\n", encoding="utf-8")
+            hba_path.write_text(self.standard_rules(), encoding="utf-8")
         except OSError as exc:
             logging.error("Could not write %s: %s", hba_path, exc)
             return False

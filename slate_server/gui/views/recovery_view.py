@@ -10,7 +10,8 @@ command line does.
     Unlock              the Recovery Key - this PC only
     Accounts            reset a password / create or restore an administrator
     Database passwords  the workstations' one and the superuser's, separately
-    Security switches   turn them off (works with no database at all)
+    Security switches   turn them off (works with no database at all), or one at a
+                        time to log only / on, each checked first
     Snapshots           put the last automatic copy back
     Recovery Key        make a new one (old key, or Windows administrator)
 
@@ -266,8 +267,11 @@ class RecoveryView(QWidget):
         box.setContentsMargins(24, 20, 24, 20)
         box.addWidget(_heading("Security switches and snapshots",
                                "Turning a switch off puts back the old behaviour, even with "
-                               "the database down. A snapshot is taken before every security "
-                               "change and before every repair here."))
+                               "the database down. Log only changes nothing but writes down "
+                               "what the switch would refuse; Turn on checks first that "
+                               "people can still get in, and undoes itself if not. A "
+                               "snapshot is taken before every security change and before "
+                               "every repair here."))
         row = QHBoxLayout()
         self.switch_pick = QComboBox()
         self.switch_pick.addItem("Every security switch", None)
@@ -280,8 +284,18 @@ class RecoveryView(QWidget):
         row.addWidget(self.switch_pick, 1)
         self.btn_switch_off = _button("Turn off")
         self.btn_switch_off.clicked.connect(self._switches_off)
-        row.addWidget(self.btn_switch_off)
+        self.btn_switch_log = _button("Log only")
+        self.btn_switch_log.clicked.connect(lambda: self._switch_on("log_only"))
+        self.btn_switch_on = _button("Turn on")
+        self.btn_switch_on.clicked.connect(lambda: self._switch_on("on"))
+        for button in (self.btn_switch_off, self.btn_switch_log, self.btn_switch_on):
+            row.addWidget(button)
         box.addLayout(row)
+        self._modes = None
+        self.switch_about = _note("")
+        box.addWidget(self.switch_about)
+        self.switch_pick.currentIndexChanged.connect(self._show_switch)
+        self._show_switch()
         row = QHBoxLayout()
         self.chk_accounts = QCheckBox("Also put the users and roles back")
         self.chk_accounts.setStyleSheet(f"color: {C.TEXT_PRIMARY}; background: transparent; "
@@ -401,6 +415,7 @@ class RecoveryView(QWidget):
         def done(_):
             self.lbl_lock.setText("Unlocked for ten minutes.")
             self.say("Unlocked.")
+            self.refresh_switches()
 
         def work(say):
             session.say = say
@@ -422,7 +437,7 @@ class RecoveryView(QWidget):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel) == QMessageBox.StandardButton.Yes
 
-    def _in_session(self, work):
+    def _in_session(self, work, on_done=None):
         session = self._unlocked_session()
         if session is None:
             return
@@ -431,7 +446,7 @@ class RecoveryView(QWidget):
             session.say = say
             return work(session)
 
-        self.run_job(run)
+        self.run_job(run, on_done)
 
     def _reset_password(self):
         user = self.user_field.text().strip()
@@ -467,7 +482,57 @@ class RecoveryView(QWidget):
 
     def _switches_off(self):
         name = self.switch_pick.currentData()
-        self._in_session(lambda s: s.switches_off(None if name is None else [name]))
+        self._in_session(lambda s: s.switches_off(None if name is None else [name]),
+                         lambda _: self.refresh_switches())
+
+    def _show_switch(self, *_):
+        name = self.switch_pick.currentData()
+        if name is None:
+            self.switch_about.setText("Every security switch: Turn off only. Switches are "
+                                      "turned on one at a time.")
+            return
+        from slate.core.security import switches
+        mode = (self._modes or {}).get(name) or "not known (unlock, with the database running, to see it)"
+        text = "%s - now: %s. %s" % (name, mode, switches.known().get(name, ""))
+        if name.startswith("signed_"):
+            text += " Recommended: Log only first; turn it on once the log shows nothing " \
+                    "would be refused."
+        self.switch_about.setText(text)
+
+    def refresh_switches(self):
+        """Read every switch's mode off the screen's thread, then show the chosen one."""
+        from slate_server.core.recovery.hardening import current_modes
+        layout = self._layout()
+
+        def done(modes):
+            self._modes = modes
+            if modes is None:
+                self.say("The switches' modes cannot be read: the database cannot be reached.")
+            self._show_switch()
+
+        self.run_job(lambda say: current_modes(layout), done)
+
+    def _switch_on(self, mode: str):
+        name = self.switch_pick.currentData()
+        if name is None:
+            QMessageBox.information(self, "Recovery", "Choose one switch: they are turned on "
+                                                      "one at a time.")
+            return
+        if self._unlocked_session() is None:
+            return
+        if mode == "on" and name.startswith("signed_") and \
+                (self._modes or {}).get(name) != "log_only":
+            question = ("%s should run as Log only first, so a mistake shows up as log lines "
+                        "rather than as nobody being able to work. Turn it on anyway?" % name)
+        elif mode == "on":
+            question = ("Turn %s on? It is checked first and undone on its own if anybody "
+                        "would be locked out." % name)
+        else:
+            question = ("Set %s to Log only? Nothing is refused; what it would refuse is "
+                        "written to the log." % name)
+        if not self._confirm(question):
+            return
+        self._in_session(lambda s: s.turn_on(name, mode), lambda _: self.refresh_switches())
 
     def _restore_snapshot(self):
         accounts = self.chk_accounts.isChecked()
