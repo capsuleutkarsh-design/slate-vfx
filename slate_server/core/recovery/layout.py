@@ -147,7 +147,7 @@ def credentials_file(key: str = "db_password") -> Path:
         try:
             if path.is_file():
                 import json
-                data = json.loads(path.read_text(encoding="utf-8"))
+                data = json.loads(path.read_text(encoding="utf-8-sig"))
                 if isinstance(data, dict) and data.get(key) not in (None, ""):
                     best = path
         except Exception:

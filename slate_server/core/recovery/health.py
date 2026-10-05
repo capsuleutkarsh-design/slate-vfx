@@ -114,7 +114,7 @@ def _check_settings(layout, out):
         for path in db_credentials._config_layers():
             if path.is_file():
                 try:
-                    json.loads(path.read_text(encoding="utf-8"))
+                    json.loads(path.read_text(encoding="utf-8-sig"))
                 except Exception:
                     broken.append(str(path))
         if broken:

@@ -234,7 +234,7 @@ def _write_setting(layout, key: str, value: str) -> Path:
     data = {}
     if target.exists():
         try:
-            loaded = json.loads(target.read_text(encoding="utf-8"))
+            loaded = json.loads(target.read_text(encoding="utf-8-sig"))
             if isinstance(loaded, dict):
                 data = loaded
         except Exception:
