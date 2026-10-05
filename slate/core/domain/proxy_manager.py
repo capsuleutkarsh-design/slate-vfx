@@ -345,22 +345,15 @@ class ProxyManager:
         """
         ffmpeg input arguments for every frame of a sequence, at 24 fps.
 
-        ffmpeg's image reader stops at the first missing frame: a render with
-        one frame missing made a proxy of the frames before it, reported it
-        made, and the lineup played that instead of the shot. A gap now holds
-        the frame before it, as RV does, so the proxy runs the whole shot.
+        A render with one frame missing made a proxy of the frames before the
+        gap, reported it made, and the lineup played that instead of the shot:
+        with a gap the frames are read through FrameSequence.ffconcat.
         """
         if not seq.missing_frames:
             return ["-framerate", "24", "-start_number", str(seq.start), "-i", seq.pattern]
-        present, held = set(seq.frames), None
-        lines = ["ffconcat version 1.0"]
-        for frame in range(seq.start, seq.end + 1):
-            if frame in present:
-                held = str(seq.frame_path(frame)).replace("'", "'\\''")
-            lines += [f"file '{held}'", "duration 0.041666667"]
         listing = partial.with_suffix(".txt")
         with open(cls.long_path(listing), "w", encoding="utf-8") as handle:
-            handle.write("\n".join(lines) + "\n")
+            handle.write(seq.ffconcat(seq.start))
         return ["-f", "concat", "-safe", "0", "-i", str(listing), "-r", "24"]
 
     def parse_resolution(self, res_str: str) -> Tuple[int, int]:
