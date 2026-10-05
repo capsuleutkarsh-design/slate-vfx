@@ -9,6 +9,7 @@ a new database and compared row for row.
 """
 
 import json
+import sys
 import os
 import string
 import time
@@ -218,7 +219,14 @@ def workstation_config(server, tmp_path, monkeypatch):
                                   "db_name": DBNAME, "db_user": "ut_vfx_app",
                                   "db_password": APP_PASSWORD}), encoding="utf-8")
     monkeypatch.setattr(local_secrets, "_candidates", lambda: iter([config]))
+    # The same file is this workstation's settings, as it is for the client
+    # itself, and it has no keyring entry (find_db_password reads both).
+    from slate.core.infra.global_config import GlobalConfig
+    monkeypatch.setattr(GlobalConfig, "get", classmethod(
+        lambda cls, key, default=None: json.loads(config.read_text(encoding="utf-8")).get(key, default)))
+    monkeypatch.setitem(sys.modules, "keyring", None)
     monkeypatch.delenv("SLATE_DB_PASSWORD", raising=False)
+    monkeypatch.delenv("DB_PASSWORD", raising=False)
     recorded = []
     from slate.core.domain import backup_service
     monkeypatch.setattr(backup_service, "_record", lambda ok, msg: recorded.append((ok, msg)))
