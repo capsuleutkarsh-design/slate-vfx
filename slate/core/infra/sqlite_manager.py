@@ -18,7 +18,6 @@ import os
 import re
 import threading
 from contextlib import contextmanager
-from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -27,6 +26,7 @@ from .db_results import (
     is_legacy_write_fetch, is_write_statement,
 )
 from .transaction import AtomicUnit
+from .manager_facade import ManagerFacade
 
 logger = logging.getLogger(__name__)
 
@@ -342,7 +342,7 @@ def _dict_factory(cursor, row):
     return dict(zip(fields, row))
 
 
-class SQLiteManager:
+class SQLiteManager(ManagerFacade):
     """
     SQLite backend for Slate — drop-in replacement for PostgresManager.
 
@@ -737,155 +737,3 @@ class SQLiteManager:
             "db_path": self._db_path,
             "pool_initialized": hasattr(self._local, "conn") and self._local.conn is not None,
         }
-
-    # ── Project Management (delegates to repo) ──────────────────────────────
-
-    def get_all_projects(self, limit=1000):
-        return self.project_repo.get_all_projects(limit=limit)
-
-    def get_all_projects_summary(self, limit=1000):
-        return self.project_repo.get_all_projects_summary(limit=limit)
-
-    def record_project(self, name, template_used, target_directory, total_folders=0):
-        return self.project_repo.record_project(name, template_used, target_directory, total_folders)
-
-    def start_operation(self, project_id, operation_type):
-        return self.project_repo.start_operation(project_id, operation_type)
-
-    def update_operation(self, op_id, duration, items, errors, success):
-        self.project_repo.update_operation(op_id, duration, items, errors, success)
-
-    def record_task_detail(self, op_id, name, src, dst, size, duration, status, error=""):
-        self.project_repo.record_task_detail(op_id, name, src, dst, size, duration, status, error)
-
-    # ── Stock Library (delegates to repo) ───────────────────────────────────
-
-    def add_stock_asset(self, path, thumb_path="", proxy_path="", tags=None, metadata=None):
-        return self.stock_repo.add_stock_asset(path, thumb_path, proxy_path, tags, metadata)
-
-    def add_stock_assets_batch(self, assets_list):
-        self.stock_repo.add_stock_assets_batch(assets_list)
-
-    def update_stock_asset_paths(self, asset_id, thumb_path=None, proxy_path=None, file_path=None):
-        self.stock_repo.update_stock_asset_paths(asset_id, thumb_path, proxy_path, file_path)
-
-    def update_asset_tags(self, asset_id, new_tags):
-        return self.stock_repo.update_asset_tags(asset_id, new_tags)
-
-    def update_asset_metadata(self, asset_id, metadata_str, tags_str):
-        return self.stock_repo.update_asset_metadata(asset_id, metadata_str, tags_str)
-
-    def count_stock_assets(self, search_query=None, file_types=None, asset_ids=None) -> int:
-        """How many assets match the filter, so the count agrees with the list."""
-        return self.stock_repo.count_stock_assets(search_query, file_types, asset_ids)
-
-    def list_stock_paths(self):
-        """Just the paths, for the ingest to tell what it already holds."""
-        return self.stock_repo.list_stock_paths()
-
-    def get_stock_count(self):
-        return self.stock_repo.get_stock_count()
-
-    def get_all_stock_assets(self, limit=None, offset=0, search_query=None, file_types=None, asset_ids=None):
-        return self.stock_repo.get_all_stock_assets(limit, offset, search_query, file_types, asset_ids)
-
-    def get_stock_file_types(self):
-        return self.stock_repo.get_stock_file_types()
-
-    def get_stock_tags(self):
-        return self.stock_repo.get_stock_tags()
-
-    def remove_stock_asset(self, asset_id):
-        return self.stock_repo.remove_stock_asset(asset_id)
-
-    def remove_stock_asset_by_path(self, file_path):
-        return self.stock_repo.remove_stock_asset_by_path(file_path)
-
-    def clear_stock_library(self):
-        return self.stock_repo.clear_stock_library()
-
-    def clear_stock_assets(self):
-        return self.clear_stock_library()
-
-    # ── Tracking / Dashboard and Users (the same repositories PostgreSQL runs) ──
-
-    def save_tracking_project(self, code, name, config_json):
-        return self.tracking_repo.save_tracking_project(code, name, config_json)
-
-    def get_tracking_project(self, code):
-        return self.tracking_repo.get_tracking_project(code)
-
-    def get_all_tracking_projects(self):
-        return self.tracking_repo.get_all_tracking_projects()
-
-    def save_tracking_shots(self, project_code, shots_data):
-        return self.tracking_repo.save_tracking_shots(project_code, shots_data)
-
-    def get_tracking_shots(self, project_code):
-        return self.tracking_repo.get_tracking_shots(project_code)
-
-    def update_tracking_shot_safe(self, project_code, shot_name, data_json,
-                                  current_version, reel=None):
-        return self.tracking_repo.update_tracking_shot_safe(
-            project_code, shot_name, data_json, current_version, reel=reel)
-
-    def _get_tracking_tasks_columns(self) -> set:
-        return self.tracking_repo._get_tracking_tasks_columns()
-
-    def get_tracking_tasks(self, project_code):
-        return self.tracking_repo.get_tracking_tasks(project_code)
-
-    def save_tracking_tasks(self, project_code, tasks_data):
-        return self.tracking_repo.save_tracking_tasks(project_code, tasks_data)
-
-    def sync_users(self, users_dict):
-        return self.user_repo.sync_users(users_dict)
-
-    def get_user_profile_pic(self, username):
-        return self.user_repo.get_user_profile_pic(username)
-
-    def update_user_profile_pic(self, username, path):
-        return self.user_repo.update_user_profile_pic(username, path)
-
-    def get_user_id(self, name_or_user):
-        return self.user_repo.get_user_id(name_or_user)
-
-    # ── Maintenance ─────────────────────────────────────────────────────────
-
-    def perform_maintenance(self, days_to_keep=30):
-        try:
-            cutoff = (datetime.now() - timedelta(days=days_to_keep)).isoformat()
-            self.execute_query("DELETE FROM task_details WHERE timestamp < %s", (cutoff,), fetch="none")
-        except Exception as e:
-            logger.error(f"Maintenance error: {e}")
-
-    def cleanup_stale_sessions(self):
-        end = datetime.now().isoformat()
-        self.execute_query(
-            "UPDATE operations SET end_time=%s, success=0, errors=errors+1 WHERE end_time IS NULL",
-            (end,), fetch="none"
-        )
-
-    # ── Change History & Audit ──────────────────────────────────────────────
-
-    def log_change_event(self, project_code, entity_type, entity_id, user_id, action_type,
-                         field, old_val, new_val, **shot):
-        """
-        One line of change history. user_id is the author's username (see
-        change_history.py); shot may carry shot_id, shot_name, reel and
-        department. Returns the WriteResult.
-        """
-        from .change_history import log_change
-        return log_change(self, project_code, entity_type, entity_id, user_id, action_type,
-                          field, old_val, new_val, **shot)
-
-    def get_history(self, project_code=None, shot_name=None, limit=200, **shot):
-        """History, newest first - see change_history.read_history()."""
-        from .change_history import read_history
-        try:
-            return read_history(self, project_code, shot_name, limit, **shot)
-        except DatabaseUnavailableError:
-            raise
-        except Exception as e:
-            logger.exception(f"Failed to fetch history for project={project_code}, shot={shot_name}: {e}")
-            return []
