@@ -144,6 +144,92 @@ def test_first_run_test_connection_button_uses_the_real_connect(qtbot, monkeypat
     assert seen == [None]
 
 
+# Slots whose first parameter takes clicked's checked=False harmlessly
+# (False means the same as the default).
+_FALSE_IS_DEFAULT = {"build_proxies", "_on_refresh_clicked", "_on_allow_firewall", "save",
+                     "_on_stat_card_clicked"}
+
+
+def test_no_click_handler_gets_checked_in_a_real_parameter():
+    """
+    clicked/triggered pass checked=False into a slot's first parameter when it
+    has one. The dashboard's "N filters on - Clear" chip got apply=False and
+    never re-filtered the grid; bid Export and first-run Test connection broke
+    the same way. Wrap such a slot in a lambda.
+    """
+    def optional_first(fn):
+        """An optional first parameter: what clicked's checked fills."""
+        params = fn.args.posonlyargs + fn.args.args
+        return (len(params) > 1 and len(fn.args.defaults) >= len(params) - 1
+                and not fn.decorator_list)
+
+    trees = [ast.parse(p.read_bytes()) for top in ("slate", "slate_server")
+             for p in (ROOT / top).rglob("*.py")]
+    classes = [c for t in trees for c in ast.walk(t) if isinstance(c, ast.ClassDef)]
+    anywhere = {}
+    for cls in classes:
+        for fn in cls.body:
+            if isinstance(fn, ast.FunctionDef):
+                anywhere.setdefault(fn.name, []).append(optional_first(fn))
+    bad = []
+    for cls in classes:
+        own = {fn.name: optional_first(fn) for fn in cls.body if isinstance(fn, ast.FunctionDef)}
+        for call in (n for n in ast.walk(cls) if isinstance(n, ast.Call)):
+            slots = []
+            func = call.func
+            if (isinstance(func, ast.Attribute) and func.attr == "connect" and call.args
+                    and isinstance(func.value, ast.Attribute) and func.value.attr in ("clicked", "triggered")):
+                slots.append(call.args[0])
+            if isinstance(func, ast.Name) and func.id == "make_button":
+                slots += [k.value for k in call.keywords if k.arg == "on_click"]
+            for slot in slots:
+                if not isinstance(slot, ast.Attribute) or slot.attr in _FALSE_IS_DEFAULT:
+                    continue
+                mine = isinstance(slot.value, ast.Name) and slot.value.id == "self" and slot.attr in own
+                if own[slot.attr] if mine else any(anywhere.get(slot.attr, ())):
+                    bad.append(f"{cls.name} line {call.lineno}: {ast.unparse(slot)}")
+    # Module-level builders (dashboard_layout_builder) connect widget.<method>.
+    for tree in trees:
+        for call in (n for n in ast.walk(tree) if isinstance(n, ast.Call)):
+            func = call.func
+            if (isinstance(func, ast.Attribute) and func.attr == "connect" and call.args
+                    and isinstance(func.value, ast.Attribute) and func.value.attr == "clicked"
+                    and isinstance(call.args[0], ast.Attribute)
+                    and isinstance(call.args[0].value, ast.Name) and call.args[0].value.id == "widget"
+                    and any(anywhere.get(call.args[0].attr, ()))):
+                bad.append(f"line {call.lineno}: {ast.unparse(call.args[0])}")
+    assert not bad, sorted(set(bad))
+
+
+def test_batch_edit_applies_what_was_ticked(qtbot, monkeypatch):
+    """The dialog deleted itself on close, so reading its answer after exec() raised."""
+    from PySide6.QtCore import QCoreApplication, QEvent
+    from PySide6.QtWidgets import QWidget
+    from slate.gui.tabs.vfx_dashboard_pro.ui import dashboard_widget as module
+    from slate.gui.tabs.vfx_dashboard_pro.ui.batch_edit_dialog import BatchEditDialog
+
+    applied = []
+    host = QWidget()
+    qtbot.addWidget(host)
+    host._can_manage_shots = lambda: True
+    host._get_user_list = lambda: []
+    host._notify = lambda *a, **k: None
+    host.on_batch_update = lambda shots, updates: applied.append(updates)
+
+    def answer(dialog):
+        # What a real exec() does: the person ticks and applies, the dialog
+        # closes, and leaving its event loop runs any pending deletes.
+        dialog.status_cb.setChecked(True)
+        dialog._on_apply()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        return dialog.result()
+
+    monkeypatch.setattr("slate.core.infra.studio_settings.get_setting", lambda *a, **k: None)
+    monkeypatch.setattr(BatchEditDialog, "exec", answer)
+    module.DashboardWidget.open_batch_edit_dialog(host, ["sh010", "sh020"])
+    assert applied and "status" in applied[0]
+
+
 def test_dashboard_retry_reconnects(monkeypatch):
     """The offline banner's Retry asked for a reconnect() nothing has, so it never retried."""
     from slate.core.domain import access

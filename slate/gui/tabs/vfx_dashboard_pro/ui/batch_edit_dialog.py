@@ -28,7 +28,6 @@ class BatchEditDialog(QDialog):
 
         self.setWindowTitle(f"Batch edit - {self.selected_count} shots")
         self.setMinimumWidth(self.sp(440, minimum=380))
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self.setup_ui()
 
     def setup_ui(self):

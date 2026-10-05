@@ -175,7 +175,7 @@ def build_dashboard_ui(widget):
     widget.filter_chip = make_button("", "ghost", icon="close",
                                      tooltip="Clear the search, the status filter, column filters and Filters rules")
     widget.filter_chip.setObjectName("filterChip")
-    widget.filter_chip.clicked.connect(widget.clear_all_filters)
+    widget.filter_chip.clicked.connect(lambda: widget.clear_all_filters())
     widget.filter_chip.hide()
     row2.addWidget(widget.filter_chip)
 
