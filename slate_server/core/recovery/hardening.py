@@ -249,7 +249,12 @@ def turn_on(layout, name: str, mode: str = "on", by: str = "recovery tool") -> S
         apply, verify, rollback = (lambda: None), None, None
         if name == "hide_password_hashes" and mode == switches.ON:
             from slate_server.core import secure_schema
-            probe = secure_schema.make_probe(conn)
+            try:
+                probe = secure_schema.make_probe(conn)
+            except Exception as exc:
+                return StepResult(name, False, "Not turned on: the sign-in check could not "
+                                  "be prepared (%s). Nothing was changed."
+                                  % (str(exc).strip().splitlines() or ["?"])[0])
             precheck, apply, verify, rollback = _hide_hashes(conn, client, probe)
         elif name not in SERVER_SWITCHES:
             precheck = {"db": db}

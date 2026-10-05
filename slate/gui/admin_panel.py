@@ -295,7 +295,9 @@ class AdminPanelTab(QWidget):
         if mode == "off" or getattr(self.hub, "signing_key", None):
             return True
         from slate.core.security.signing import fleet_private_key
-        self.hub.signing_key = fleet_private_key(self.current_username, password, db=self.db)
+        # Trimmed, as sign-in stores and checks it (UserManager.clean_password).
+        self.hub.signing_key = fleet_private_key(self.current_username, str(password).strip(),
+                                                 db=self.db)
         if self.hub.signing_key or mode != "on":
             return True
         QMessageBox.warning(self, "Not sent",
