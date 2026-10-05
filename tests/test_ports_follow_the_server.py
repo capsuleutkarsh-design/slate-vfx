@@ -121,6 +121,7 @@ class TestTheWorkstationFollowsAPortChange:
         m.host = "10.0.0.5"
         m.port = 5442
         m.pooler_port = 6432
+        m.saved_host = ""      # first setup; a saved server is pinned (NEW-4)
         m.saved = saved
         return m
 

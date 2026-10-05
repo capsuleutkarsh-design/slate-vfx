@@ -225,7 +225,9 @@ class PostgresManager:
 
         # Set database connection parameters
         # Priority: Config File > Keyring > Default
-        primary_host = config.get('host') or get_from_keyring("db_host") or "127.0.0.1"
+        # The server this machine was set up with; '' on a first setup (NEW-4).
+        self.saved_host = config.get('host') or get_from_keyring("db_host") or ""
+        primary_host = self.saved_host or "127.0.0.1"
         raw_hosts = config.get('hosts') or config.get('db_hosts') or []
         if isinstance(raw_hosts, str):
             raw_hosts = [h.strip() for h in raw_hosts.split(",") if h.strip()]
@@ -423,6 +425,16 @@ class PostgresManager:
         db_port = int(found.get("db_port") or 0)
         pooler_port = int(found.get("pooler_port") or 0)
         if not host:
+            return False
+
+        if host not in self.host_candidates and getattr(self, "saved_host", ""):
+            # NEW-4: a saved server is never replaced by whoever answers first -
+            # that could be any PC on the LAN, and it would be sent the password.
+            self.discovery_warning = (
+                f"Another computer ({host}) answered as the Slate server, but this "
+                f"machine is set up for {self.saved_host}, so it was not used. If the "
+                "server has moved, use Reconfigure to enter its new address.")
+            logging.warning(self.discovery_warning)
             return False
 
         changed = False
@@ -698,6 +710,8 @@ class PostgresManager:
                                 f"Error: {e}\n\n"
                                 + what_to_do(e, self.host, self.port,
                                              self.dbname, self.user)
+                                + (f"\n\n{self.discovery_warning}"
+                                   if getattr(self, "discovery_warning", "") else "")
                             )
     
     def _close_pool(self):
@@ -1237,33 +1251,37 @@ class PostgresManager:
 
     def execute_sql(self, query: str, params: tuple = None, max_rows: Optional[int] = None) -> SqlResult:
         """
-        Run a statement somebody typed and report everything about it.
+        Run a statement somebody typed, READ ONLY, and report everything about it.
 
         Returns an SqlResult with the columns and rows of a query (at most
-        max_rows), the rows changed by a write, or the database's reason for
-        refusing. Nothing is swallowed and nothing is guessed. An unreachable
-        database raises DatabaseUnavailableError.
+        max_rows), or the database's reason for refusing. It runs inside a
+        READ ONLY transaction that is always rolled back, so nothing typed
+        can change data (SYS-002). One statement only: a second one after a
+        ';' could COMMIT the read-only transaction and write in a new one.
+        An unreachable database raises DatabaseUnavailableError.
         """
+        if ";" in query.strip().rstrip(";"):
+            return SqlResult(error="Run one statement at a time (take out the ';' in the middle).")
+
         def _execute():
             with self.get_connection() as conn:
-                with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                    cur.execute(query, params)
-                    if cur.description is not None:
-                        columns = [d[0] for d in cur.description]
-                        if max_rows is not None and max_rows >= 0:
-                            rows = cur.fetchmany(max_rows + 1)
-                            truncated = len(rows) > max_rows
-                            rows = rows[:max_rows]
-                        else:
-                            rows, truncated = cur.fetchall(), False
-                        # A data-changing statement with RETURNING still needs
-                        # its commit; a plain SELECT does not mind one.
-                        conn.commit()
-                        return SqlResult(columns, [dict(r) for r in rows],
-                                         rowcount=len(rows), truncated=truncated, is_query=True)
-                    rowcount = cur.rowcount
-                    conn.commit()
-                    return SqlResult(rowcount=max(rowcount, 0), is_query=False)
+                try:
+                    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                        cur.execute("SET TRANSACTION READ ONLY")
+                        cur.execute(query, params)
+                        if cur.description is not None:
+                            columns = [d[0] for d in cur.description]
+                            if max_rows is not None and max_rows >= 0:
+                                rows = cur.fetchmany(max_rows + 1)
+                                truncated = len(rows) > max_rows
+                                rows = rows[:max_rows]
+                            else:
+                                rows, truncated = cur.fetchall(), False
+                            return SqlResult(columns, [dict(r) for r in rows],
+                                             rowcount=len(rows), truncated=truncated, is_query=True)
+                        return SqlResult(rowcount=max(cur.rowcount, 0), is_query=False)
+                finally:
+                    conn.rollback()
 
         try:
             # Not retried: a typed statement may not be safe to run twice.

@@ -14,6 +14,7 @@ from PySide6.QtCore import QStandardPaths, QThread, Signal, Qt
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from ..core.domain import fleet_status as fs
+from ..core.domain.table_export import neutralise
 from ..core.workers.admin_workers import list_reports, load_report
 from .admin_fleet_export import export_fleet_xlsx
 from .admin_widgets import ram_gb, reported
@@ -179,7 +180,7 @@ def write_csv(path: Path, records, summary, skipped) -> Path:
         writer = csv.writer(fh)
         writer.writerow([header_for(k) for k in columns])
         for record in records:
-            writer.writerow([record.get(k, "") for k in columns])
+            writer.writerow([neutralise(record.get(k, "")) for k in columns])
     sidecar = path.with_name(path.stem + "_summary.txt")
     sidecar.write_text(
         f"Slate fleet report - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"

@@ -48,9 +48,17 @@ def neutralise(value):
     if value is None or isinstance(value, (bool, int, float, Decimal, date, datetime)):
         return value
     text = str(value)
-    if text.startswith(_DANGEROUS_START):
+    # Apostrophes already in front are quoted too, so restore() gives back exactly this text.
+    if text.lstrip("'").startswith(_DANGEROUS_START):
         return "'" + text
     return text
+
+
+def restore(value):
+    """What neutralise() was given: its apostrophe taken off, for reading a sheet back."""
+    if isinstance(value, str) and value.startswith("'") and value.lstrip("'").startswith(_DANGEROUS_START):
+        return value[1:]
+    return value
 
 
 def default_filename(name: str, extension: str = "csv") -> str:

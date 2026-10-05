@@ -38,7 +38,7 @@ from slate.core.services.path_template_manager import get_path_manager
 from slate.core.domain.ingest_survey import (
     IGNORED_FILES, IGNORED_SUFFIXES, IngestSurvey, client_folder_for, is_junk_file, survey_drive,
 )
-from slate.core.domain.naming import name_problem, shot_name_problem
+from slate.core.domain.naming import name_problem, path_inside, shot_name_problem
 from slate.utils.sequence_utils import group_frames
 
 __all__ = ["FolderCreationWorker", "ShotSubfoldersWorker", "is_junk_file",
@@ -480,11 +480,11 @@ class FolderCreationWorker(QThread):
         for reel in self.excel_df[reel_col].dropna().unique():
             if not self._should_go_on():
                 break
-            reel_path = root / str(reel).strip()
+            reel_path = path_inside(root, str(reel).strip())
             self._mkdir(reel_path)
             self.reels_count += 1
             for shot in self.excel_df[self.excel_df[reel_col] == reel][shot_col].dropna():
-                shot_path = reel_path / str(shot).strip()
+                shot_path = path_inside(reel_path, str(shot).strip())
                 self._mkdir(shot_path)
                 self.shots_count += 1
                 self._create_subs(shot_path, subs)
