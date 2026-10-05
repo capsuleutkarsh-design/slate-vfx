@@ -638,8 +638,7 @@ class IngestWorker(QThread):
             if not self.fast_mode:
                 try:
                     if seq is not None:
-                        _ok, proxy_path = proxy_manager.generate_proxy(
-                            f_path, is_seq=True, sequence=(seq.pattern, seq.start))
+                        _ok, proxy_path = proxy_manager.generate_proxy(f_path, is_seq=True)
                     else:
                         _ok, proxy_path = proxy_manager.generate_proxy(f_path)
                 except Exception as e:

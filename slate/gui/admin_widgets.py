@@ -12,6 +12,7 @@ slate/core/domain/fleet_status.py, shared with the fleet report.
 
 import html
 import logging
+import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -99,11 +100,14 @@ def signed_in_user(data) -> str:
 # What clients write when they could not read a value (hardware_info writes
 # the word 'Unknown'); shown as 'Not reported' rather than verbatim.
 _NOT_REPORTED_WORDS = ("", "unknown", "n/a", "none", "null")
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
 
 def reported(value) -> str:
     """A client-written value, or '' when it is missing or a placeholder."""
-    text = "" if value is None else str(value).strip()
+    # BIOS strings can carry NULs and other control characters; one of them
+    # made the fleet report's CSV and Excel writers refuse the whole file.
+    text = "" if value is None else _CONTROL.sub("", str(value)).strip()
     return "" if text.lower() in _NOT_REPORTED_WORDS else text
 
 

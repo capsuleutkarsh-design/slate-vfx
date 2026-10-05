@@ -1,4 +1,5 @@
 import logging
+from html import escape
 from pathlib import Path
 from typing import Tuple
 import pandas as pd
@@ -107,13 +108,15 @@ class ReportGenerator:
             # Title
             title_color = colors.HexColor("#3EA8BF")
             title_style = ParagraphStyle('CustomTitle', parent=self.styles['Heading1'], fontSize=24, spaceAfter=20, alignment=1, textColor=title_color)
-            story.append(Paragraph(f"Slate - Project Report: {proj_name}", title_style))
-            
+            # Paragraph text is markup: a name or path with '&' or '<' (R&D) was
+            # printed mangled, so every value is escaped.
+            story.append(Paragraph(f"Slate - Project Report: {escape(str(proj_name))}", title_style))
+
             # Executive Summary
             story.append(Paragraph("Session Overview", self.styles['Heading2']))
-            
-            summary_text = f"<b>Project Name:</b> {proj_name}<br/>"
-            summary_text += f"<b>Date:</b> {proj_date}<br/>"
+
+            summary_text = f"<b>Project Name:</b> {escape(str(proj_name))}<br/>"
+            summary_text += f"<b>Date:</b> {escape(str(proj_date))}<br/>"
             
             if not tasks_df.empty:
                 # Ensure sizes are treated as numeric
@@ -168,8 +171,8 @@ class ReportGenerator:
                     sus_data = [['File Name', 'Location', 'Issue']]
                     for fname, loc, issue in suspicious_list[:50]: # Limit to 50 to avoid overflow
                         sus_data.append([
-                            Paragraph(fname, ParagraphStyle('s', fontSize=9)),
-                            Paragraph(str(loc), ParagraphStyle('s', fontSize=8)), 
+                            Paragraph(escape(fname), ParagraphStyle('s', fontSize=9)),
+                            Paragraph(escape(str(loc)), ParagraphStyle('s', fontSize=8)),
                             issue
                         ])
                     
@@ -223,7 +226,7 @@ class ReportGenerator:
                     status_color = colors.green if status_text == 'Success' else colors.red
                     
                     table_data.append([
-                        Paragraph(display_path, ParagraphStyle('small', fontSize=9)),
+                        Paragraph(escape(display_path), ParagraphStyle('small', fontSize=9)),
                         str(row['item_name']),
                         self._format_bytes(row['file_size']),
                         f"{row['duration']:.1f}s",

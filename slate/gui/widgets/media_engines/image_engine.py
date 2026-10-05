@@ -48,7 +48,8 @@ _NAMED_SPACES = {
     "aces2065-1": "ACES2065-1", "aces": "ACES2065-1", "aces - aces2065-1": "ACES2065-1",
     "linear": "Linear Rec.709 (sRGB)", "lin_rec709": "Linear Rec.709 (sRGB)",
     "linear rec.709 (srgb)": "Linear Rec.709 (sRGB)", "lin_srgb": "Linear Rec.709 (sRGB)",
-    "scene_linear": "", "srgb": "sRGB Encoding", "srgb encoding": "sRGB Encoding",
+    # "sRGB - Texture" is the built-in config's name; "sRGB Encoding" is not in it.
+    "scene_linear": "", "srgb": "sRGB - Texture", "srgb encoding": "sRGB - Texture",
     "raw": "Raw",
 }
 
@@ -59,18 +60,24 @@ def detect_input_space(attributes: dict, default: str = "ACEScg") -> str:
 
     Every EXR used to be read as ACEScg (MED-124), so plates and renders in
     linear Rec.709 displayed with the wrong colour. The header's colourspace
-    name is used when it has one, then its chromaticities; otherwise the
-    config's scene-linear space. The player also lets a person choose.
+    name is used when it has one, then the ACES flag and its chromaticities;
+    otherwise the config's scene-linear space. The player also lets a person
+    choose. OpenImageIO's own oiio:ColorSpace comes after the file's word:
+    OIIO 3 puts "lin_rec709" on every EXR it reads, which read ACEScg renders
+    and ACES containers as Rec.709.
     """
     attributes = attributes or {}
-    for key in ("oiio:ColorSpace", "colorspace", "ColorSpace", "acesImageContainerFlag"):
+
+    def named(key):
         value = attributes.get(key)
         if isinstance(value, str) and value.strip():
             mapped = _NAMED_SPACES.get(value.strip().lower())
-            if mapped:
-                return mapped
-            if mapped is None and key != "acesImageContainerFlag":
-                return value.strip()
+            return value.strip() if mapped is None else mapped
+        return ""
+
+    for key in ("colorspace", "ColorSpace"):
+        if named(key):
+            return named(key)
     if attributes.get("acesImageContainerFlag") in (1, "1", True):
         return "ACES2065-1"
     chroma = attributes.get("chromaticities")
@@ -82,7 +89,7 @@ def detect_input_space(attributes: dict, default: str = "ACEScg") -> str:
                     return name
         except (TypeError, ValueError):
             pass
-    return default
+    return named("oiio:ColorSpace") or default
 
 
 class ImageEngine(BaseMediaEngine):
@@ -263,7 +270,11 @@ class ImageEngine(BaseMediaEngine):
         # Store full raw buffer for real-time color switching
         self.raw_buffer = img_np.astype(np.float32)
         default = self._color_manager.scene_linear_space() if self._color_manager else "ACEScg"
-        self.input_space = detect_input_space(self._header, default)
+        space = detect_input_space(self._header, default)
+        # A name the config does not know fails the transform, and the float
+        # picture that comes back was shown as bytes - noise.
+        known = self._color_manager.get_colorspaces() if self._color_manager else []
+        self.input_space = space if not known or space in known else default
         
         self._process_ocio()
 

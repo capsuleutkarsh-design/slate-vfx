@@ -117,7 +117,7 @@ class ColorManager:
             ("ACES2065-1", "ACES 2065-1"),
             ("ACEScc", "ACEScc (Log)"),
             ("ACEScct", "ACEScct (Log)"),
-            ("sRGB Encoding", "sRGB"),
+            ("sRGB - Texture", "sRGB"),
             ("Raw", "Raw (No Transform)"),
             ("Linear Rec.709 (sRGB)", "Linear Rec.709"),
             ("Linear ARRI Wide Gamut 3", "ARRI LogC3"),
@@ -181,7 +181,7 @@ class ColorManager:
             image: Input image as numpy array.
                    - uint8 (0-255): will be converted to float32 internally
                    - float32 (0.0-1.0+): used directly
-            src_colorspace: Source colorspace name (e.g. 'ACEScg', 'sRGB Encoding').
+            src_colorspace: Source colorspace name (e.g. 'ACEScg', 'sRGB - Texture').
 
         Returns:
             Transformed image as uint8 numpy array (0-255), ready for Qt display.

@@ -118,6 +118,9 @@ shared_datas = [
     (R('slate', 'default_config.json'), 'slate'),
     (R('slate', 'icons'), 'slate/icons'),
     (R('slate', 'resources'), 'slate/resources'),
+    # RV loads the Slate menu from this folder as a plain .py file, in RV's
+    # own Python; shipped only as compiled code, RV found nothing to import.
+    (R('slate', 'core', 'rv_plugin.py'), 'slate/core'),
     # FFmpeg is fetched by setup.bat rather than committed - it is a
     # 95MB third-party binary with its own licence. Include it only if
     # it is present, so a build on a machine that has run setup works

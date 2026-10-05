@@ -1,3 +1,5 @@
+import os
+import tempfile
 from pathlib import Path
 
 from .stream_engine import StreamEngine
@@ -19,12 +21,14 @@ class SequenceEngine(StreamEngine):
         self.start_frame_idx = 0
         self.seq_pattern = ""
         self.seq_frames = 0
+        self.seq = None
 
-    def set_sequence_details(self, pattern_path, start_frame, frame_count=0):
-        """Configure sequence specifics before loading."""
+    def set_sequence_details(self, pattern_path, start_frame, frame_count=0, seq=None):
+        """Configure sequence specifics before loading; seq is the FrameSequence, if known."""
         self.seq_pattern = pattern_path
         self.start_frame_idx = int(start_frame or 0)
         self.seq_frames = int(frame_count or 0)
+        self.seq = seq
 
     def load(self, source_path: str):
         """Load from the printf pattern; the frame named is probed for its size."""
@@ -54,13 +58,20 @@ class SequenceEngine(StreamEngine):
         frames_to_skip = int(round(start_time_sec * self.fps)) if start_time_sec > 0 else 0
         start_num = self.start_frame_idx + frames_to_skip
 
+        if self.seq is not None and self.seq.missing_frames:
+            # ffmpeg stops at a missing frame: read through a frame list that
+            # holds the frame before each gap (FrameSequence.ffconcat).
+            # ponytail: one small list per player, rewritten each launch, left in TEMP.
+            listing = Path(tempfile.gettempdir()) / f"slate-frames-{os.getpid()}-{id(self)}.txt"
+            listing.write_text(self.seq.ffconcat(start_num, self.fps), encoding="utf-8")
+            source = ['-f', 'concat', '-safe', '0', '-i', str(listing), '-r', f"{self.fps:g}"]
+        else:
+            source = ['-framerate', f"{self.fps:g}", '-start_number', str(start_num),
+                      '-i', self.source]
         cmd = [
             self.ff_path,
             '-loglevel', 'error',
-            '-framerate', f"{self.fps:g}",
-            '-start_number', str(start_num),
-            '-i', self.source,
-        ] + self._video_args() + [
+        ] + source + self._video_args() + [
             '-f', 'rawvideo', '-pix_fmt', 'rgba',
             '-'
         ]

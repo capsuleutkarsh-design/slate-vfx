@@ -210,42 +210,17 @@ class ThumbnailGenerator:
         return str(fallback_root / "05_Reels" / reel_folder / shot_folder / "01_Scan")
     
     def find_first_frame(self, scan_path: str) -> str:
-        """Find first supported media file (Recursive search)."""
-        if not os.path.exists(scan_path):
-            # print(f"[Thumb] Scan Path Invalid: {scan_path}")
-            return ""
-            
-        from slate.utils.media_capabilities import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
-        supported_exts = set(IMAGE_EXTENSIONS) | set(VIDEO_EXTENSIONS)
-        
-        # Method 1: Recursive Search (Depth limited to avoid deep trees)
-        # Search scan_path and immediate subfolders
-        candidates = []
-        
-        try:
-             # Look in root
-            for f in os.listdir(scan_path):
-                full = os.path.join(scan_path, f)
-                if os.path.isfile(full):
-                    if os.path.splitext(f)[1].lower() in supported_exts:
-                        candidates.append(full)
-                elif os.path.isdir(full):
-                    # Look one level down (e.g. EXR, DPX, Mov)
-                    for sub in os.listdir(full):
-                        sub_full = os.path.join(full, sub)
-                        if os.path.isfile(sub_full):
-                             if os.path.splitext(sub)[1].lower() in supported_exts:
-                                candidates.append(sub_full)
-                                
-            if candidates:
-                # Sort to get first frame (e.g. 1001)
-                found = sorted(candidates)[0]
-                return found
-                
-        except OSError as e:
-            logger.debug("ThumbnailGen: failed scanning %s: %s", scan_path, e)
-            
-        return ""
+        """
+        The plate's first frame (or its movie), by the review player's rule.
+
+        It looked in 01_Scan and one folder below, but the ingest writes the
+        plate two below (01_Scan/v001/EXR), so every shot got the red "no
+        source" picture - and of two versions it took the oldest.
+        """
+        from slate.core.domain.proxy_builder import first_frame_file
+        from slate.core.domain.shot_media import resolve_scan
+        clip = resolve_scan(Path(scan_path)) if scan_path else None
+        return str(first_frame_file(clip)) if clip else ""
 
     def generate_with_ffmpeg(self, source_path: str, dest_path: str) -> bool:
         """

@@ -542,7 +542,9 @@ class AdvancedPlayer(QWidget):
                 logging.exception(f"Sequence detection error: {e}")
             if seq is not None:
                 engine_key = 'sequence'
-                self.engines['sequence'].set_sequence_details(seq.pattern, seq.start, seq.frame_count)
+                # The whole range: a missing frame is held, not skipped.
+                self.engines['sequence'].set_sequence_details(
+                    seq.pattern, seq.start, seq.end - seq.start + 1, seq)
             elif is_image(path_obj.suffix.lower()):
                 engine_key = 'image'
 

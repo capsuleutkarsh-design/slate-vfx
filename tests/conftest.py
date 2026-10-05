@@ -127,6 +127,9 @@ def pytest_configure(config):
     """
     config.addinivalue_line(
         "markers", "slow: starts a real throwaway PostgreSQL (the recovery lab)")
+    config.addinivalue_line(
+        "markers", "realtools: runs the real outside program (ffmpeg, rvio, PostgreSQL...); "
+                   "skipped where it is not installed")
 
     from slate.core.infra.global_config import GlobalConfig
 

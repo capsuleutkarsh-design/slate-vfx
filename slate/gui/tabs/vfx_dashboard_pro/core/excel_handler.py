@@ -420,10 +420,13 @@ class ExcelHandler:
             key = department.key
 
             if key == "comp":
-                # Comp historically shares the sheet's main artist/status columns.
-                artist = get_val("comp_artist") or get_val("assigned_artist")
-                status = (get_val("comp_status") or get_val("internal_status")
-                          or get_val("overall_status"))
+                # Comp historically shares the sheet's main artist/status columns -
+                # only on a sheet without comp's own, or a blank comp status came
+                # back as the shot's status.
+                has = lambda name: self._get_col_idx(name) >= 0  # noqa: E731
+                artist = get_val("comp_artist") if has("comp_artist") else get_val("assigned_artist")
+                status = get_val("comp_status") if has("comp_status") else (
+                    get_val("internal_status") or get_val("overall_status"))
                 bid = get_float("comp_bid") or get_float("comp_mandays")
                 eta = get_val("comp_eta") or get_val("comp_target")
                 mapped = any(self._get_col_idx(name) >= 0 for name in (
@@ -459,6 +462,9 @@ class ExcelHandler:
             curr_version=get_val("version") or get_val("latest_version"),
             prev_version=get_val("prev_version"),
             description=get_val("description"),
+            # Written to notes / shot_comment and never read back, so an
+            # Excel-only project lost every shot note on the next open.
+            notes=get_val("notes") or get_val("shot_comment"),
             target=get_val("target"),
             scan_status=get_val("scan_status"),
             edit_status=get_val("edit_status"),
