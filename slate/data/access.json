@@ -90,11 +90,6 @@
     "developer",
     "dev"
   ],
-  "_wipe_fleet_caches": "Clears thumbnail and proxy caches on every connected workstation.",
-  "wipe_fleet_caches": [
-    "admin",
-    "developer"
-  ],
   "_approve_leave": "Works the first (supervisor) stage of the leave queue.",
   "approve_leave": [
     "supervisor",

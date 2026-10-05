@@ -89,8 +89,6 @@ ABILITIES = (
             "Overwrite another user's edit when a conflict is reported."),
     Ability("excel_sync", "Excel import / export",
             "Import from and export to the project Excel backup."),
-    Ability("wipe_fleet_caches", "Wipe fleet caches",
-            "Clear thumbnail and proxy caches on every connected workstation."),
     # Added 2026-09. Existing roles were upgraded once so nobody lost what
     # they could already do (UserManager._upgrade_role_abilities).
     Ability("assignable", "Can be given shots",
@@ -119,7 +117,7 @@ ABILITIES = (
 # with "Edit roles and permissions" can hand on only what they hold, and never
 # these - they are how somebody would give themselves everything else.
 SENSITIVE_ABILITIES = frozenset({
-    "manage_permissions", "manage_users", "wipe_fleet_caches", "manage_system",
+    "manage_permissions", "manage_users", "manage_system",
     "studio_settings", "tester_destructive", "delete_project",
 })
 

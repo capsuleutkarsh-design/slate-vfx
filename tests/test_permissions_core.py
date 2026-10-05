@@ -137,7 +137,6 @@ def test_hr_cannot_tick_full_access_or_sensitive_abilities(users):
     """As HR, ticking Full access on the HR role saved ['ALL', ...]."""
     hr = ["HR"]
     assert not access.can_grant(hr, ["ALL"])
-    assert not access.can_grant(hr, ["can:wipe_fleet_caches"])
     assert not access.can_grant(hr, ["can:manage_system"])
     assert access.can_grant(hr, ["HRMS", "Settings", "can:manage_leave"])   # what HR holds
     assert not access.can_grant(hr, ["Dashboard"])                          # what HR does not

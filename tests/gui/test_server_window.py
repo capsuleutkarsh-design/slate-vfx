@@ -415,3 +415,41 @@ def test_every_screen_scrolls_rather_than_crushing_itself():
                  "self.operations_view"):
         assert "_scrollable(%s)" % view in source, \
             "%s is added to the stack unwrapped" % view
+
+
+def test_the_daily_backup_runs_by_itself_and_keeps_to_the_retention(qtbot):
+    """Maintenance.due() had no caller: the daily backup was only ever taken by hand."""
+    from types import SimpleNamespace
+    from slate_server.gui import app_window as module
+    calls = []
+
+    class Engine:
+        def is_available(self): return True
+        def back_up(self): return {"ok": True, "message": "Backed up x.dump"}
+        def prune(self, days, least, apply=False):
+            calls.append(("prune", days, least, apply))
+            return []
+
+    class Jobs:
+        def __init__(self, due): self._due = due
+        def due(self): return self._due
+        def record_backup(self, ok, message): calls.append(("record", ok, message))
+
+    spin = lambda n: SimpleNamespace(value=lambda: n)  # noqa: E731
+    fake = SimpleNamespace(_backup_worker=None, server_running=lambda: True,
+                           _maintenance=lambda: Jobs(["backup"]), _backup_engine=Engine,
+                           _log=lambda message: None, _refresh_operations=lambda: calls.append("refresh"),
+                           operations_view=SimpleNamespace(spin_keep_days=spin(30), spin_keep_least=spin(7)))
+    fake._on_scheduled_backup_done = lambda r: module.UTServerWindow._on_scheduled_backup_done(fake, r)
+
+    assert module.UTServerWindow._scheduled_backup(fake) is not None
+    qtbot.waitUntil(lambda: "refresh" in calls, timeout=10000)
+    assert ("record", True, "Scheduled: Backed up x.dump") in calls
+    assert ("prune", 30, 7, True) in calls
+
+    fake._backup_worker = None
+    fake._maintenance = lambda: Jobs([])                 # backed up today: nothing to do
+    assert module.UTServerWindow._scheduled_backup(fake) is None
+    fake.server_running = lambda: False                  # database down: not attempted
+    fake._maintenance = lambda: Jobs(["backup"])
+    assert module.UTServerWindow._scheduled_backup(fake) is None

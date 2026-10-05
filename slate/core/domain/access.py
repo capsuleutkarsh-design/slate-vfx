@@ -95,9 +95,6 @@ _DEFAULTS = {
     "ingest_stock": [
         "admin", "lead", "supervisor", "developer", "dev",
     ],
-    "wipe_fleet_caches": [
-        "admin", "developer",
-    ],
     # Works the first (supervisor) stage of the leave queue. This was the
     # literal {"supervisor", "lead"} inside the Leave tab.
     "approve_leave": [

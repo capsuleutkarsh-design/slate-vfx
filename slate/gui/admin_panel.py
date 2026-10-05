@@ -119,7 +119,6 @@ class AdminPanelTab(QWidget):
         # open the tab had a SQL console and fleet restart.
         self.roles = roles_of_user(roles, getattr(self, "user_role", None), self.app_context)
         self.can_manage_system = access.can(self.roles, "manage_system")
-        self.can_wipe_caches = self.can_manage_system and access.can(self.roles, "wipe_fleet_caches")
 
         self.log_file = self.hub.get_attendance_dir().parent / "Config" / "audit.log"
         try: self.log_file.parent.mkdir(parents=True, exist_ok=True)
@@ -271,13 +270,6 @@ class AdminPanelTab(QWidget):
                                    on_click=self.start_api_server)
         h.addWidget(self.btn_api)
 
-        if self.can_wipe_caches:
-            btn_wipe = make_button("Wipe caches", "danger",
-                                   tooltip="Clear the local cache on every connected workstation",
-                                   on_click=self.wipe_remote_caches)
-            btn_wipe.setIcon(draw_icon("trash"))
-            h.addWidget(btn_wipe)
-
         dashboard.layout().insertWidget(0, control_frame)
 
     # ------------------------------------------------------------ API gateway
@@ -368,18 +360,6 @@ class AdminPanelTab(QWidget):
         self.inp_broadcast.clear()
         QMessageBox.information(self, "Sent", "Broadcast alert sent to all active stations.")
         self.log_action(f"Broadcast Alert: {msg}")
-
-    def wipe_remote_caches(self):
-        if not self.can_wipe_caches:
-            return
-        # Fleet-wide and irreversible, so it takes the same re-authentication
-        # restart and shutdown do. It used to ask only yes/no.
-        if QMessageBox.question(self, "Confirm", "Wipe thumbnails/cache on ALL connected PCs?") != QMessageBox.StandardButton.Yes:
-            return
-        if not self.verify_admin_action():
-            return
-        self.hub.post_command("wipe_cache", "all")
-        self.log_action("Triggered Remote Cache Wipe")
 
     def export_fleet_report(self):
         run_fleet_report_export(self, self.hub, self.log_action)

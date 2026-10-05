@@ -71,9 +71,9 @@ def test_every_command_the_admin_screens_send_is_received_and_handled(share, mon
     hub = ServerHub()
     me = socket.gethostname()
 
-    # The Admin Panel's broadcast box and its fleet cache wipe, and a PC
+    # The Admin Panel's broadcast box, and a PC
     # card's Restart and Shut down - each through the real button handler.
-    panel = SimpleNamespace(hub=hub, log_action=lambda m: None, can_wipe_caches=True,
+    panel = SimpleNamespace(hub=hub, log_action=lambda m: None,
                             verify_admin_action=lambda: True,
                             inp_broadcast=SimpleNamespace(text=lambda: "Lunch is here",
                                                           clear=lambda: None))
@@ -94,19 +94,6 @@ def test_every_command_the_admin_screens_send_is_received_and_handled(share, mon
     done = _handled(received, monkeypatch)
     assert ("shown", "Lunch is here") in done
     assert ("asked", "restart") in done and ("asked", "shutdown") in done
-
-
-def test_the_fleet_cache_wipe_reaches_no_workstation(share):
-    """Documented, not fixed: no workstation has a handler for wipe_cache (see report)."""
-    from slate.core.infra.server_hub import ServerHub
-    from slate.gui import admin_panel
-    hub = ServerHub()
-    panel = SimpleNamespace(hub=hub, log_action=lambda m: None, can_wipe_caches=True,
-                            verify_admin_action=lambda: True)
-    admin_panel.AdminPanelTab.wipe_remote_caches(panel)
-    assert [json.loads(p.read_text())["command"] for p in (share / "Commands").glob("*.json")] \
-        == ["wipe_cache"]
-    assert _workstation_receives(hub) == []
 
 
 def test_old_and_foreign_commands_are_not_acted_on(share):

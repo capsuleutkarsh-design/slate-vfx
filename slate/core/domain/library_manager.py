@@ -62,7 +62,7 @@ class LibraryManager:
         self.username = username or ""
         self.server_root = GlobalConfig.server_root()
 
-        # Local cache file a remote "wipe cache" command removes.
+        # The library cached on this PC.
         self.local_cache = GlobalConfig.local_cache_dir() / "Library_Cache.caplib"
 
         self.assets = []

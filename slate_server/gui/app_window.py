@@ -217,6 +217,21 @@ class PollWorker(QThread):
         self.done.emit(poll_facts(self.port))
 
 
+class BackupWorker(QThread):
+    """The scheduled backup: pg_dump can take minutes, never on the UI thread."""
+    done = Signal(object)
+
+    def __init__(self, engine):
+        super().__init__()
+        self.engine = engine
+
+    def run(self):
+        try:
+            self.done.emit(self.engine.back_up())
+        except Exception as exc:
+            self.done.emit({"ok": False, "message": "Backup failed: %s" % exc})
+
+
 class UTServerWindow(QMainWindow):
     """
     Main Application Window for Slate Central Server.
@@ -406,7 +421,14 @@ class UTServerWindow(QMainWindow):
         # Once a day is often enough: it reads yesterday's punches.
         self.comp_off_timer = QTimer(self)
         self.comp_off_timer.timeout.connect(self._credit_comp_off)
+        # The daily backup the Operations screen promised was only ever taken
+        # by hand (Maintenance.due() had no caller). Same beat, plus once soon
+        # after start so a server left off overnight catches up.
+        self.comp_off_timer.timeout.connect(self._scheduled_backup)
         self.comp_off_timer.start(6 * 60 * 60 * 1000)   # every six hours
+        self._backup_worker = None
+        if not os.environ.get("HEADLESS_TESTING"):
+            QTimer.singleShot(5 * 60 * 1000, self._scheduled_backup)
 
         # Setup Sidebar after views are ready
         self.setup_sidebar()
@@ -726,6 +748,43 @@ class UTServerWindow(QMainWindow):
                 self._log("> Comp off: %s" % result.get("message", ""))
         except Exception as exc:
             logging.warning("Comp off crediting did not run: %s", exc)
+
+    def _scheduled_backup(self):
+        """Back up when the last one is over a day old and the database is up."""
+        if self._backup_worker is not None and self._backup_worker.isRunning():
+            return None
+        try:
+            if not self.server_running() or "backup" not in self._maintenance().due():
+                return None
+            engine = self._backup_engine()
+            if not engine.is_available():
+                return None
+        except Exception as exc:
+            logging.warning("Scheduled backup check failed: %s", exc)
+            return None
+        self._log("> Scheduled backup started.")
+        self._backup_worker = BackupWorker(engine)
+        self._backup_worker.done.connect(self._on_scheduled_backup_done)
+        self._backup_worker.start()
+        return self._backup_worker
+
+    def _on_scheduled_backup_done(self, result):
+        self._maintenance().record_backup(result["ok"], "Scheduled: " + result["message"])
+        self._log("> Scheduled backup: " + result["message"])
+        if result["ok"]:
+            # Keep to the retention shown on the Operations screen; the newest
+            # ones are always kept whatever their age.
+            try:
+                removed = self._backup_engine().prune(
+                    self.operations_view.spin_keep_days.value(),
+                    self.operations_view.spin_keep_least.value(), apply=True)
+                if removed:
+                    self._log("> Removed %d old backup(s)." % len(removed))
+            except Exception as exc:
+                logging.warning("Pruning after the scheduled backup failed: %s", exc)
+        else:
+            logging.warning("Scheduled backup failed: %s", result["message"])
+        self._refresh_operations()
 
     def setup_sidebar(self):
         sidebar = QWidget()
@@ -1578,6 +1637,10 @@ class UTServerWindow(QMainWindow):
                 self._log("> Window closed; the server keeps running in the tray.")
                 return
         self._save_window_geometry()
+        backup = getattr(self, "_backup_worker", None)
+        if backup is not None and backup.isRunning():
+            self._log("> Waiting for the scheduled backup to finish…")
+            backup.wait()              # stopping the database under pg_dump spoils the backup
         if self.server_running() and not getattr(self, "_stopped_for_close", False):
             # pg_ctl stop can take seconds: on the worker, and the window
             # closes when it reports back (it froze, its log unpainted).
