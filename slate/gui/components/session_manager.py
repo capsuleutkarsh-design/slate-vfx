@@ -131,13 +131,6 @@ class SessionManagerMixin:
                         except Exception as e:
                             logging.exception(f"Error cleaning up page {i}: {e}")
             
-            # Cleanup network manager
-            if hasattr(self, 'network_manager') and self.network_manager:
-                try:
-                    self.network_manager.stop()
-                except Exception as e:
-                    logging.exception(f"Error stopping network manager: {e}")
-
             # Cleanup DB Monitor (Fixes Zombie Process)
             if hasattr(self, 'db_monitor') and self.db_monitor:
                 try:
