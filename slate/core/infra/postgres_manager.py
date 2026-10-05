@@ -1252,6 +1252,18 @@ class PostgresManager:
         """
         return self.write(query, params)
 
+    def executemany(self, query: str, rows) -> None:
+        """
+        One INSERT for many rows, committed. query has a single "VALUES %s"
+        for the rows (psycopg2's execute_values form); SQLiteManager takes the
+        same statement, so the repositories run unchanged on both. Errors
+        propagate - the caller decides what a refused batch means.
+        """
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                execute_values(cur, query, rows)
+            conn.commit()
+
     def execute_sql(self, query: str, params: tuple = None, max_rows: Optional[int] = None) -> SqlResult:
         """
         Run a statement somebody typed, READ ONLY, and report everything about it.
@@ -1596,9 +1608,6 @@ class PostgresManager:
 
     def get_all_tracking_projects(self) -> List[Dict]:
         return self.tracking_repo.get_all_tracking_projects()
-
-    def delete_tracking_project(self, code: str) -> bool:
-        return self.tracking_repo.delete_tracking_project(code)
 
     def save_tracking_shots(self, project_code: str, shots_data: List[Tuple[str, str, int, str]]):
         return self.tracking_repo.save_tracking_shots(project_code, shots_data)

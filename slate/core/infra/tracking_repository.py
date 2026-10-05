@@ -2,18 +2,16 @@ import json
 import logging
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional, Any
-from psycopg2.extras import execute_values
 
 
 # A database that is down must not look like a studio with no data. The manager
 # raises DatabaseUnavailableError precisely so a read cannot quietly come back
 # empty; catching it here and returning a fallback puts the fault straight back.
 # So it is re-raised, and anything else is logged before the fallback is used.
-try:
-    from .postgres_manager import DatabaseUnavailableError
-except ImportError:                                  # pragma: no cover
-    class DatabaseUnavailableError(ConnectionError):
-        """Fallback when the manager cannot be imported."""
+# From db_results, where it is defined: importing it from postgres_manager
+# failed when this module was imported first (postgres_manager imports it
+# back), and the fallback class then matched no real outage.
+from .db_results import DatabaseUnavailableError
 
 def _reel_of(data_json) -> str:
     """
@@ -124,7 +122,7 @@ class TrackingRepository:
         q = """
             SELECT config_json
             FROM tracking_projects
-            WHERE LOWER(COALESCE(active::text, '')) IN ('1', 't', 'true', 'y', 'yes')
+            WHERE LOWER(COALESCE(CAST(active AS TEXT), '')) IN ('1', 't', 'true', 'y', 'yes')
             ORDER BY code
         """
         rows = self.db.execute_query(q) or []
@@ -134,22 +132,6 @@ class TrackingRepository:
             if val:
                 res.append(json.loads(val) if isinstance(val, str) else val)
         return res
-
-    def delete_tracking_project(self, code: str) -> bool:
-        try:
-            with self.db.get_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("DELETE FROM tracking_tasks WHERE project_code=%s", (code,))
-                    cur.execute("DELETE FROM tracking_shots WHERE project_code=%s", (code,))
-                    cur.execute("DELETE FROM tracking_projects WHERE code=%s", (code,))
-                    cur.execute("DELETE FROM change_history WHERE project_code=%s", (code,))
-                    conn.commit()
-            return True
-        except DatabaseUnavailableError:
-            raise
-        except Exception as e:
-            logging.exception(f"Delete Failed: {e}")
-            return False
 
     def save_tracking_shots(self, project_code: str, shots_data: List[Tuple[str, str, int, str]]):
         if not shots_data: return
@@ -167,10 +149,7 @@ class TrackingRepository:
             """
             values = [(project_code, _reel_of(s[3]), s[0], s[1], s[2], s[3], timestamp, 1)
                       for s in shots_data]
-            with self.db.get_connection() as conn:
-                with conn.cursor() as cur:
-                    execute_values(cur, sql, values)
-                    conn.commit()
+            self.db.executemany(sql, values)
             return True
         except DatabaseUnavailableError:
             raise
@@ -212,10 +191,14 @@ class TrackingRepository:
         if cache:
             return cache
 
-        rows = self.db.execute_query(
-            "SELECT column_name FROM information_schema.columns WHERE table_name='tracking_tasks'"
-        ) or []
-        cols = {r["column_name"] for r in rows if isinstance(r, dict) and r.get("column_name")}
+        from .migrations.registry import is_postgres
+        if is_postgres(self.db):
+            q = ("SELECT column_name AS name FROM information_schema.columns "
+                 "WHERE table_name='tracking_tasks'")
+        else:
+            q = "PRAGMA table_info(tracking_tasks)"
+        rows = self.db.execute_query(q) or []
+        cols = {r["name"] for r in rows if isinstance(r, dict) and r.get("name")}
         self._tracking_tasks_columns_cache = cols
         return cols
 
@@ -287,10 +270,7 @@ class TrackingRepository:
                 )
                 values.append(tuple(row_values))
             
-            with self.db.get_connection() as conn:
-                with conn.cursor() as cur:
-                    execute_values(cur, sql, values)
-                    conn.commit()
+            self.db.executemany(sql, values)
             return True
         except DatabaseUnavailableError:
             raise

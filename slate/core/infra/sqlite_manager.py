@@ -53,23 +53,6 @@ def _sqlite_unavailable(exc: BaseException) -> bool:
         "readonly database", "database or disk is full", "malformed"))
 
 
-def _reel_of(data_json) -> str:
-    """
-    A shot's reel, read out of its stored JSON.
-
-    The reel is part of a shot's identity, and it already travels inside the
-    shot payload - so the database layer lifts it out rather than every caller
-    having to pass it separately.
-    """
-    try:
-        data = json.loads(data_json) if isinstance(data_json, str) else (data_json or {})
-        return str(data.get("reel_episode") or "").strip()
-    except Exception:
-        return ""
-
-
-
-
 # ── Schema ──────────────────────────────────────────────────────────────────
 
 _SCHEMA_SQL = """
@@ -401,8 +384,12 @@ class SQLiteManager:
         # Lazy-import repos to match PostgresManager interface
         from .project_repository import ProjectRepository
         from .stock_repository import StockRepository
+        from .tracking_repository import TrackingRepository
+        from .user_repository import UserRepository
         self.project_repo = ProjectRepository(self)
         self.stock_repo = StockRepository(self)
+        self.tracking_repo = TrackingRepository(self)
+        self.user_repo = UserRepository(self)
 
         self._ensure_db()
         self._initialized = True
@@ -652,6 +639,17 @@ class SQLiteManager:
         """The same as write(): truthy when accepted, .rows for what changed."""
         return self.write(query, params)
 
+    def executemany(self, query: str, rows) -> None:
+        """The same statement as PostgresManager.executemany(): "VALUES %s" stands for each row."""
+        rows = list(rows)
+        if not rows:
+            return
+        one_row = "VALUES (" + ", ".join(["%s"] * len(rows[0])) + ")"
+        q = self._translate_sql(query.replace("VALUES %s", one_row, 1))
+        with self.get_connection() as conn:
+            conn.executemany(q, rows)
+            conn.commit()
+
     def execute_sql(self, query: str, params: tuple = None, max_rows: Optional[int] = None) -> SqlResult:
         """Run a typed statement read-only and report everything - see PostgresManager.execute_sql()."""
         try:
@@ -821,234 +819,48 @@ class SQLiteManager:
     def clear_stock_assets(self):
         return self.clear_stock_library()
 
-    # ── Tracking / Dashboard ────────────────────────────────────────────────
+    # ── Tracking / Dashboard and Users (the same repositories PostgreSQL runs) ──
 
     def save_tracking_project(self, code, name, config_json):
-        q = """
-            INSERT INTO tracking_projects (code, name, config_json, last_updated)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (code) DO UPDATE SET
-                name = excluded.name,
-                config_json = excluded.config_json,
-                last_updated = excluded.last_updated
-        """
-        return bool(self.execute_update(q, (code, name, config_json, datetime.now().isoformat())))
+        return self.tracking_repo.save_tracking_project(code, name, config_json)
 
     def get_tracking_project(self, code):
-        q = "SELECT config_json FROM tracking_projects WHERE code=%s"
-        res = self.execute_query(q, (code,), fetch="one")
-        return json.loads(res['config_json']) if res else None
+        return self.tracking_repo.get_tracking_project(code)
 
     def get_all_tracking_projects(self):
-        q = "SELECT config_json FROM tracking_projects WHERE active=1 ORDER BY code"
-        rows = self.execute_query(q) or []
-        return [json.loads(r['config_json']) for r in rows if r.get('config_json')]
-
-    def delete_tracking_project(self, code):
-        try:
-            conn = self._get_conn()
-            conn.execute("DELETE FROM tracking_tasks WHERE project_code=?", (code,))
-            conn.execute("DELETE FROM tracking_shots WHERE project_code=?", (code,))
-            conn.execute("DELETE FROM tracking_projects WHERE code=?", (code,))
-            conn.execute("DELETE FROM change_history WHERE project_code=?", (code,))
-            conn.commit()
-            return True
-        except Exception as e:
-            logger.error(f"Delete tracking project failed: {e}")
-            return False
+        return self.tracking_repo.get_all_tracking_projects()
 
     def save_tracking_shots(self, project_code, shots_data):
-        if not shots_data:
-            return
-        try:
-            timestamp = datetime.now().isoformat()
-            sql = """
-                INSERT INTO tracking_shots (project_code, reel, shot_name, status, priority, data_json, last_updated, version)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 1)
-                ON CONFLICT (project_code, reel, shot_name) DO UPDATE SET
-                    status=excluded.status,
-                    priority=excluded.priority,
-                    data_json=excluded.data_json,
-                    last_updated=excluded.last_updated,
-                    version=tracking_shots.version + 1
-            """
-            values = [(project_code, _reel_of(s[3]), s[0], s[1], s[2], s[3], timestamp)
-                      for s in shots_data]
-            conn = self._get_conn()
-            conn.executemany(sql, values)
-            conn.commit()
-            return True
-        except Exception as e:
-            logger.error(f"Save shots failed: {e}")
-            return False
+        return self.tracking_repo.save_tracking_shots(project_code, shots_data)
 
     def get_tracking_shots(self, project_code):
-        from .tracking_repository import shot_row_to_dict
-        q = ("SELECT id, reel, shot_name, data_json, version FROM tracking_shots "
-             "WHERE project_code=%s")
-        rows = self.execute_query(q, (project_code,)) or []
-        return [d for d in (shot_row_to_dict(r) for r in rows) if d is not None]
+        return self.tracking_repo.get_tracking_shots(project_code)
 
     def update_tracking_shot_safe(self, project_code, shot_name, data_json,
                                   current_version, reel=None):
-        from .tracking_repository import status_and_priority
-        timestamp = datetime.now().isoformat()
-        if reel is None:
-            reel = _reel_of(data_json)
-        status, priority = status_and_priority(data_json)
-        q = """
-            UPDATE tracking_shots
-            SET data_json=%s, status=%s, priority=%s, version=version+1, last_updated=%s
-            WHERE project_code=%s AND reel=%s AND shot_name=%s AND version=%s
-        """
-        result = self.execute_query(
-            q, (data_json, status, priority, timestamp, project_code, reel, shot_name, current_version),
-            fetch="rowcount"
-        )
-        return (result or 0) > 0
+        return self.tracking_repo.update_tracking_shot_safe(
+            project_code, shot_name, data_json, current_version, reel=reel)
 
     def _get_tracking_tasks_columns(self) -> set:
-        cache = getattr(self, "_tracking_tasks_columns_cache", None)
-        if cache:
-            return cache
-        conn = self._get_conn()
-        cur = conn.execute("PRAGMA table_info(tracking_tasks)")
-        rows = cur.fetchall()
-        cols = {r["name"] for r in rows}
-        self._tracking_tasks_columns_cache = cols
-        return cols
+        return self.tracking_repo._get_tracking_tasks_columns()
 
     def get_tracking_tasks(self, project_code):
-        cols = self._get_tracking_tasks_columns()
-        if "artist_name" in cols:
-            artist_select = "t.artist_name AS artist"
-        elif "artist" in cols:
-            artist_select = "t.artist AS artist_name"
-        else:
-            artist_select = "NULL AS artist"
-
-        q = """
-            SELECT t.*, {artist_select}
-            FROM tracking_tasks t
-            JOIN tracking_shots s ON t.shot_id = s.id
-            WHERE s.project_code = %s
-        """.format(artist_select=artist_select)
-        rows = self.execute_query(q, (project_code,)) or []
-        return [dict(r) for r in rows]
+        return self.tracking_repo.get_tracking_tasks(project_code)
 
     def save_tracking_tasks(self, project_code, tasks_data):
-        if not tasks_data:
-            return
-        try:
-            cols = self._get_tracking_tasks_columns()
-            artist_col = "artist" if "artist" in cols else "artist_name"
-            has_project_code = "project_code" in cols
-
-            insert_columns = ["shot_id"]
-            if has_project_code:
-                insert_columns.append("project_code")
-            insert_columns.extend(["department", "status", artist_col, "artist_id", "bid_days", "target_date"])
-
-            conflict_target = "(project_code, shot_id, department)" if has_project_code else "(shot_id, department)"
-            placeholders = ", ".join(["?"] * len(insert_columns))
-
-            update_assignments = [
-                "status = excluded.status",
-                f"{artist_col} = excluded.{artist_col}",
-                "artist_id = excluded.artist_id",
-                "bid_days = excluded.bid_days",
-                "target_date = excluded.target_date",
-            ]
-            if has_project_code:
-                update_assignments.append("project_code = excluded.project_code")
-
-            sql = f"""
-                INSERT INTO tracking_tasks ({', '.join(insert_columns)})
-                VALUES ({placeholders})
-                ON CONFLICT {conflict_target} DO UPDATE SET
-                    {', '.join(update_assignments)}
-            """
-
-            values = []
-            for t in tasks_data:
-                row = [t["shot_id"]]
-                if has_project_code:
-                    row.append(project_code)
-                row.extend([
-                    t["department"],
-                    t.get("status", ""),
-                    t.get("artist", t.get("artist_name", "")),
-                    t.get("artist_id"),
-                    t.get("bid_days", 0.0),
-                    t.get("target", t.get("target_date", "")),
-                ])
-                values.append(tuple(row))
-
-            conn = self._get_conn()
-            conn.executemany(sql, values)
-            conn.commit()
-            return True
-        except Exception as e:
-            logger.error(f"Save tasks failed: {e}")
-            return False
-
-    # ── Users ───────────────────────────────────────────────────────────────
+        return self.tracking_repo.save_tracking_tasks(project_code, tasks_data)
 
     def sync_users(self, users_dict):
-        if not users_dict:
-            return True
-        try:
-            timestamp = datetime.now().isoformat()
-            sql = """
-                INSERT INTO ut_users (username, display_name, roles, password_hash, job_title, profile_pic_path, last_synced)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (username) DO UPDATE SET
-                    display_name = excluded.display_name,
-                    roles = excluded.roles,
-                    password_hash = CASE WHEN excluded.password_hash != '' THEN excluded.password_hash ELSE ut_users.password_hash END,
-                    job_title = CASE WHEN excluded.job_title != '' THEN excluded.job_title ELSE ut_users.job_title END,
-                    profile_pic_path = CASE WHEN excluded.profile_pic_path != '' THEN excluded.profile_pic_path ELSE ut_users.profile_pic_path END,
-                    last_synced = excluded.last_synced
-            """
-            values = []
-            for username, data in users_dict.items():
-                roles = data.get("roles", [])
-                if not roles and "role" in data:
-                    roles = [data["role"]]
-                elif not roles:
-                    roles = ["Artist"]
-                roles_str = json.dumps(roles if isinstance(roles, list) else [roles])
-                values.append((
-                    username,
-                    data.get("display_name", ""),
-                    roles_str,
-                    data.get("password_hash", ""),
-                    data.get("job_title", ""),
-                    data.get("profile_pic_path", ""),
-                    timestamp,
-                ))
-
-            conn = self._get_conn()
-            conn.executemany(sql, values)
-            conn.commit()
-            return True
-        except Exception as e:
-            logger.error(f"Sync users failed: {e}")
-            return False
+        return self.user_repo.sync_users(users_dict)
 
     def get_user_profile_pic(self, username):
-        res = self.execute_query("SELECT profile_pic_path FROM ut_users WHERE username=%s", (username,), fetch="one")
-        return res['profile_pic_path'] if res else None
+        return self.user_repo.get_user_profile_pic(username)
 
     def update_user_profile_pic(self, username, path):
-        return (self.execute_query("UPDATE ut_users SET profile_pic_path=%s WHERE username=%s", (path, username), fetch="rowcount") or 0) > 0
+        return self.user_repo.update_user_profile_pic(username, path)
 
     def get_user_id(self, name_or_user):
-        res = self.execute_query("SELECT id FROM ut_users WHERE username=%s", (name_or_user,), fetch="one")
-        if res:
-            return res['id']
-        res = self.execute_query("SELECT id FROM ut_users WHERE display_name LIKE %s", (name_or_user,), fetch="one")
-        return res['id'] if res else None
+        return self.user_repo.get_user_id(name_or_user)
 
     # ── Embeddings / Vector Search ──────────────────────────────────────────
 

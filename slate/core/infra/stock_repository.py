@@ -10,11 +10,10 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 # raises DatabaseUnavailableError precisely so a read cannot quietly come back
 # empty; catching it here and returning a fallback puts the fault straight back.
 # So it is re-raised, and anything else is logged before the fallback is used.
-try:
-    from .postgres_manager import DatabaseUnavailableError
-except ImportError:                                  # pragma: no cover
-    class DatabaseUnavailableError(ConnectionError):
-        """Fallback when the manager cannot be imported."""
+# From db_results, where it is defined: importing it from postgres_manager
+# failed when this module was imported first (postgres_manager imports it
+# back), and the fallback class then matched no real outage.
+from .db_results import DatabaseUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -211,21 +210,8 @@ class StockRepository:
         values = list(unique.values())
 
         try:
-            if _is_postgres(self.db):
-                from psycopg2.extras import execute_values
-                sql = ("INSERT INTO stock_library (" + self._UPSERT_COLUMNS + ") VALUES %s"
-                       + self._ON_CONFLICT)
-                with self.db.get_connection() as conn:
-                    with conn.cursor() as cur:
-                        execute_values(cur, sql, values)
-                        conn.commit()
-            else:
-                placeholders = ", ".join(["?"] * len(values[0]))
-                sql = ("INSERT INTO stock_library (" + self._UPSERT_COLUMNS + ") VALUES ("
-                       + placeholders + ")" + self._ON_CONFLICT.replace("EXCLUDED.", "excluded."))
-                with self.db.get_connection() as conn:
-                    conn.executemany(sql, values)
-                    conn.commit()
+            self.db.executemany("INSERT INTO stock_library (" + self._UPSERT_COLUMNS
+                                + ") VALUES %s" + self._ON_CONFLICT, values)
         except DatabaseUnavailableError:
             raise
         except Exception as e:
