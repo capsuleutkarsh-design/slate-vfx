@@ -9,7 +9,6 @@ rather than through arithmetic typed into a widget.
 
 from __future__ import annotations
 
-import json
 import logging
 
 from datetime import date, datetime
@@ -47,29 +46,11 @@ def _days(value) -> str:
     return "%g day%s" % (value, "" if value == 1 else "s")
 
 
-def as_date(value):
-    """
-    Whatever the driver handed back, as a date. None when it is not one.
-
-    The two backends do not agree about dates. PostgreSQL returns a date
-    object; SQLite returns the text it stored. Every comparison in this module
-    used to assume the first, so on the local database the holiday set came
-    back empty - each row was dropped for not being a date - and comparing a
-    comp-off expiry against today raised TypeError outright.
-
-    One place to convert means the rest of the module can just use dates.
-    """
-    if value is None or value == "":
-        return None
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
-    try:
-        return datetime.fromisoformat(str(value)[:10]).date()
-    except (TypeError, ValueError):
-        return None
-
+# The shared helpers, not private copies of them (several had drifted):
+# as_date stays importable from here, as callers and tests use it.
+from ..domain.dates import as_date  # noqa: F401
+from ..domain.people import account_active, is_service_record, switched_off
+from ..security.admin_guard import parse_roles
 
 
 class LeaveRepository:
@@ -469,27 +450,6 @@ class LeaveRepository:
             return {}
         return dict(row) if row else {}
 
-    @staticmethod
-    def _roles_of(record) -> list:
-        raw = record.get("roles")
-        if isinstance(raw, list):
-            return raw
-        if isinstance(raw, str) and raw.strip():
-            try:
-                value = json.loads(raw)
-                return [value] if isinstance(value, str) else list(value or [])
-            except ValueError:
-                return [raw]
-        return []
-
-    @staticmethod
-    def _is_active_record(record) -> bool:
-        value = record.get("active")
-        if value is not None and str(value).strip().lower() in ("0", "false", "f", "no"):
-            return False
-        left = as_date(record.get("last_day"))
-        return not (left and left < date.today())
-
     def approver_kind(self, username) -> str:
         """
         Which stage of the leave chain this person works: "hr", "supervisor"
@@ -504,22 +464,18 @@ class LeaveRepository:
         return self._kind_of(self._user_row(username))
 
     def _kind_of(self, record, stored=None) -> str:
-        """approver_kind for a ut_users row already read."""
-        if not record or not self._is_active_record(record):
+        """approver_kind for a ut_users row already read: workplace_access.leave_stage, lower-cased."""
+        if not record or not account_active(record):
             return ""
-        roles = self._roles_of(record)
+        roles = parse_roles(record.get("roles"))
         from slate.core.domain import access
-        from slate.core.domain.workplace_access import manages_leave
+        from slate.core.domain.workplace_access import leave_stage
         if stored is None:
             stored = access._role_permission_lists()
         tabs = set()
         for role in roles:
             tabs.update(stored.get(str(role).strip().lower(), []))
-        if manages_leave(roles, tabs):
-            return "hr"
-        if access.can(roles, "approve_leave"):
-            return "supervisor"
-        return ""
+        return leave_stage(roles, tabs).lower()
 
     def first_stage(self, username) -> dict:
         """
@@ -1361,15 +1317,6 @@ class LeaveRepository:
         wanted = (latest + 1) if latest is not None else today.year - 1
         return wanted if wanted < today.year else None
 
-    @staticmethod
-    def _is_service(record) -> bool:
-        from slate.core.domain.people import SERVICE_USERNAMES
-        name = str(record.get("username") or "").strip().lower()
-        flag = record.get("is_service")
-        if flag is not None and str(flag).strip().lower() not in ("", "0", "false", "f", "no"):
-            return True
-        return name in SERVICE_USERNAMES
-
     def preview_close(self, year: int, rules=None, include_no_joining: bool = False) -> list:
         """
         What closing a year would do to everybody, without doing it.
@@ -1396,7 +1343,7 @@ class LeaveRepository:
         for row in rows:
             record = dict(row) if hasattr(row, "keys") else {"username": row[0]}
             name = record.get("username") or ""
-            if not name or self._is_service(record):
+            if not name or is_service_record(record):
                 continue
             # Somebody who had left (or was deactivated) before the year began
             # has nothing to close: their balance stopped with their last day.
@@ -1405,9 +1352,7 @@ class LeaveRepository:
             ended = [d for d in ended if d]
             if ended and min(ended) < year_start:
                 continue
-            active = record.get("active")
-            if active is not None and str(active).strip().lower() in ("0", "false", "f") \
-                    and not ended:
+            if switched_off(record.get("active")) and not ended:
                 continue
             joined = as_date(record.get("joined_on"))
             if joined and joined > as_of:

@@ -114,9 +114,9 @@ class InactivePerson(UnknownPerson):
 
 
 def _is_active(record: dict) -> bool:
-    """The same rule as UserManager: not deactivated and last day not passed."""
-    from .user_manager import UserManager
-    return UserManager._flag_active(record or {})
+    """Not deactivated and last day not passed: people.account_active, the one rule."""
+    from .people import account_active
+    return account_active(record)
 
 
 def _as_day(value):

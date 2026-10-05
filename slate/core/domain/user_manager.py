@@ -1289,10 +1289,9 @@ class UserManager:
 
     @staticmethod
     def _flag_active(record) -> bool:
-        """Not deactivated and not past the last day - the rule the
-        last-administrator guard uses too (admin_guard.account_active)."""
-        from slate.core.security.admin_guard import account_active
-        return account_active(record)
+        """Not deactivated and not past the last day: people.account_active,
+        the one rule (sign-in and the last-administrator guard use it too)."""
+        return people.account_active(record)
 
     def is_active(self, username: str) -> bool:
         row = self._get_db().execute_query(
