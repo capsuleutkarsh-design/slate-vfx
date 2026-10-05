@@ -59,6 +59,42 @@ def test_dcc_plugins_find_the_shot_the_launcher_names(monkeypatch, tmp_path):
         assert data == {"shot_name": "sh010", "scan_path": scan}, rel
 
 
+def test_settings_project_root_reaches_build_and_ingest(qtbot, monkeypatch, tmp_path):
+    """
+    Settings' "Project root" (the folder Build & Ingest opens with) was saved
+    under a key Build & Ingest reads only until it has been used once; its
+    "Excel tracking file" was read by nothing and is gone.
+    """
+    from types import SimpleNamespace
+    from PySide6.QtWidgets import QLineEdit
+    from slate.gui.tabs import settings_tab as st
+    from slate.gui.tabs.folder_creator_tab import FolderCreatorTab
+
+    class Config:
+        settings = {"global_settings": {}, "last_project_dir": "C:/old",
+                    "last_project_directory": "C:/old/used_by_build"}
+        default_global_settings = {}
+
+        def save_settings(self, settings):
+            return True
+
+        def update_global_settings(self, values):
+            return True
+
+    monkeypatch.setattr(st.SettingsTab, "_toast", lambda *a, **k: None)
+    tab = st.SettingsTab(Config(), roles=["Admin"])
+    qtbot.addWidget(tab)
+    assert not hasattr(tab, "excel_tracking_input")
+    tab.project_root_input.setText(str(tmp_path))
+    assert tab.save_all()
+
+    build = SimpleNamespace(project_dir_input=QLineEdit(), scan_source_input=QLineEdit(),
+                            project_name_input=QLineEdit(),
+                            _settings=lambda: tab.config_manager.settings)
+    FolderCreatorTab.restore_last_paths(build)
+    assert build.project_dir_input.text() == str(tmp_path)
+
+
 def test_dashboard_retry_reconnects(monkeypatch):
     """The offline banner's Retry asked for a reconnect() nothing has, so it never retried."""
     from slate.core.domain import access

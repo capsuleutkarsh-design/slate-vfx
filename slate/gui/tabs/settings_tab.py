@@ -478,15 +478,8 @@ class SettingsTab(QWidget):
                 make_button("Browse…", "secondary",
                             on_click=lambda: self._browse_directory(self.project_root_input, "Select project root")),
                 make_button("Clear", "ghost", on_click=self.project_root_input.clear)]))
-
-        self.excel_tracking_input = QLineEdit(str(self.config_manager.settings.get("last_excel_file", "")))
-        self.excel_tracking_input.setPlaceholderText("Excel tracking file (.xlsx)")
-        self.ingest_rows.append(self._path_row(
-            lay, "Excel tracking file", "The shot list Build & Ingest reads", self.excel_tracking_input, [
-                make_button("Browse…", "secondary",
-                            on_click=lambda: self._browse_file(self.excel_tracking_input, "Select Excel file",
-                                                               "Excel Files (*.xlsx *.xls)")),
-                make_button("Clear", "ghost", on_click=self.excel_tracking_input.clear)]))
+        # (An "Excel tracking file" row was here: Build & Ingest reads no Excel
+        # file, and nothing read the setting.)
         main_layout.addWidget(card_config)
 
         # 2. STUDIO POLICY - everybody reads it, HR and admins change it.
@@ -617,14 +610,13 @@ class SettingsTab(QWidget):
         # Until the person is known (a widget shown on its own in a test) the
         # studio parts stay hidden; apply_access shows them to the right people.
         self._apply_visibility()
-        for field in (self.project_root_input, self.excel_tracking_input, self.server_root_input,
-                      self.brand_logo_input):
+        for field in (self.project_root_input, self.server_root_input, self.brand_logo_input):
             self._show_start(field)
         self._snapshot = self.current_values()
         for signal in (self.restore_paths_cb.toggled, self.dry_run_default_cb.toggled,
                        self.theme_combo.currentTextChanged, self.ui_scale_sb.valueChanged,
                        self.nuke_mode_combo.currentIndexChanged,
-                       self.project_root_input.textChanged, self.excel_tracking_input.textChanged,
+                       self.project_root_input.textChanged,
                        self.server_root_input.textChanged, self.brand_logo_input.textChanged,
                        self.db_host_input.textChanged, self.db_port_input.textChanged,
                        self.db_name_input.textChanged, self.db_user_input.textChanged):
@@ -692,7 +684,6 @@ class SettingsTab(QWidget):
             "ui_scale_override": round(float(self.ui_scale_sb.value()), 2),
             "nuke_mode": self.nuke_mode_combo.currentData() or "nukex",
             "last_project_dir": self.project_root_input.text().strip(),
-            "last_excel_file": self.excel_tracking_input.text().strip(),
             "server_root": self.server_root_input.text().strip(),
             "branding_logo_path": self.brand_logo_input.text().strip(),
             "db_host": self.db_host_input.text().strip(),
@@ -711,7 +702,6 @@ class SettingsTab(QWidget):
             index = self.nuke_mode_combo.findData(values.get("nuke_mode") or "nukex")
             self.nuke_mode_combo.setCurrentIndex(max(0, index))
             for field, key in ((self.project_root_input, "last_project_dir"),
-                               (self.excel_tracking_input, "last_excel_file"),
                                (self.server_root_input, "server_root"),
                                (self.brand_logo_input, "branding_logo_path"),
                                (self.db_host_input, "db_host"), (self.db_port_input, "db_port"),
@@ -821,11 +811,16 @@ class SettingsTab(QWidget):
                 self.global_settings["branding_logo_path"] = values["branding_logo_path"]
             # A cleared path is saved as cleared - it used to be skipped, so
             # a wrong path could never be removed.
-            for key in ("last_project_dir", "last_excel_file"):
-                if values[key]:
-                    self.config_manager.settings[key] = values[key]
-                else:
-                    self.config_manager.settings.pop(key, None)
+            project = values["last_project_dir"]
+            if project:
+                self.config_manager.settings["last_project_dir"] = project
+            else:
+                self.config_manager.settings.pop("last_project_dir", None)
+            # Build & Ingest opens with "last_project_directory"; this field's
+            # key was copied there only while that one was empty, so once
+            # Build & Ingest had been used a new Project root changed nothing.
+            if project and project != self._snapshot.get("last_project_dir"):
+                self.config_manager.settings["last_project_directory"] = project
             self.config_manager.save_settings(self.config_manager.settings)
             saved = self.config_manager.update_global_settings(self.global_settings)
             if not saved:
