@@ -255,10 +255,15 @@ def roles_for(action: str) -> Set[str]:
     return set(_load().get(action, set()))
 
 
+def by_name(role) -> Set[str]:
+    """What access.json gives this role by its name (no ticks can take it away)."""
+    role = str(role or "").strip().lower()
+    return {action for action, members in _load().items() if role in members}
+
+
 def _abilities_of(role: str) -> Set[str]:
     """What one role may do: access.json by name, plus the role's own ticks."""
-    names = {action for action, members in _load().items() if role in members}
-    return names | _role_abilities().get(role, set())
+    return by_name(role) | _role_abilities().get(role, set())
 
 
 def _allowed(action: str, roles: Iterable) -> bool:

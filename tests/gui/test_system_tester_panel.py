@@ -237,7 +237,8 @@ def test_permission_matrix_is_readable(panel_for):
     rows = tp.TesterPanel.permission_rows(FakeUsers.roles_config)
     artist = dict((r[0], r) for r in rows)["Artist"]
     assert artist[1]["Stock Viewer"] and not artist[1]["Admin Panel"]
-    assert artist[2] == "Set own shot status"
+    # With what access.json gives "artist" by name (the matrix left it out).
+    assert artist[2] == "Can be given shots, Set own shot status"
 
 
 def test_config_sandbox_is_gone(panel_for):
