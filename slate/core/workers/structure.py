@@ -125,6 +125,15 @@ def reels_root_for(project_path, project_code: str, target_root=None) -> Path:
         return project_path / "05_Reels"
 
 
+def free_space(dest):
+    """Free bytes on dest's drive, or None when that cannot be told."""
+    try:
+        return psutil.disk_usage(Path(dest).anchor or str(dest)).free
+    except Exception as exc:
+        logging.warning("Free space on %s unknown: %s", dest, exc)
+        return None
+
+
 class FolderCreationWorker(QThread):
 
     log_signal = Signal(str)
@@ -415,10 +424,11 @@ class FolderCreationWorker(QThread):
                                   self.folders_created, message)
 
     def _enough_space(self, size, dest):
-        try:
-            anchor = Path(dest).anchor or str(dest)
-            free = psutil.disk_usage(anchor).free
-        except Exception:
+        anchor = Path(dest).anchor or str(dest)
+        free = free_space(dest)
+        if free is None:
+            # Build & Ingest asked before starting; said in the run log too.
+            self.log_signal.emit(f"[WARN] Free space on {anchor} is unknown - carrying on.")
             return True, ""
         if free > size * 1.1:
             return True, ""
