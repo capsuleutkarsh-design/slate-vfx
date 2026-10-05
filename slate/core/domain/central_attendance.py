@@ -259,6 +259,15 @@ class CentralAttendance:
                 found = people.person(user_id, self.db)
                 if user_id in people.SERVICE_USERNAMES or (found is not None and found.is_service):
                     return None
+                # Nor on a day of approved full-day leave (owner's decision):
+                # signing in to check something is not coming to work.
+                if action == "in":
+                    try:
+                        if self.leave_today(user_id):
+                            logger.info("No automatic punch-in for %s: on approved leave today.", user_id)
+                            return None
+                    except Exception as exc:
+                        logger.warning("Approved leave not checked before the automatic punch-in: %s", exc)
             today_date, now_time = self._server_now()
 
             # SMART AUTO-LOGOUT: close the forgotten days before today.
