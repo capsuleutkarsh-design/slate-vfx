@@ -93,16 +93,11 @@ CATALOGUE: Dict[str, str] = {
     "no_sqlite_fallback":
         "No local admin/admin123 database when the server is unreachable "
         "(SEC-021).",
-    "no_master_password":
-        "The shared admin_password no longer unlocks admin actions (SEC-004).",
     "signed_fleet_commands":
         "Fleet commands on the share must carry a valid signature (SEC-022). "
         "Roll out as log_only first.",
     "signed_updates":
         "Updates must be signed (SEC-023). Roll out as log_only first.",
-    "api_auth_required":
-        "The web API checks passwords and needs a token on every route "
-        "(SEC-002, SEC-007, SEC-008).",
     "readonly_sql_console":
         "The Data Center SQL console is read-only (SEC-016, SEC-017).",
     "hide_password_hashes":

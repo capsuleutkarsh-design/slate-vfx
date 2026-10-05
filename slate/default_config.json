@@ -10,7 +10,6 @@
     "db_name": "ut_vfx",
     "db_user": "ut_vfx_app",
     "db_password": "Tango$",
-    "admin_password": "admin123",
     "gatekeeper_enabled": true,
     "update_manifest_url": "http://192.168.0.15/slate_updates/manifest.json",
     "check_updates_on_startup": true,

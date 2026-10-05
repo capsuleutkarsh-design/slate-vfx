@@ -123,11 +123,12 @@ class DatabaseManager:
                 # local copy, or "unavailable") takes seconds. The retry ladder
                 # made a refused port cost about 28 s here, every start-up.
                 backend._init_pool(retry=False)
+                _remember_fallback_switch(backend)
                 return backend, "postgres", False
             except Exception as exc:
                 self.bootstrap_error = str(exc)
                 logger.error("Postgres bootstrap failed: %s", exc)
-                if not self.allow_fallback:
+                if not self.allow_fallback or not _fallback_allowed_by_switch():
                     # The error every screen already knows means "no
                     # database"; a RuntimeError went past the sign-in window's
                     # handler and ended Slate in the crash handler.
@@ -188,6 +189,38 @@ class DatabaseManager:
             self.backend.shutdown_system()
         elif hasattr(self.backend, 'force_shutdown'):
             self.backend.force_shutdown()
+
+
+# Switch no_sqlite_fallback (SEC-021): on the local copy the built-in
+# admin/admin123 is always there, so a workstation cut off from the server
+# could be signed in to as an administrator. The switch lives in the studio
+# database - exactly what cannot be read when the fallback is wanted - so this
+# computer keeps the last mode it read there in its own settings.
+_FALLBACK_SETTING = "security_no_sqlite_fallback"
+
+
+def _remember_fallback_switch(backend) -> None:
+    try:
+        from slate.core.security import switches
+        from .global_config import GlobalConfig
+        mode = switches.mode("no_sqlite_fallback", db=backend)
+        if str(GlobalConfig.get(_FALLBACK_SETTING, "off")) != mode:
+            GlobalConfig.set(_FALLBACK_SETTING, mode)
+    except Exception as exc:
+        logger.debug("no_sqlite_fallback not remembered: %s", exc)
+
+
+def _fallback_allowed_by_switch() -> bool:
+    """False only when the last mode read from the studio database was 'on'."""
+    try:
+        from .global_config import GlobalConfig
+        mode = str(GlobalConfig.get(_FALLBACK_SETTING, "off") or "off")
+    except Exception:
+        return True
+    if mode in ("log_only", "on"):
+        logger.warning("no_sqlite_fallback is %s: the local copy %s", mode,
+                       "is not opened" if mode == "on" else "would not be opened")
+    return mode != "on"
 
 
 _manager_lock = RLock()

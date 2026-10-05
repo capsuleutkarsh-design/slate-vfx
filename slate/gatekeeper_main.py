@@ -414,7 +414,19 @@ class ApplicationEntry:
             flag_path.write_text("configured=true\n", encoding="utf-8")
 
             users_file = Path(values["SERVER_ROOT"]) / "Config" / "users.json"
-            if not users_file.exists():
+            from slate.core.security import switches
+            no_defaults = switches.mode("no_default_accounts")
+            if not users_file.exists() and no_defaults != switches.OFF:
+                logging.warning("no_default_accounts is %s: the EMP0001/admin123 offer %s",
+                                no_defaults, "is not shown" if no_defaults == switches.ON
+                                else "would not be shown")
+            if not users_file.exists() and no_defaults == switches.ON:
+                QMessageBox.information(
+                    None, "Setup Notice",
+                    "Slate does not create a default administrator on this studio.\n\n"
+                    "To make the first administrator, open Recover Slate on the server PC "
+                    "and use Accounts > Create or restore administrator.")
+            elif not users_file.exists():
                 reply = QMessageBox.question(
                     None,
                     "Setup Notice",

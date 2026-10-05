@@ -21,6 +21,11 @@ from ..core.infra.global_config import GlobalConfig
 from ..core.infra.gate import Gate
 from .. import __version__ as APP_VERSION
 import logging
+import time
+
+# Seconds a failed sign-in waits before it answers (NEW-7). On the worker
+# thread, so the window never freezes; there is no account lockout.
+FAILED_SIGNIN_DELAY = 1.0
 
 
 class LoginAuthWorker(QThread):
@@ -37,6 +42,8 @@ class LoginAuthWorker(QThread):
     def run(self):
         try:
             user = self.user_manager.authenticate(self.username, self.password)
+            if not user:
+                time.sleep(FAILED_SIGNIN_DELAY)
             self.auth_result.emit(user, "")
         except Exception as exc:
             self.auth_result.emit(None, str(exc))
@@ -586,6 +593,13 @@ class LoginDialog(QDialog):
             return
 
         logging.warning(f"Login failed for {username}")
+        # The password was right but the account may not sign in (switched
+        # off, an old-style password): say so rather than "do not match".
+        refused = getattr(self.user_manager, "last_error", "")
+        if refused:
+            self.show_error(refused)
+            self.pass_input.selectAll()
+            return
         try:
             fresh = self.user_manager.is_fresh_seed()
         except Exception:
@@ -595,8 +609,7 @@ class LoginDialog(QDialog):
             # here yet, and the one that does is the built-in administrator.
             self.show_error(
                 "This studio's database is new and has no accounts yet. "
-                "Sign in as  admin  /  admin123  to create them, then change "
-                "that password from the Users tab.")
+                "Ask your administrator for yours.")
         else:
             self.show_error("That user name and password do not match. Try again.")
         self.pass_input.selectAll()

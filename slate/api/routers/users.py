@@ -1,6 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.security import OAuth2PasswordRequestForm
-from typing import Dict, Any, List
 from slate.core.infra.database_manager import DatabaseManager
 from slate.api.core.security import create_access_token, get_current_user
 
@@ -11,34 +10,21 @@ def get_db():
 
 @router.post("/login")
 def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: DatabaseManager = Depends(get_db)):
-    """Authenticate user and issue JWT."""
-    # Since password is not strongly enforced in legacy DB, just verify username exists
-    user_id = db.user_repo.get_user_id(form_data.username)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Incorrect username")
-    user_roles = db.user_repo.get_user_roles(form_data.username)
-    
-    access_token = create_access_token(data={"sub": form_data.username, "roles": user_roles})
+    """Check the user name and password exactly as the sign-in window does, then issue a JWT."""
+    from slate.core.domain.user_manager import UserManager
+    user = UserManager(db=db).authenticate(form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Incorrect user name or password")
+    access_token = create_access_token(data={"sub": user["username"], "roles": user["roles"]})
     return {"access_token": access_token, "token_type": "bearer"}
 
 @router.get("/")
-def get_user_id(username: str, db: DatabaseManager = Depends(get_db)):
+def get_user_id(username: str, db: DatabaseManager = Depends(get_db), current_user: str = Depends(get_current_user)):
     """Get User ID by username or display name."""
     user_id = db.user_repo.get_user_id(username)
     if not user_id:
         raise HTTPException(status_code=404, detail="User not found")
     return {"user_id": user_id}
-
-@router.post("/sync")
-def sync_users(users_dict: Dict[str, Any], db: DatabaseManager = Depends(get_db)):
-    """Sync a dictionary of users into the database."""
-    try:
-        success = db.user_repo.sync_users(users_dict)
-    except PermissionError as refused:          # the last administrator stays
-        raise HTTPException(status_code=409, detail=str(refused))
-    if not success:
-        raise HTTPException(status_code=500, detail="Failed to sync users")
-    return {"status": "success"}
 
 @router.get("/{username}/profile_pic")
 def get_profile_pic(username: str, db: DatabaseManager = Depends(get_db), current_user: str = Depends(get_current_user)):

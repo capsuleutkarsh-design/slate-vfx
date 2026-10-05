@@ -40,9 +40,9 @@ def test_adding_an_existing_username_is_refused_and_changes_nothing(um):
 
 def test_a_new_user_is_created_with_the_username_rule(um):
     for bad in ("ravi kumar", "a", "x" * 120, "o'brien;--"):
-        ok, message = um.create_user(bad, "pw1234", ["Artist"])
+        ok, message = um.create_user(bad, "pw123456", ["Artist"])
         assert not ok, bad
-    ok, message = um.create_user("Ravi.Kumar", "pw1234", ["Artist"], "Ravi Kumar", "Comp",
+    ok, message = um.create_user("Ravi.Kumar", "pw123456", ["Artist"], "Ravi Kumar", "Comp",
                                  employment="staff")
     assert ok and message == "Added Ravi Kumar (ravi.kumar)"
     assert um._row("ravi.kumar")["employment"] == "Staff"
@@ -113,7 +113,7 @@ def test_reset_password_changes_only_the_password(um, monkeypatch):
     after = um._row("aarav")
     assert after["profile_pic_path"] == "C:/pics/aarav.png"
     assert after["roles"] == before["roles"] and after["display_name"] == before["display_name"]
-    assert after["password_hash"] != before["password_hash"] and not after["must_change_password"]
+    assert after["password_hash"] != before["password_hash"] and after["must_change_password"]  # HR-127
     assert um.authenticate("aarav", "newpass9")
     assert seen[-1] == ("hr.kavya", "aarav", "Password reset by hr.kavya")
     assert not um.set_password("aarav", "   ")[0]
@@ -132,7 +132,7 @@ def test_a_leaver_is_reactivated_only_with_the_last_day_cleared(um):
 def test_reports_to_must_be_able_to_approve_everywhere(um):
     """HR2-062: create, update and import share the rule; HR2-064: no service accounts."""
     assert "cannot approve leave" in um.reports_to_problem("new.one", "aarav")
-    ok, message = um.create_user("new.one", "pw1234", ["Artist"], reports_to="aarav")
+    ok, message = um.create_user("new.one", "pw123456", ["Artist"], reports_to="aarav")
     assert not ok and "cannot approve" in message
     with pytest.raises(PermissionError):
         um.update_user("sup.anjali", reports_to="aarav")

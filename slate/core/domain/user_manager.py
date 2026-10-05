@@ -91,106 +91,93 @@ class UserManager:
                     db.execute_update(f"ALTER TABLE ut_users ADD COLUMN {column} {kind}")
         except Exception as e:
             logging.warning("Could not add the account status columns: %s", e)
+        # Sign-in reads security switches; without the table every read logs an error.
+        from slate.core.security import switches
+        switches.ensure_table(db)
 
     def _run_migration(self):
         """
-        One-time migration from users.json/roles.json to SQL database.
-        Wrapped in atomic transaction to prevent data loss.
+        users.json / roles.json on the share go into an EMPTY ut_users, once,
+        in one transaction, and the files are renamed only after it commits.
+
+        It used to run on every start whenever the files were there, deleting
+        and re-inserting every account they named - so a rename that failed
+        (a read-only share) put old passwords and roles back each time
+        (NEW-2). A database that already has accounts is never touched by them.
         """
         db = self._get_db()
-        
-        # If JSON files don't exist, just ensure admin exists and return
+        res = db.execute_query("SELECT count(*) as c FROM ut_users", fetch="one")
+        if not res or res.get('c', 0):
+            if self.users_file.exists() or self.roles_file.exists():
+                logging.info("users.json / roles.json not imported: the database already has accounts.")
+            return
+
         if not self.users_file.exists() and not self.roles_file.exists():
-            res = db.execute_query("SELECT count(*) as c FROM ut_users", fetch="one")
-            if res and res.get('c', 0) == 0:
-                logging.info("Database is empty and no JSON config found. Creating default users.")
-                try:
-                    self._create_default_roles_sql(db)
-                    self._create_default_users_sql(db)
-                except Exception as e:
-                    logging.error(f"Failed to create default users: {e}")
-                    self._ensure_admin_exists()
-            return # Nothing to migrate
-            
-        logging.info("Starting Auth migration from JSON to SQL (or resuming failed migration)...")
-
-
-        
-        try:
-            # 1. Migrate Roles
-            if self.roles_file.exists():
-                try:
-                    with open(self.roles_file, 'r', encoding='utf-8') as f:
-                        roles_data = json.load(f)
-                except Exception as e:
-                    logging.error(f"Failed to parse {self.roles_file}: {e}")
-                    roles_data = {}
-                    
-                roles_config = roles_data.get('roles', {})
-                for role_name, permissions in roles_config.items():
-                    perm_str = json.dumps(permissions)
-                    db.execute_update("DELETE FROM ut_roles WHERE role_name=%s", (role_name,))
-                    db.execute_update(
-                        "INSERT INTO ut_roles (role_name, permissions) VALUES (%s, %s)", 
-                        (role_name, perm_str)
-                    )
-            else:
+            logging.info("Database is empty and no JSON config found. Creating default users.")
+            try:
                 self._create_default_roles_sql(db)
-
-            # 2. Migrate Users
-            if self.users_file.exists():
-                try:
-                    with open(self.users_file, 'r', encoding='utf-8') as f:
-                        users_data = json.load(f)
-                except Exception as e:
-                    logging.error(f"Failed to parse {self.users_file}: {e}")
-                    users_data = {}
-                    
-                users_dict = users_data.get('users', {})
-                
-                for username, data in users_dict.items():
-                    uid = username.strip()
-                    # Extract data with fallbacks
-                    display_name = data.get('display_name', uid)
-                    job_title = data.get('job_title', '')
-                    profile_pic = data.get('profile_pic_path', '')
-                    password_hash = data.get('password_hash', '')
-                    
-                    roles = data.get('roles', [])
-                    if 'role' in data and not roles:
-                        roles = [data['role']]
-                    elif not roles:
-                        roles = ["Artist"]
-                    
-                    roles_str = json.dumps(roles)
-                    
-                    db.execute_update("DELETE FROM ut_users WHERE username=%s", (uid,))
-                    db.execute_update(
-                        "INSERT INTO ut_users (username, password_hash, display_name, job_title, roles, profile_pic_path) VALUES (%s, %s, %s, %s, %s, %s)",
-                        (uid, password_hash, display_name, job_title, roles_str, profile_pic)
-                    )
-            else:
                 self._create_default_users_sql(db)
-            
-            # 3. Rename files after successful transaction (Best effort)
-            if self.roles_file.exists():
-                try:
-                    self.roles_file.rename(self.roles_file.with_suffix('.json.migrated'))
-                except Exception as e:
-                    logging.warning(f"Could not rename roles.json: {e}. Safe to ignore since SQL is populated.")
-                    
-            if self.users_file.exists():
-                try:
-                    self.users_file.rename(self.users_file.with_suffix('.json.migrated'))
-                except Exception as e:
-                    logging.warning(f"Could not rename users.json: {e}. Safe to ignore since SQL is populated.")
-                
-            logging.info("Auth migration completed successfully.")
-            
+            except Exception as e:
+                logging.error(f"Failed to create default users: {e}")
+                self._ensure_admin_exists()
+            return
+
+        logging.info("Starting Auth migration from JSON to SQL...")
+        from types import SimpleNamespace
+        from ..infra.transaction import atomic
+        try:
+            with atomic(db) as tx:
+                writer = SimpleNamespace(execute_update=tx.write)
+                # 1. Roles
+                if self.roles_file.exists():
+                    for role_name, permissions in self._read_json(self.roles_file).get('roles', {}).items():
+                        tx.write("DELETE FROM ut_roles WHERE role_name=%s", (role_name,))
+                        tx.write("INSERT INTO ut_roles (role_name, permissions) VALUES (%s, %s)",
+                                 (role_name, json.dumps(permissions)))
+                else:
+                    self._create_default_roles_sql(writer)
+
+                # 2. Users
+                if self.users_file.exists():
+                    for username, data in self._read_json(self.users_file).get('users', {}).items():
+                        uid = username.strip()
+                        roles = data.get('roles', [])
+                        if 'role' in data and not roles:
+                            roles = [data['role']]
+                        elif not roles:
+                            roles = ["Artist"]
+                        tx.write("DELETE FROM ut_users WHERE username=%s", (uid,))
+                        tx.write(
+                            "INSERT INTO ut_users (username, password_hash, display_name, job_title, roles, profile_pic_path) VALUES (%s, %s, %s, %s, %s, %s)",
+                            (uid, data.get('password_hash', ''), data.get('display_name', uid),
+                             data.get('job_title', ''), json.dumps(roles), data.get('profile_pic_path', '')))
+                else:
+                    self._create_default_users_sql(writer)
         except Exception as e:
             logging.error(f"Auth migration failed (rolled back): {e}")
             # If migration fails and tables are empty, populate defaults so we aren't locked out.
             self._ensure_admin_exists()
+            return
+
+        # 3. Only now, after the commit, the files are renamed.
+        for path in (self.roles_file, self.users_file):
+            if path.exists():
+                try:
+                    path.rename(path.with_suffix('.json.migrated'))
+                except Exception as e:
+                    logging.warning(f"Could not rename {path.name}: {e}. Harmless: the database "
+                                    "has accounts now, so it is not imported again.")
+        logging.info("Auth migration completed successfully.")
+
+    @staticmethod
+    def _read_json(path) -> dict:
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except Exception as e:
+            logging.error(f"Failed to parse {path}: {e}")
+            return {}
 
     # Roles every studio needs. Adding one here makes it appear on existing
     # installations at next start, without touching roles already configured.
@@ -402,18 +389,28 @@ class UserManager:
             )
 
     def _create_default_users_sql(self, db):
-        defaults = [
-            ("admin", "admin123", ["Developer"], "System Admin", "Dev"),
-            ("artist", "artist123", ["Artist"], "Test Artist", "Roto"),
-            ("tester", "tester123", ["Tester"], "QA Tester", "QA"),
-        ]
-        for uid, pw, roles, disp, job in defaults:
-            pw_hash = self._hash_password(pw)
-            db.execute_update("DELETE FROM ut_users WHERE username=%s", (uid,))
-            db.execute_update(
-                "INSERT INTO ut_users (username, password_hash, display_name, job_title, roles) VALUES (%s, %s, %s, %s, %s)",
-                (uid, pw_hash, disp, job, json.dumps(roles))
-            )
+        # Only the administrator. artist/artist123 and tester/tester123 were
+        # seeded too: two known logins on every new studio (SYS-084).
+        if self._no_default_accounts():
+            return
+        db.execute_update("DELETE FROM ut_users WHERE username=%s", ("admin",))
+        db.execute_update(
+            "INSERT INTO ut_users (username, password_hash, display_name, job_title, roles) VALUES (%s, %s, %s, %s, %s)",
+            ("admin", self._hash_password("admin123"), "System Admin", "Dev", json.dumps(["Developer"]))
+        )
+
+    def _no_default_accounts(self) -> bool:
+        """
+        Switch no_default_accounts: on, admin/admin123 is never created or
+        brought back (Recover Slate on the server PC makes an administrator
+        instead); log_only logs that it would not be; off, as before.
+        """
+        from slate.core.security import switches
+        mode = switches.mode("no_default_accounts", db=self._get_db())
+        if mode != switches.OFF:
+            logging.warning("no_default_accounts is %s: the default admin/admin123 account %s",
+                            mode, "is not created" if mode == switches.ON else "would not be created")
+        return mode == switches.ON
 
     def _ensure_essential_accounts(self):
         """Guarantee essential admin/dev accounts exist so developers and administrators are never locked out."""
@@ -429,7 +426,7 @@ class UserManager:
 
             # Check for admin
             admin_row = db.execute_query("SELECT username FROM ut_users WHERE username='admin'", fetch="one")
-            if not admin_row:
+            if not admin_row and not self._no_default_accounts():
                 logging.info("Injecting default admin user...")
                 pw_hash = self._hash_password("admin123")
                 db.execute_update(
@@ -531,6 +528,8 @@ class UserManager:
     def authenticate(self, username: str, password: str) -> Optional[Dict[str, Any]]:
         db = self._get_db()
         search_id = username.strip()
+        # Why the last sign-in was refused, for the sign-in window to show.
+        self.last_error = ""
         
         # Try exact match first
         user_row = db.execute_query("SELECT * FROM ut_users WHERE username=%s", (search_id,), fetch="one")
@@ -541,13 +540,22 @@ class UserManager:
             
         if not user_row:
             logging.warning(f"Authentication failed: User '{search_id}' not found")
+            self.audit.log_auth(search_id, False, "unknown user name")
             return None
             
         uid = user_row['username']
         stored_hash = user_row['password_hash']
         
         if self._password_matches(stored_hash, password):
+            refused = self._signin_refusal(uid, dict(user_row))
+            if refused:
+                self.last_error = refused
+                self.audit.log_auth(uid, False, refused)
+                return None
+            if not self._is_bcrypt(stored_hash):
+                self._rehash(uid, password)
             logging.info(f"Authentication successful for user '{uid}'")
+            self.audit.log_auth(uid, True)
             try:
                 roles_raw = user_row.get('roles', '["Artist"]')
                 if isinstance(roles_raw, list):
@@ -579,7 +587,67 @@ class UserManager:
             }
         else:
             logging.warning(f"Authentication failed: Invalid password for user '{uid}'")
+            self.audit.log_auth(uid, False, "wrong password")
             return None
+
+    @staticmethod
+    def _is_bcrypt(stored_hash) -> bool:
+        return str(stored_hash or "").startswith(("$2b$", "$2a$", "$2y$"))
+
+    def _rehash(self, uid, password):
+        """A plain-text or unsalted SHA-256 password that just matched, stored with bcrypt (HR-144)."""
+        try:
+            self._get_db().execute_update("UPDATE ut_users SET password_hash=%s WHERE username=%s",
+                                          (self._hash_password(self.clean_password(password)), uid))
+            logging.info("The stored password of '%s' was upgraded to bcrypt.", uid)
+        except Exception as exc:
+            logging.warning("Could not upgrade the stored password of '%s': %s", uid, exc)
+
+    def legacy_password_accounts(self) -> List[str]:
+        """
+        Active accounts whose stored password is not bcrypt. Turning
+        no_plaintext_passwords on would stop each of them signing in, so it is
+        refused while this is not empty (each upgrades itself at its next
+        sign-in, or an administrator resets it).
+        """
+        rows = self._get_db().execute_query("SELECT * FROM ut_users", fetch="all") or []
+        return sorted(r["username"] for r in rows
+                      if self._flag_active(dict(r)) and str(r.get("password_hash") or "").strip()
+                      and not self._is_bcrypt(r.get("password_hash")))
+
+    def _signin_refusal(self, uid, row) -> str:
+        """Why this account may not sign in although its password is right, or ''."""
+        from slate.core.security import switches
+        db = self._get_db()
+        if not self._is_bcrypt(row.get("password_hash")):
+            mode = switches.mode("no_plaintext_passwords", db=db)
+            if mode != switches.OFF:
+                logging.warning("no_plaintext_passwords (%s): '%s' signed in with an old-style "
+                                "stored password.", mode, uid)
+            if mode == switches.ON:
+                return ("Your password is stored in an old, unsafe way and can no longer be used. "
+                        "Ask your administrator to reset it.")
+        if not self._flag_active(row) and not self._always_signs_in(uid, row):
+            mode = switches.mode("refuse_inactive_signin", db=db)
+            if mode != switches.OFF:
+                logging.warning("refuse_inactive_signin (%s): '%s' is switched off or past "
+                                "their last day.", mode, uid)
+            if mode == switches.ON:
+                return ("This account is switched off or its last day has passed. "
+                        "Ask your administrator if you still need it.")
+        return ""
+
+    def _always_signs_in(self, uid, row) -> bool:
+        """The protected accounts, and a full-access account while no active administrator is left."""
+        if str(uid).lower() in self.PROTECTED_ACCOUNTS:
+            return True
+        from slate.core.security import admin_guard
+        try:
+            users, perms = admin_guard.read_state(self._get_db())
+        except Exception:
+            return True
+        return (admin_guard.has_full_access(admin_guard.parse_roles(row.get("roles")), perms)
+                and not admin_guard.administrators(users, perms))
 
     @property
     def users(self) -> Dict[str, Dict[str, Any]]:
@@ -726,7 +794,9 @@ class UserManager:
             self.audit.log_user_change(self._actor(), uid, f"Updated roles: {roles}")
         return bool(success)
 
-    MIN_PASSWORD_LENGTH = 6
+    # For new passwords only (password_problem): a shorter one set before
+    # still signs in (HR-132).
+    MIN_PASSWORD_LENGTH = 8
 
     def set_must_change_password(self, username: str, required: bool) -> bool:
         db = self._get_db()
@@ -740,22 +810,23 @@ class UserManager:
         (ok, message).
 
         It went through add_user, an upsert of the whole account, which blanked
-        the person's picture and was audited as 'Updated roles'. The password
-        rule and hashing are add_user's, unchanged (passwords are reviewed with
-        the security work).
+        the person's picture and was audited as 'Updated roles'. The new
+        password follows password_problem, and the person must change it at
+        their next sign-in.
         """
         row = self._row(username)
         if not row:
             return False, "There is no account called %s." % str(username or "").strip()
         target = row["username"]
         self._check_account_change(target)
+        problem = self.password_problem(new)
+        if problem:
+            return False, problem
         cleaned = self.clean_password(new)
-        if not cleaned:
-            return False, "A password cannot be empty or only spaces."
-        # A password an admin set is not forced to change, even for somebody
-        # imported who never signed in with the first one.
+        # The administrator knows this password, so the person chooses their
+        # own at the next sign-in (HR-127).
         ok = self._get_db().execute_update(
-            "UPDATE ut_users SET password_hash=%s, must_change_password=0 WHERE username=%s",
+            "UPDATE ut_users SET password_hash=%s, must_change_password=1 WHERE username=%s",
             (self._hash_password(cleaned), target))
         if not ok:
             return False, "The password for %s could not be saved. Try again." % target
@@ -827,6 +898,10 @@ class UserManager:
         if problem:
             self.last_error = problem
             return False, problem
+        problem = self.password_problem(password)
+        if problem:
+            self.last_error = problem
+            return False, problem
         roles = [roles] if isinstance(roles, str) else list(roles or [])
         if not roles:
             return False, "Pick at least one role."
@@ -841,7 +916,7 @@ class UserManager:
             fields["employment"] = employment_value(fields["employment"])
         columns = ["username", "password_hash", "display_name", "job_title", "roles",
                    "profile_pic_path"]
-        values = [uid, self._hash_password(password), (display_name or "").strip() or uid,
+        values = [uid, self._hash_password(self.clean_password(password)), (display_name or "").strip() or uid,
                   (job_title or "").strip(), json.dumps(roles), ""]
         for field in self.EMPLOYMENT_FIELDS:
             value = fields.get(field)

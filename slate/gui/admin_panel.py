@@ -417,14 +417,8 @@ class AdminPanelTab(QWidget):
         if not ok or not password:
             return False
 
-        # 1. Check Master Password (from config.json / default_config.json)
-        # This allows the 'admin_password' key in the JSON to actually work as an override
-        master_pass = GlobalConfig.get("admin_password")
-        if master_pass and password == master_pass:
-             self.log_action("Admin verified via MASTER PASSWORD override")
-             return True
-
-        # 2. Verify against current user's password (Standard)
+        # Only the signed-in person's own password. A shared admin_password from
+        # config.json (admin123 by default) used to work too (SYS-001).
         if self.current_username and self.user_manager.authenticate(self.current_username, password):
             self.log_action(f"Admin verified for destructive action by {self.current_username}")
             return True
