@@ -95,6 +95,55 @@ def test_settings_project_root_reaches_build_and_ingest(qtbot, monkeypatch, tmp_
     assert build.project_dir_input.text() == str(tmp_path)
 
 
+def test_bid_tracking_export_button_writes_a_file(qtbot, monkeypatch, tmp_path):
+    """clicked's checked=False landed in export(path=...), so no Save dialog and no file."""
+    from types import SimpleNamespace
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QFileDialog
+    from slate.core.domain import bid_export
+    from slate.gui.tabs import bid_tracking_view as module
+
+    target = tmp_path / "tracking.csv"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(target), ""))
+    monkeypatch.setattr(bid_export, "tracking_rows", lambda bid, tracking: (["Shot"], [["sh010"]]))
+    monkeypatch.setattr("slate.gui.components.feedback.toast", lambda *a, **k: None)
+    view = module.BidTrackingView()
+    qtbot.addWidget(view)
+    view.bid = SimpleNamespace(project_code="ABC", revision=1)
+    view.tracking = object()
+    view.export_button.setEnabled(True)
+    qtbot.mouseClick(view.export_button, Qt.MouseButton.LeftButton)
+    assert target.exists()
+
+
+def test_first_run_test_connection_button_uses_the_real_connect(qtbot, monkeypatch):
+    """clicked's checked=False became connect=False, so the test called False(...) and always failed."""
+    from PySide6.QtCore import Qt
+    from slate.gui.dialogs import first_run_dialog as module
+
+    seen = []
+
+    class Worker:
+        def __init__(self, values, connect=None):
+            seen.append(connect)
+            self.done = self
+
+        def connect(self, *_):
+            pass
+
+        def isRunning(self):
+            return False
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(module, "ConnectionTestWorker", Worker)
+    dialog = module.FirstRunSetupDialog()
+    qtbot.addWidget(dialog)
+    qtbot.mouseClick(dialog.test_button, Qt.MouseButton.LeftButton)
+    assert seen == [None]
+
+
 def test_dashboard_retry_reconnects(monkeypatch):
     """The offline banner's Retry asked for a reconnect() nothing has, so it never retried."""
     from slate.core.domain import access

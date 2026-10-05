@@ -127,7 +127,8 @@ class FirstRunSetupDialog(QDialog):
         root.addLayout(form)
 
         test_row = QHBoxLayout()
-        self.test_button = make_button("Test connection", "secondary", on_click=self.test_connection)
+        self.test_button = make_button("Test connection", "secondary",
+                                       on_click=lambda: self.test_connection())
         self.test_result = QLabel("")
         self.test_result.setWordWrap(True)
         test_row.addWidget(self.test_button)
