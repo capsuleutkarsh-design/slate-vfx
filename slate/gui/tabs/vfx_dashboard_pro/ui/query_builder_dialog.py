@@ -183,7 +183,7 @@ class QueryBuilderDialog(QDialog):
         if incomplete:
             self.warning_label.setText(
                 f"{len(incomplete)} rule{'s have' if len(incomplete) != 1 else ' has'} no value. "
-                "Give it one, choose "is empty" or "is not empty", or remove it.")
+                'Give it one, choose "is empty" or "is not empty", or remove it.')
             self.warning_label.show()
             incomplete[0].value_input.setFocus()
             return
