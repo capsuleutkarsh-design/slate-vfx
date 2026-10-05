@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 from slate.core.infra.gate import Gate
 from ..core.table_style import style_table
 from slate.core.infra.leave_repository import LeaveRepository
+from slate.core.infra.db_results import DatabaseReadError
 from slate.core.domain import leave_policy as lp
 from ..core.controls import make_button
 from slate.gui.core.offline_notice import on_database_error
@@ -687,7 +688,17 @@ class YearEndDialog(QDialog):
         year = self.year.currentData()
         recorded = {str(r["user_id"]).lower(): r for r in self.repo.closes(year)}
         self._closed = set(recorded)
-        self._preview = self.repo.preview_close(year)
+        try:
+            self._preview = self.repo.preview_close(year)
+        except DatabaseReadError as exc:
+            # Not "nothing to close": the list could not be read.
+            from slate.gui.components.state_notice import show_load_error
+            self._preview = []
+            self.table.setRowCount(0)
+            show_load_error(self.table, exc, retry=self.refresh, what="the people to close")
+            self.state.setText("The people list could not be read, so nothing can be closed yet.")
+            self.btn_close.setEnabled(False)
+            return
 
         with KeepSelection(self.table):
             self.table.setRowCount(len(self._preview))
@@ -776,10 +787,23 @@ class YearEndDialog(QDialog):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
         ) != QMessageBox.StandardButton.Yes:
             return
-        result = self.repo.close_year(year, self.username,
-                                      include_no_joining=self.include_no_date.isChecked())
+        try:
+            result = self.repo.close_year(year, self.username,
+                                          include_no_joining=self.include_no_date.isChecked())
+        except DatabaseReadError:
+            result = {"refused": "The people list could not be read, so nothing was closed. "
+                                 "Try again in a moment; if it keeps happening, tell IT."}
+        failed = result.get("failed") or []
         if result.get("refused"):
             QMessageBox.warning(self, "Close %d" % year, result["refused"])
+        elif failed:
+            QMessageBox.warning(
+                self, "Close %d" % year,
+                "%d closed, %d were already done. %s NOT saved: %s.\n\nClose the year "
+                "again to finish them - the ones already closed are not touched twice."
+                % (result["closed"], result["skipped"],
+                   people.plural(len(failed), "close was", "closes were"),
+                   ", ".join(people.display_name(u) for u in failed)))
         else:
             QMessageBox.information(
                 self, "Year closed",
