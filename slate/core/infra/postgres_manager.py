@@ -287,9 +287,6 @@ class PostgresManager:
         self.password = None
         # self._connection_pool is already managed by class/init
         
-        # Usage Stats / Cache
-        self._embedding_cache = None
-        self._vector_cache_lock = threading.RLock()
         self.project_repo = ProjectRepository(self)
         self.stock_repo = StockRepository(self)
         self.tracking_repo = TrackingRepository(self)
@@ -306,21 +303,6 @@ class PostgresManager:
         self._initialized = True
 
         
-    def invalidate_vector_cache(self):
-        """
-        Invalidate the in-memory vector cache.
-        Must be called whenever stock library assets or embeddings are modified.
-        """
-        with self._vector_cache_lock:
-            self._embedding_cache = None
-            if hasattr(self, 'ids_cache'):
-                del self.ids_cache
-            if hasattr(self, 'matrix_cache'):
-                del self.matrix_cache
-            if hasattr(self, 'norms_cache'):
-                del self.norms_cache
-        logging.debug("Vector search cache invalidated")
-
     def _ensure_not_shutting_down(self):
         """Raise a consistent error when DB access is requested during shutdown."""
         if self.__class__._is_shutting_down:
@@ -1510,93 +1492,6 @@ class PostgresManager:
     def clear_stock_assets(self):
         """Legacy compatibility alias."""
         return self.clear_stock_library()
-
-    # --- VECTOR SEARCH (Postgres Implementation) ---
-    
-    def update_asset_embedding(self, asset_id, embedding_json):
-        # Postgres JSONB
-        q = "UPDATE stock_assets SET embedding_json=%s WHERE id=%s"
-        success = (self.execute_query(q, (embedding_json, asset_id), fetch="rowcount") or 0) > 0
-        if success:
-            self.invalidate_vector_cache()
-        return success
-        
-    def search_similar_assets(self, query_embedding: List[float], limit: int = 50) -> List[Dict]:
-        """
-        Hybrid Approach: Fetch vectors and do numpy logic in Python (Proven fast for <100k items)
-        pgvector extension is better but requires installation. We stick to Python for "No Install" requirement on server side plugins.
-        """
-        # Reuse the exact logic from DatabaseManager regarding numpy caching
-        # Just fetching data from Postgres
-        
-        import numpy as np
-        
-        with self._vector_cache_lock:
-            if self._embedding_cache is None:
-                q = "SELECT id, embedding FROM stock_library WHERE embedding IS NOT NULL"
-                rows = self.execute_query(q) or []
-                if not rows:
-                    return []
-
-                ids = []
-                vecs = []
-                for r in rows:
-                    try:
-                        # embedding col in Postgres is JSONB, so psycopg2 adapters might auto-convert to list/dict
-                        # Check type
-                        v = r['embedding']
-                        if isinstance(v, str):
-                            v = json.loads(v)
-
-                        if len(v) > 0:
-                            ids.append(r['id'])
-                            vecs.append(v)
-                    except Exception:
-                        continue
-
-                if not vecs:
-                    return []
-
-                matrix = np.array(vecs, dtype=np.float32)
-                norms = np.linalg.norm(matrix, axis=1)
-                norms[norms == 0] = 1e-10
-
-                self.ids_cache = np.array(ids)
-                self.matrix_cache = matrix
-                self.norms_cache = norms
-                self._embedding_cache = True
-
-            ids_cache = self.ids_cache
-            matrix_cache = self.matrix_cache
-            norms_cache = self.norms_cache
-            
-        # Perform Dot Product (Cosine Similarity)
-        # Cosine Sim = (A . B) / (||A|| * ||B||)
-        
-        query_vec = np.array(query_embedding, dtype=np.float32)
-        query_norm = np.linalg.norm(query_vec)
-        if query_norm == 0: query_norm = 1e-10
-        
-        # Dot product of query vs all items
-        dot_products = np.dot(matrix_cache, query_vec)
-        
-        # Calculate similarities
-        result_norms = norms_cache * query_norm
-        similarities = dot_products / result_norms
-        
-        # Get top N indices
-        # argsort returns indices that would sort the array (ascending), so we take tail and reverse
-        top_indices = np.argsort(similarities)[-limit:][::-1]
-        
-        results = []
-        for idx in top_indices:
-            score = float(similarities[idx])
-            # Filter out weak matches if needed, but for now return all top N
-            if score > 0.0:
-                asset_id = int(ids_cache[idx])
-                results.append({'id': asset_id, 'score': score})
-                
-        return results
 
     # --- DASHBOARD / TRACKING ---
 

@@ -74,14 +74,6 @@ class StockRepository:
     def __init__(self, db):
         self.db = db
 
-    def _invalidate(self):
-        invalidate = getattr(self.db, "invalidate_vector_cache", None)
-        if callable(invalidate):
-            try:
-                invalidate()
-            except Exception:
-                pass
-
     # ------------------------------------------------------------ writing
 
     def add_stock_asset(
@@ -217,7 +209,6 @@ class StockRepository:
         except Exception as e:
             logger.error(f"Batch add failed: {e}")
             raise
-        self._invalidate()
         return len(values)
 
     # Columns update_assets_by_path may set, and how each is written.
@@ -279,7 +270,6 @@ class StockRepository:
                     % ", ".join(f"{c} = %s" for c in columns),
                     tuple(fields[c] for c in columns) + (path,))
                 changed += _rows(result)
-        self._invalidate()
         return changed
 
     def update_stock_asset_paths(self, asset_id, thumb_path=None, proxy_path=None, file_path=None):
@@ -578,7 +568,6 @@ class StockRepository:
             "UPDATE stock_library SET deleted_at = %%s, deleted_by = %%s "
             "WHERE %s AND id IN (%s)" % (LIVE, ",".join(["%s"] * len(ids))),
             (_now(), str(by or "")) + tuple(ids))
-        self._invalidate()
         return _rows(result)
 
     def restore(self, asset_ids: Iterable) -> int:
@@ -588,7 +577,6 @@ class StockRepository:
         result = self.db.write(
             "UPDATE stock_library SET deleted_at = NULL, deleted_by = '' WHERE id IN (%s)"
             % ",".join(["%s"] * len(ids)), tuple(ids))
-        self._invalidate()
         return _rows(result)
 
     def purge_deleted(self, older_than: datetime = None, asset_ids: Iterable = None) -> List[Dict]:
@@ -628,7 +616,6 @@ class StockRepository:
             tx.write(f"DELETE FROM stock_picks WHERE stock_id IN ({marks})", tuple(gone))
             tx.write(f"UPDATE stock_library SET thumb_path = '', proxy_path = '' "
                      f"WHERE id IN ({marks})", tuple(gone))
-        self._invalidate()
         return rows
 
     def cached_files(self) -> List[Dict]:
@@ -647,7 +634,6 @@ class StockRepository:
             if deleted:
                 self.db.write("DELETE FROM stock_favorites WHERE stock_id = %s", (int(asset_id),))
                 self.db.write("DELETE FROM stock_picks WHERE stock_id = %s", (int(asset_id),))
-                self._invalidate()
             return deleted
         except DatabaseUnavailableError:
             raise
@@ -662,8 +648,6 @@ class StockRepository:
             result = self.db.write(
                 "DELETE FROM stock_library WHERE file_path=%s", (str(file_path),))
             deleted = _rows(result) > 0
-            if deleted:
-                self._invalidate()
             return deleted
         except DatabaseUnavailableError:
             raise
@@ -682,5 +666,4 @@ class StockRepository:
             # And the folders: a Rescan right after a clear rebuilt the whole
             # library that had just been emptied (MED2-002).
             self.db.write("DELETE FROM stock_roots")
-        self._invalidate()
         return bool(ok)

@@ -13,7 +13,6 @@ Features:
 """
 
 import sqlite3
-import json
 import logging
 import os
 import re
@@ -378,8 +377,6 @@ class SQLiteManager:
 
         self._db_path = self._resolve_db_path(db_path)
         self._local = threading.local()
-        self._embedding_cache = None
-        self._vector_cache_lock = threading.RLock()
 
         # Lazy-import repos to match PostgresManager interface
         from .project_repository import ProjectRepository
@@ -741,15 +738,6 @@ class SQLiteManager:
             "pool_initialized": hasattr(self._local, "conn") and self._local.conn is not None,
         }
 
-    # ── Vector cache ────────────────────────────────────────────────────────
-
-    def invalidate_vector_cache(self):
-        with self._vector_cache_lock:
-            self._embedding_cache = None
-            for attr in ('ids_cache', 'matrix_cache', 'norms_cache'):
-                if hasattr(self, attr):
-                    delattr(self, attr)
-
     # ── Project Management (delegates to repo) ──────────────────────────────
 
     def get_all_projects(self, limit=1000):
@@ -861,54 +849,6 @@ class SQLiteManager:
 
     def get_user_id(self, name_or_user):
         return self.user_repo.get_user_id(name_or_user)
-
-    # ── Embeddings / Vector Search ──────────────────────────────────────────
-
-    def update_asset_embedding(self, asset_id, embedding_json):
-        q = "UPDATE stock_library SET embedding=%s WHERE id=%s"
-        success = (self.execute_query(q, (embedding_json, asset_id), fetch="rowcount") or 0) > 0
-        if success:
-            self.invalidate_vector_cache()
-        return success
-
-    def search_similar_assets(self, query_embedding, limit=50):
-        try:
-            import numpy as np
-        except ImportError:
-            logger.warning("numpy not available — vector search disabled in SQLite mode")
-            return []
-
-        with self._vector_cache_lock:
-            if self._embedding_cache is None:
-                rows = self.execute_query("SELECT id, embedding FROM stock_library WHERE embedding IS NOT NULL") or []
-                if not rows:
-                    return []
-                ids, vecs = [], []
-                for r in rows:
-                    try:
-                        v = r['embedding']
-                        if isinstance(v, str):
-                            v = json.loads(v)
-                        if v:
-                            ids.append(r['id'])
-                            vecs.append(v)
-                    except Exception:
-                        continue
-                if not vecs:
-                    return []
-
-                self.ids_cache = np.array(ids)
-                self.matrix_cache = np.array(vecs, dtype=np.float32)
-                self.norms_cache = np.linalg.norm(self.matrix_cache, axis=1)
-                self.norms_cache[self.norms_cache == 0] = 1e-10
-                self._embedding_cache = True
-
-            qvec = np.array(query_embedding, dtype=np.float32)
-            qnorm = np.linalg.norm(qvec) or 1e-10
-            dots = np.dot(self.matrix_cache, qvec)
-            sims = dots / (self.norms_cache * qnorm)
-            top = np.argsort(sims)[-limit:][::-1]
-            return [{'id': int(self.ids_cache[i]), 'score': float(sims[i])} for i in top if sims[i] > 0]
 
     # ── Maintenance ─────────────────────────────────────────────────────────
 
