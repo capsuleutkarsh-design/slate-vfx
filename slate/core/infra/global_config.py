@@ -215,6 +215,26 @@ class GlobalConfig:
         cls._instance.data[key] = value
         cls._instance.save()
 
+    @classmethod
+    def save_connection(cls, values: dict) -> None:
+        """
+        Keep what Reconfigure server / database was given.
+
+        The database keys go through local_secrets.write_local_config, the one
+        writer whose file GlobalConfig reads last. GlobalConfig.set wrote them
+        under LOCALAPPDATA, where slate/config.json (setup.bat) overrode them
+        at the next start. SERVER_ROOT stays per machine, as in Settings.
+        """
+        from slate.core.infra.local_secrets import write_local_config
+        db = {k: values.get(k) for k in ("db_host", "db_port", "db_name", "db_user")}
+        if values.get("db_password"):
+            db["db_password"] = values["db_password"]
+        if cls._instance is None:
+            cls._instance = GlobalConfig()
+        cls._instance.data.update({k: v for k, v in db.items() if v is not None})
+        write_local_config(db)
+        cls.set("SERVER_ROOT", values["SERVER_ROOT"])
+
     def save(self):
         """Save configuration to JSON file."""
         try:

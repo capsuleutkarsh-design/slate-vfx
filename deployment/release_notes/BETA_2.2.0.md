@@ -165,6 +165,39 @@ These were decided in several places that disagreed. Each is now decided once, s
 
 The test database no longer has its own copy of the dashboard's save code, so the tests now check the code the studio runs.
 
+## Fixed before rollout
+
+**Signing in and the server**
+- **Reconfigure server / database on the sign-in screen now sticks.** On a machine set up with `setup.bat`, the new server went back to the old one at the next start. It is now saved in the same file setup.bat and Settings use.
+- **Slate Server's daily comp-off job really runs.** It never read the studio's own rules, so it always thought comp off was switched off, and it could look in the wrong database. It now reads the studio database. In the same daily run, comp off nobody used in time lapses, with "(lapsed unused)" in the ledger.
+
+**Restart, shut down and messages to workstations**
+- **The person at the PC is told who asked and why.** Restart and Shut down said "No reason provided" every time. The admin's name is now sent, and the admin is asked for a reason (optional) that is shown on the PC.
+- **A workstation whose clock runs ahead still gets commands.** A PC more than a minute ahead of the admin's PC dropped every restart, shut-down and message. The age of a command is now measured by the shared folder's own clock.
+
+**Roles, people and Settings**
+- **Roles & Permissions shows what each role really has.** Some abilities come with a role's name (for example every Lead may edit the dashboard). They showed unticked, and unticking them did nothing. They now show ticked and locked, and the tooltip says they come with the role name and where that is set. The Tester Panel's permission list shows them too.
+- **Users & Roles is offered only to people who can use it.** A role with only the HR tab saw it in the sidebar and opened it onto "You do not have permission".
+- **No empty "ADMINISTRATION" heading** in the sidebar for people with nothing under it.
+- **The studio logo is one logo for the whole studio.** It was saved per workstation, so each PC showed its own or none. A logo set on a PC before this release still shows there until someone saves one in Settings. Use a path every PC can reach, such as `\\server\share\logo.png`.
+- **A lead's department comes from their own record in Users & Roles**, not from what the screen sends.
+
+**Attendance**
+- **Signing in on a day of approved full-day leave no longer punches you in.** Punching in by hand still works, after asking.
+
+**VFX Dashboard, Timeline Viewer and exports**
+- **Each project has its own frame rate for image sequences** (Edit project → Frame rate, 24 until changed). The lineup, EDLs, review proxies and the player use it. Movies keep their own rate. After changing it, use "Rebuild all" for proxies made at the old rate.
+- **"Export to Excel" on a project kept only in Excel** said it had exported shots when it wrote nothing. It now says every save already goes to that file.
+- **Excel files no longer show an apostrophe** in front of text that starts with `=`, `+`, `-` or `@`. The cell is stored as plain text instead, which Excel never runs. CSV files keep the apostrophe, which is how CSV stays safe. Backups made by earlier versions still restore exactly.
+- **A dashboard thumbnail cut short** (by the 30-second limit) no longer leaves a broken picture that counts as made for ever.
+
+**Housekeeping on each PC**
+- **"Clear temporary files" and the automatic clean-up keep the caches.** They emptied the thumbnail cache, local review proxies, the RV playlist and the stock library cache every day. Now they remove only Slate's own temporary files: the player's frame lists and pictures or proxies left half-written.
+
+**Installing and updating**
+- **setup.bat writes `config.json` without the invisible marker** at its start that older Slate versions could not read.
+- **An update's safety copy now keeps folders inside the program** that happen to be called `database`, `logs`, `tmp`, `Cache` or `Backups`. Only the ones at the top of the install folder (the studio's own files) are left out.
+
 ## Removed
 
 - **Olive.** It is no longer developed. The Timeline Viewer now:
@@ -175,11 +208,12 @@ The test database no longer has its own copy of the dashboard's save code, so th
   The Studio installer is about 70 MB smaller.
 - **Wipe caches** in the Admin Panel. It never reached any workstation. The Wipe fleet caches permission went with it.
 - **The web API**, with the Admin Panel's "Start API gateway" and Slate Server's web dashboard. Nothing in Slate used it, and it was a way into the studio network. Two web libraries (FastAPI and uvicorn) went with it.
-- **Code that nothing used,** including an unused "similar assets" search.
+- **Code that nothing used,** including an unused "similar assets" search. Before rollout about 45 more unused files went: old scripts, a video exporter, a continuity checker, an unused notification pop-up, an asset tracker for a table that never existed, and unused parts of the dashboard, attendance, scheduling and bidding code. Nothing anybody can see or use has changed.
+- **Five settings in `default_config.json` that nothing read** (`THEME`, `update_manifest_url`, `network_timeout_ms`, `max_semantic_connections`, `gatekeeper_enabled`).
+- **`update_notify`**, a workstation command nothing sent or handled.
 
 ## Known limits of 2.2.0
 
-- **The automatic punch-in at sign-in** still punches in on a day of approved full-day leave.
 - See also **Still open** under Security, and the **Known limits** from 2.1.0 below.
 
 ---
@@ -326,7 +360,7 @@ On each machine, a settings file damaged by the old `&` / apostrophe bug is also
 - **Stock Viewer: deleted assets stay deleted.** Delete hides the asset and offers Undo. After 24 hours its cached thumbnail and proxy, favourites and picks are removed, but Slate remembers the file was deleted, so **Rescan** and ingest no longer bring it back. People who can ingest into the library find deleted assets under **Removed** and can restore them at any time. Importing an exported library still brings a deleted file back, because that is a deliberate act. **Clear library** asks you to type `CLEAR` and forgets everything, including the deleted list and the ingest folders.
 - **Stock search matches the start of words only.** "plosion" no longer finds "explosion", and "HD" no longer finds "UHD". Names, tags, category, folders, resolution, frame rate, codec and kind ("movie", "image sequence") are all searched. A term with no letters or digits (`_`, `%`) is still matched anywhere.
 - **Stock stills play the original file.** EXR, HDR and DPX stills are no longer shown from an 8-bit proxy, so the colour controls appear. Proxies are used only for movies and image sequences. Sound and 3D files are not taken into the library; the ingest summary names them.
-- **Timeline Viewer** reads each movie plate's frame rate and length from the file. Image sequences are played and written at 24 fps, because Slate has no project frame-rate setting yet.
+- **Timeline Viewer** reads each movie plate's frame rate and length from the file. Image sequences are played and written at the project's frame rate (24 until set in Edit project).
 - **New shot names follow one rule everywhere:** Add Shots, Build & Ingest, CAP Rename's stitch names and "Create shots from bid". Names may use letters, digits, `_`, `-` and `.`, with no spaces, up to 64 characters. Shots you already have are never refused.
 - **Olive is removed.** It is no longer developed, so the Timeline Viewer no longer writes Olive timelines or opens Olive. **Open in RV** plays the lineup instead, and **Export EDL** writes CMX 3600 EDLs to `<project>/editorial/lineups` for Resolve, Premiere or Avid. Old `.ovexml` files there are left alone. The Studio installer is about 70 MB smaller.
 - **Auto-publish** fires only when a shot changes to Approved, and asks first. On new projects the output folder is `08_Deliver`. It copies only the shot's current (else newest) version folder, and only media files, keeping sub-folders.
@@ -989,7 +1023,6 @@ On each machine, a settings file damaged by the old `&` / apostrophe bug is also
 - Shot names in non-Latin scripts are spelled out from the letters' names and marked "check it". This is not a real transliteration, so check them before you ingest.
 - CAP Rename reorders with **Move up / Move down** and sorting. Rows cannot be dragged.
 - **Review proxies stay in a `proxy` folder next to the frames** (for plates, inside the scan version, for example `01_Scan\v001\EXR\proxy`). Help says exactly where. Stock proxies are kept apart, in the server's `Cache` folder.
-- Image sequences play, and are timed in EDLs, at 24 fps, because projects have no frame-rate setting yet. Movie plates use their own rate.
 - Importing an exported stock library brings back files that were deleted.
 
 **Scheduling and Bidding**

@@ -144,7 +144,7 @@ Anything that touches a disk, a network or FFmpeg runs off the main thread.
 
 There are roughly thirty worker classes; the pattern is consistent:
 
-- **`QThread` subclasses** for long jobs that report progress — `IngestWorker`, `MoveScanWorker`, `ProxyBuildWorker`, `ExcelLoadWorker`.
+- **`QThread` subclasses** for long jobs that report progress — `IngestWorker`, `ProxyBuildWorker`, `ExcelLoadWorker`.
 - **`QRunnable` on a pool** for many small jobs — `ImageLoaderTask` for thumbnails.
 - **`GlobalTaskRegistry`** (`core/infra/task_registry.py`) keeps track of what is running so shutdown can stop it.
 

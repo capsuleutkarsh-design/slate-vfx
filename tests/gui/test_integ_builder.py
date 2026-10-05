@@ -40,7 +40,6 @@ def fakes(monkeypatch):
     targets = {
         ("slate.gui.tabs.settings_tab", "SettingsTab"): FakeSettings,
         ("slate.gui.admin_panel", "AdminPanelTab"): _recorder(calls, "AdminPanelTab"),
-        ("slate.gui.tabs.stock_library_tab", "StockBrowserTab"): _recorder(calls, "StockBrowserTab"),
     }
     for (module, name), fake in targets.items():
         try:

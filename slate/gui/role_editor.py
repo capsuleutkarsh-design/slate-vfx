@@ -435,13 +435,23 @@ class RoleEditor(QWidget):
             cb.setEnabled(editable and not full and grantable)
             if not grantable:
                 cb.setToolTip(not_yours)
+        named = self._by_name()
+        helps = {a.key: a.help for a in catalog.ABILITIES}
         for key, cb in self.ability_boxes.items():
             granted_by_all = full and key not in catalog.NOT_IMPLIED_BY_ALL
-            checked = granted_by_all or key in abilities
+            # access.json gives some abilities by role name. They showed
+            # unticked, and unticking one changed nothing.
+            checked = granted_by_all or key in abilities or key in named
             cb.setChecked(checked)
             grantable = checked or self._may_grant(catalog.ability_key(key))
-            cb.setEnabled(editable and not granted_by_all and grantable)
-            if not grantable:
+            cb.setEnabled(editable and not granted_by_all and key not in named and grantable)
+            cb.setToolTip(helps.get(key, ""))
+            if key in named:
+                cb.setToolTip(
+                    f"Every \"{self.current_role}\" has this by its role name, set in the "
+                    "studio's permission file (slate/data/access.json). It cannot be "
+                    "taken away here; change that file to remove it.")
+            elif not grantable:
                 cb.setToolTip(
                     "Only an Admin or Developer can give this." if key in catalog.SENSITIVE_ABILITIES
                     else not_yours)
@@ -469,10 +479,16 @@ class RoleEditor(QWidget):
         for key, cb in self.tab_boxes.items():
             if cb.isChecked():
                 perms.append(key)
+        named = self._by_name() - catalog.abilities_in(self._stored)
         for key, cb in self.ability_boxes.items():
-            if cb.isChecked():
+            if cb.isChecked() and key not in named:
                 perms.append(catalog.ability_key(key))
         return perms + kept
+
+    def _by_name(self):
+        """Abilities access.json gives this role by name."""
+        from slate.core.domain.access import by_name
+        return by_name(self.current_role) & set(catalog.ABILITY_KEYS)
 
     def _warn_if_locking_self_out(self, new_perms):
         """Stop an editor removing their own way back to this screen."""

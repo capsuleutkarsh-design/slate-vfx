@@ -427,7 +427,7 @@ class TabCoordinator(QObject):
         # Store mapping
         self.tab_factories.setdefault(label, {'factory': None, 'icon': icon,
                                               'permission': permission_key,
-                                              'visible': visible, 'locked': False})
+                                              'visible': visible})
         self.nav_items.append({
             'page': page_widget,
             'item': item,
@@ -437,8 +437,7 @@ class TabCoordinator(QObject):
             # must not reveal a tab the person has no permission for.
             'permitted': bool(visible),
         })
-        if self.groups:
-            self.groups[-1]['rows'].append(self.sidebar_nav.count() - 1)
+        self._add_to_group(self.sidebar_nav.count() - 1)
         if label not in self.tab_labels:
             self.tab_labels.append(label)
         self.tab_instances[label] = page_widget
@@ -464,6 +463,9 @@ class TabCoordinator(QObject):
         item.setFlags(Qt.ItemFlag.NoItemFlags)
         
         self.sidebar_nav.addItem(item)
+        # Shown by its first entry: an Ops user with neither Users & Roles nor
+        # Admin Panel saw an empty ADMINISTRATION heading.
+        item.setHidden(True)
         
         # Set premium widget
         widget = CategoryHeaderWidget(label)
@@ -490,24 +492,12 @@ class TabCoordinator(QObject):
         
         logging.debug(f"Category header added: {label}")
     
-    def set_tab_visible(self, page_widget, visible, rename_to=None):
-        """
-        Set visibility of a tab.
-        
-        Args:
-            page_widget: The tab widget
-            visible: True to show, False to hide
-            rename_to: Optional new label text
-        """
-        if not page_widget:
-            return
-        
-        for entry in self.nav_items:
-            if entry['page'] == page_widget:
-                entry['item'].setHidden(not visible)
-                if rename_to:
-                    entry['item'].setText(rename_to)
-                return
+    def _add_to_group(self, row):
+        """File an entry under the last heading, and show that heading."""
+        if self.groups:
+            group = self.groups[-1]
+            group['rows'].append(row)
+            self.sidebar_nav.item(group['header_row']).setHidden(False)
 
     def set_sidebar_collapsed(self, collapsed: bool):
         """Update the text of sidebar items based on collapse state."""
@@ -531,19 +521,11 @@ class TabCoordinator(QObject):
                 
                 factory_data = self.tab_factories.get(label, {})
                 icon = factory_data.get('icon', '')
-                is_locked = factory_data.get('locked', False)
-                
-                # Format text. The icon is drawn on the item rather than typed
-                # into the label, so it never appears twice and never depends on
-                # which emoji font Windows happens to choose.
-                if collapsed:
-                    display_text = " "
-                elif is_locked:
-                    display_text = f"[LOCKED] {label}"
-                else:
-                    display_text = label
 
-                item.setText(display_text)
+                # The icon is drawn on the item rather than typed into the
+                # label, so it never appears twice and never depends on which
+                # emoji font Windows happens to choose.
+                item.setText(" " if collapsed else label)
                 _apply_nav_icon(item, icon)
                 if collapsed:
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -712,18 +694,6 @@ class TabCoordinator(QObject):
                 return entry['label']
         return "Unknown"
     
-    def find_tab_by_page(self, page_widget):
-        """
-        Find tab entry by page widget.
-        
-        Returns:
-            dict or None: Tab entry dict if found
-        """
-        for entry in self.nav_items:
-            if entry['page'] == page_widget:
-                return entry
-        return None
-    
     def register_tab_factory(self, label, factory_fn, icon="", permission_key=None,
                             visible=True, user_role=None, allowed_tabs=None, tooltip=""):
         """
@@ -742,9 +712,6 @@ class TabCoordinator(QObject):
         Returns:
             bool: True if tab was registered
         """
-        is_locked = False
-        lock_tooltip = tooltip
-
         # Permission check. No permissions means no keyed tabs - see register_tab.
         if permission_key:
             allowed_tabs = allowed_tabs or []
@@ -769,26 +736,17 @@ class TabCoordinator(QObject):
         
         # Store factory
         self.tab_factories[label] = {
-            'factory': None if is_locked else factory_fn,
+            'factory': factory_fn,
             'icon': icon,
             'permission': permission_key,
             'visible': visible,
-            'locked': is_locked,
         }
         self.tab_labels.append(label)
-        
+
         # Add to sidebar immediately (for navigation)
         is_collapsed = getattr(self, "sidebar_collapsed", False)
-        
-        if is_collapsed:
-            display_text = " "
-        else:
-            if is_locked:
-                display_text = f"[LOCKED] {label}"
-            else:
-                display_text = label
 
-        item = QListWidgetItem(display_text)
+        item = QListWidgetItem(" " if is_collapsed else label)
         _apply_nav_icon(item, icon)
         item.setSizeHint(QSize(0, NAV_ROW_HEIGHT))
         item.setHidden(not visible)
@@ -797,10 +755,8 @@ class TabCoordinator(QObject):
             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         else:
             item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            
-        if is_locked:
-            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled & ~Qt.ItemFlag.ItemIsSelectable)
-        item.setToolTip(nav_tooltip(label, lock_tooltip if is_locked else tooltip))
+
+        item.setToolTip(nav_tooltip(label, tooltip))
         self.sidebar_nav.addItem(item)
 
         # Keep content_stack index in 1:1 sync with sidebar_nav
@@ -816,8 +772,7 @@ class TabCoordinator(QObject):
             # Folding a group must never reveal a tab this person may not open.
             'permitted': (not item.isHidden()),
         })
-        if self.groups:
-            self.groups[-1]['rows'].append(self.sidebar_nav.count() - 1)
+        self._add_to_group(self.sidebar_nav.count() - 1)
 
         if self.sidebar_nav.currentRow() < 0 and not item.isHidden() and bool(item.flags() & Qt.ItemFlag.ItemIsEnabled):
             self.sidebar_nav.setCurrentRow(self.sidebar_nav.count() - 1)
@@ -858,9 +813,6 @@ class TabCoordinator(QObject):
             return None
         
         factory_info = self.tab_factories[label]
-        if factory_info.get("locked"):
-            return None
-
         try:
             logging.info(f"[LAZY] Creating tab: {label}")
             factory = factory_info.get('factory')
@@ -1017,7 +969,3 @@ class TabCoordinator(QObject):
         # Sidebar count includes lazy tabs (not yet created), eagerly created tabs,
         # and dynamically loaded plugins.
         return self.sidebar_nav.count()
-    
-    def get_visible_tab_count(self):
-        """Return number of visible tabs."""
-        return sum(1 for entry in self.nav_items if not entry['item'].isHidden())

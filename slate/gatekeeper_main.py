@@ -200,7 +200,7 @@ class CommandCheckWorker(QThread):
         self.hub = hub
         self.processed_cmds = processed_cmds
         self.running = True
-        self.ALLOWED_COMMANDS = {'message', 'shutdown', 'restart', 'update_notify'}
+        self.ALLOWED_COMMANDS = {'message', 'shutdown', 'restart'}
 
     def run(self):
         while self.running:
@@ -405,10 +405,7 @@ class ApplicationEntry:
                 return False
 
             values = dlg.values()
-            for key in ("SERVER_ROOT", "db_host", "db_port", "db_name", "db_user"):
-                GlobalConfig.set(key, values[key])
-            if values.get("db_password"):
-                GlobalConfig.set("db_password", values["db_password"])
+            GlobalConfig.save_connection(values)
 
             flag_path.parent.mkdir(parents=True, exist_ok=True)
             flag_path.write_text("configured=true\n", encoding="utf-8")
@@ -514,8 +511,8 @@ class ApplicationEntry:
             cmd: Command dictionary with 'command', 'admin_user', 'reason', etc.
         """
         action = "shutdown" if cmd['command'] == "shutdown" else "restart"
-        admin = cmd.get('admin_user', 'Administrator')
-        reason = cmd.get('reason', 'No reason provided')
+        admin = cmd.get('admin_user') or 'An administrator'
+        reason = cmd.get('reason') or 'No reason given'
         verb = "shut down" if action == "shutdown" else "restart"
         button_text = "Shut down" if action == "shutdown" else "Restart"
 

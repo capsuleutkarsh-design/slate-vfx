@@ -73,16 +73,17 @@ def test_every_command_the_admin_screens_send_is_received_and_handled(share, mon
 
     # The Admin Panel's broadcast box, and a PC
     # card's Restart and Shut down - each through the real button handler.
-    panel = SimpleNamespace(hub=hub, log_action=lambda m: None,
+    panel = SimpleNamespace(hub=hub, log_action=lambda m: None, current_username="boss",
                             verify_admin_action=lambda: True,
                             inp_broadcast=SimpleNamespace(text=lambda: "Lunch is here",
                                                           clear=lambda: None))
     admin_panel.AdminPanelTab.send_broadcast(panel)
     monkeypatch.setattr(admin_widgets, "confirm", lambda *a, **k: True)
     monkeypatch.setattr(admin_widgets, "toast", lambda *a, **k: None)
+    monkeypatch.setattr(admin_widgets, "ask_reason", lambda parent, verb, pc: f"{verb} for updates")
     card = SimpleNamespace(read_only=False, window=lambda: None, verify_callback=None,
                            hub=hub, pc_name=me, log_action=None, requested=None,
-                           current_data={})
+                           current_data={}, admin_user="boss")
     admin_widgets.PCCard.request_power(card, "restart")
     admin_widgets.PCCard.request_power(card, "shutdown")
 
@@ -91,6 +92,9 @@ def test_every_command_the_admin_screens_send_is_received_and_handled(share, mon
 
     received = _workstation_receives(hub)
     assert sorted(c["command"] for c in received) == ["message", "restart", "shutdown"]
+    # Who asked and why reach the PC (it said "No reason provided" every time).
+    restart = next(c for c in received if c["command"] == "restart")
+    assert (restart["admin_user"], restart["reason"]) == ("boss", "Restart for updates")
     done = _handled(received, monkeypatch)
     assert ("shown", "Lunch is here") in done
     assert ("asked", "restart") in done and ("asked", "shutdown") in done
@@ -104,6 +108,9 @@ def test_old_and_foreign_commands_are_not_acted_on(share):
     (commands / "expired.json").write_text(json.dumps(
         {"command": "message", "target": "all", "message": "old", "timestamp": now - 90,
          "expires": now - 30}))
+    # Its age is its time on the share (the admin PC's clock is not this PC's).
+    import os
+    os.utime(commands / "expired.json", (now - 90, now - 90))
     (commands / "other_pc.json").write_text(json.dumps(
         {"command": "message", "target": "SOME-OTHER-PC", "message": "x", "timestamp": now,
          "expires": now + 60}))
@@ -111,6 +118,19 @@ def test_old_and_foreign_commands_are_not_acted_on(share):
     (commands / "unknown.json").write_text(json.dumps(
         {"command": "format_c", "target": "all", "timestamp": now, "expires": now + 60}))
     assert _workstation_receives(hub) == []
+
+
+def test_a_workstation_whose_clock_runs_ahead_still_gets_commands(share, monkeypatch):
+    """
+    Commands expired by the admin PC's clock: a workstation more than 60 s
+    ahead of it dropped every one. Their age is now their time on the share.
+    """
+    from slate.core.infra import server_hub
+    hub = server_hub.ServerHub()
+    hub.post_command("message", "all", "Fire drill at 3")
+    ahead = time.time() + 300
+    monkeypatch.setattr(server_hub.time, "time", lambda: ahead)
+    assert [c["message"] for c in _workstation_receives(server_hub.ServerHub())] == ["Fire drill at 3"]
 
 
 def test_a_missing_share_does_not_break_the_command_poll(share, monkeypatch):

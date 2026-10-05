@@ -120,22 +120,31 @@ def _sort_key(shot) -> tuple:
     return (natural_key(reel), 0 if has_number else 1, natural_key(name))
 
 
-# A sequence has no rate of its own. The dashboard and the project keep no
-# rate either, so frames play at the studio's usual 24.
-# ponytail: one rate for every sequence; read a project rate here once projects store one.
+# A sequence has no rate of its own: it plays at its project's rate (Edit
+# project > Frame rate), 24 until a project says otherwise. Movies keep their own.
 SEQUENCE_FPS = 24.0
 
 
-def plate_facts(clip: Optional[MediaClip]) -> Tuple[float, int]:
+def project_fps(project) -> float:
+    """The rate a project's image sequences play at (ProjectConfig.fps, or its stored dict)."""
+    value = project.get("fps") if isinstance(project, dict) else getattr(project, "fps", 0)
+    try:
+        fps = float(value or 0)
+    except (TypeError, ValueError):
+        fps = 0.0
+    return fps if fps > 0 else SEQUENCE_FPS
+
+
+def plate_facts(clip: Optional[MediaClip], sequence_fps: float = SEQUENCE_FPS) -> Tuple[float, int]:
     """
-    (rate, frame count) read from a movie plate - (SEQUENCE_FPS, 0) for a
+    (rate, frame count) read from a movie plate - (sequence_fps, 0) for a
     sequence or when the file cannot be read. Every shot used to be listed
     and written at 24 because the rate was asked of a dashboard field that
     does not exist (MED2-041), and a movie plate's length was never read
     (MED2-042). Runs on the Timeline's scan thread.
     """
     if clip is None or clip.is_sequence:
-        return SEQUENCE_FPS, 0
+        return sequence_fps, 0
     try:
         from slate.core.domain.metadata_engine import SmartMetadataManager
         meta = SmartMetadataManager.extract_tech_metadata(str(clip.path)) or {}
@@ -143,9 +152,9 @@ def plate_facts(clip: Optional[MediaClip]) -> Tuple[float, int]:
         duration = float(meta.get("duration_sec") or 0)
     except Exception as exc:
         logger.debug("Plate not probed (%s): %s", clip.path, exc)
-        return SEQUENCE_FPS, 0
+        return sequence_fps, 0
     if fps <= 0:
-        return SEQUENCE_FPS, 0
+        return sequence_fps, 0
     return fps, int(round(duration * fps))
 
 
@@ -179,8 +188,8 @@ def _frame_range(shot, clip: Optional[MediaClip], movie_frames: int = 0
     return None
 
 
-def build_lineup_shot(shot, project_root=None, folder_resolver=None
-                      ) -> Optional[LineupShot]:
+def build_lineup_shot(shot, project_root=None, folder_resolver=None,
+                      sequence_fps: float = SEQUENCE_FPS) -> Optional[LineupShot]:
     """
     One dashboard shot as a timeline entry, or None if it has no plate yet.
     """
@@ -197,7 +206,7 @@ def build_lineup_shot(shot, project_root=None, folder_resolver=None
             paths[key] = clip.path
             clips[key] = clip
 
-    fps, movie_frames = plate_facts(scan)
+    fps, movie_frames = plate_facts(scan, sequence_fps)
     return LineupShot(
         name=str(getattr(shot, "shot_name", "") or "shot"),
         reel=str(getattr(shot, "reel_episode", "") or ""),
@@ -209,12 +218,12 @@ def build_lineup_shot(shot, project_root=None, folder_resolver=None
     )
 
 
-def build_lineup(shots, project_root=None, folder_resolver=None
-                 ) -> List[LineupShot]:
+def build_lineup(shots, project_root=None, folder_resolver=None,
+                 sequence_fps: float = SEQUENCE_FPS) -> List[LineupShot]:
     """Every shot that has a plate, in edit order."""
     lineup = []
     for shot in sorted(shots or [], key=_sort_key):
-        entry = build_lineup_shot(shot, project_root, folder_resolver)
+        entry = build_lineup_shot(shot, project_root, folder_resolver, sequence_fps)
         if entry is not None:
             lineup.append(entry)
     return lineup
@@ -233,7 +242,8 @@ class LineupRow:
         return self.entry is not None
 
 
-def lineup_rows(shots, project_root=None, folder_resolver=None) -> List[LineupRow]:
+def lineup_rows(shots, project_root=None, folder_resolver=None,
+                sequence_fps: float = SEQUENCE_FPS) -> List[LineupRow]:
     """
     Every shot, in edit order - including the ones with no scan yet, so the
     list can show them greyed out instead of hiding them (MED-087).
@@ -244,7 +254,7 @@ def lineup_rows(shots, project_root=None, folder_resolver=None) -> List[LineupRo
             name=str(getattr(shot, "shot_name", "") or "shot"),
             reel=str(getattr(shot, "reel_episode", "") or ""),
             shot=shot,
-            entry=build_lineup_shot(shot, project_root, folder_resolver),
+            entry=build_lineup_shot(shot, project_root, folder_resolver, sequence_fps),
         ))
     return rows
 
@@ -380,7 +390,8 @@ def combined_edl_name(project_name: str, layer: str) -> str:
 
 def generate_timelines(shots, output_dir, project_name="Lineup",
                        project_root=None, folder_resolver=None,
-                       layer: str = "scan", lineup: List[LineupShot] = None) -> LineupResult:
+                       layer: str = "scan", lineup: List[LineupShot] = None,
+                       sequence_fps: float = SEQUENCE_FPS) -> LineupResult:
     """
     Write an EDL per reel and one of every reel, of the chosen layer.
 
@@ -392,7 +403,7 @@ def generate_timelines(shots, output_dir, project_name="Lineup",
 
     all_shots = list(shots or [])
     if lineup is None:
-        lineup = build_lineup(all_shots, project_root, folder_resolver)
+        lineup = build_lineup(all_shots, project_root, folder_resolver, sequence_fps)
     result.shot_count = len(lineup)
     # Which shots have a plate: the folders only - no need to probe every
     # movie again here.

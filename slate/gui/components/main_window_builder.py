@@ -489,15 +489,13 @@ class MainWindowBuilderMixin:
                 self.tab_coordinator.add_category_header("ADMINISTRATION")
 
                 # Users & Roles: the only place people and roles are managed.
-                # Shown to HR (the HRMS tab) and to anybody who may manage
-                # users or edit permissions - IT edits permissions without
-                # holding the HR tab. Inside, each sees only their own half.
-                from ...core.domain.access import can
-                from ...core.domain.workplace_access import has_permission
+                # Shown to anybody who may manage users or edit permissions -
+                # IT edits permissions without holding the HR tab. Inside, each
+                # sees only their own half. The HRMS tab key alone used to
+                # open it too, onto "You do not have permission".
+                from ...core.domain.access import opens_users_and_roles
                 roles_for_access = list(getattr(self, "user_roles", None) or []) + [self.user_role]
-                if (has_permission(self.allowed_tabs, "HRMS")
-                        or can(roles_for_access, "manage_users")
-                        or can(roles_for_access, "manage_permissions")):
+                if opens_users_and_roles(roles_for_access):
                     self.tab_coordinator.register_tab_factory(
                         "Users & Roles",
                         lambda: screen("slate.gui.tabs.admin_users_tab", "AdminUsersTab")(user_role=self.user_role, user_data=self.user_data),

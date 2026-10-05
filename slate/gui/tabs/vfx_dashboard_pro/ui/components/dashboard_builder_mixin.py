@@ -7,7 +7,6 @@ import copy
 from datetime import datetime
 from slate.gui.tabs.vfx_dashboard_pro.core.project_manager import ProjectManager
 from slate.gui.tabs.vfx_dashboard_pro.ui.dashboard_sync_service import DashboardSyncService
-from slate.gui.tabs.vfx_dashboard_pro.ui.dashboard_avatar_service import DashboardAvatarService
 from slate.gui.tabs.vfx_dashboard_pro.utils.thumbnail import ThumbnailGenerator
 from slate.utils.async_image_loader import AsyncImageLoader
 from slate.core.infra.app_context import AppContext
@@ -47,7 +46,6 @@ class DashboardBuilderMixin:
 
             self.project_manager = ProjectManager()
             self.sync_service = DashboardSyncService(self.project_manager)
-            self.avatar_service = DashboardAvatarService()
             self._is_closing = False
             self._is_cleaned = False
             self.current_project = None
@@ -58,8 +56,6 @@ class DashboardBuilderMixin:
             self.last_excel_mtime = None
             self.all_shots = []
             self.displayed_shots = []
-            from slate.gui.tabs.vfx_dashboard_pro.viewmodels.dashboard_viewmodel import DashboardViewModel
-            self.viewmodel = DashboardViewModel(self)
             from collections import OrderedDict
             self.image_cache = OrderedDict()
             self._init_thumbnail_system()
@@ -85,7 +81,6 @@ class DashboardBuilderMixin:
             self.image_loader = AsyncImageLoader(self.thumb_gen)
             self.image_loader.image_loaded.connect(self.on_image_loaded)
             self.image_loader.image_started.connect(self.on_image_started)
-            self.avatar_upload_worker = None
 
             # In main app, inherit host stylesheet so dashboard looks consistent.
             # Standalone runs can still use dashboard-local QSS.

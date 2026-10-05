@@ -13,8 +13,8 @@ import os
 
 from openpyxl import load_workbook
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout, QLabel,
-    QLineEdit, QSpinBox, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog, QHBoxLayout,
+    QLabel, QLineEdit, QSpinBox, QVBoxLayout, QWidget,
 )
 
 from slate.core.infra.gate import Gate
@@ -84,6 +84,15 @@ class EditProjectDialog(QDialog):
                                      tooltip="List the sheets in the Excel file", on_click=self.analyze_excel)
         sheet_layout.addWidget(self.sheet_btn)
         self.form.addRow("Sheet", sheet_row)
+
+        # The rate image sequences play at; a movie keeps its own.
+        self.fps_spin = QDoubleSpinBox()
+        self.fps_spin.setRange(1.0, 120.0)
+        self.fps_spin.setDecimals(3)
+        self.fps_spin.setValue(float(getattr(project_config, "fps", 0) or 24.0))
+        self.fps_spin.setToolTip("Used for image sequences in the lineup, EDLs, proxies and the "
+                                 "player. Movies keep their own frame rate.")
+        self.form.addRow("Frame rate (sequences)", self.fps_spin)
 
         self.adv_toggle = QCheckBox("Change the sheet layout (header and first data row)")
         self.adv_group = self.adv_toggle
@@ -185,5 +194,6 @@ class EditProjectDialog(QDialog):
             "folder_base": self.folder_input.text().strip(),
             "sheet_name": self.sheet_combo.currentText().strip(),
             "header_row": self.header_row_spin.value(),
-            "data_start_row": self.data_row_spin.value()
+            "data_start_row": self.data_row_spin.value(),
+            "fps": self.fps_spin.value(),
         }

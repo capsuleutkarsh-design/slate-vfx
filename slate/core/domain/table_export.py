@@ -14,10 +14,12 @@ HR opened the file in Excel. This is the one way to do it:
 
 What it guarantees:
 
-  * Formula injection is neutralised. Any text cell starting with = + - @
-    (or a tab / carriage return that Excel strips before looking) is written
-    with a leading apostrophe, which Excel shows as text. Real numbers stay
-    numbers - "-5" typed as text is quoted, -5 as a number is not.
+  * Formula injection is neutralised. In CSV, any text cell starting with
+    = + - @ (or a tab / carriage return that Excel strips before looking) is
+    written with a leading apostrophe, which Excel shows as text. In XLSX the
+    cell is stored as text instead (put / append_row), with no apostrophe to
+    show. Real numbers stay numbers - "-5" typed as text is quoted, -5 as a
+    number is not.
   * CSV is UTF-8 with a byte-order mark, so Excel opens Hindi names, ₹ and
     emoji correctly instead of as mojibake.
   * XLSX (when openpyxl is available) keeps numbers and dates as real
@@ -61,6 +63,39 @@ def restore(value):
     return value
 
 
+def xlsx_value(value):
+    """
+    neutralise() for an XLSX cell written with put() or append_row(). The
+    cell is stored as text, which no spreadsheet runs, so the apostrophe -
+    which Excel showed in the cell - is left off. Text that already starts
+    with one keeps neutralise()'s, so restore() still gives back exactly what
+    was written.
+    """
+    if isinstance(value, str) and not value.startswith("'"):
+        return value
+    return neutralise(value)
+
+
+def _as_text(cell):
+    # openpyxl takes any text starting with "=" for a formula.
+    if cell.data_type == "f":
+        cell.data_type = "s"
+    return cell
+
+
+def put(cell, value):
+    """Write value into an openpyxl cell: text stays text, never a formula."""
+    cell.value = xlsx_value(value)
+    return _as_text(cell)
+
+
+def append_row(ws, values) -> None:
+    """ws.append(values), with text kept as text (see put)."""
+    ws.append([xlsx_value(v) for v in values])
+    for cell in ws[ws._current_row]:
+        _as_text(cell)
+
+
 def default_filename(name: str, extension: str = "csv") -> str:
     """'licences_2026-09-30.csv' - safe on every file system."""
     base = _SAFE_FILENAME.sub("_", str(name or "export")).strip(" ._") or "export"
@@ -95,7 +130,6 @@ def write_xlsx(path, headers: Sequence[str], rows: Iterable[Sequence], sheet: st
     from openpyxl.styles import Font
 
     def cell(value):
-        value = neutralise(value)
         if isinstance(value, Decimal):
             return float(value)
         # A control character pasted from a mail made openpyxl refuse the whole export.
@@ -104,12 +138,12 @@ def write_xlsx(path, headers: Sequence[str], rows: Iterable[Sequence], sheet: st
     book = Workbook()
     ws = book.active
     ws.title = (sheet or "Export")[:31]
-    ws.append([cell(h) for h in headers])
+    append_row(ws, [cell(h) for h in headers])
     for header in ws[1]:
         header.font = Font(bold=True)
     count = 0
     for row in rows:
-        ws.append([cell(v) for v in row])
+        append_row(ws, [cell(v) for v in row])
         count += 1
     # A header row that stays put, and columns wide enough to read.
     ws.freeze_panes = "A2"

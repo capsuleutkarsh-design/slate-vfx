@@ -295,14 +295,6 @@ class WorkCalendar:
                 break
         return cursor
 
-    def next_working(self, day: date) -> date:
-        """The day itself when it is worked, else the next one that is."""
-        cursor, guard = day, 0
-        while not self.is_working(cursor) and guard < 366:
-            cursor += timedelta(days=1)
-            guard += 1
-        return cursor
-
     def working_days(self, start: Optional[date], end: Optional[date]) -> int:
         """Working days from start to end inclusive (0 when either is missing or reversed)."""
         if start is None or end is None or end < start:
@@ -467,9 +459,6 @@ class ShiftPlan:
     @property
     def moved(self) -> List[Move]:
         return [m for m in self.moves if m.changed]
-
-    def undo_changes(self) -> List[Tuple[int, date, date]]:
-        return [(m.id, m.old_start, m.old_end) for m in self.moved]
 
     def changes(self) -> List[Tuple[int, date, date]]:
         return [(m.id, m.new_start, m.new_end) for m in self.moved]
@@ -735,9 +724,6 @@ class TimeScale:
     def x_end(self, day: date) -> float:
         """The right edge of a day (a bar ending on day covers all of it)."""
         return self.x(day) + self.px_per_day
-
-    def day_at(self, x: float) -> date:
-        return self.origin + timedelta(days=int(math.floor(x / self.px_per_day)))
 
     def width(self, start: date, end: date) -> float:
         return max(self.x_end(end) - self.x(start), self.px_per_day)

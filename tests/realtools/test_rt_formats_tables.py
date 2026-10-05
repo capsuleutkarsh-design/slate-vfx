@@ -18,7 +18,7 @@ import pytest
 pytestmark = pytest.mark.realtools
 openpyxl = pytest.importorskip("openpyxl")
 
-from slate.core.domain.table_export import export_rows  # noqa: E402
+from slate.core.domain.table_export import export_rows, restore  # noqa: E402
 
 TRICKY = [
     "plain",
@@ -85,10 +85,14 @@ def test_xlsx_keeps_types_and_never_holds_a_formula(tmp_path):
     assert ws.freeze_panes == "A2"
     for i, text in enumerate(TRICKY):
         name, count, money, when, day, empty = (c.value for c in ws[i + 2])
-        want = expected_text(text)
+        # In .xlsx the cell is text, so it shows what was typed - no visible
+        # apostrophe. One already in front keeps neutralise()'s extra one.
+        typed = text
         for bad in "\x07\x0b":
-            want = want.replace(bad, "")       # characters an .xlsx cannot hold
+            typed = typed.replace(bad, "")     # characters an .xlsx cannot hold
+        want = "'" + typed if typed.startswith("'") else typed
         assert (name or "") == want, f"row {i}"
+        assert restore(name or "") == typed, f"row {i}"
         assert count == -i and isinstance(count, int)
         assert money == 1234.5
         assert when == datetime(2026, 10, 5, 9, 30)
@@ -129,7 +133,7 @@ def test_bid_list_export_adds_up(tmp_path, suffix):
     assert got[0] == LIST_HEADERS
     col = {h: i for i, h in enumerate(LIST_HEADERS)}
     first, second = got[1], got[2]
-    assert first[col["Client"]] == "'=cmd|bad"
+    assert first[col["Client"]] == ("=cmd|bad" if suffix == ".xlsx" else "'=cmd|bad")
     assert second[col["Project name"]] == 'Dune, Part "3"'
     assert first[col["Status"]] == "Won" and first[col["Created by"]] == "Priya S"
     if suffix == ".xlsx":
@@ -197,13 +201,14 @@ def test_fleet_report_files(tmp_path, suffix):
     rows_by = {r[0]: dict(zip(header, r)) for r in table[1:]}
     art01 = rows_by["ART-01"]
     assert art01["Status"] == "Online" and rows_by["ART-02"]["Status"] == "Offline"
-    assert art01["Slate user"] == "'=HYPERLINK(\"x\")"
+    quote = "" if suffix == ".xlsx" else "'"  # a text cell needs none
+    assert art01["Slate user"] == quote + "=HYPERLINK(\"x\")"
     assert art01["CPU"] == 'Intel, "i9"'
     assert art01["C: label"] == "Système"
     assert str(art01["RAM (GB)"]) == "32"
     assert str(art01["C: used %"]) == "94.7"
     assert art01["C: alert"] == "CRITICAL"
     assert "Drive without a letter 1: label" in header
-    assert art01["Drive without a letter 1: label"] == "'-weird"
+    assert art01["Drive without a letter 1: label"] == quote + "-weird"
     serial = rows_by["ART-02"]["Serial number"]
     assert serial == "SN1234"

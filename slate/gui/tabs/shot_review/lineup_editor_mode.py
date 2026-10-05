@@ -79,10 +79,11 @@ class ProxyBuildWorker(QThread):
     progress_signal = Signal(int, int, str)
     finished_signal = Signal(object)
 
-    def __init__(self, jobs, parent=None, overwrite=False):
+    def __init__(self, jobs, parent=None, overwrite=False, fps=24.0):
         super().__init__(parent)
         self.jobs = list(jobs or [])
         self.overwrite = overwrite
+        self.fps = fps
         self._stop = False
 
     def stop(self):
@@ -90,7 +91,7 @@ class ProxyBuildWorker(QThread):
 
     def run(self):
         from slate.core.domain.proxy_builder import build
-        result = build(self.jobs, overwrite=self.overwrite,
+        result = build(self.jobs, overwrite=self.overwrite, fps=self.fps,
                        progress=lambda done, total, label: self.progress_signal.emit(done, total, label),
                        should_stop=lambda: self._stop)
         self.finished_signal.emit(result)
@@ -164,6 +165,7 @@ class LineupEditorMode(QWidget):
         self.project_path = None
         self.prefer_proxy_media = True
         self.project_root = None
+        self.sequence_fps = 24.0
         self.folder_resolver = None
         self.last_result = None
         self.proxy_worker = None
@@ -274,7 +276,10 @@ class LineupEditorMode(QWidget):
         # Another project: the last one's export is not this one's (MED2-040).
         self.last_result = None
 
-    def set_project_source(self, project_root=None, folder_resolver=None):
+    def set_project_source(self, project_root=None, folder_resolver=None, sequence_fps=24.0):
+        """Where the shots' folders are, and the rate the project's sequences play at."""
+        self.sequence_fps = float(sequence_fps or 24.0)
+        self.preview.player.sequence_fps = self.sequence_fps
         self.project_root = project_root
         self.folder_resolver = folder_resolver
 
@@ -306,7 +311,8 @@ class LineupEditorMode(QWidget):
             return
         self._set_status(f"Looking for media of {len(self.shots)} shots…")
         self.table.setEnabled(False)
-        job = _Job(lambda: lineup_rows(self.shots, root, resolver), self)
+        fps = self.sequence_fps
+        job = _Job(lambda: lineup_rows(self.shots, root, resolver, fps), self)
         job.done.connect(self._on_rows)
         job.finished.connect(job.deleteLater)
         self._scan_job = job
@@ -566,7 +572,8 @@ class LineupEditorMode(QWidget):
             self.proxy_status.setText("")
             return
         self.btn_proxy.setText("Stop making proxies")
-        self.proxy_worker = ProxyBuildWorker(jobs, self, overwrite=rebuild)
+        self.proxy_worker = ProxyBuildWorker(jobs, self, overwrite=rebuild,
+                                             fps=self.sequence_fps)
         self.proxy_worker.progress_signal.connect(self._on_proxy_progress)
         self.proxy_worker.finished_signal.connect(self._on_proxy_finished)
         self.proxy_worker.start()

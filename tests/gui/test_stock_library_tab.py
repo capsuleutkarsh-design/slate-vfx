@@ -282,7 +282,7 @@ class _HeldWorker:
         self.running = False
         self.is_paused = False
         _HeldWorker.made.append(self)
-        for name in ("progress_signal", "assets_batch_signal", "asset_update_signal",
+        for name in ("progress_signal", "assets_batch_signal",
                      "assets_update_batch_signal", "summary_ready", "finished_signal",
                      "memory_alarm"):
             setattr(self, name, _Sig())

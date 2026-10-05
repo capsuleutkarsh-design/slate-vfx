@@ -25,7 +25,8 @@ class ConnectionDB:
         except Exception:
             pass
 
-    def execute_query(self, sql, params=None, fetch="all"):
+    def execute_query(self, sql, params=None, fetch="all", strict=False):
+        # strict is the managers' "raise, never None"; this always raises.
         with self.conn.cursor() as cur:
             cur.execute(sql, params or None)
             if cur.description is None:

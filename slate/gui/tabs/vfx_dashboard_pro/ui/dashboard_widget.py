@@ -321,35 +321,6 @@ class DashboardWidget(
             self.update_kanban()
 
     # ------------------------------------------------------------------
-    # Notifications (the header bell; this tab's own copy only standalone)
-    # ------------------------------------------------------------------
-    def _notifier(self):
-        notifier = getattr(self, "_notification_manager", None)
-        if notifier is None:
-            try:
-                from slate.core.domain.notification_manager import NotificationManager
-                notifier = NotificationManager()
-            except Exception as exc:
-                logging.debug("Notifications unavailable: %s", exc)
-                notifier = False
-            self._notification_manager = notifier
-        return notifier or None
-
-    def unread_notifications(self):
-        from .notifications_panel import unread_for
-        return unread_for(self._notifier(), list(self._artist_identity_candidates()))
-
-    def refresh_notification_indicator(self):
-        return len(self.unread_notifications()) if getattr(self, "notifications_btn", None) else 0
-
-    def show_notifications(self):
-        from slate.gui.components.notification_center import open_notifications
-        if open_notifications(self):
-            return
-        from .notifications_panel import NotificationsDialog
-        NotificationsDialog(self.unread_notifications(), notifier=self._notifier(), parent=self).exec()
-
-    # ------------------------------------------------------------------
     # Undo
     # ------------------------------------------------------------------
     @staticmethod
@@ -931,26 +902,6 @@ class DashboardWidget(
         if self.poll_worker is worker:
             self.poll_worker = None
 
-    def _cleanup_avatar_upload_worker(self, timeout_ms: int = 1500):
-        worker = self.avatar_upload_worker
-        if worker is None:
-            return
-        try:
-            if worker.isRunning():
-                if hasattr(worker, "stop"):
-                    worker.stop()
-                else:
-                    worker.requestInterruption()
-                worker.wait(timeout_ms)
-        except Exception as exc:
-            logging.debug("Avatar upload worker shutdown warning: %s", exc)
-        try:
-            worker.deleteLater()
-        except RuntimeError as exc:
-            logging.debug("Avatar worker deleteLater skipped: %s", exc)
-        if self.avatar_upload_worker is worker:
-            self.avatar_upload_worker = None
-
     def check_for_updates(self):
         if self._is_closing or not self.current_project:
             return
@@ -1522,58 +1473,6 @@ class DashboardWidget(
                       reel=getattr(shot, "reel_episode", None)).exec()
 
     # ------------------------------------------------------------------
-    # Avatar (kept for the standalone dashboard)
-    # ------------------------------------------------------------------
-    def change_avatar(self):
-        if self._is_closing:
-            return
-        if not hasattr(self, "avatar_label"):
-            self._notify("Your profile picture is changed from the main header.", "info")
-            return
-        path = self.avatar_service.choose_avatar_file(self)
-        if not path:
-            return
-        try:
-            self._cleanup_avatar_upload_worker(timeout_ms=1000)
-            username = self.user_data.get("username", "unknown")
-            self.avatar_upload_worker = self.avatar_service.start_avatar_upload(
-                path, username, self.on_avatar_upload_finished)
-        except Exception as e:
-            self._notify("Could not start the upload.", "error", details=str(e))
-
-    def on_avatar_upload_finished(self, success, result_path, username):
-        sender = self.sender()
-        if sender is not None and sender is not self.avatar_upload_worker:
-            return
-        if self._is_closing:
-            self._cleanup_avatar_upload_worker(timeout_ms=500)
-            return
-        if not success:
-            self._notify("Could not copy the picture.", "error", details=str(result_path))
-            self.avatar_upload_worker = None
-            return
-        ok, payload = self.avatar_service.finalize_avatar_upload(success, result_path, username)
-        if ok:
-            self.load_user_avatar_from_path(payload)
-        else:
-            self._notify("The picture could not be saved.", "warning", details=str(payload))
-        self.avatar_upload_worker = None
-
-    def load_user_avatar(self):
-        try:
-            username = self.user_data.get('username', 'unknown')
-            path = self.avatar_service.get_user_avatar_path(username)
-            if path and os.path.exists(path):
-                self.load_user_avatar_from_path(path)
-        except Exception as e:
-            logging.exception(f"Avatar load error: {e}")
-
-    def load_user_avatar_from_path(self, path):
-        if not hasattr(self, "avatar_label"):
-            return
-        self.avatar_service.apply_avatar_to_label(self.avatar_label, path, size=40)
-
-    # ------------------------------------------------------------------
     # Manage project
     # ------------------------------------------------------------------
     def set_project_root_click(self):
@@ -2003,7 +1902,6 @@ class DashboardWidget(
                 self.image_loader.shutdown(2000)
             except Exception as e:
                 logging.debug(f"Image loader shutdown warning: {e}")
-        self._cleanup_avatar_upload_worker(timeout_ms=1500)
         for worker in list(getattr(self, "publish_workers", [])):
             worker.wait(3000)
         mirror = getattr(self, "_mirror_worker", None)

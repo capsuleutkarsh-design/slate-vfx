@@ -177,7 +177,7 @@ def plan(shots, project_root=None, folder_resolver=None, rebuild: bool = False) 
 def build(jobs: List[ProxyJob], manager=None,
           progress: Optional[Callable[[int, int, str], None]] = None,
           should_stop: Optional[Callable[[], bool]] = None,
-          overwrite: bool = False) -> ProxyBuildResult:
+          overwrite: bool = False, fps: float = 24.0) -> ProxyBuildResult:
     """
     Make the proxies.
 
@@ -229,6 +229,7 @@ def build(jobs: List[ProxyJob], manager=None,
                 is_seq=job.is_sequence,
                 proxy_path=job.target,
                 overwrite=True,
+                fps=fps,
             )
         except Exception as exc:
             logger.exception("Proxy failed for %s: %s", job.label, exc)

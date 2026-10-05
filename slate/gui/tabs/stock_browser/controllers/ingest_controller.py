@@ -147,7 +147,6 @@ class StockIngestController(QObject):
         self.worker = IngestWorker(root_paths=folders, fast_mode=fast_mode, username=self.username)
         self.worker.progress_signal.connect(self.progress_updated.emit)
         self.worker.assets_batch_signal.connect(self.on_batch_ingested)
-        self.worker.asset_update_signal.connect(self.on_asset_update)
         self.worker.assets_update_batch_signal.connect(self.on_assets_update_batch)
         self.worker.summary_ready.connect(self.ingest_summary.emit)
         self.worker.finished_signal.connect(self.on_worker_finished)

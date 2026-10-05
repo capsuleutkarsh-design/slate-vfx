@@ -210,25 +210,52 @@ class Maintenance:
         a job that reports failure for doing the right thing teaches people to
         ignore the column.
         """
+        db = None
         try:
             from slate.core.domain import leave_policy as lp
+            from slate.core.domain.comp_off_service import CompOffService
+            from slate.core.infra.studio_policy import load_into_domain
+
+            db = self._studio_db()
+            # The studio's own rules. The server never loaded them, so
+            # comp_off_enabled was always the default (off) and the job was
+            # skipped every day.
+            load_into_domain(db)
+            service = CompOffService(db)
+            # Comp off nobody used in time lapses in the same daily job.
+            expired = service.expire()
+            lapsed = " %d lapsed unused." % expired["lapsed"] if expired.get("lapsed") else ""
             if not lp.policy(None).get("comp_off_enabled"):
-                message = "This studio does not operate comp off - nothing to do."
+                message = "This studio does not operate comp off - nothing to do." + lapsed
                 self.log.record("comp_off", True, message)
                 return {"ok": True, "message": message, "skipped": True}
 
-            from slate.core.domain.comp_off_service import CompOffService
             if progress:
                 progress("Reviewing the attendance record...")
-            result = CompOffService().run()
+            result = service.run()
             message = "Credited %d of %d qualifying days." % (
-                result.get("credited", 0), result.get("found", 0))
+                result.get("credited", 0), result.get("found", 0)) + lapsed
             self.log.record("comp_off", True, message)
             return {"ok": True, "message": message}
         except Exception as exc:
             message = "Comp off crediting failed: %s" % exc
             self.log.record("comp_off", False, message)
             return {"ok": False, "message": message}
+        finally:
+            if db is not None:
+                db.conn.close()
+
+    def _studio_db(self):
+        """
+        The studio database, reached the way the server reaches it. The job
+        used slate.core's database manager, which reads this PC's client
+        settings - on a server PC possibly a local SQLite file.
+        """
+        import psycopg2
+        from slate.core.security.dbapi import ConnectionDB
+        from slate_server.core.db_credentials import connect_kwargs
+        return ConnectionDB(psycopg2.connect(**connect_kwargs(self.port, self.dbname,
+                                                              connect_timeout=5)))
 
     def record_backup(self, ok: bool, message: str) -> None:
         """Backups are taken by BackupEngine; this is how they get on the list."""

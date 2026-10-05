@@ -239,7 +239,8 @@ def test_the_export_agrees_with_the_grid(tmp_path):
     ws = load_workbook(path).active
     headers = [c.value for c in ws[1]]
     assert "01 Tue" in headers
-    assert str(ws.cell(row=2, column=1).value).startswith("'"), "formula neutralised"
+    name = ws.cell(row=2, column=1)
+    assert name.data_type == "s" and not str(name.value).startswith("'"), "a formula stored as text"
     first_day = headers.index("01 Tue") + 1
     assert ws.cell(row=2, column=first_day).value == "L 9.5"      # late, 9.5 hours
 

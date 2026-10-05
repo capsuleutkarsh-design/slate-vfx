@@ -353,7 +353,8 @@ class AdminUsersTab(QWidget):
 
         self.users_panel = None
         self.role_editor = None
-        if not (may_manage_users or may_edit_roles):
+        from slate.core.domain.access import opens_users_and_roles
+        if not opens_users_and_roles(roles):
             lbl = QLabel("You do not have permission to manage users or roles.")
             lbl.setStyleSheet(f"color: {Gate.BAD}; font-size: 14px;")
             main_layout.addWidget(lbl)

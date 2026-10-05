@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMenu,
@@ -438,15 +439,24 @@ def _this_version() -> str:
         return ""
 
 
+def ask_reason(parent, verb: str, pc_name: str):
+    """The reason shown on the PC with the question. None when cancelled."""
+    text, ok = QInputDialog.getText(
+        parent, f"{verb} {pc_name}",
+        "Reason, shown to the person at that PC (optional):")
+    return text.strip() if ok else None
+
+
 class PCCard(QFrame):
     # The narrowest a card gets; cards share the row's width beyond that.
     CARD_WIDTH = 220
     CARD_HEIGHT = 140
 
     def __init__(self, pc_name, hub, verify_callback=None, read_only=False, log_action=None,
-                 on_removed=None):
+                 on_removed=None, admin_user=""):
         super().__init__()
         self.pc_name = pc_name
+        self.admin_user = admin_user
         self.hub = hub
         self.current_data = {}
         self.state = fs.UNKNOWN
@@ -681,7 +691,10 @@ class PCCard(QFrame):
             return False
         if self.verify_callback and not self.verify_callback():
             return False
-        self.hub.post_command(command, self.pc_name)
+        reason = ask_reason(self.window(), verb, self.pc_name)
+        if reason is None:
+            return False
+        self.hub.post_command(command, self.pc_name, admin_user=self.admin_user, reason=reason)
         done = "Restart" if command == "restart" else "Shut-down"
         if callable(self.log_action):
             self.log_action(f"{done} sent to {self.pc_name}")
@@ -744,9 +757,11 @@ FILTERS = (("All machines", ""), (fs.label(fs.ONLINE), fs.ONLINE),
 class LiveDashboard(QWidget):
     GRID_SPACING = 15
 
-    def __init__(self, hub, verify_callback=None, read_only=False, log_action=None):
+    def __init__(self, hub, verify_callback=None, read_only=False, log_action=None,
+                 admin_user=""):
         super().__init__()
         self.hub = hub
+        self.admin_user = admin_user
         self.verify_callback = verify_callback
         self.read_only = bool(read_only)
         self.log_action = log_action
@@ -928,7 +943,8 @@ class LiveDashboard(QWidget):
             if card is None:
                 card = PCCard(pc_name, self.hub, self.verify_callback,
                               read_only=self.read_only, log_action=self.log_action,
-                              on_removed=lambda _name: self.refresh_grid())
+                              on_removed=lambda _name: self.refresh_grid(),
+                              admin_user=self.admin_user)
                 self.pc_widgets[pc_name] = card
             # One bad report must not stop the cards after it from updating.
             try:

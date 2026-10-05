@@ -1,7 +1,6 @@
 {
     "LOG_LEVEL": "INFO",
     "DEVELOPER_MODE": false,
-    "THEME": "Default",
     "THEME_MODE": "Dark",
     "db_mode": "postgres",
     "db_path": "",
@@ -10,12 +9,8 @@
     "db_name": "ut_vfx",
     "db_user": "ut_vfx_app",
     "db_password": "Tango$",
-    "gatekeeper_enabled": true,
-    "update_manifest_url": "http://192.168.0.15/slate_updates/manifest.json",
     "check_updates_on_startup": true,
-    "network_timeout_ms": 5000,
     "min_db_connections": 1,
     "max_db_connections": 2,
-    "max_semantic_connections": 4,
     "db_pooler_port": 6432
 }
