@@ -323,6 +323,24 @@ def test_refresh_shortcut_refreshes_the_timeline_viewer(monkeypatch):
     assert calls == [1, "Refreshed"]
 
 
+def test_column_filter_row_click_ticks_the_value(qtbot):
+    """'A click anywhere on the row ticks it' was a bare pass; only the box worked."""
+    from PySide6.QtCore import QPoint, Qt
+    from slate.gui.tabs.vfx_dashboard_pro.ui.header_filter_view import _FilterPanel
+
+    panel = _FilterPanel(["Comp", "Roto"], selected=None)
+    qtbot.addWidget(panel)
+    panel.show()
+    item = panel.list.item(0)
+    rect = panel.list.visualItemRect(item)
+    qtbot.mouseClick(panel.list.viewport(), Qt.MouseButton.LeftButton,
+                     pos=QPoint(rect.left() + 120, rect.center().y()))
+    assert item.checkState() == Qt.CheckState.Unchecked
+    qtbot.mouseClick(panel.list.viewport(), Qt.MouseButton.LeftButton,
+                     pos=QPoint(rect.left() + 10, rect.center().y()))          # the box itself
+    assert item.checkState() == Qt.CheckState.Checked
+
+
 def test_dashboard_retry_reconnects(monkeypatch):
     """The offline banner's Retry asked for a reconnect() nothing has, so it never retried."""
     from slate.core.domain import access

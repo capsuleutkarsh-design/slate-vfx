@@ -242,6 +242,8 @@ class _FilterPanel(QWidget):
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             ticked = selected is None or value in selected
             item.setCheckState(Qt.CheckState.Checked if ticked else Qt.CheckState.Unchecked)
+        self._pressed = None
+        self.list.itemPressed.connect(lambda item: setattr(self, "_pressed", item))
         self.list.itemClicked.connect(self._toggle)
         layout.addWidget(self.list)
 
@@ -255,8 +257,12 @@ class _FilterPanel(QWidget):
         layout.addLayout(row)
 
     def _toggle(self, item):
-        # A click anywhere on the row ticks it, not just on the box.
-        pass
+        # A click anywhere on the row ticks it, not just on the box (this was a
+        # bare pass). A click on the box ticks it by itself and reports no press.
+        if self._pressed is item:
+            item.setCheckState(Qt.CheckState.Unchecked if item.checkState() == Qt.CheckState.Checked
+                               else Qt.CheckState.Checked)
+        self._pressed = None
 
     def _filter_list(self, text):
         needle = text.strip().lower()
