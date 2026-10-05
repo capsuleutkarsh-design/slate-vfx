@@ -160,13 +160,9 @@ class ClickableLabel(QLabel):
 # into another (the old table made coordinators and producers "supervisor").
 _ROLE_SPELLINGS = {"dev": "developer", "coord": "coordinator", "production": "producer", "pro": "producer"}
 
-# Job-title words that name a department family without using its key, label
-# or name ('Head of Paint', 'Senior Compositor', 'Mograph Lead').
-_DEPARTMENT_WORDS = {
-    "paint": "prep", "painter": "prep", "matte": "dmp", "compositor": "comp",
-    "compositing": "comp", "mograph": "mgfx", "motion": "mgfx", "matchmover": "matchmove",
-    "tracking": "matchmove", "rotoscoping": "roto", "deage": "deage",
-}
+# The job-title words that name a department now live with the rule
+# (departments.family_of); the old name stays importable.
+from slate.core.domain.departments import DEPARTMENT_WORDS as _DEPARTMENT_WORDS  # noqa: E402,F401
 
 
 class DashboardWidget(
@@ -1795,11 +1791,8 @@ class DashboardWidget(
         The department keys this person may edit, or None if unrestricted.
         An empty set is a scoped role whose job title names no department.
         """
-        if not self._is_department_scoped():
-            return None
-        from slate.core.domain.departments import families
-        family = self._department_family()
-        return {d.key for d in families().get(family or "", [])}
+        from slate.core.domain.departments import scope_keys
+        return scope_keys(getattr(self, "access_roles", self.user_roles), self._department_family())
 
     def _can_manage_shots(self) -> bool:
         """Add, remove and batch-edit shots: a coordinator's job, not a lead's."""
@@ -1814,39 +1807,15 @@ class DashboardWidget(
         return [s for s in shot_status.WORKFLOW if s in allowed]
 
     def _detect_user_department_family(self) -> Optional[str]:
-        job_title = str(getattr(self, "user_data", {}).get("job_title", "")).strip().lower()
-        dept = str(getattr(self, "user_data", {}).get("department", "")).strip().lower()
-        import re
-        from slate.core.domain.departments import load_departments, families
-
-        def words(text):
-            return " ".join(re.findall(r"[a-z0-9]+", str(text or "").lower()))
-
-        # Whole words only: 'ai' is inside 'paint' and 'trainee', which put a
-        # Paint Lead in the AI department.
-        title = f" {words(job_title + ' ' + dept)} "
-        if not title.strip():
-            return None
-        for d in load_departments():
-            for phrase in (d.key, d.label, d.name):
-                if words(phrase) and f" {words(phrase)} " in title:
-                    return d.family
-        known = families()
-        for word in title.split():
-            family = _DEPARTMENT_WORDS.get(word)
-            if family in known:
-                return family
-        return None
+        from slate.core.domain.departments import family_of
+        user_data = getattr(self, "user_data", {}) or {}
+        return family_of(user_data.get("job_title"), user_data.get("department"))
 
     @staticmethod
     def _family_name(family: str) -> str:
-        """'Matte Painting' for 'dmp' - the department's own name, not the key title-cased."""
-        from slate.core.domain.departments import families
-        members = families().get(family, [])
-        if not members:
-            return family.title()
-        lead = next((d for d in members if d.key == family), members[0])
-        return lead.name
+        """'Matte Painting' for 'dmp' (departments.family_name)."""
+        from slate.core.domain.departments import family_name
+        return family_name(family)
 
     def populate_scope_selector(self, apply: bool = True):
         """

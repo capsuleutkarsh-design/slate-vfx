@@ -86,3 +86,23 @@ def test_leave_and_users_ask_the_reporting_rule(mock_db):
                 last_day="2000-01-01")
     assert LeaveRepository(mock_db).reports_to("sup.vikram") == {"aarav", "gone"}
     assert um.reports_of("sup.vikram") == ["aarav"]         # active people only
+
+
+# ------------------------------------------------ a lead's department (item 4)
+def test_the_grid_and_the_handler_share_the_department_scope(mock_db):
+    from slate.core.domain import departments
+    from slate.gui.tabs.vfx_dashboard_pro.core.sqlite_handler import SQLiteHandler
+    from slate.gui.tabs.vfx_dashboard_pro.ui.dashboard_widget import DashboardWidget
+    from types import SimpleNamespace
+    assert departments.family_of("Head of Paint") == "prep"
+    assert departments.family_of("Trainee") is None and departments.family_of(None) is None
+    assert departments.scope_keys(["Supervisor"], "roto") is None        # not scoped
+    assert departments.scope_keys(["Lead"], "") == set()                   # scoped, no department
+    roto = departments.scope_keys(["Lead"], "roto")
+    assert roto and all(departments.get_department(k).family == "roto" for k in roto)
+    grid = SimpleNamespace(user_data={"job_title": "Roto Lead"}, user_roles=["Lead"])
+    grid._department_family = lambda: DashboardWidget._detect_user_department_family(grid)
+    handler = SQLiteHandler("P3", db_manager=mock_db, user_role=["Lead"],
+                            department_family=grid._department_family())
+    assert DashboardWidget._department_scope(grid) == handler._scoped_department_keys() == roto
+    assert handler._family_name() == DashboardWidget._family_name("roto") == departments.family_name("roto")

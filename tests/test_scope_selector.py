@@ -27,17 +27,8 @@ def qapp():
 
 
 def test_department_family_detection():
-    # Helper logic mirroring DashboardWidget._detect_user_department_family
-    def detect_family(job_title, dept=""):
-        search = f"{job_title} {dept}".lower().strip()
-        all_depts = load_departments()
-        for d in all_depts:
-            if d.key in search or d.name.lower() in search or d.label.lower() in search:
-                return d.family
-        for fam in families().keys():
-            if fam in search:
-                return fam
-        return None
+    # The real rule (it used to test its own, older copy of it).
+    from slate.core.domain.departments import family_of as detect_family
 
     assert detect_family("Senior Roto Artist") == "roto"
     assert detect_family("Roto Lead") == "roto"

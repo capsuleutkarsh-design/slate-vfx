@@ -189,3 +189,63 @@ def staff_department_names() -> List[str]:
     """
     names = [dept.name for dept in load_departments()]
     return names + list(NON_PRODUCTION_DEPARTMENTS)
+
+
+# ------------------------------------------------- a lead's own department
+# Which department a person leads decides what a department-scoped role (a
+# lead) may edit. The dashboard's grid asks it and the handler that writes
+# the shots enforces it, so the rule lives here rather than in either.
+
+# Job-title words that name a department family without using its key, label
+# or name ('Head of Paint', 'Senior Compositor', 'Mograph Lead').
+DEPARTMENT_WORDS = {
+    "paint": "prep", "painter": "prep", "matte": "dmp", "compositor": "comp",
+    "compositing": "comp", "mograph": "mgfx", "motion": "mgfx", "matchmover": "matchmove",
+    "tracking": "matchmove", "rotoscoping": "roto", "deage": "deage",
+}
+
+
+def family_of(job_title, department="") -> Optional[str]:
+    """The department family a job title (and department) names, or None."""
+    import re
+
+    def words(text):
+        return " ".join(re.findall(r"[a-z0-9]+", str(text or "").lower()))
+
+    # Whole words only: 'ai' is inside 'paint' and 'trainee', which put a
+    # Paint Lead in the AI department.
+    title = f" {words(str(job_title or '').strip() + ' ' + str(department or '').strip())} "
+    if not title.strip():
+        return None
+    for d in load_departments():
+        for phrase in (d.key, d.label, d.name):
+            if words(phrase) and f" {words(phrase)} " in title:
+                return d.family
+    known = families()
+    for word in title.split():
+        family = DEPARTMENT_WORDS.get(word)
+        if family in known:
+            return family
+    return None
+
+
+def family_name(family) -> str:
+    """'Matte Painting' for 'dmp' - the department's own name, not the key title-cased."""
+    family = str(family or "")
+    members = families().get(family, [])
+    if not members:
+        return family.title()
+    lead = next((d for d in members if d.key == family), members[0])
+    return lead.name
+
+
+def scope_keys(roles, family) -> Optional[set]:
+    """
+    The department keys this person may edit, or None if unrestricted. An
+    empty set is a department-scoped role whose job title names no
+    department: nothing may be edited.
+    """
+    from slate.core.domain.access import is_department_scoped
+    if not is_department_scoped(roles):
+        return None
+    return {d.key for d in families().get(family or "", [])}

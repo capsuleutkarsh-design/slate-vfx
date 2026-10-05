@@ -298,10 +298,8 @@ class SQLiteHandler:
         return str(dept_key or "").title()
 
     def _family_name(self) -> str:
-        from slate.core.domain.departments import families
-        members = families().get(self.department_family, [])
-        lead = next((d for d in members if d.key == self.department_family), members[0] if members else None)
-        return lead.name if lead else self.department_family.title()
+        from slate.core.domain.departments import family_name
+        return family_name(self.department_family)
 
     def _notify_assignment(self, shot_name: str, old_artist: str, new_artist: str, dept_key: str = ""):
         if not self.notifier:
@@ -607,14 +605,9 @@ class SQLiteHandler:
     # ------------------------------------------------------------------
 
     def _scoped_department_keys(self):
-        """The department keys this person may edit, or None if unrestricted."""
-        from slate.core.domain.access import is_department_scoped
-        from slate.core.domain.departments import families
-
-        if not is_department_scoped(self.user_roles):
-            return None
-        members = families().get(self.department_family, [])
-        return {dept.key for dept in members}
+        """The department keys this person may edit, or None if unrestricted (departments.scope_keys)."""
+        from slate.core.domain.departments import scope_keys
+        return scope_keys(self.user_roles, self.department_family)
 
     @staticmethod
     def _shot_level_fields(shot: Shot) -> dict:
