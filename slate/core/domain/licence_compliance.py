@@ -21,7 +21,7 @@ evidence instead of instinct.
 from __future__ import annotations
 
 import math
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 from typing import Optional
 
@@ -84,17 +84,7 @@ def renewal_window(db=None) -> int:
         return RENEWAL_SOON_DAYS
 
 
-def as_date(value):
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(str(value)[:10]).date()
-    except Exception:
-        return None
+from .dates import as_date  # noqa: E402  (the shared stored-date reader; importable from here)
 
 
 def days_until(expiry, today: date = None):

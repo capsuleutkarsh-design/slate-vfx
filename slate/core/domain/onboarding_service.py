@@ -119,16 +119,7 @@ def _is_active(record: dict) -> bool:
     return account_active(record)
 
 
-def _as_day(value):
-    """A stored date (date, datetime or ISO text) as a date, or None."""
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date) or not value:
-        return value or None
-    try:
-        return datetime.fromisoformat(str(value)[:10]).date()
-    except (TypeError, ValueError):
-        return None
+from .dates import as_date as _as_day  # noqa: E402  (the shared stored-date reader)
 
 
 def _issuable_sql() -> str:
@@ -404,24 +395,8 @@ class OnboardingService:
 
     def joined_on(self, username: str):
         """The joining date on record, if any (shown in the Start joining dialog)."""
-        try:
-            row = self.db.execute_query(
-                "SELECT joined_on FROM ut_users WHERE LOWER(username) = LOWER(%s)",
-                (username,), fetch="one")
-        except DatabaseUnavailableError:
-            raise
-        except Exception:
-            logger.exception("joined_on failed")
-            return None
-        value = (dict(row) or {}).get("joined_on") if row else None
-        if isinstance(value, datetime):
-            return value.date()
-        if isinstance(value, date) or not value:
-            return value or None
-        try:
-            return datetime.fromisoformat(str(value)[:10]).date()
-        except (TypeError, ValueError):
-            return None
+        from ..infra.leave_repository import LeaveRepository
+        return LeaveRepository(self.db).joined_on(username)
 
     def cancel_checklist(self, username: str, direction: str, by_whom: str,
                          clear_last_day: bool = False) -> int:
@@ -482,28 +457,8 @@ class OnboardingService:
 
     def last_day(self, username: str):
         """The last working day recorded for somebody, if any."""
-        try:
-            row = self.db.execute_query(
-                "SELECT last_day FROM ut_users WHERE LOWER(username) = LOWER(%s)",
-                (username,), fetch="one")
-        except DatabaseUnavailableError:
-            raise
-        except Exception:
-            logger.exception("last_day failed")
-            return None
-        if not row:
-            return None
-        value = row["last_day"] if isinstance(row, dict) else row[0]
-        if isinstance(value, datetime):
-            return value.date()
-        if isinstance(value, date):
-            return value
-        if not value:
-            return None
-        try:
-            return datetime.fromisoformat(str(value)[:10]).date()
-        except (TypeError, ValueError):
-            return None
+        from ..infra.leave_repository import LeaveRepository
+        return LeaveRepository(self.db).last_day(username)
 
     def complete(self, task_id, done: bool = True, by: str = None) -> bool:
         """

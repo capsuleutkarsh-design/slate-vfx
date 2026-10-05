@@ -45,3 +45,21 @@ def test_every_old_name_asks_the_one_rule():
         expected = people.account_active(record)
         assert UserManager._flag_active(record) is expected
         assert onboarding_service._is_active(record) is expected
+
+
+# ------------------------------------------------- shared helpers (item 5)
+def test_one_stored_date_reader_and_one_roles_reader():
+    from slate.core.domain import dates, attendance_rules, central_attendance, licence_compliance
+    from slate.core.domain import onboarding_service
+    from slate.core.infra import leave_repository
+    from slate.core.security import admin_guard
+    from slate.core.domain.user_manager import UserManager
+    for copy in (leave_repository.as_date, licence_compliance.as_date, people._as_date,
+                 onboarding_service._as_day, attendance_rules._as_day,
+                 central_attendance.CentralAttendance._as_date):
+        assert copy is dates.as_date
+    assert dates.as_date("2026-10-05 09:00") == date(2026, 10, 5)
+    assert dates.as_date("05/10/2026") is None          # stored dates are ISO; nothing else counts
+    assert UserManager._parse_roles is admin_guard.parse_roles
+    assert admin_guard.parse_roles('["HR", "Artist"]') == ["HR", "Artist"]
+    assert admin_guard.parse_roles("Artist") == ["Artist"] and admin_guard.parse_roles(None) == []

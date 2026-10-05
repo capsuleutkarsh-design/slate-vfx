@@ -10,6 +10,7 @@ from ..infra.audit_logger import AuditLogger
 from slate.utils.safe_json import SafeJsonIO
 from slate.core.domain import people
 from slate.core.domain.people import plural
+from slate.core.security import admin_guard
 
 class UserManager:
     """
@@ -664,22 +665,7 @@ class UserManager:
         users_dict = {}
         for r in rows:
             uid = r['username']
-            try:
-                roles_raw = r.get('roles', '[]')
-                if isinstance(roles_raw, list):
-                    roles = roles_raw
-                elif isinstance(roles_raw, str):
-                    try:
-                        roles = json.loads(roles_raw)
-                        if isinstance(roles, str):
-                            roles = [roles]
-                    except Exception:
-                        roles = [roles_raw] if roles_raw else []
-                else:
-                    roles = []
-            except Exception:
-                roles = []
-                
+            roles = self._parse_roles(r.get('roles'))
             users_dict[uid] = {
                 "password_hash": r['password_hash'],
                 "display_name": r.get('display_name', ''),
@@ -1223,17 +1209,8 @@ class UserManager:
             (self.acting_user,), fetch="one")
         return self._parse_roles(row.get("roles") if row else None) if row else []
 
-    @staticmethod
-    def _parse_roles(raw):
-        if isinstance(raw, list):
-            return raw
-        if isinstance(raw, str) and raw.strip():
-            try:
-                value = json.loads(raw)
-                return [value] if isinstance(value, str) else list(value or [])
-            except Exception:
-                return [raw]
-        return []
+    # The one reader of a stored roles value (also used by ticket_repository).
+    _parse_roles = staticmethod(admin_guard.parse_roles)
 
     def _refuse(self, message):
         from slate.core.domain.access import GrantRefused

@@ -26,6 +26,7 @@ import json
 import logging
 import socket
 from ..infra.database_manager import DatabaseManager
+from .dates import as_date
 
 logger = logging.getLogger(__name__)
 
@@ -412,13 +413,7 @@ class CentralAttendance:
             "source": meta.get("source") or "",
         }
 
-    @staticmethod
-    def _as_date(d):
-        if isinstance(d, datetime.datetime):
-            return d.date()
-        if isinstance(d, datetime.date):
-            return d
-        return datetime.date.fromisoformat(str(d)[:10])
+    _as_date = staticmethod(as_date)
 
     def _rows_between(self, start, end, user_id=None):
         clauses = ["day_date >= %s", "day_date <= %s"]
