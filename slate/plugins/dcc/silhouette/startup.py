@@ -1,6 +1,5 @@
 import os
 import sys
-import sqlite3
 import glob
 from pathlib import Path
 
@@ -11,32 +10,11 @@ except ImportError:
     pass
 
 def get_shot_data():
-    """Reads the shot data directly from the SQLite database."""
-    shot_id = os.environ.get("SLATE_SHOT_ID")
-    db_path = os.environ.get("SLATE_DB_PATH")
-    
-    if not shot_id or not db_path or not os.path.exists(db_path):
+    """The shot Slate opened this program for (slate/core/dcc_launcher.py sets these)."""
+    scan_path = os.environ.get("SLATE_SCAN_PATH")
+    if not scan_path:
         return None
-        
-    try:
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute("SELECT shot_name, scan_path, render_path, project_code FROM shots WHERE id = ?", (shot_id,))
-        row = cursor.fetchone()
-        conn.close()
-        
-        if row:
-            return {
-                "shot_name": row[0],
-                "scan_path": row[1],
-                "render_path": row[2],
-                "project_code": row[3]
-            }
-    except Exception as e:
-        print(f"Slate DB Error: {e}")
-        
-    return None
+    return {"shot_name": os.environ.get("SLATE_SHOT_NAME", ""), "scan_path": scan_path}
 
 def find_sequence(folder_path):
     if not os.path.exists(folder_path):

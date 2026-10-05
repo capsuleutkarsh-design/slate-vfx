@@ -1470,7 +1470,8 @@ class DashboardWidget(
         if app_key == "rv":
             self.review_in_rv(shot)
             return
-        launcher.launch(app_key, shot.id)
+        launcher.launch(app_key, shot.id, shot_name=shot.shot_name,
+                        scan_path=self._shot_folder_resolver(shot, "scan") or "")
 
     def _shot_folder_resolver(self, shot, key):
         """Where one of a shot's folders actually is (through the project manager)."""

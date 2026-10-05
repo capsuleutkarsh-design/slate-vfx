@@ -923,7 +923,11 @@ class ShotDetailWidget(QWidget):
         else:
             target_file = self._find_dcc_target_file(app_key)
         from slate.core.dcc_launcher import DCCLauncher
-        DCCLauncher(self).launch(app_key, self.shot.id, file_path=target_file)
+        scan = (self.project_manager.get_folder_path(
+            self.current_project_code, "scan", self.shot.reel_episode, self.shot.shot_name)
+            if self.project_manager else "")
+        DCCLauncher(self).launch(app_key, self.shot.id, file_path=target_file,
+                                 shot_name=self.shot.shot_name, scan_path=scan)
 
     _DCC_FILE_TYPES = {
         "nuke": [".nk", ".nknc"],

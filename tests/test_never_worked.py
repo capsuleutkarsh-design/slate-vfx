@@ -28,6 +28,37 @@ def test_every_module_parses():
     assert not broken, broken
 
 
+def test_dcc_plugins_find_the_shot_the_launcher_names(monkeypatch, tmp_path):
+    """
+    The Slate menu inside Nuke/Natron/Blender/Silhouette looked the shot up in
+    a "shots" table that no Slate database has, so Load Scan and Save New
+    Version always said "Shot context not found".
+    """
+    import os
+    from slate.core import dcc_launcher
+
+    exe = tmp_path / "Nuke.exe"
+    exe.write_bytes(b"")
+    monkeypatch.setattr(dcc_launcher, "resolve_executable", lambda *_: str(exe))
+    monkeypatch.setattr(dcc_launcher, "ConfigManager", lambda: None)
+    monkeypatch.setattr(dcc_launcher, "get_nuke_mode", lambda *_: "nukex")
+    envs = []
+    monkeypatch.setattr(dcc_launcher.subprocess, "Popen", lambda cmd, **kw: envs.append(kw["env"]))
+    scan = str(tmp_path / "sh010" / "01_Scan")
+    assert dcc_launcher.DCCLauncher().launch("nuke", 7, shot_name="sh010", scan_path=scan)
+
+    for rel in ("nuke/menu.py", "natron/menu.py", "silhouette/startup.py",
+                "blender/startup/ut_vfx_startup.py"):
+        tree = ast.parse((ROOT / "slate/plugins/dcc" / rel).read_bytes())
+        func = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "get_shot_data")
+        space = {"os": os}
+        exec(compile(ast.Module([func], []), rel, "exec"), space)
+        monkeypatch.setattr(os, "environ", envs[0])
+        data = space["get_shot_data"]()
+        monkeypatch.undo()
+        assert data == {"shot_name": "sh010", "scan_path": scan}, rel
+
+
 def test_dashboard_retry_reconnects(monkeypatch):
     """The offline banner's Retry asked for a reconnect() nothing has, so it never retried."""
     from slate.core.domain import access
