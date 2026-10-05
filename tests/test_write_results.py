@@ -244,3 +244,14 @@ def test_an_outage_is_not_a_refusal():
     with pytest.raises(DatabaseUnavailableError):
         with atomic(Down()) as tx:
             tx.write("anything")
+
+
+def test_a_strict_read_raises_instead_of_looking_empty(tmp_path):
+    """A failed read returned None, which callers turn into 'no rows'; strict raises."""
+    import pytest
+    from slate.core.infra.db_results import DatabaseReadError
+    from slate.core.infra.sqlite_manager import SQLiteManager
+    db = SQLiteManager(str(tmp_path / "strict.db"))
+    assert db.execute_query("SELECT nope FROM nowhere") is None
+    with pytest.raises(DatabaseReadError):
+        db.execute_query("SELECT nope FROM nowhere", strict=True)

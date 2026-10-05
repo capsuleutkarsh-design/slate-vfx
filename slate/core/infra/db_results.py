@@ -74,6 +74,15 @@ class DatabaseWriteError(RuntimeError):
         self.result = result
 
 
+class DatabaseReadError(DatabaseWriteError):
+    """
+    A read the database refused, raised by execute_query(..., strict=True).
+    Without strict a failed read returns None, which callers turn into "no
+    rows" - fine for a list on screen, wrong for a check whose empty answer
+    charges leave, credits comp-off or re-ingests a library.
+    """
+
+
 class NoRowsError(DatabaseWriteError):
     """An atomic step said it must change a row, and it matched none."""
 

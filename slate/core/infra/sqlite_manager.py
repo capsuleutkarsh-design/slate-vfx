@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .db_results import (
-    DatabaseUnavailableError, SqlResult, WriteResult, classify_error, error_text,
+    DatabaseReadError, DatabaseUnavailableError, SqlResult, WriteResult, classify_error, error_text,
     is_legacy_write_fetch, is_write_statement,
 )
 from .transaction import AtomicUnit
@@ -574,7 +574,8 @@ class SQLiteManager:
             q = _RETURNING_RE.sub('', q)
         return q, has_returning
 
-    def execute_query(self, query: str, params: tuple = None, fetch: str = "all") -> Any:
+    def execute_query(self, query: str, params: tuple = None, fetch: str = "all",
+                      strict: bool = False) -> Any:
         """
         Execute a query, translating PostgreSQL syntax on-the-fly.
 
@@ -613,6 +614,8 @@ class SQLiteManager:
                     "Your work has not been lost - try again in a moment.") from e
             self._remember_error(error_text(e))
             logger.error(f"SQLite query error: {e} | Query: {query[:120]}")
+            if strict:
+                raise DatabaseReadError(error_text(e), kind="read") from e
             return None
 
     def write(self, query: str, params: tuple = None, *, strict: bool = False) -> WriteResult:

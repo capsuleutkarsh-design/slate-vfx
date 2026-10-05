@@ -33,7 +33,7 @@ MAX_POOL_PER_CLIENT = 2
 # an outage whichever database is behind the manager. Re-exported from here
 # because this is where every existing caller imports it from.
 from .db_results import (  # noqa: E402
-    DatabaseUnavailableError, DatabaseWriteError, NoRowsError, SqlResult, WriteResult,
+    DatabaseReadError, DatabaseUnavailableError, DatabaseWriteError, NoRowsError, SqlResult, WriteResult,
     classify_error, error_text, is_legacy_write_fetch, is_write_statement,
 )
 from .transaction import AtomicUnit  # noqa: E402
@@ -1130,7 +1130,8 @@ class PostgresManager:
                 "saved. Your work has not been lost - try again in a moment."
             ) from e
 
-    def execute_query(self, query: str, params: tuple = None, fetch: str = "all") -> Any:
+    def execute_query(self, query: str, params: tuple = None, fetch: str = "all",
+                      strict: bool = False) -> Any:
         """
         Run one statement.
 
@@ -1196,6 +1197,8 @@ class PostgresManager:
             # outage to survive. The reason is kept for last_error().
             self._remember_error(error_text(e))
             logging.exception(f"Query failed after retries: {query[:100]}... Error: {e}")
+            if strict:
+                raise DatabaseReadError(error_text(e), kind="read") from e
             return None
 
     def write(self, query: str, params: tuple = None, *, strict: bool = False) -> WriteResult:
