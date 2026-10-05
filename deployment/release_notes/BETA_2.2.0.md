@@ -208,7 +208,9 @@ The test database no longer has its own copy of the dashboard's save code, so th
   The Studio installer is about 70 MB smaller.
 - **Wipe caches** in the Admin Panel. It never reached any workstation. The Wipe fleet caches permission went with it.
 - **The web API**, with the Admin Panel's "Start API gateway" and Slate Server's web dashboard. Nothing in Slate used it, and it was a way into the studio network. Two web libraries (FastAPI and uvicorn) went with it.
-- **Code that nothing used,** including an unused "similar assets" search.
+- **Code that nothing used,** including an unused "similar assets" search. Before rollout about 45 more unused files went: old scripts, a video exporter, a continuity checker, an unused notification pop-up, an asset tracker for a table that never existed, and unused parts of the dashboard, attendance, scheduling and bidding code. Nothing anybody can see or use has changed.
+- **Five settings in `default_config.json` that nothing read** (`THEME`, `update_manifest_url`, `network_timeout_ms`, `max_semantic_connections`, `gatekeeper_enabled`).
+- **`update_notify`**, a workstation command nothing sent or handled.
 
 ## Known limits of 2.2.0
 
