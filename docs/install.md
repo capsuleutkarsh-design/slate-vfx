@@ -66,11 +66,13 @@ Port           [5440]
 Database name  [slate]
 Database user  [ut_vfx_app]
 Database password
-Admin password (for Slate's own admin panel)
 ```
 
 These are written to **`slate/config.json`**, which is git-ignored and never
-leaves the machine. Delete that file and re-run `setup.bat` to change them.
+leaves the machine - except the password, which goes into Windows Credential
+Manager. Delete that file and re-run `setup.bat` to change them. The database
+password is the studio's own: on the server PC, Recover Slate > Database
+passwords > Show app password shows it.
 
 ### Without a server
 

@@ -72,7 +72,7 @@ def build_workbook(path, year, month, rows, data, leave=None, now=None, studio_h
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
-    from slate.core.domain.table_export import neutralise
+    from slate.core.domain.table_export import put
 
     now = now or datetime.now()
     leave = leave or {}
@@ -110,8 +110,8 @@ def build_workbook(path, year, month, rows, data, leave=None, now=None, studio_h
                             leave.get(uid.lower(), {}), now)
         open_today = open_today or summary["open_today"]
         # Text a person typed could be a formula; Excel would run it.
-        ws.cell(row=r, column=1, value=neutralise(row.get("name") or uid))
-        ws.cell(row=r, column=2, value=neutralise(uid))
+        put(ws.cell(row=r, column=1), row.get("name") or uid)
+        put(ws.cell(row=r, column=2), uid)
         for i, key in enumerate(("present", "late", "absent", "leave", "missing", "hours", "wfh")):
             cell = ws.cell(row=r, column=3 + i, value=summary[key])
             cell.fill = fill(FILL["total"])

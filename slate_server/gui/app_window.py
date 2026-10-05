@@ -164,7 +164,7 @@ class StageUpdateWorker(QThread):
         self.done.emit(ok)
 
 
-def poll_facts(port: int) -> dict:
+def poll_facts(port: int, pooler_port: int = 0) -> dict:
     """
     One look at the database for the Analytics screen. Runs on PollWorker.
 
@@ -183,7 +183,7 @@ def poll_facts(port: int) -> dict:
         return facts
     try:
         db = ConnectionDB(conn)                          # autocommit: no idle transaction
-        facts["refusals"] = logged_refusals(db, facts["sessions"])
+        facts["refusals"] = logged_refusals(db, facts["sessions"], pooler_port)
         one = lambda sql: (db.execute_query(sql, fetch="one") or {}).get("n")  # noqa: E731
         active = one("SELECT count(*) AS n FROM pg_stat_activity "
                      "WHERE state = 'active' OR state = 'idle'") or 0
@@ -209,12 +209,13 @@ class PollWorker(QThread):
     """poll_facts() off the UI thread: a slow database must not freeze the window."""
     done = Signal(object)
 
-    def __init__(self, port):
+    def __init__(self, port, pooler_port=0):
         super().__init__()
         self.port = int(port)
+        self.pooler_port = int(pooler_port or 0)
 
     def run(self):
-        self.done.emit(poll_facts(self.port))
+        self.done.emit(poll_facts(self.port, self.pooler_port))
 
 
 class BackupWorker(QThread):
@@ -945,17 +946,20 @@ class UTServerWindow(QMainWindow):
                 written = {"db_name": new_name,
                            "db_port": new_port,
                            "db_pooler_port": new_pooler}
+                write_local_config(written)
+
                 # Blank means "leave it alone". Writing an empty password is how
                 # a server loses the one setting it cannot work without, and it
-                # would look like a successful save.
-                if new_password:
-                    written["db_password"] = new_password
-                write_local_config(written)
+                # would look like a successful save. Kept in this PC's protected
+                # store, never in config.json (db_credentials.store).
+                from slate_server.core import db_credentials
+                if new_password and new_password != db_credentials.app_password():
+                    db_credentials.use_data_dir(new_path)
+                    db_credentials.store(app_password=new_password)
 
                 # These are read once and cached, so without this the server
                 # goes on using the password it started with and the save looks
                 # like it did nothing.
-                from slate_server.core import db_credentials
                 db_credentials.reload()
             except Exception as exc:
                 client_error = str(exc) or exc.__class__.__name__
@@ -1113,7 +1117,6 @@ class UTServerWindow(QMainWindow):
             db_port=int(port),
             listen_port=int(pooler_port),
             db_user=_client_setting("db_user", "ut_vfx_app"),
-            db_password=_client_setting("db_password", ""),
         )
         return engine
 
@@ -1472,7 +1475,8 @@ class UTServerWindow(QMainWindow):
         worker = getattr(self, "_poll_worker", None)
         if worker is not None and worker.isRunning():
             return worker
-        self._poll_worker = PollWorker(int(getattr(self, "_db_port", 5440) or 5440))
+        self._poll_worker = PollWorker(int(getattr(self, "_db_port", 5440) or 5440),
+                                       int(getattr(self, "_db_pooler_port", 0) or 0))
         self._poll_worker.done.connect(self._show_poll)
         self._poll_worker.start()
         return self._poll_worker

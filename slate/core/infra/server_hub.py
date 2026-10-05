@@ -3,16 +3,17 @@ import os
 from pathlib import Path
 import time
 import logging
-import re
 import uuid
 from .global_config import GlobalConfig
 from slate.utils.safe_json import SafeJsonIO
 
 class ServerHub:
     """
-    Manages centralized server resources, commands, and PC registration.
+    Manages centralized server resources and commands.
     Now uses SafeJsonIO for concurrency and GlobalConfig for paths.
     """
+    signing_key = None      # fleet commands are signed with this when it is set
+
     def __init__(self):
         self.server_root = GlobalConfig.server_root()
         self.config_dir = self.server_root / "Config"
@@ -57,71 +58,52 @@ class ServerHub:
         """Save global settings with locking."""
         SafeJsonIO.save_json(self.settings_file, settings)
 
-    def register_pc(self, pc_name: str) -> bool:
-        """Atomic PC Registration"""
-        if not re.match(r'^[A-Za-z0-9_-]+$', pc_name):
-            logging.warning(f"SECURITY: Invalid PC name attempted: {pc_name}")
-            return False
-
-        def update_logic(data):
-            active_pcs = data.get('active_pcs', [])
-            if pc_name not in active_pcs:
-                active_pcs.append(pc_name)
-                data['active_pcs'] = active_pcs
-                logging.info(f"Registered new PC: {pc_name}")
-                
-        return SafeJsonIO.update_json(self.settings_file, update_logic)
-
-    def is_gatekeeper_enabled(self) -> bool:
-        settings = self.load_settings()
-        return settings.get('gatekeeper_enabled', True)
-
-    def set_gatekeeper_enabled(self, enabled: bool) -> bool:
-        """Atomic Gatekeeper Toggle"""
-        def update_logic(data):
-            data["gatekeeper_enabled"] = enabled
-            
-        return SafeJsonIO.update_json(self.settings_file, update_logic)
-
-    def trigger_remote_unlock(self, target_pc_name):
-        trigger_file = self.dirs["commands"] / f"UNLOCK_{target_pc_name}.trigger"
-        try:
-            with open(trigger_file, 'w') as f: f.write(f"UNLOCK REQUEST: {time.time()}")
-            return True
-        except Exception as e:
-            logging.exception(f"Trigger remote unlock failed: {e}")
-            return False
-
-    def check_for_unlock_trigger(self):
-        import socket
-        my_pc = socket.gethostname()
-        trigger_file = self.dirs["commands"] / f"UNLOCK_{my_pc}.trigger"
-        if trigger_file.exists():
-            try: 
-                os.remove(trigger_file)
-                return True
-            except Exception as e:
-                logging.warning(f"Failed to remove trigger file: {e}")
-        return False
-    
     # --- BROADCAST SYSTEM ---
-    def post_command(self, cmd_type, target="all", message=""):
+    def post_command(self, cmd_type, target="all", message="", admin_user="", reason=""):
         # One file per command. Named by the second alone, a second command to
         # the same target in the same second (Restart then Shut down, two
         # broadcasts) overwrote the first, which was never seen.
         cmd_id = f"cmd_{int(time.time())}_{target}_{uuid.uuid4().hex[:8]}"
         cmd_file = self.dirs["commands"] / f"{cmd_id}.json"
         data = {
-            "command": cmd_type, 
-            "target": target, 
-            "message": message, 
+            "command": cmd_type,
+            "target": target,
+            "message": message,
+            # Who asked and why: the workstation's question showed
+            # "Administrator ... No reason provided" because neither was sent.
+            "admin_user": admin_user,
+            "reason": reason,
             "timestamp": time.time(),
             "expires": time.time() + 60 # Command valid for 60s
         }
+        # signed_fleet_commands: the Admin Panel holds the studio's key once an
+        # administrator has given their password (slate.core.security.signing).
+        if self.signing_key:
+            from slate.core.security.signing import sign
+            data = sign(data, self.signing_key)
         try:
             with open(cmd_file, 'w') as f: json.dump(data, f)
         except Exception as e:
             logging.exception(f"Failed to post command {cmd_type}: {e}")
+
+    def _share_now(self) -> float:
+        """
+        Now, by the share's clock. A command's age is its file's time on the
+        share against this: "expires" is by the admin PC's clock, so a
+        workstation more than 60 s ahead of it dropped every command. The
+        offset is measured with a small probe file, at most every 10 minutes.
+        """
+        now = time.time()
+        if now - getattr(self, "_clock_at", 0) > 600:
+            import socket
+            probe = self.dirs["commands"] / f".clock_{socket.gethostname()}"
+            try:
+                probe.write_bytes(b"")
+                self._clock_offset = probe.stat().st_mtime - time.time()
+                self._clock_at = now
+            except OSError as exc:
+                logging.debug("Share clock not measured (%s); using this PC's.", exc)
+        return now + getattr(self, "_clock_offset", 0.0)
 
     def get_active_commands(self):
         """Reads all commands valid for this PC."""
@@ -129,24 +111,25 @@ class ServerHub:
             import socket
             my_pc = socket.gethostname()
             commands = []
-            now = time.time()
-            
+
             # Directory Check (Avoid crash if network drive lost)
             if not self.dirs["commands"].exists():
                 return []
+            now = self._share_now()
 
             # Cleanup old commands
             for f in self.dirs["commands"].glob("*.json"):
                 try:
+                    age = now - f.stat().st_mtime
                     # Basic cleanup of old files
-                    if now - f.stat().st_mtime > 120: 
+                    if age > 120:
                         os.remove(f)
                         continue
-                        
+
                     with open(f, 'r') as file:
                         data = json.load(file)
-                        
-                    if data['expires'] > now:
+
+                    if age <= 60:
                         if data['target'] == 'all' or data['target'].lower() == my_pc.lower():
                             commands.append(data)
                 except Exception:

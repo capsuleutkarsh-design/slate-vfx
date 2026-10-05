@@ -87,7 +87,11 @@ def take_backup(pg_dump: Path, target_dir: Path) -> Path | None:
 
     env = dict(os.environ, PGPASSWORD=settings["password"])
     command = [str(pg_dump), "-h", settings["host"], "-p", str(settings["port"]),
-               "-U", settings["user"], "-F", "c", "-b", "-f", str(partial), settings["dbname"]]
+               "-U", settings["user"], "-F", "c", "-b", "-f", str(partial),
+               # The studio's tables only. The server's own part (slate_secure:
+               # hidden passwords, the fleet key) this account may not read,
+               # and the server's backup has it.
+               "--schema=public", settings["dbname"]]
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
         result = subprocess.run(command, capture_output=True, text=True, env=env,

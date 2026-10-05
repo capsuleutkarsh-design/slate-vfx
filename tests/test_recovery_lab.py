@@ -321,8 +321,8 @@ def test_app_password_changed_on_the_server_only(healthy):
     # Recovery: give the database the password the workstations already have.
     lines = lab.session(lab.key).set_app_password(APP_PASSWORD)
     assert lab.can_login("ut_vfx_app", APP_PASSWORD)
-    assert any("EVERY workstation" in l for l in lines), "and it says what to do on them"
-    assert json.loads(lab.credentials.read_text())["db_password"] == APP_PASSWORD
+    assert any("Reconfigure server / database" in l for l in lines), "and it says what to do on them"
+    assert db_credentials.stored()["app_password"] == APP_PASSWORD
     _no_window_left(lab, lab.hardened)
 
 
@@ -453,7 +453,7 @@ def test_a_stale_pool_is_replaced_on_the_next_start(healthy, monkeypatch):
 
     def pool():
         return PgBouncerEngine(str(lab.data), db_port=lab.port, listen_port=lab.pooler_port,
-                               dbname=DBNAME, db_user="ut_vfx_app", db_password=APP_PASSWORD)
+                               dbname=DBNAME, db_user="ut_vfx_app")
 
     render = PgBouncerEngine._render_ini
     # Loopback only in the lab - this test PC is on a real network.
@@ -857,7 +857,8 @@ def test_split_superuser_password_on_keeps_both_logins_and_off_puts_it_back(heal
     session.turn_on("split_superuser_password")
     db_credentials.reload()
     separate = db_credentials.admin_password()
-    assert separate != APP_PASSWORD and _settings(lab)["db_admin_password"] == separate
+    assert separate != APP_PASSWORD and db_credentials.stored()["admin_password"] == separate
+    assert "db_admin_password" not in _settings(lab), "kept protected, not in a settings file"
     assert lab.can_login("postgres", separate)
     assert not lab.can_login("postgres", APP_PASSWORD), "the public password no longer opens it"
     assert lab.can_login("ut_vfx_app", APP_PASSWORD), "workstations untouched"
@@ -883,6 +884,7 @@ def test_split_superuser_password_refused_by_its_precheck_changes_nothing(health
         lab.session(lab.key).turn_on("split_superuser_password")
     assert "Workstations could not connect" in str(refused.value)
     assert "db_admin_password" not in _settings(lab)
+    assert "admin_password" not in db_credentials.stored()
     assert lab.can_login("postgres", APP_PASSWORD)
     assert snapshots.latest_snapshot(lab.layout) is None, "nothing was touched"
 
@@ -900,6 +902,8 @@ def test_split_superuser_password_that_breaks_the_server_login_is_rolled_back(he
     assert not result.applied and result.rolled_back
     assert lab.can_login("postgres", APP_PASSWORD), "the old password is back"
     assert "db_admin_password" not in _settings(lab), "the settings file is back"
+    db_credentials.reload()
+    assert "admin_password" not in db_credentials.stored(), "and the protected store"
     assert _mode(lab, "split_superuser_password") == "off"
 
 

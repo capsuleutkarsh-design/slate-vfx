@@ -12,14 +12,6 @@ sys.path.append(root_dir)
 def verify_imports():
     print("--- Verifying Refactor Imports ---")
     print(f"Running from: {root_dir}")
-    
-    try:
-        print("Importing core.workers.file_ops...")
-        from slate.core.workers import file_ops
-        print("OK")
-    except ImportError as e:
-        print(f"FAILED: {e}")
-        return False
 
     try:
         print("Importing core.workers.structure...")

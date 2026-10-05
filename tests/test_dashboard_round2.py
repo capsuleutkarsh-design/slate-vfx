@@ -184,7 +184,8 @@ class TestSavePath:
 
     def test_a_lead_is_not_blamed_for_someone_elses_change(self, seeded, mock_db):
         """DSH2-012: a stale lead save is a conflict, not a permission breach."""
-        lead = _handler(mock_db, role=["lead"], department_family="roto")
+        from tests.dashboard_util import person
+        lead = _handler(mock_db, role=["lead"], username=person(mock_db, "rl", "Roto Lead"))
         mine = lead.read_shots()[0]
         from slate.gui.tabs.vfx_dashboard_pro.ui.shot_table_model import snapshot
         mine._baseline = snapshot(mine)

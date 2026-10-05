@@ -962,17 +962,33 @@ class DatabaseAuditViewer(QWidget):
 _LEGACY_LINE = re.compile(r"^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]\s+([^:]+):\s?(.*)$")
 
 
-def read_audit_trail(audit_dir=None, legacy_file=None, limit=TRAIL_LIMIT, since=None, until=None):
+def read_audit_trail(audit_dir=None, legacy_file=None, limit=TRAIL_LIMIT, since=None, until=None,
+                     db=None):
     """
-    Everything the audit trail holds, newest first: the daily JSON-lines files
-    of AuditLogger (user and role changes, attendance edits...) and the Admin
-    Panel's own log ('[2026-09-30 11:00:00] admin: Broadcast Alert: ...').
+    Everything the audit trail holds, newest first: the database's append-only
+    trail (slate_secure.audit_trail, when db is given and the server has it),
+    the daily JSON-lines files of AuditLogger (what it wrote while the database
+    could not take it, and everything from before) and the Admin Panel's own
+    log ('[2026-09-30 11:00:00] admin: Broadcast Alert: ...').
     since / until are dates (until inclusive); a daily file outside them is
     not read at all.
     """
     first = since.isoformat() if since else ""
     last = until.isoformat() if until else ""
     entries = []
+    if db is not None:
+        try:
+            rows = db.execute_query(
+                "SELECT to_char(at, 'YYYY-MM-DD HH24:MI:SS') AS time, username AS \"user\", "
+                "kind AS type, status, details FROM slate_secure.audit_trail "
+                "WHERE (%s = '' OR at >= CAST(NULLIF(%s, '') AS date)) "
+                "AND (%s = '' OR at < CAST(NULLIF(%s, '') AS date) + 1) "
+                "ORDER BY id DESC LIMIT %s",
+                (first, first, last, last, int(limit)), fetch="all") or []
+            entries += [{k: str(r.get(k) or "") for k in ("time", "user", "type", "status",
+                                                           "details")} for r in rows]
+        except Exception as exc:
+            logger.debug("The database audit trail was not read: %s", exc)
     if audit_dir is not None:
         folder = Path(audit_dir)
         files = sorted(folder.glob("audit_*.log"), reverse=True) if folder.exists() else []
@@ -1057,10 +1073,11 @@ def trail_details(entry: dict) -> str:
 class AuditTrailViewer(QWidget):
     COLUMNS = ["Time", "User", "Type", "Result", "Details"]
 
-    def __init__(self, audit_dir=None, legacy_file=None):
+    def __init__(self, audit_dir=None, legacy_file=None, db=None):
         super().__init__()
         self.audit_dir = audit_dir
         self.legacy_file = legacy_file
+        self.db = db
         self.entries = []
         self.capped = False
         layout = QVBoxLayout(self)
@@ -1110,7 +1127,7 @@ class AuditTrailViewer(QWidget):
         since, until = self.date_range.dates()
         try:
             entries = read_audit_trail(self.audit_dir, self.legacy_file, limit=TRAIL_LIMIT + 1,
-                                       since=since, until=until)
+                                       since=since, until=until, db=self.db)
         except Exception as exc:
             logger.exception("Audit trail could not be read: %s", exc)
             entries = []
@@ -1195,7 +1212,7 @@ class UnifiedLogViewer(QWidget):
         self.tabs = QTabWidget()
         self.sys_logs = SystemLogViewer(log_root)
         self.db_audit = DatabaseAuditViewer(self.db_manager)
-        self.audit_trail = AuditTrailViewer(audit_dir, audit_file)
+        self.audit_trail = AuditTrailViewer(audit_dir, audit_file, db=self.db_manager)
 
         self.tabs.addTab(self.sys_logs, "Workstation logs")
         self.tabs.addTab(self.db_audit, "Change history")

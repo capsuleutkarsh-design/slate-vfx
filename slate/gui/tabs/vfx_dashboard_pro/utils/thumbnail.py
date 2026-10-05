@@ -230,12 +230,16 @@ class ThumbnailGenerator:
             logger.warning("ThumbnailGen: blocking ffmpeg call prevented on GUI thread for %s", source_path)
             return False
 
+        # Written beside its final name and moved into place when finished:
+        # a stump left by the 30 s timeout counted as "made" for ever.
+        from slate.core.domain.proxy_manager import ProxyManager
+        partial = ProxyManager._partial_name(Path(dest_path))
         try:
             # -y: overwrite, -i: input, -vf: scale, -vframes 1, -q:v 5
             cmd = [
                 self.ffmpeg_path, '-y', '-i', source_path,
                 '-vf', 'scale=300:-1', '-vframes', '1', '-q:v', '5',
-                dest_path
+                str(partial)
             ]
             creationflags = 0x08000000 if os.name == 'nt' else 0
             subprocess.run(
@@ -246,9 +250,10 @@ class ThumbnailGenerator:
                 creationflags=creationflags,
                 timeout=30,
             )
-            return True
+            return ProxyManager._commit_partial(partial, Path(dest_path))
         except (subprocess.SubprocessError, OSError, ValueError) as e:
             logger.warning("FFmpeg thumbnail generation failed for %s: %s", source_path, e)
+            ProxyManager._discard(partial)
             return False
 
     @staticmethod

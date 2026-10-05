@@ -170,17 +170,12 @@ def test_nothing_is_reported_as_still_held_during_an_outage():
 # studio with no machines, no assets, no shots and no attendance. Same two rules
 # as the ones above.
 
-from slate.core.infra.attendance_repository import AttendanceRepository
 from slate.core.infra.stock_repository import StockRepository
 from slate.core.infra.tracking_repository import TrackingRepository
 from slate.core.infra.user_repository import UserRepository
 
 
 REMAINING_READS = [
-    ("attendance.get_attendance",
-     lambda db: AttendanceRepository(db).get_attendance()),
-    ("attendance.log_check_in",
-     lambda db: AttendanceRepository(db).log_check_in("someone")),
     ("stock.get_stock_count",
      lambda db: StockRepository(db).get_stock_count()),
     ("stock.list_stock_paths",

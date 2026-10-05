@@ -1717,13 +1717,17 @@ class TesterPanel(QWidget):
         Python lists such as "['ALL', 'Admin Panel']" with internal 'can:' tokens.
         """
         from ..core.domain import permissions_catalog as pc
+        from ..core.domain.access import by_name
         labels = {a.key: a.label for a in pc.ABILITIES}
         rows = []
         for role, perms in sorted((roles_config or {}).items(), key=lambda kv: kv[0].lower()):
             perms = list(perms or [])
             full = pc.has_all(perms)
             tabs = {t.label: full or t.key in perms for t in pc.TABS}
-            abilities = sorted(labels.get(a, a) for a in pc.abilities_in(perms))
+            # With what access.json gives the role by name, which the
+            # matrix left out.
+            given = pc.abilities_in(perms) | (by_name(role) & set(pc.ABILITY_KEYS))
+            abilities = sorted(labels.get(a, a) for a in given)
             text = "Full access" if full else ", ".join(abilities)
             rows.append((role, tabs, text))
         return rows

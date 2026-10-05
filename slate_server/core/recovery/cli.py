@@ -6,6 +6,9 @@ Recover Slate - command line.
     Recover Slate.bat reset-password admin
     Recover Slate.bat restore-admin [admin]
     Recover Slate.bat set-app-password
+    Recover Slate.bat show-app-password                (prints the passwords - for the admin)
+    Recover Slate.bat publish-app-password             (workstations learn it; nothing changes)
+    Recover Slate.bat switch-app-password              (to the published one, checked first)
     Recover Slate.bat set-superuser-password
     Recover Slate.bat switches-off [name ...]          (no names: every switch)
     Recover Slate.bat restore-snapshot [--accounts] [--list]
@@ -18,7 +21,8 @@ Options for all of them: --data-dir <the database folder>, --port <n>.
 
 The Recovery Key and new passwords are always asked for at the prompt (they are
 never taken from the command line, where other programs could read them) and
-are never printed back or logged.
+are never printed back or logged - except by show-app-password, after the key,
+which is there to show the database password to the admin setting up a PC.
 """
 
 from __future__ import annotations
@@ -99,6 +103,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     admin = sub.add_parser("restore-admin")
     admin.add_argument("username", nargs="?", default="admin")
     sub.add_parser("set-app-password")
+    sub.add_parser("show-app-password")
+    sub.add_parser("publish-app-password")
+    sub.add_parser("switch-app-password")
     sub.add_parser("set-superuser-password")
     off = sub.add_parser("switches-off")
     off.add_argument("names", nargs="*")
@@ -158,6 +165,12 @@ def main(argv: Optional[List[str]] = None) -> int:
                                                                    % args.username))
         elif args.command == "set-app-password":
             session.set_app_password(_ask_new_password("database app password"))
+        elif args.command == "show-app-password":
+            session.show_app_password()
+        elif args.command == "publish-app-password":
+            session.publish_app_password()
+        elif args.command == "switch-app-password":
+            session.switch_app_password()
         elif args.command == "set-superuser-password":
             session.set_superuser_password(_ask_new_password("superuser password"))
         elif args.command == "switches-off":

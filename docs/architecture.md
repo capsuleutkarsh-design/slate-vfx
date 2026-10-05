@@ -123,7 +123,7 @@ Layered, lowest priority first. Each layer overrides the one above it:
 
 1. `GlobalConfig.DEFAULTS` — hard-coded
 2. `slate/default_config.json` — shipped with the source. **Settings only, no credentials.**
-3. `slate/config.json` — written by `setup.bat`, git-ignored, **this is where the password lives**
+3. `slate/config.json` — written by `setup.bat`, git-ignored
 4. `client_config.json` — per-site overrides
 5. `%LOCALAPPDATA%\Slate\config.json` — per-machine
 
@@ -135,6 +135,20 @@ Windows Credential Manager, the encrypted file from `tools/setup_credentials.py`
 maintenance scripts and the SQLAlchemy factory all use it. Maintenance scripts import it rather than carrying a literal —
 this repository is public, and a password in source is a disclosure.
 
+**Where the password is kept (2.2.0).** A workstation keeps it in Windows
+Credential Manager (`keyring "Slate"/"db_password"`), never in a config file:
+a password found in a config.json is moved there after it has connected —
+stored, read back, and only then removed from the file. The server keeps the
+studio's passwords in `slate_recovery\db_secrets.dat` beside the database
+(Windows DPAPI, machine scope; `slate_server/core/db_credentials.py`). Each
+studio's password is made by its own server; none is shipped. To change it
+without cutting anybody off, the server publishes the next one in the database
+(`app_password_next`), workstations learn it into Credential Manager
+(`db_password_next`, reported in `app_password_learned`), and Recover Slate
+switches when they all have it; a refused workstation then tries the one it
+learned. PgBouncer holds no password at all: it logs in to PostgreSQL with each
+client's own SCRAM proof.
+
 ---
 
 ## Threads
@@ -144,7 +158,7 @@ Anything that touches a disk, a network or FFmpeg runs off the main thread.
 
 There are roughly thirty worker classes; the pattern is consistent:
 
-- **`QThread` subclasses** for long jobs that report progress — `IngestWorker`, `MoveScanWorker`, `ProxyBuildWorker`, `ExcelLoadWorker`.
+- **`QThread` subclasses** for long jobs that report progress — `IngestWorker`, `ProxyBuildWorker`, `ExcelLoadWorker`.
 - **`QRunnable` on a pool** for many small jobs — `ImageLoaderTask` for thumbnails.
 - **`GlobalTaskRegistry`** (`core/infra/task_registry.py`) keeps track of what is running so shutdown can stop it.
 

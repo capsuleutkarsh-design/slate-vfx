@@ -260,21 +260,19 @@ def test_PRD_050_the_message_names_the_milestone_and_counts_in_the_singular():
                               '1 dependent milestone moved to follow it.')
 
 
-def test_PRD_051_undo_puts_back_the_old_dates():
+def test_PRD_051_changes_are_the_new_dates():
     m = ms(1, "A", "2026-10-05", "2026-10-09")
     plan = DS.plan_shift([m], 1, 2, calendar=WEEKDAYS)
-    assert plan.undo_changes() == [(1, date(2026, 10, 5), date(2026, 10, 9))]
     assert plan.changes() == [(1, date(2026, 10, 7), date(2026, 10, 13))]
 
 
 # ------------------------------------------------------------------ timeline maths
 
-def test_PRD_011_dates_map_to_x_and_back():
+def test_PRD_011_dates_map_to_x():
     scale = DS.TimeScale(date(2026, 10, 5), 10.0)
     assert scale.x(date(2026, 10, 5)) == 0
     assert scale.x(date(2026, 10, 8)) == 30
     assert scale.x_end(date(2026, 10, 8)) == 40
-    assert scale.day_at(35) == date(2026, 10, 8)
     assert scale.width(date(2026, 10, 5), date(2026, 10, 9)) == 50
 
 

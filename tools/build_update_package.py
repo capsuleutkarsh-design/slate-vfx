@@ -12,6 +12,7 @@ from slate.core.updater.manifest import (          # noqa: E402
     build as build_manifest,
     manifest_name,
     releases_dir as releases_dir_for,
+    sign as sign_manifest,
 )
 
 
@@ -184,6 +185,9 @@ def build_single_target(target="vfx", project_root=None):
         target=app_target,
         built_from=target,
     )
+    # signed_updates: the owner's key, as tools/release_publisher.py --key.
+    if os.environ.get("SLATE_RELEASE_KEY"):
+        external_manifest = sign_manifest(external_manifest, os.environ["SLATE_RELEASE_KEY"])
 
     external_manifest_path = releases_dir / manifest_name(app_target)
     with open(external_manifest_path, "w", encoding="utf-8") as f:

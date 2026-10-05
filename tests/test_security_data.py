@@ -75,16 +75,16 @@ def test_excel_backup_is_neutralised_and_reads_back(tmp_path):
     assert ExcelHandler(str(path), project).write_shots([shot])
 
     book = load_workbook(path)
-    assert book["MASTER"]["C3"].value == "'" + evil
+    # Stored as text, shown as typed: no formula, and no apostrophe on show.
+    assert book["MASTER"]["C3"].value == evil
     assert book["MASTER"]["C3"].data_type == "s"
-    assert all(not str(c.value or "").startswith(("=", "-")) for row in book["FEEDBACK_LOG"].iter_rows()
-               for c in row)
+    assert all(c.data_type != "f" for ws in book.worksheets for row in ws.iter_rows() for c in row)
 
     got = ExcelHandler(str(path), project).read_shots()[0]
     assert got.description == evil
     assert got.feedback_client[0].text == "-fix " + evil
     assert ExcelHandler(str(path), project).write_shots([got])      # a second save does not double up
-    assert load_workbook(path)["MASTER"]["C3"].value == "'" + evil
+    assert load_workbook(path)["MASTER"]["C3"].value == evil
 
 
 def test_fleet_reports_are_neutralised(tmp_path):
@@ -99,9 +99,10 @@ def test_fleet_reports_are_neutralised(tmp_path):
 
     export_fleet_xlsx(str(tmp_path / "f.xlsx"), records, summary, 0,
                       columns=svc.columns_of(records), header_for=svc.header_for)
-    values = [c.value for ws in load_workbook(tmp_path / "f.xlsx").worksheets
-              for row in ws.iter_rows() for c in row if c.value]
-    assert "'=cmd|' /C calc'!A0" in values and "=cmd|' /C calc'!A0" not in values
+    cells = [c for ws in load_workbook(tmp_path / "f.xlsx").worksheets
+             for row in ws.iter_rows() for c in row if c.value]
+    assert "=cmd|' /C calc'!A0" in [c.value for c in cells]
+    assert all(c.data_type != "f" for c in cells)
 
 
 # ------------------------------------------------------------ SHL-120

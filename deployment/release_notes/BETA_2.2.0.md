@@ -17,6 +17,7 @@ Nothing needs an internet connection. Every dependency is inside the installer, 
 1. Back up the studio database (Slate Server → Operations → Back up now).
 2. Install **Slate Server 2.2.0** on the server PC. The first start shows the **Recovery Key once**. Write it down and keep it with a printed copy of `docs/RECOVERY.md`. It is the way back in if nobody can sign in.
 3. Install Studio or Ops 2.2.0 on one HR or admin workstation, sign in, and check Users & Roles and Attendance. Then install the rest.
+4. When every workstation is on 2.2.0 and has opened Slate once, switch the studio to its own database password. See **The database password** under Security.
 
 The database is upgraded on the first start, as described under **Upgrading from 2.0.32** below.
 
@@ -38,6 +39,28 @@ The database is upgraded on the first start, as described under **Upgrading from
 - **A fix that could stop somebody is behind a switch, and every switch starts OFF.** You turn switches on yourself, one at a time, from **Recover Slate** on the server PC with the Recovery Key. Turning one on first checks that people can still get in. It takes a snapshot so it can be undone, and it is rolled back by itself if the check afterwards fails.
 - **The Recovery Key is the way back in when nothing else works.** Read `docs/RECOVERY.md` and keep a printed copy with the key.
 
+### The database password
+
+Every copy of Slate before 2.2.0 shipped with the same database password, and it is public. Now:
+
+- **Each studio has its own password.** Slate Server makes a strong random one when it sets up a new database. It is kept on the server PC only, encrypted by Windows (`slate_recovery\db_secrets.dat` beside the database). No password ships with Slate any more.
+- **Workstations keep the password in Windows Credential Manager, not in `config.json`.** A password already in a `config.json` is moved there the first time the workstation connects. It is removed from the file only after Credential Manager has read it back, so a PC whose Credential Manager does not work keeps its file as it was.
+- **PgBouncer holds no password.** `pgbouncer.ini` used to carry the workstations' password in plain text. The pool now logs in to the database with each person's own proof, and its user list holds only one-way verifiers.
+- **A workstation without the password says so**, and says where to get it: on the server PC, **Recover Slate > Database passwords > Show app password**; on the workstation, **Reconfigure server / database** on the sign-in screen.
+- **Recover Slate can show, publish and switch the password.** **Publish a new app password** lets workstations learn a new one; **Show app password** lists who has it; **Switch to the published password** changes it once they all do. It is checked before and after, a snapshot is taken first, and it undoes itself if the server cannot get in afterwards. **Set app password (workstations)** still changes it at once.
+
+**When you upgrade an existing studio, in this order:**
+
+1. Install **Slate Server 2.2.0** and start it. It keeps the old shipped password for now, so nobody is cut off, and it publishes a new password of the studio's own. The health check warns "Studio password" until step 4.
+2. Install 2.2.0 on **every** workstation and open Slate on each one once. Each one moves its password into Credential Manager and learns the new one. Nothing changes for the person using it.
+3. On the server PC, open **Recover Slate**, unlock it, and press **Show app password**. It lists the workstations that have the new password. Wait until every one is listed. A workstation that is off is not listed: open Slate on it first.
+4. Write the new password down and keep it with the Recovery Key. Press **Switch to the published password**, best at a quiet moment. The workstations that learned it carry on by themselves. Anyone who had Slate open may need to restart it.
+5. Any workstation that missed it says it does not have the password. Click **Reconfigure server / database** on its sign-in screen and type the password **Show app password** gives.
+
+If something goes wrong after step 4, **Show app password** also lists the previous password. **Set app password (workstations)** with that one puts everything back as it was.
+
+A **new** studio needs none of this: the server makes the studio's password itself. Give it to each new workstation with **Reconfigure server / database**.
+
 ### Fixed in this release (no switch needed)
 
 **The server**
@@ -51,6 +74,7 @@ The database is upgraded on the first start, as described under **Upgrading from
 - **The test accounts artist/artist123 and tester/tester123 are no longer created** on a new database.
 - **Old password formats are upgraded at sign-in.** A password stored as plain text, or in the old unsalted format, is re-stored securely the next time that person signs in.
 - **Every sign-in is recorded** in the audit log: success, and each failure with the reason, but never the password.
+- **The audit trail is in the database, and nothing can change or delete it.** Workstations can only add lines and read them; the database refuses edits and deletions, even by accident, and stamps each line with the server's clock. Only when the database cannot take a line (an older server, an outage) does it go to the file on the share, as before, and the Audit Logs screen shows both. A share that is down no longer slows signing in. Slate Server sets this up when it starts, so **start Slate Server 2.2.0 once before the workstations**.
 - **Resetting someone's password needs 8 characters and makes them choose their own at their next sign-in.** New passwords need 8 characters. Existing shorter passwords still work.
 - **A wrong password waits one second before you can try again.** Nobody is ever locked out for wrong tries.
 - The sign-in screen no longer names the default login.
@@ -70,28 +94,22 @@ Open **Recover Slate** on the server PC, unlock it with the Recovery Key, and us
 
 | Switch | What it does when on | Before turning it on |
 |---|---|---|
-| `split_superuser_password` | The database superuser gets its own password, kept on the server PC only. Workstations keep theirs. | Press **Restart pool** afterwards. |
+| `split_superuser_password` | The database superuser gets its own password, kept on the server PC only. Workstations keep theirs. | Nothing: the running pool picks it up. If Recover Slate says it did not, press **Restart pool**. |
 | `strict_pg_hba` | The superuser can connect only from the server PC. Workstations can reach only the studio database. | Refused while a workstation is connected as the superuser. |
 | `refuse_inactive_signin` | People who are deactivated, or past their last working day, cannot sign in. `admin` and `developer` are always exempt. | Check Users & Roles for anyone wrongly marked as left. |
 | `no_plaintext_passwords` | Passwords in the old formats no longer open an account. | Refused while any active account still has one: let everybody sign in once first. |
 | `no_default_accounts` | admin/admin123 is never created or brought back. The first-run screen points to Recover Slate instead. | Make sure you have the Recovery Key. |
 | `no_sqlite_fallback` | When the server is down, workstations do not open the local copy, which has its own admin/admin123. | With this on, nobody can work while the server is down. |
-
-`signed_fleet_commands`, `signed_updates` and `pgbouncer_hba` are listed but not built yet; turning them on is refused.
+| `hide_password_hashes` | Password hashes leave the accounts table for a part of the database the workstations cannot read; the database checks passwords itself. The Data Center, the SQL console and tricks like `row_to_json` show nothing. | **Every workstation must run 2.2.0 first:** an older Slate cannot check a hidden password. A workstation cut off from the server cannot sign anybody in from its local copy while this is on. Turning it on proves a real sign-in before and after with a temporary account, and that no stored password changed; turning it off moves the hashes back. |
+| `signed_fleet_commands` | Broadcasts, restarts and shut downs carry a signature; workstations ignore any command file without a valid one. Anyone who can only write to the share can no longer send them. | Every admin's Slate must be 2.2.0. The admin types their own password once per session before the first command; only active administrators get the studio's signing key. Use **Log only** first and look for "would be refused" in the workstations' logs. |
+| `signed_updates` | Workstations install only updates signed with the owner's release key. | Make the release key and ship its public half in a build first (`docs/development.md`, "Signing updates"); turning this on is refused until the build has one. The installer always works by hand. |
+| `pgbouncer_hba` | The connection pool's admin console works from the server PC only, and workstations reach only the studio database through the pool. The running pool picks it up at once. | Refused while somebody uses the pool's console from another PC. |
 
 ### Still open (planned)
 
-- **The database password `Tango$`** is still the shipped default. It is public. Changing it safely is planned for **2.3**:
-  1. workstations read the password from Windows' protected store;
-  2. the new password is rolled out to every workstation;
-  3. it is changed on the server;
-  4. it is removed from the repository's history.
-
-  Doing it in any other order disconnects every PC.
-- **Fleet commands and updates on the share are not yet signed**, so anyone who can write to that share folder can post them.
-- **Permissions are checked in the app, not by the database.** Anyone with the database password can bypass them. This changes after the password is protected.
-- **The audit trail is still a file on the share.** It moves to the database together with that change.
-- **A crafted SQL console query can still show a password hash** (for example `row_to_json`). This needs a database account that cannot read that column.
+- **The old shipped database password is still in the repository's history.** No studio needs it once it has switched (see **The database password**). Removing it from the history is the owner's decision.
+- **Permissions are checked in the app, not by the database.** Anyone with the database password can bypass them, including making themselves an administrator, which would also get them the fleet signing key. The password is now each studio's own and kept in Windows' protected store, which makes it much harder to get.
+- **The workstations' database account still owns the studio's tables,** so someone with the database password could drop or empty them (backups are the way back). Taking that away means the database changes Slate makes on upgrade must run on the server instead of the workstations. It already cannot create accounts, databases or roles.
 
 ## Found by testing with the real tools
 
@@ -165,6 +183,39 @@ These were decided in several places that disagreed. Each is now decided once, s
 
 The test database no longer has its own copy of the dashboard's save code, so the tests now check the code the studio runs.
 
+## Fixed before rollout
+
+**Signing in and the server**
+- **Reconfigure server / database on the sign-in screen now sticks.** On a machine set up with `setup.bat`, the new server went back to the old one at the next start. It is now saved in the same file setup.bat and Settings use.
+- **Slate Server's daily comp-off job really runs.** It never read the studio's own rules, so it always thought comp off was switched off, and it could look in the wrong database. It now reads the studio database. In the same daily run, comp off nobody used in time lapses, with "(lapsed unused)" in the ledger.
+
+**Restart, shut down and messages to workstations**
+- **The person at the PC is told who asked and why.** Restart and Shut down said "No reason provided" every time. The admin's name is now sent, and the admin is asked for a reason (optional) that is shown on the PC.
+- **A workstation whose clock runs ahead still gets commands.** A PC more than a minute ahead of the admin's PC dropped every restart, shut-down and message. The age of a command is now measured by the shared folder's own clock.
+
+**Roles, people and Settings**
+- **Roles & Permissions shows what each role really has.** Some abilities come with a role's name (for example every Lead may edit the dashboard). They showed unticked, and unticking them did nothing. They now show ticked and locked, and the tooltip says they come with the role name and where that is set. The Tester Panel's permission list shows them too.
+- **Users & Roles is offered only to people who can use it.** A role with only the HR tab saw it in the sidebar and opened it onto "You do not have permission".
+- **No empty "ADMINISTRATION" heading** in the sidebar for people with nothing under it.
+- **The studio logo is one logo for the whole studio.** It was saved per workstation, so each PC showed its own or none. A logo set on a PC before this release still shows there until someone saves one in Settings. Use a path every PC can reach, such as `\\server\share\logo.png`.
+- **A lead's department comes from their own record in Users & Roles**, not from what the screen sends.
+
+**Attendance**
+- **Signing in on a day of approved full-day leave no longer punches you in.** Punching in by hand still works, after asking.
+
+**VFX Dashboard, Timeline Viewer and exports**
+- **Each project has its own frame rate for image sequences** (Edit project → Frame rate, 24 until changed). The lineup, EDLs, review proxies and the player use it. Movies keep their own rate. After changing it, use "Rebuild all" for proxies made at the old rate.
+- **"Export to Excel" on a project kept only in Excel** said it had exported shots when it wrote nothing. It now says every save already goes to that file.
+- **Excel files no longer show an apostrophe** in front of text that starts with `=`, `+`, `-` or `@`. The cell is stored as plain text instead, which Excel never runs. CSV files keep the apostrophe, which is how CSV stays safe. Backups made by earlier versions still restore exactly.
+- **A dashboard thumbnail cut short** (by the 30-second limit) no longer leaves a broken picture that counts as made for ever.
+
+**Housekeeping on each PC**
+- **"Clear temporary files" and the automatic clean-up keep the caches.** They emptied the thumbnail cache, local review proxies, the RV playlist and the stock library cache every day. Now they remove only Slate's own temporary files: the player's frame lists and pictures or proxies left half-written.
+
+**Installing and updating**
+- **setup.bat writes `config.json` without the invisible marker** at its start that older Slate versions could not read.
+- **An update's safety copy now keeps folders inside the program** that happen to be called `database`, `logs`, `tmp`, `Cache` or `Backups`. Only the ones at the top of the install folder (the studio's own files) are left out.
+
 ## Removed
 
 - **Olive.** It is no longer developed. The Timeline Viewer now:
@@ -175,11 +226,12 @@ The test database no longer has its own copy of the dashboard's save code, so th
   The Studio installer is about 70 MB smaller.
 - **Wipe caches** in the Admin Panel. It never reached any workstation. The Wipe fleet caches permission went with it.
 - **The web API**, with the Admin Panel's "Start API gateway" and Slate Server's web dashboard. Nothing in Slate used it, and it was a way into the studio network. Two web libraries (FastAPI and uvicorn) went with it.
-- **Code that nothing used,** including an unused "similar assets" search.
+- **Code that nothing used,** including an unused "similar assets" search. Before rollout about 45 more unused files went: old scripts, a video exporter, a continuity checker, an unused notification pop-up, an asset tracker for a table that never existed, and unused parts of the dashboard, attendance, scheduling and bidding code. Nothing anybody can see or use has changed.
+- **Five settings in `default_config.json` that nothing read** (`THEME`, `update_manifest_url`, `network_timeout_ms`, `max_semantic_connections`, `gatekeeper_enabled`).
+- **`update_notify`**, a workstation command nothing sent or handled.
 
 ## Known limits of 2.2.0
 
-- **The automatic punch-in at sign-in** still punches in on a day of approved full-day leave.
 - See also **Still open** under Security, and the **Known limits** from 2.1.0 below.
 
 ---
@@ -326,7 +378,7 @@ On each machine, a settings file damaged by the old `&` / apostrophe bug is also
 - **Stock Viewer: deleted assets stay deleted.** Delete hides the asset and offers Undo. After 24 hours its cached thumbnail and proxy, favourites and picks are removed, but Slate remembers the file was deleted, so **Rescan** and ingest no longer bring it back. People who can ingest into the library find deleted assets under **Removed** and can restore them at any time. Importing an exported library still brings a deleted file back, because that is a deliberate act. **Clear library** asks you to type `CLEAR` and forgets everything, including the deleted list and the ingest folders.
 - **Stock search matches the start of words only.** "plosion" no longer finds "explosion", and "HD" no longer finds "UHD". Names, tags, category, folders, resolution, frame rate, codec and kind ("movie", "image sequence") are all searched. A term with no letters or digits (`_`, `%`) is still matched anywhere.
 - **Stock stills play the original file.** EXR, HDR and DPX stills are no longer shown from an 8-bit proxy, so the colour controls appear. Proxies are used only for movies and image sequences. Sound and 3D files are not taken into the library; the ingest summary names them.
-- **Timeline Viewer** reads each movie plate's frame rate and length from the file. Image sequences are played and written at 24 fps, because Slate has no project frame-rate setting yet.
+- **Timeline Viewer** reads each movie plate's frame rate and length from the file. Image sequences are played and written at the project's frame rate (24 until set in Edit project).
 - **New shot names follow one rule everywhere:** Add Shots, Build & Ingest, CAP Rename's stitch names and "Create shots from bid". Names may use letters, digits, `_`, `-` and `.`, with no spaces, up to 64 characters. Shots you already have are never refused.
 - **Olive is removed.** It is no longer developed, so the Timeline Viewer no longer writes Olive timelines or opens Olive. **Open in RV** plays the lineup instead, and **Export EDL** writes CMX 3600 EDLs to `<project>/editorial/lineups` for Resolve, Premiere or Avid. Old `.ovexml` files there are left alone. The Studio installer is about 70 MB smaller.
 - **Auto-publish** fires only when a shot changes to Approved, and asks first. On new projects the output folder is `08_Deliver`. It copies only the shot's current (else newest) version folder, and only media files, keeping sub-folders.
@@ -989,7 +1041,6 @@ On each machine, a settings file damaged by the old `&` / apostrophe bug is also
 - Shot names in non-Latin scripts are spelled out from the letters' names and marked "check it". This is not a real transliteration, so check them before you ingest.
 - CAP Rename reorders with **Move up / Move down** and sorting. Rows cannot be dragged.
 - **Review proxies stay in a `proxy` folder next to the frames** (for plates, inside the scan version, for example `01_Scan\v001\EXR\proxy`). Help says exactly where. Stock proxies are kept apart, in the server's `Cache` folder.
-- Image sequences play, and are timed in EDLs, at 24 fps, because projects have no frame-rate setting yet. Movie plates use their own rate.
 - Importing an exported stock library brings back files that were deleted.
 
 **Scheduling and Bidding**

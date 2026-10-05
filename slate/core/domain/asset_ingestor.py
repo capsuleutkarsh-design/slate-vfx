@@ -157,7 +157,6 @@ class IngestWorker(QThread):
     progress_signal = Signal(int, str)          # percent (-1 = still scanning), text
     asset_processed_signal = Signal(dict)
     assets_batch_signal = Signal(list)          # new assets, shown as "being analysed"
-    asset_update_signal = Signal(dict)          # legacy: one analysed asset
     assets_update_batch_signal = Signal(list)   # analysed assets, in groups
     finished_signal = Signal(bool, str)
     # What happened, for the person: added, refreshed, skipped, failed, stopped.

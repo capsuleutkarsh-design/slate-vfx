@@ -30,8 +30,10 @@ def get_url():
     port = gc.get('db_port', 5440)
     db = gc.get('db_name', 'ut_vfx')
     user = gc.get('db_user', 'postgres')
-    pwd = gc.get('db_password', 'utkarsh@123')
-    return f"postgresql://{user}:{pwd}@{host}:{port}/{db}"
+    from slate.core.infra.local_secrets import db_password
+    pwd = db_password()   # this PC's own password; there is no built-in one
+    from urllib.parse import quote
+    return f"postgresql://{user}:{quote(pwd, safe='')}@{host}:{port}/{db}"
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""

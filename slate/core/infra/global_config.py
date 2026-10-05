@@ -213,14 +213,44 @@ class GlobalConfig:
         if cls._instance is None:
             cls._instance = GlobalConfig()
         cls._instance.data[key] = value
+        if key == "db_password":
+            # Windows Credential Manager, not config.json (SYS-110).
+            from .local_secrets import save_db_password
+            save_db_password(value)
+            return
         cls._instance.save()
 
+    @classmethod
+    def save_connection(cls, values: dict) -> None:
+        """
+        Keep what Reconfigure server / database was given.
+
+        The database keys go through local_secrets.write_local_config, the one
+        writer whose file GlobalConfig reads last. GlobalConfig.set wrote them
+        under LOCALAPPDATA, where slate/config.json (setup.bat) overrode them
+        at the next start. SERVER_ROOT stays per machine, as in Settings.
+        """
+        from slate.core.infra.local_secrets import write_local_config
+        db = {k: values.get(k) for k in ("db_host", "db_port", "db_name", "db_user")}
+        if values.get("db_password"):
+            db["db_password"] = values["db_password"]
+        if cls._instance is None:
+            cls._instance = GlobalConfig()
+        cls._instance.data.update({k: v for k, v in db.items() if v is not None})
+        write_local_config(db)
+        cls.set("SERVER_ROOT", values["SERVER_ROOT"])
+
     def save(self):
-        """Save configuration to JSON file."""
+        """Save configuration to JSON file - never the protected database password."""
         try:
+            data = dict(self.data)
+            if "db_password" in data:
+                from .local_secrets import protected_password
+                if protected_password():
+                    data.pop("db_password")
             self.config_path.parent.mkdir(parents=True, exist_ok=True)
             with open(self.config_path, 'w') as f:
-                json.dump(self.data, f, indent=4)
+                json.dump(data, f, indent=4)
         except Exception as e:
             logging.warning("GlobalConfig: could not save config to %s (%s)", self.config_path, e)
 

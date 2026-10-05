@@ -93,7 +93,8 @@ def test_passbook_backup_opens_in_openpyxl_and_restores_every_field(tmp_path):
     row = {r[col["shot_name"] - 1].value: r for r in ws.iter_rows(min_row=3)}
     sh010 = row["SH010"]
     assert sh010[col["frames"] - 1].value == 48
-    assert sh010[col["sow"] - 1].value == "'=1+1"
+    # Stored as text, shown as typed (the apostrophe used to show in Excel).
+    assert (sh010[col["sow"] - 1].value, sh010[col["sow"] - 1].data_type) == ("=1+1", "s")
     assert isinstance(sh010[col["target"] - 1].value, datetime)
     assert sh010[col["target"] - 1].value.date() == date(2026, 10, 5)
     assert sh010[col["comp_bid"] - 1].value == 2.5

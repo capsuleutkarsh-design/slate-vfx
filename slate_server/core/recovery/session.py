@@ -144,6 +144,48 @@ class RecoverySession:
         return self._in_window("set-app-password", lambda conn: actions.set_app_password(
             conn, new_password, self.layout))
 
+    def publish_app_password(self) -> List[str]:
+        """A new app password for the workstations to learn; nothing changes yet."""
+        return self._in_window("publish-app-password", actions.publish_app_password)
+
+    def show_app_password(self) -> List[str]:
+        """The passwords, for the admin. Unlocked only; nothing is changed."""
+        self._need_unlocked()
+        import psycopg2
+        from slate_server.core.db_credentials import connect_kwargs
+        conn = None
+        try:
+            conn = psycopg2.connect(**connect_kwargs(self.layout.port, connect_timeout=4))
+        except Exception:
+            pass                                   # the list of learners needs it, nothing else
+        try:
+            lines = actions.app_password_lines(conn)
+        finally:
+            if conn is not None:
+                conn.close()
+        self._log("show-app-password", True)
+        for line in lines:
+            self.say(line)
+        return lines
+
+    def switch_app_password(self) -> List[str]:
+        """To the published password, through apply_hardening_step. Raises when refused."""
+        self._need_unlocked()
+        from .hardening import switch_app_password
+        try:
+            who = getpass.getuser()
+        except Exception:
+            who = "?"
+        result = switch_app_password(self.layout, by="recovery tool (%s)" % who)
+        self._log("switch-app-password", result.applied,
+                  "" if result.applied else result.message.splitlines()[0][:200])
+        lines = [result.message] + list(result.details)
+        if not result.applied:
+            raise actions.RecoveryRefused("\n".join(lines))
+        for line in lines:
+            self.say(line)
+        return lines
+
     def set_superuser_password(self, new_password: str) -> List[str]:
         return self._in_window("set-superuser-password",
                                lambda conn: actions.set_superuser_password(
@@ -167,6 +209,11 @@ class RecoverySession:
             # After the window: while it is open the file is its temporary rule.
             from .hardening import undo_strict_pg_hba
             for line in undo_strict_pg_hba(self.layout):
+                self.say(line)
+                lines.append(line)
+        if names is None or "pgbouncer_hba" in names:
+            from .hardening import undo_pgbouncer_hba
+            for line in undo_pgbouncer_hba(self.layout):
                 self.say(line)
                 lines.append(line)
         return lines

@@ -23,9 +23,169 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Read once; the settings files do not change while the server runs.
+# Read once; the settings files do not change while the server runs. The
+# protected store can (Recover Slate is another process), so its file's time
+# is part of what the cache is for.
 _cache: Optional[dict] = None
+_cache_key = None
 _sources: list = []
+
+
+# ------------------------------------------------ the protected store
+#
+# The studio's database passwords live on the server PC only, encrypted with
+# Windows DPAPI (machine scope) in slate_recovery\db_secrets.dat beside the
+# database - the folder only administrators and the server's own account can
+# read. Machine scope rather than one Windows account's Credential Manager, so
+# Recover Slate run by another administrator reads and writes the very
+# passwords the server uses: two different copies is how a server ends up
+# locked out of its own database.
+#
+#   app_password           the workstations' (ut_vfx_app)
+#   admin_password         the superuser's, once split_superuser_password gave it its own
+#   app_password_next      published for the workstations to learn, not in use yet
+#   app_password_previous  the one before the last switch, to set back if ever needed
+
+SECRETS_NAME = "db_secrets.dat"
+_secrets_path: Optional[Path] = None
+_adopted = ""          # proved at start-up but not storable (see adopt)
+
+
+def use_data_dir(data_dir) -> None:
+    """The server's database folder; its protected store sits beside it."""
+    global _secrets_path, _cache
+    _secrets_path = Path(data_dir).parent / "slate_recovery" / SECRETS_NAME
+    _cache = None
+
+
+def _dpapi(data: bytes, protect: bool) -> bytes:
+    """Windows DPAPI, machine scope, no prompts."""
+    import ctypes
+    from ctypes import wintypes
+
+    class Blob(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+    buffer = ctypes.create_string_buffer(data, len(data))
+    blob_in = Blob(len(data), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_char)))
+    blob_out = Blob()
+    crypt32 = ctypes.windll.crypt32
+    call = crypt32.CryptProtectData if protect else crypt32.CryptUnprotectData
+    ui_forbidden, local_machine = 0x1, 0x4
+    if not call(ctypes.byref(blob_in), None, None, None, None,
+                ui_forbidden | local_machine, ctypes.byref(blob_out)):
+        raise ctypes.WinError()
+    try:
+        return ctypes.string_at(blob_out.pbData, blob_out.cbData)
+    finally:
+        ctypes.windll.kernel32.LocalFree(blob_out.pbData)
+
+
+def stored() -> dict:
+    """What the protected store holds; {} when there is none or it cannot be read."""
+    path = _secrets_path
+    if path is None or not path.is_file():
+        return {}
+    try:
+        import base64
+        data = json.loads(_dpapi(base64.b64decode(path.read_text(encoding="ascii")),
+                                 False).decode("utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception as exc:
+        logger.error("The server's protected passwords (%s) cannot be read: %s", path, exc)
+        return {}
+
+
+def store(**values) -> Path:
+    """
+    Merge into the protected store ('' or None removes a value). Raises when
+    there is nowhere to keep it or it does not read back the same.
+    """
+    import base64
+    from slate_server.core.recovery import fs
+    if _secrets_path is None:
+        raise RuntimeError("the server's database folder is not known yet")
+    data = stored()
+    for key, value in values.items():
+        if value:
+            data[key] = str(value)
+        else:
+            data.pop(key, None)
+    fs.ensure_private_dir(_secrets_path.parent)
+    fs.write_atomic(_secrets_path, base64.b64encode(
+        _dpapi(json.dumps(data).encode("utf-8"), True)).decode("ascii"))
+    if stored() != data:
+        raise RuntimeError("%s did not read back the same" % _secrets_path)
+    reload()
+    if values.get("app_password"):
+        strip_from_files("db_password")
+        _for_slate_on_this_pc(str(values["app_password"]))
+    return _secrets_path
+
+
+def _for_slate_on_this_pc(password: str) -> None:
+    """
+    The same password for a Slate on this PC (its Credential Manager); the
+    plain copies in the settings files are gone (store). A stale one left
+    there is what this server would fall back to - and set on the
+    workstations' account - if the protected store were ever unreadable.
+    """
+    try:
+        from slate.core.infra.local_secrets import LEGACY_PASSWORD, save_db_password
+        if password != LEGACY_PASSWORD:
+            save_db_password(password)
+    except Exception as exc:
+        logger.warning("The Slate on this PC was not given the new password: %s", exc)
+
+
+def adopt(password: str) -> None:
+    """A password proved by logging in: kept protected, or for this run only if it cannot be."""
+    global _adopted, _cache
+    try:
+        store(app_password=password)
+    except Exception as exc:
+        logger.error("The database password could not be kept protected (%s); using it "
+                     "for this run only.", exc)
+        _adopted = password
+        _cache = None
+
+
+def keep_in_protected_store() -> bool:
+    """
+    The passwords this server reads from plain settings files go into the
+    protected store, which then wins, and leave the files (db_password via
+    store(), which hands it to this PC's Credential Manager as well, since a
+    Slate here reads the same config.json). True if anything was stored.
+    """
+    if _secrets_path is None:
+        return False
+    have, merged = stored(), _settings()
+    updates = {}
+    if not have.get("app_password") and merged.get("db_password"):
+        updates["app_password"] = merged["db_password"]
+    if not have.get("admin_password") and merged.get("db_admin_password"):
+        updates["admin_password"] = merged["db_admin_password"]
+    if updates:
+        store(**updates)
+    if stored().get("admin_password"):
+        strip_from_files("db_admin_password")
+    return bool(updates)
+
+
+def strip_from_files(key: str) -> None:
+    """Remove one setting from every settings file this server reads that has it."""
+    from slate_server.core.recovery import fs
+    for path in _config_layers():
+        try:
+            if not path.is_file():
+                continue
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+            if isinstance(data, dict) and key in data:
+                data.pop(key)
+                fs.write_atomic(path, json.dumps(data, indent=4))
+        except Exception as exc:
+            logger.warning("Could not remove %s from %s: %s", key, path, exc)
+    reload()
 
 
 def _config_layers() -> list:
@@ -95,8 +255,12 @@ def _config_layers() -> list:
 
 
 def _settings() -> dict:
-    global _cache
-    if _cache is not None:
+    global _cache, _cache_key
+    try:
+        key = (str(_secrets_path), _secrets_path.stat().st_mtime_ns if _secrets_path else 0)
+    except OSError:
+        key = (str(_secrets_path), 0)
+    if _cache is not None and key == _cache_key:
         return _cache
 
     merged: dict = {}
@@ -119,7 +283,24 @@ def _settings() -> dict:
         merged.update({k: v for k, v in loaded.items() if v not in (None, "")})
         found.append(str(path))
 
-    _cache = merged
+    # The protected store wins over every file (see store()).
+    protected = stored()
+    for name, setting_key in (("app_password", "db_password"),
+                              ("admin_password", "db_admin_password")):
+        if protected.get(name):
+            merged[setting_key] = protected[name]
+    if not merged.get("db_password"):
+        # A Slate on this PC that moved it into its Credential Manager, or one
+        # proved at start-up that could not be stored (adopt).
+        try:
+            from slate.core.infra.local_secrets import protected_password
+            kept = protected_password() or _adopted
+        except Exception:
+            kept = _adopted
+        if kept:
+            merged["db_password"] = kept
+
+    _cache, _cache_key = merged, key
     del _sources[:]
     _sources.extend(found)
     return _cache

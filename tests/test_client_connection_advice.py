@@ -30,9 +30,9 @@ def test_a_refused_password_says_the_two_ends_disagree():
         Exception('FATAL:  password authentication failed for user "ut_vfx_app"'),
         *ARGS)
 
-    assert "refused the password" in advice
-    assert "Slate Server" in advice
-    assert "Reinstalling only this workstation" in advice
+    assert "refused this PC's database password" in advice
+    assert "Show app password" in advice and "Reconfigure" in advice
+    assert "Reinstalling this workstation will not fix it" in advice
 
 
 def test_a_missing_account_points_at_the_server_that_never_made_it():

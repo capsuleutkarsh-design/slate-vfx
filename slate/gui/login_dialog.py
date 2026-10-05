@@ -701,11 +701,7 @@ class LoginDialog(QDialog):
             from .dialogs.first_run_dialog import FirstRunSetupDialog
             dlg = FirstRunSetupDialog(self)
             if dlg.exec() == QDialog.DialogCode.Accepted:
-                values = dlg.values()
-                for key in ("SERVER_ROOT", "db_host", "db_port", "db_name", "db_user"):
-                    GlobalConfig.set(key, values[key])
-                if values.get("db_password"):
-                    GlobalConfig.set("db_password", values["db_password"])
+                GlobalConfig.save_connection(dlg.values())
 
                 config_instance = GlobalConfig._instance or GlobalConfig()
                 flag_path = config_instance.local_app_data / ".setup_complete"

@@ -517,7 +517,8 @@ class SettingsTab(QWidget):
             make_button("Browse…", "secondary",
                         on_click=lambda: self._browse_directory(self.server_root_input, "Select Slate_Central root"))])
 
-        self.brand_logo_input = QLineEdit(str(self.global_settings.get("branding_logo_path", "")))
+        from slate.core.infra.studio_settings import studio_logo
+        self.brand_logo_input = QLineEdit(studio_logo(self.global_settings.get("branding_logo_path", "")))
         self.brand_logo_input.setPlaceholderText("Optional: studio logo image (.png, .jpg, .svg)")
         self._path_row(pl, "Studio logo (optional)", "Shown in the header", self.brand_logo_input, [
             make_button("Browse…", "secondary",
@@ -807,7 +808,13 @@ class SettingsTab(QWidget):
             self.global_settings["dry_run_enabled"] = values["dry_run_enabled"]
             self.global_settings["ui_scale_override"] = snap_ui_scale(values["ui_scale_override"])
             self.global_settings["nuke_mode"] = values["nuke_mode"]
-            if self.can_studio:
+            if self.can_studio and values["branding_logo_path"] != self._snapshot.get("branding_logo_path"):
+                # One logo for the studio, not one per workstation.
+                from slate.core.infra.studio_settings import set_setting
+                from slate.gui.tabs.studio_settings_cards import _username_of
+                if not set_setting("branding_logo_path", values["branding_logo_path"],
+                                   by=_username_of(self) or "Settings"):
+                    raise RuntimeError("the studio logo could not be saved for the studio")
                 self.global_settings["branding_logo_path"] = values["branding_logo_path"]
             # A cleared path is saved as cleared - it used to be skipped, so
             # a wrong path could never be removed.
@@ -913,7 +920,8 @@ class SettingsTab(QWidget):
             return None
         name = self.db_name_input.text().strip()
         user = self.db_user_input.text().strip()
-        password = GlobalConfig.get("db_password")
+        from slate.core.infra.local_secrets import find_db_password
+        password = find_db_password() or None
         self.btn_test_db.setEnabled(False)
         self.lbl_test.setStyleSheet("")
         self.lbl_test.setText("Connecting…")

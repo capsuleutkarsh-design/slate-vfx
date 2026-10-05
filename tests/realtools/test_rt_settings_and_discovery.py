@@ -6,6 +6,7 @@ Settings files with real files, and UDP discovery on the loopback interface.
     UDP 54320                 NetworkBroadcaster  ->  discover_server_details
 """
 
+import codecs
 import json
 import shutil
 import socket
@@ -72,6 +73,32 @@ def test_a_config_json_written_by_setup_bat_is_read_by_every_reader(tmp_path, mo
     fresh = GlobalConfig()
     assert fresh.data.get("db_password") == PASSWORD
     assert fresh.data.get("db_host") == "10.0.0.5"
+
+
+def test_setup_bat_now_writes_config_json_without_a_bom(tmp_path):
+    """
+    The writer itself: install.ps1's own line, run by the real Windows
+    PowerShell, writes plain UTF-8 that even a strict reader accepts.
+    """
+    from pathlib import Path
+    import os
+    import re
+    powershell = shutil.which("powershell.exe")
+    if not powershell:
+        pytest.skip("Windows PowerShell is not here")
+    install = (Path(__file__).resolve().parents[2] / "setup" / "install.ps1").read_text(encoding="utf-8")
+    (line,) = [l.strip() for l in install.splitlines()
+               if "ConvertTo-Json" in l and "$target" in l and not l.strip().startswith("#")]
+    target = tmp_path / "config.json"
+    script = ("$config = [ordered]@{ 'db_host' = '10.0.0.5'; 'db_password' = $env:RT_PASSWORD }; "
+              "$target = $env:RT_TARGET; " + line)
+    done = subprocess.run([powershell, "-NoProfile", "-NonInteractive", "-Command", script],
+                          capture_output=True, text=True, timeout=60,
+                          env=dict(os.environ, RT_PASSWORD=PASSWORD, RT_TARGET=str(target)))
+    assert done.returncode == 0, done.stderr
+    assert not target.read_bytes().startswith(codecs.BOM_UTF8), "still a BOM"
+    assert json.loads(target.read_text(encoding="utf-8"))["db_password"] == PASSWORD
+    assert re.search(r"WriteAllText", line)
 
 
 def test_client_config_round_trip_and_a_damaged_file(tmp_path, monkeypatch):

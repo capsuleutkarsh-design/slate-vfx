@@ -15,7 +15,6 @@ _LAZY_IMPORTS = {
     "ConfigManager": ("slate.core", "ConfigManager"),
     "SafeFileOperations": ("slate.core", "SafeFileOperations"),
     "FolderCreationWorker": ("slate.core.worker_threads", "FolderCreationWorker"),
-    "MoveScanWorker": ("slate.core.worker_threads", "MoveScanWorker"),
     "ShotSubfoldersWorker": ("slate.core.worker_threads", "ShotSubfoldersWorker"),
 }
 

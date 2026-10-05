@@ -99,12 +99,17 @@ def test_a_refused_turn_on_says_why_in_plain_words(app, qtbot, layout, monkeypat
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
     monkeypatch.setattr(RecoverySession, "_need_unlocked", lambda self: None)
     monkeypatch.setattr(RecoverySession, "unlocked", property(lambda self: True))
+    # The refusal itself is hardening's (tests/test_security_*); this is what the
+    # page shows. Never reaches a real database (the studio's is on 5440).
+    reason = "Not turned on: this build has no release key, so every update would be refused."
+    monkeypatch.setattr(hardening, "turn_on",
+                        lambda layout_, name, mode="on", by="": hardening.StepResult(name, False, reason))
     view = RecoveryView(lambda: layout)
     qtbot.addWidget(view)
-    view.switch_pick.setCurrentIndex(view.switch_pick.findData("pgbouncer_hba"))
+    view.switch_pick.setCurrentIndex(view.switch_pick.findData("signed_updates"))
     view._switch_on("on")
     qtbot.waitUntil(lambda: "Not done" in view.output.toPlainText(), timeout=10000)
-    assert hardening.NOT_BUILT["pgbouncer_hba"] in view.output.toPlainText()
+    assert "no release key" in view.output.toPlainText()
 
 
 def test_the_key_dialog_cannot_be_closed_until_the_key_is_stored(app, qtbot):

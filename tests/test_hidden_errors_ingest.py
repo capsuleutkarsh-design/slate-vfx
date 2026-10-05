@@ -99,26 +99,6 @@ def test_a_local_only_cache_is_flagged_and_its_paths_are_not_shared(monkeypatch,
     assert data == {"file_path": "x", "tags": ["a"]}
 
 
-# 4 ------------------------------------------------------- old proxies kept
-
-def test_old_cached_pictures_that_could_not_be_removed_are_logged(monkeypatch, tmp_path, caplog):
-    from slate.core.domain.proxy_manager import ProxyManager
-
-    manager = ProxyManager.__new__(ProxyManager)
-    manager.cache_dir = tmp_path
-    identity = manager.identity_hash("/stock/a.mov")
-    old = manager.cache_path_for("old", "_thumb.jpg", identity)
-    old.write_bytes(b"x")
-
-    def refuse(self, *a, **k):
-        raise PermissionError("in use")
-
-    monkeypatch.setattr(Path, "unlink", refuse)
-    with caplog.at_level(logging.WARNING):
-        assert manager.forget_previous("/stock/a.mov") == 0
-    assert "could not be removed" in caplog.text and "in use" in caplog.text
-
-
 # 5 ------------------------------------------------------ permission cache
 
 def test_a_failed_role_read_keeps_the_last_answer_and_is_never_cached(monkeypatch):

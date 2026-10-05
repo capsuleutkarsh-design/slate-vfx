@@ -131,9 +131,10 @@ class SettingsView(QWidget):
         self.input_db_password.setEchoMode(QLineEdit.EchoMode.Password)
         self.input_db_password.setPlaceholderText("not set")
         self.input_db_password.setToolTip(
-            "The password the database is created with, and the one every "
-            "workstation uses. It has to match what the clients were installed "
-            "with, or they will reach the server and be turned away.")
+            "The password every workstation uses. A new server makes its own; it "
+            "is kept on this PC only, encrypted. Changing it here cuts off every "
+            "workstation that does not have it - to change it gently, use Recover "
+            "Slate > Database passwords > Publish, then Switch.")
         lbl_db_password = QLabel("Database password")
         lbl_db_password.setStyleSheet(lbl_port.styleSheet())
         form_layout.addRow(lbl_db_password, self.input_db_password)

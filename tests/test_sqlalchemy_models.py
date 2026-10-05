@@ -1,5 +1,5 @@
 """
-Comprehensive unit tests for SQLAlchemy 2.0 models and DatabaseFactory.
+Comprehensive unit tests for SQLAlchemy 2.0 models.
 """
 
 import os
@@ -21,7 +21,6 @@ from slate.core.infra.models.operations import (
     StockAssetModel, AttendanceLogModel, HardwareInventoryModel,
     ItDeploymentModel, ItTicketModel, LeaveRequestModel, LeaveBalanceModel
 )
-from slate.core.infra.db_factory import get_db_session, init_schema
 
 
 class TestSQLAlchemyModels(unittest.TestCase):

@@ -17,6 +17,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from .shot_review.lineup_editor_mode import LineupEditorMode
+from slate.core.domain.lineup import project_fps
 from ..core.controls import make_button
 from slate.core.infra.gate import Gate
 
@@ -99,16 +100,11 @@ class VFXReviewDualModeTab(QWidget):
                 return  # the status line already says it; no toast on opening the tab
             report(self, result)
 
-    def show_notifications(self):
-        """Open the header's notification list (kept for anything that calls it)."""
-        from ..components.notification_center import open_notifications
-        open_notifications(self)
-
     def set_shots(self, shots, project_root=None, folder_resolver=None,
-                  project_name="", project_path=None):
+                  project_name="", project_path=None, sequence_fps=24.0):
         """Hand the timeline the shots the dashboard is tracking."""
         self.lineup_editor.set_project_context(project_name, project_path)
-        self.lineup_editor.set_project_source(project_root, folder_resolver)
+        self.lineup_editor.set_project_source(project_root, folder_resolver, sequence_fps)
         self.lineup_editor.set_shots(shots)
 
     def refresh_from_dashboard(self):
@@ -130,6 +126,7 @@ class VFXReviewDualModeTab(QWidget):
                     project_root=getattr(project, "folder_base", "") or None,
                     folder_resolver=getattr(dashboard, "_shot_folder_resolver", None),
                     project_name=getattr(project, "code", "") or "",
+                    sequence_fps=project_fps(project),
                 )
                 if not shots:
                     return Result.failure(
@@ -175,6 +172,7 @@ class VFXReviewDualModeTab(QWidget):
                 project_root=getattr(project, "folder_base", "") or None,
                 folder_resolver=None,
                 project_name=project.code or "",
+                sequence_fps=project_fps(project),
             )
             return Result.success(f"Timeline rebuilt for {project.code}: "
                                   f"{len(shots)} shot{'s' if len(shots) != 1 else ''}.")

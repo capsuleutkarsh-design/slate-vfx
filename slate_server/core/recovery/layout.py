@@ -65,7 +65,17 @@ class ServerLayout:
     bin_dir: Path = field(default_factory=bundled_bin_dir)
     notes: List[str] = field(default_factory=list)
 
+    def __post_init__(self):
+        # This database's passwords are kept beside it (db_credentials.store).
+        from slate_server.core import db_credentials
+        db_credentials.use_data_dir(self.data_dir)
+
     # ------------------------------------------------------------ places
+    @property
+    def secrets_file(self) -> Path:
+        from slate_server.core.db_credentials import SECRETS_NAME
+        return self.recovery_dir / SECRETS_NAME
+
     @property
     def recovery_dir(self) -> Path:
         return self.data_dir.parent / RECOVERY_DIR_NAME

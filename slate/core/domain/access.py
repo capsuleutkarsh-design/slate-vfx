@@ -255,10 +255,15 @@ def roles_for(action: str) -> Set[str]:
     return set(_load().get(action, set()))
 
 
+def by_name(role) -> Set[str]:
+    """What access.json gives this role by its name (no ticks can take it away)."""
+    role = str(role or "").strip().lower()
+    return {action for action, members in _load().items() if role in members}
+
+
 def _abilities_of(role: str) -> Set[str]:
     """What one role may do: access.json by name, plus the role's own ticks."""
-    names = {action for action, members in _load().items() if role in members}
-    return names | _role_abilities().get(role, set())
+    return by_name(role) | _role_abilities().get(role, set())
 
 
 def _allowed(action: str, roles: Iterable) -> bool:
@@ -275,6 +280,15 @@ def can(roles, action: str) -> bool:
     agrees. An action the file does not know is refused, never granted.
     """
     return _allowed(action, roles)
+
+
+def opens_users_and_roles(roles) -> bool:
+    """
+    Whether Users & Roles is there for these roles: the sidebar and the screen
+    ask this one question. The sidebar also showed it for the HRMS tab key,
+    which opened onto "You do not have permission".
+    """
+    return can(roles, "manage_users") or can(roles, "manage_permissions")
 
 
 def can_edit_dashboard(roles) -> bool:

@@ -157,13 +157,14 @@ class LineupStrip(QWidget):
 class _ProxyJob(QThread):
     done = Signal(object)
 
-    def __init__(self, jobs, parent=None):
+    def __init__(self, jobs, parent=None, fps=24.0):
         super().__init__(parent)
         self.jobs = jobs
+        self.fps = fps
 
     def run(self):
         from slate.core.domain.proxy_builder import build
-        self.done.emit(build(self.jobs))
+        self.done.emit(build(self.jobs, fps=self.fps))
 
 
 class LineupPreview(QWidget):
@@ -352,7 +353,7 @@ class LineupPreview(QWidget):
                        is_sequence=clip.is_sequence)
         self.btn_make_proxy.setEnabled(False)
         self.btn_make_proxy.setText("Making proxy…")
-        worker = _ProxyJob([job], self)
+        worker = _ProxyJob([job], self, fps=self.player.sequence_fps)
         worker.done.connect(self._on_proxy_done)
         worker.finished.connect(worker.deleteLater)
         self._proxy_job = worker

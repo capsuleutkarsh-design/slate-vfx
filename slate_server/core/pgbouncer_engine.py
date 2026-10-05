@@ -49,13 +49,50 @@ RESERVE_POOL_SIZE = 10
 MAX_CLIENT_CONN = 600
 
 
+def hba_rules(dbname: str, app_user: str, superuser: str = "postgres") -> str:
+    """
+    Switch pgbouncer_hba: the admin console from this PC only, and the
+    workstations' account only into the studio database.
+    """
+    from slate_server.core.db_engine import DatabaseEngine
+    lines = ["# Written by Slate (switch pgbouncer_hba). Turning the switch off "
+             "removes this file.",
+             'host  pgbouncer  "%s"  127.0.0.1/32  scram-sha-256' % superuser,
+             'host  pgbouncer  "%s"  ::1/128       scram-sha-256' % superuser]
+    for net in ("127.0.0.1/32", "::1/128") + tuple(DatabaseEngine.STUDIO_NETWORKS):
+        lines.append('host  "%s"  "%s"  %-14s scram-sha-256' % (dbname, app_user, net))
+    return "\n".join(lines) + "\n"
+
+
+def clients(port: int) -> list:
+    """Who is connected to the pool ({client, user, database}); [] when it cannot be asked."""
+    import psycopg2
+    from slate_server.core.db_credentials import admin_password, admin_user
+    try:
+        conn = psycopg2.connect(host="127.0.0.1", port=int(port), dbname="pgbouncer",
+                                user=admin_user(), password=admin_password(),
+                                connect_timeout=3)
+    except Exception as exc:
+        logger.debug("The pool's clients could not be read: %s", exc)
+        return []
+    try:
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("SHOW CLIENTS")
+        names = [d[0] for d in cur.description]
+        return [{"client": str(row.get("addr") or ""), "user": str(row.get("user") or ""),
+                 "database": str(row.get("database") or "")}
+                for row in (dict(zip(names, values)) for values in cur.fetchall())]
+    finally:
+        conn.close()
+
+
 class PgBouncerEngine:
     """Manages the bundled PgBouncer instance."""
 
     def __init__(self, data_dir: str, db_port: int = 5440,
                  listen_port: int = DEFAULT_LISTEN_PORT,
-                 dbname: str = "", db_user: str = "ut_vfx_app",
-                 db_password: str = ""):
+                 dbname: str = "", db_user: str = "ut_vfx_app"):
         from slate_server.core.db_credentials import database_name
 
         self.data_dir = Path(data_dir)
@@ -66,7 +103,6 @@ class PgBouncerEngine:
         # the work - not whatever the product happens to be called.
         self.dbname = dbname or database_name()
         self.db_user = db_user
-        self.db_password = db_password
 
         base_dir = Path(__file__).parent.parent
         if getattr(sys, "frozen", False):
@@ -80,6 +116,8 @@ class PgBouncerEngine:
         self.conf_dir = self.data_dir.parent / "pgbouncer"
         self.ini_path = self.conf_dir / "pgbouncer.ini"
         self.userlist_path = self.conf_dir / "userlist.txt"
+        # Present only while switch pgbouncer_hba is on (recovery/hardening.py).
+        self.hba_path = self.conf_dir / "pgbouncer_hba.conf"
         self.log_path = self.conf_dir / "pgbouncer.log"
         self.pid_path = self.conf_dir / "pgbouncer.pid"
 
@@ -130,18 +168,10 @@ class PgBouncerEngine:
         if not Path(psql_exe).exists():
             return {}
 
-        import os
-        env = dict(os.environ)
         # psql logs in as the superuser here, so it needs the superuser's
-        # password - which is the workstations' one until db_admin_password
-        # gives the superuser its own (db_credentials.admin_password).
-        try:
-            from slate_server.core.db_credentials import admin_password
-            superuser_password = admin_password() or self.db_password
-        except Exception:
-            superuser_password = self.db_password
-        if superuser_password:
-            env["PGPASSWORD"] = superuser_password
+        # password (db_credentials.admin_password).
+        from slate_server.core.db_credentials import env_with_password
+        env = env_with_password()
 
         cmd = [
             str(psql_exe), "-h", "127.0.0.1", "-p", str(self.db_port),
@@ -199,6 +229,8 @@ class PgBouncerEngine:
         self.ini_path.write_text(ini, encoding="utf-8")
         self._restrict_permissions(self.ini_path)
         self._restrict_permissions(self.userlist_path)
+        if self.hba_path.exists():
+            self._restrict_permissions(self.hba_path)
         return True
 
     def _render_ini(self) -> str:
@@ -206,9 +238,11 @@ class PgBouncerEngine:
         def p(path: Path) -> str:
             return str(path).replace("\\", "/")
 
-        password_clause = (
-            f" password={self.db_password}" if self.db_password else ""
-        )
+        if self.hba_path.exists():
+            auth = (f"auth_type = hba\nauth_hba_file = {p(self.hba_path)}\n"
+                    "; pgbouncer_hba is on: who may connect from where is in that file.")
+        else:
+            auth = "auth_type = scram-sha-256"
 
         return f"""; PgBouncer - connection pooling for Slate
 ; Written by Slate Central Server. Edits here are overwritten on restart;
@@ -220,15 +254,16 @@ class PgBouncerEngine:
 
 [databases]
 ; Clients ask for "{self.dbname}"; PgBouncer reaches the real database on the
-; loopback interface, where only this machine can reach it.
-{self.dbname} = host=127.0.0.1 port={self.db_port} dbname={self.dbname} user={self.db_user}{password_clause}
+; loopback interface, where only this machine can reach it. No password here:
+; PgBouncer logs in with the client's own SCRAM proof (it holds no password).
+{self.dbname} = host=127.0.0.1 port={self.db_port} dbname={self.dbname}
 
 [pgbouncer]
 listen_addr = *
 listen_port = {self.listen_port}
 
 ; Clients prove who they are against the verifiers copied from PostgreSQL.
-auth_type = scram-sha-256
+{auth}
 auth_file = {p(self.userlist_path)}
 
 ; Transaction pooling: a real database connection is handed back as soon as
@@ -261,6 +296,39 @@ stats_users = postgres, {self.db_user}
 logfile = {p(self.log_path)}
 pidfile = {p(self.pid_path)}
 """
+
+    def reload(self, psql_exe: Optional[Path] = None, console_passwords=()) -> str:
+        """
+        Rewrite the configuration (fresh password verifiers, the hba choice)
+        and have a running pool re-read it - Restart pool, from any process.
+        The pool still knows the superuser's password from before a change,
+        so ``console_passwords`` (that old one) are tried before the current
+        one. '' when done; otherwise why not, in plain words.
+        """
+        import psycopg2
+        from slate_server.core.db_credentials import admin_password, admin_user
+        if not self.write_config(psql_exe=psql_exe):
+            return "The pool's configuration could not be written."
+        if not self.is_ready():
+            return ""                                  # used when it next starts
+        error = None
+        for password in dict.fromkeys(list(console_passwords) + [admin_password()]):
+            try:
+                conn = psycopg2.connect(host="127.0.0.1", port=self.listen_port,
+                                        dbname="pgbouncer", user=admin_user(),
+                                        password=password, connect_timeout=5)
+            except Exception as exc:
+                error = exc
+                continue
+            try:
+                conn.autocommit = True
+                conn.cursor().execute("RELOAD")
+            finally:
+                conn.close()
+            time.sleep(0.5)
+            return ""
+        return ("The running pool did not re-read its settings (%s). Press Restart pool "
+                "on the Dashboard." % (str(error).strip().splitlines() or ["?"])[0])
 
     @staticmethod
     def _restrict_permissions(path: Path) -> None:

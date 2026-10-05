@@ -80,10 +80,8 @@ def _select(combo: QComboBox, value):
 
 class ShotDetailWidget(QWidget):
     close_requested = Signal()
-    search_requested = Signal(str)            # kept for older callers
     show_only_requested = Signal(object)      # the grid shows only this shot
     apply_requested = Signal(object, dict)    # shot, {field path: new value}
-    save_requested = Signal(object)           # kept for older callers
     quick_look_requested = Signal(object)
     rv_review_requested = Signal(object)
     history_requested = Signal(object)
@@ -749,10 +747,6 @@ class ShotDetailWidget(QWidget):
             self.show_apply_result(True, "Nothing changed.")
             return
         self.apply_requested.emit(self.shot, changes)
-
-    # Older callers.
-    def save_data(self):
-        self.apply_changes()
 
     def show_apply_result(self, ok: bool, message: str):
         """Said after the dashboard has actually done it - never before."""

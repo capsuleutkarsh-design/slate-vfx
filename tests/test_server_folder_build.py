@@ -79,12 +79,12 @@ class TestTheSettingsCheckReadsTheFolder:
         return folder
 
     def test_a_complete_build_passes(self, check, tmp_path, capsys):
-        folder = self._folder(tmp_path, {"db_password": "x", "db_name": "ut_vfx", "db_user": "slate"})
+        folder = self._folder(tmp_path, {"db_name": "ut_vfx", "db_user": "slate"})
         check(str(folder))
         assert "settings bundled" in capsys.readouterr().out
 
     def test_it_accepts_the_executable_path_too(self, check, tmp_path, capsys):
-        folder = self._folder(tmp_path, {"db_password": "x", "db_name": "ut_vfx", "db_user": "slate"})
+        folder = self._folder(tmp_path, {"db_name": "ut_vfx", "db_user": "slate"})
         check(str(folder / "Slate_Server.exe"))
         assert "settings bundled" in capsys.readouterr().out
 
@@ -93,8 +93,9 @@ class TestTheSettingsCheckReadsTheFolder:
         with pytest.raises(SystemExit):
             check(str(folder))
 
-    def test_a_build_with_no_password_is_refused(self, check, tmp_path):
-        folder = self._folder(tmp_path, {"db_name": "ut_vfx"})
+    def test_a_build_that_ships_a_password_is_refused(self, check, tmp_path):
+        """A shipped password is the same public one in every studio."""
+        folder = self._folder(tmp_path, {"db_name": "ut_vfx", "db_password": "x"})
         with pytest.raises(SystemExit):
             check(str(folder))
 

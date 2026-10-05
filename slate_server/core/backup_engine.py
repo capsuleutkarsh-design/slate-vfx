@@ -164,6 +164,10 @@ class BackupEngine:
             "--dbname", self.dbname,
             "--format", "custom",
             "--file", str(partial),
+            # The private fleet key stays on this PC: a backup folder may be
+            # on the share. A restore leaves the table empty, and the next
+            # start makes a new key.
+            "--exclude-table-data=slate_secure.keys",
             "--no-password",
         ]
 

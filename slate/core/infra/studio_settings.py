@@ -92,6 +92,9 @@ DEFAULTS: Dict[str, Any] = {
         {"value": 2, "label": "Normal"},
         {"value": 3, "label": "Low"},
     ],
+    # The studio logo in every header. It was saved per workstation, so each
+    # PC showed its own (or none). A path every PC can read: a UNC path.
+    "branding_logo_path": "",
 }
 
 
@@ -233,6 +236,7 @@ VALIDATORS: Dict[str, Callable[[Any], Any]] = {
     "bidding": _check_bidding,
     "shot_types": _check_names,
     "shot_priorities": _check_priorities,
+    "branding_logo_path": lambda value: str(value or "").strip(),
 }
 
 
@@ -400,6 +404,22 @@ def get_setting(key: str, default: Any = None, db=None) -> Any:
     except Exception as exc:
         logger.warning("Could not read studio setting %s: %s", key, exc)
         return copy.deepcopy(DEFAULTS.get(key, default))
+
+
+def studio_logo(fallback: str = "") -> str:
+    """
+    The studio's logo path. Until the studio saves one, this machine's old
+    per-machine value (fallback). Asks only once the database is connected.
+    """
+    from .database_manager import is_connected
+    if is_connected():
+        try:
+            value = str(get_setting("branding_logo_path", "") or "").strip()
+            if value:
+                return value
+        except Exception as exc:
+            logger.debug("Studio logo not read: %s", exc)
+    return str(fallback or "").strip()
 
 
 def set_setting(key: str, value: Any, by: str = "", db=None) -> WriteResult:

@@ -259,6 +259,15 @@ class CentralAttendance:
                 found = people.person(user_id, self.db)
                 if user_id in people.SERVICE_USERNAMES or (found is not None and found.is_service):
                     return None
+                # Nor on a day of approved full-day leave (owner's decision):
+                # signing in to check something is not coming to work.
+                if action == "in":
+                    try:
+                        if self.leave_today(user_id):
+                            logger.info("No automatic punch-in for %s: on approved leave today.", user_id)
+                            return None
+                    except Exception as exc:
+                        logger.warning("Approved leave not checked before the automatic punch-in: %s", exc)
             today_date, now_time = self._server_now()
 
             # SMART AUTO-LOGOUT: close the forgotten days before today.
@@ -676,48 +685,3 @@ class CentralAttendance:
         except Exception as e:
             logger.error(f"Update failed: {e}")
             return False, str(e)
-
-    def sync_attendance(self, user_id, user_name, action, timestamp=None) -> bool:
-        """Sync attendance event to central database."""
-        try:
-            word = str(action).lower()
-            if word in ("logout", "close", "exit"):
-                # Closing Slate or signing out never punches anybody out
-                # (studio decision); only an explicit "out" does.
-                return True
-            act = "in" if word in ("login", "in") else "out"
-            self.log_action(user_name=user_id or user_name, action=act,
-                            automatic=(act == "in"))
-            return True
-        except Exception as e:
-            logger.error(f"sync_attendance error: {e}")
-            return False
-
-    def get_team_overview(self):
-        """Get overview of today's attendance across the team."""
-        try:
-            today_str = datetime.date.today().isoformat()
-            rows = self.db.execute_query(
-                "SELECT user_id, day_date, punch_in, punch_out, pc_name FROM attendance_log WHERE day_date = %s",
-                (today_str,),
-                fetch="all"
-            ) or []
-            return rows
-        except Exception as e:
-            logger.error(f"get_team_overview error: {e}")
-            return []
-
-    def is_user_active(self, user_id: str) -> bool:
-        """Check if user has punched in and not yet punched out today."""
-        try:
-            today_str = datetime.date.today().isoformat()
-            uid = str(user_id).lower().strip()
-            row = self.db.execute_query(
-                "SELECT id FROM attendance_log WHERE user_id = %s AND day_date = %s AND punch_out IS NULL",
-                (uid, today_str),
-                fetch="one"
-            )
-            return bool(row)
-        except Exception as e:
-            logger.error(f"is_user_active error: {e}")
-            return False

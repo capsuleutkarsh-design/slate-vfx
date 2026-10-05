@@ -53,6 +53,12 @@ def roles_of_user(roles=None, user_role=None, app_context=None):
         return []
 
 
+def _signing_mode():
+    """signed_fleet_commands: 'off', 'log_only' or 'on'."""
+    from slate.core.security import switches
+    return switches.mode("signed_fleet_commands")
+
+
 # --- MAIN ADMIN PANEL ---
 class AdminPanelTab(QWidget):
     def __init__(self, current_username=None, user_manager=None, hub=None, attendance=None,
@@ -139,6 +145,7 @@ class AdminPanelTab(QWidget):
             verify_callback=self.verify_admin_action,
             read_only=not self.can_manage_system,
             log_action=self.log_action,
+            admin_user=self.current_username or "",
         )
         self.live_dashboard_worker_controller = QueuedWorkerController(
             self.live_dashboard.worker,
@@ -219,9 +226,14 @@ class AdminPanelTab(QWidget):
     def send_broadcast(self):
         msg = self.inp_broadcast.text().strip()
         if not msg: return
+        # signed_fleet_commands: the key comes with the admin's own password.
+        if _signing_mode() != "off" and not getattr(self.hub, "signing_key", None) \
+                and not self.verify_admin_action():
+            return
         # "message" is what the workstations show (gatekeeper_main); they
         # dropped "alert" as an unknown command, so no broadcast ever arrived.
-        self.hub.post_command("message", "all", msg)
+        self.hub.post_command("message", "all", msg,
+                              admin_user=self.current_username or "")
         self.inp_broadcast.clear()
         QMessageBox.information(self, "Sent", "Broadcast alert sent to all active stations.")
         self.log_action(f"Broadcast Alert: {msg}")
@@ -266,10 +278,35 @@ class AdminPanelTab(QWidget):
         # Only the signed-in person's own password. A shared admin_password from
         # config.json (admin123 by default) used to work too (SYS-001).
         if self.current_username and self.user_manager.authenticate(self.current_username, password):
+            if not self._unlock_signing(password):
+                return False
             self.log_action(f"Admin verified for destructive action by {self.current_username}")
             return True
 
         QMessageBox.warning(self, "Denied", "Invalid password.")
+        return False
+
+    def _unlock_signing(self, password) -> bool:
+        """
+        signed_fleet_commands: fetch the studio's key with the admin's own
+        password (checked inside the database), so the commands that follow
+        are signed. When the switch is on and no key comes back, say so and
+        send nothing: the workstations would refuse it.
+        """
+        mode = _signing_mode()
+        if mode == "off" or getattr(self.hub, "signing_key", None):
+            return True
+        from slate.core.security.signing import fleet_private_key
+        # Trimmed, as sign-in stores and checks it (UserManager.clean_password).
+        self.hub.signing_key = fleet_private_key(self.current_username, str(password).strip(),
+                                                 db=self.db)
+        if self.hub.signing_key or mode != "on":
+            return True
+        QMessageBox.warning(self, "Not sent",
+                            "Commands must be signed, and this account could not get the "
+                            "studio's signing key. Only an active administrator can. If you "
+                            "are one, check that Slate Server has been started since it was "
+                            "upgraded.")
         return False
 
     def cleanup_resources(self):

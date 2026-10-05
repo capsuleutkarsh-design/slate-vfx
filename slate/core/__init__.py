@@ -20,7 +20,6 @@ _LAZY_IMPORTS = {
     "UserManager": ("slate.core.domain.user_manager", "UserManager"),
     # Worker facade
     "FolderCreationWorker": ("slate.core.worker_threads", "FolderCreationWorker"),
-    "MoveScanWorker": ("slate.core.worker_threads", "MoveScanWorker"),
     "ShotSubfoldersWorker": ("slate.core.worker_threads", "ShotSubfoldersWorker"),
     "ReportWorker": ("slate.core.worker_threads", "ReportWorker"),
 }

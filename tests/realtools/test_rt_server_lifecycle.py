@@ -133,7 +133,7 @@ def pool(server, monkeypatch):
                                                           "listen_addr = 127.0.0.1"))
     engine = PgBouncerEngine(str(server.data), db_port=server.port,
                              listen_port=server.pooler_port, dbname=DBNAME,
-                             db_user="ut_vfx_app", db_password=APP_PASSWORD)
+                             db_user="ut_vfx_app")
     if not engine.is_installed():
         pytest.skip("PgBouncer is not bundled here")
     yield engine
@@ -238,9 +238,11 @@ def test_server_facts_against_a_real_cluster(server):
         artist.close()
 
 
-def test_server_facts_say_what_a_wrong_password_means(server):
+def test_server_facts_say_what_a_wrong_password_means(server, tmp_path, monkeypatch):
     from slate_server.core import db_credentials, server_facts
     lab = server
+    # The settings file decides, not the passwords the server keeps protected.
+    monkeypatch.setattr(db_credentials, "_secrets_path", tmp_path / "no_secrets.dat")
     original = lab.credentials.read_text(encoding="utf-8")
     try:
         lab.credentials.write_text(json.dumps({"db_password": "wrong", "db_name": DBNAME}),

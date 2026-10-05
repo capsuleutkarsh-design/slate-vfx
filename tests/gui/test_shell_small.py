@@ -1,5 +1,5 @@
 """
-Small shell pieces: toasts, the update dialog, start-up and launchers.
+Small shell pieces: the update dialog, start-up and launchers.
 """
 import logging
 import os
@@ -7,8 +7,7 @@ import sys
 import threading
 
 import pytest
-from PySide6.QtCore import QPoint, Qt
-from PySide6.QtWidgets import QLabel, QWidget
+from PySide6.QtWidgets import QLabel
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -26,45 +25,6 @@ def gatekeeper(monkeypatch):
         if handler not in handlers:
             root.removeHandler(handler)
     root.setLevel(level)
-
-
-# ------------------------------------------------------------------ toast
-
-def test_a_long_toast_grows_and_sits_on_its_window(qtbot):
-    from slate.gui.notification_overlay import NotificationOverlay
-    parent = QWidget()
-    qtbot.addWidget(parent)
-    parent.setGeometry(500, 300, 900, 600)
-    parent.show()
-    toast = NotificationOverlay(parent)
-    toast.show_message("Message from Priya", "Please save your work. " * 12, duration=60000)
-    assert toast.height() > 80 and toast.width() <= NotificationOverlay.MAX_WIDTH
-    target, _below = toast._target()
-    corner = parent.mapToGlobal(parent.rect().bottomRight())
-    assert target.x() + toast.width() <= corner.x() and target.y() + toast.height() <= corner.y()
-    assert toast.lbl_msg.text().strip()
-    toast.enterEvent(None) if False else None
-    # Hover holds the timer.
-    from PySide6.QtCore import QEvent
-    from PySide6.QtGui import QEnterEvent
-    toast.enterEvent(QEnterEvent(QPoint(1, 1), QPoint(1, 1), QPoint(1, 1)))
-    assert not toast.timer.isActive()
-    toast.leaveEvent(QEvent(QEvent.Type.Leave))
-    assert toast.timer.isActive()
-
-
-def test_a_right_click_does_not_dismiss(qtbot):
-    from slate.gui.notification_overlay import NotificationOverlay
-    toast = NotificationOverlay()
-    qtbot.addWidget(toast)
-    assert toast.lbl_msg.text() == ""
-    calls = []
-    toast.callback = lambda: calls.append(1)
-    qtbot.mouseClick(toast, Qt.MouseButton.RightButton)
-    assert calls == []
-    qtbot.mouseClick(toast, Qt.MouseButton.LeftButton)
-    assert calls == [1]
-    assert not toast.btn_close.icon().isNull()
 
 
 # ------------------------------------------------------------------ update

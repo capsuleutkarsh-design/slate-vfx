@@ -3,7 +3,6 @@ Worker Thread Tests
 
 Comprehensive tests for worker threads covering:
 - FolderCreationWorker: Project structure creation
-- MoveScanWorker: File move operations  
 - ShotSubfoldersWorker: Shot folder management
 - ReportWorker: Report generation
 
@@ -93,106 +92,6 @@ class TestFolderCreationWorker:
         assert hasattr(FolderCreationWorker, '_process_excel')
         assert hasattr(FolderCreationWorker, '_process_scan')
         assert hasattr(FolderCreationWorker, '_create_subs')
-
-
-class TestMoveScanWorker:
-    """Test MoveScanWorker for file move operations."""
-    
-    def test_move_scan_worker_can_be_imported(self):
-        """Test that MoveScanWorker can be imported."""
-        from slate.core.workers.file_ops import MoveScanWorker
-        assert MoveScanWorker is not None
-    
-    def test_move_scan_worker_inherits_qthread(self):
-        """Test that MoveScanWorker inherits from QThread."""
-        from slate.core.workers.file_ops import MoveScanWorker
-        assert issubclass(MoveScanWorker, QThread)
-    
-    def test_move_scan_worker_has_signals(self):
-        """Test that worker has required Qt signals."""
-        from slate.core.workers.file_ops import MoveScanWorker
-        
-        assert hasattr(MoveScanWorker, 'progress_signal')
-        assert hasattr(MoveScanWorker, 'log_signal')
-        assert hasattr(MoveScanWorker, 'stats_signal')
-        assert hasattr(MoveScanWorker, 'finished_signal')
-        assert hasattr(MoveScanWorker, 'file_progress_signal')
-    
-    def test_move_scan_worker_initialization(self):
-        """Test worker initialization."""
-        from slate.core.workers.file_ops import MoveScanWorker
-        
-        # QThread requires QObject or None, not MagicMock
-        worker = MoveScanWorker(
-            parent=None,
-            mode="specific_shot",
-            source_path="/test/source",
-            dest_path="/test/dest"
-        )
-        
-        # Basic checks
-        assert worker is not None
-        assert hasattr(worker, 'run')
-    
-    def test_move_scan_worker_pause_resume(self):
-        """Test pause and resume functionality."""
-        from slate.core.workers.file_ops import MoveScanWorker
-        
-        worker = MoveScanWorker(
-            parent=None,
-            mode="specific_shot",
-            source_path="/test/source",
-            dest_path="/test/dest"
-        )
-        
-        # Test pause/resume exist and are callable
-        assert hasattr(worker, 'pause')
-        assert hasattr(worker, 'resume')
-        assert callable(worker.pause)
-        assert callable(worker.resume)
-    
-    def test_move_scan_worker_stop(self):
-        """Test stopping the worker."""
-        from slate.core.workers.file_ops import MoveScanWorker
-        
-        worker = MoveScanWorker(
-            parent=None,
-            mode="specific_shot",
-            source_path="/test/source",
-            dest_path="/test/dest"
-        )
-        
-        # Test stop exists and is callable
-        assert hasattr(worker, 'stop')
-        assert callable(worker.stop)
-    
-    def test_move_scan_worker_has_methods(self):
-        """Test that worker has required methods."""
-        from slate.core.workers.file_ops import MoveScanWorker
-        
-        assert hasattr(MoveScanWorker, 'run')
-        assert hasattr(MoveScanWorker, 'pause')
-        assert hasattr(MoveScanWorker, 'resume')
-        assert hasattr(MoveScanWorker, 'stop')
-        assert hasattr(MoveScanWorker, '_run_excel_based_move')
-        assert hasattr(MoveScanWorker, '_run_specific_shot_move')
-        assert hasattr(MoveScanWorker, '_process_folder_recursive')
-        assert hasattr(MoveScanWorker, '_production_move_operation')
-    
-    def test_move_scan_worker_junk_file_filter(self):
-        """Test that junk file filter method exists."""
-        from slate.core.workers.file_ops import MoveScanWorker
-        
-        worker = MoveScanWorker(
-            parent=None,
-            mode="specific_shot",
-            source_path="/test/source",
-            dest_path="/test/dest"
-        )
-        
-        # Just verify method exists
-        assert hasattr(worker, '_is_junk_file')
-        assert callable(worker._is_junk_file)
 
 
 class TestShotSubfoldersWorker:
@@ -289,13 +188,11 @@ class TestWorkerFacade:
         from slate.core.worker_threads import (
             FolderCreationWorker,
             ShotSubfoldersWorker,
-            MoveScanWorker,
             ReportWorker
         )
-        
+
         assert FolderCreationWorker is not None
         assert ShotSubfoldersWorker is not None
-        assert MoveScanWorker is not None
         assert ReportWorker is not None
     
     def test_safe_file_operations_exported(self):
