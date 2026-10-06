@@ -33,7 +33,7 @@ class ChangePasswordDialog(QDialog):
         # The person's name, as the header shows it - not their login id.
         name = str(display_name or "").strip() or username
         intro = QLabel(
-            f"Welcome, {name}. You signed inwith the first password you were given. "
+            f"Welcome, {name}. You signed in with the first password you were given. "
             "Choose your own password to continue. Cancel takes you back to the sign-in screen."
             if forced else f"Change the password for {name}.")
         intro.setWordWrap(True)
