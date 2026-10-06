@@ -262,6 +262,16 @@ def test_supervisor_sees_live_ops_read_only(panel_for):
     assert panel.show_page("Data Center") is False
 
 
+def test_it_messages_and_restarts_but_has_no_logs_or_database(panel_for, monkeypatch):
+    """A13: IT restarts PCs; Audit Logs and Data Center stay with Admin and Developer."""
+    from slate.core.domain import access
+    monkeypatch.setattr(access, "_role_abilities", lambda: {"it": {"fleet_control"}})
+    panel = panel_for(["IT"])
+    assert panel.page_labels() == ["Live Ops"]
+    assert not panel.live_dashboard.read_only and hasattr(panel, "inp_broadcast")
+    assert not hasattr(panel, "data_center") and not hasattr(panel, "unified_log_viewer")
+
+
 def test_admin_sees_every_page(panel_for):
     panel = panel_for(["Admin"])
     assert panel.page_labels() == ["Live Ops", "Audit Logs", "Data Center"]

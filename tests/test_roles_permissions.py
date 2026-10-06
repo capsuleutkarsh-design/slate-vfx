@@ -83,6 +83,17 @@ def test_new_roles_are_created_beside_the_old_ones(users):
         assert role.lower() in roles
 
 
+def test_new_studio_roles_match_what_they_do(users):
+    """A9: Edit bids without the Bidding screen. A13: IT makes accounts and restarts PCs."""
+    for role in ("Production Coordinator", "Producer"):
+        perms = users.role_permissions(role)
+        assert "Bidding" in perms and "can:approve_bid" not in perms, role
+    it = users.role_permissions("IT")
+    assert {"Admin Panel", "can:manage_users", "can:fleet_control"} <= set(it)
+    assert "can:manage_system" not in it
+    assert catalog.permission_label("can:excel_sync") == "Excel export"
+
+
 def test_a_deleted_default_role_stays_deleted(db, users):
     from slate.core.domain.user_manager import UserManager
     assert users.delete_role("DMP")

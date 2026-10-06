@@ -361,7 +361,8 @@ def test_PRD_061_PRD_125_artists_and_coordinators_do_not_get_bidding():
     from slate.core.domain.permissions_catalog import STUDIO_ROLES
     for role in ("Roto Artist", "Paint Artist", "Compositor", "CG", "DMP"):
         assert "Scheduling" not in STUDIO_ROLES[role] and "Bidding" not in STUDIO_ROLES[role]
-    assert "Bidding" not in STUDIO_ROLES["Production Coordinator"]
+    # The handbook fixes (A9): coordinators and producers, who hold Edit bids, get the screen.
+    assert "Bidding" in STUDIO_ROLES["Production Coordinator"]
     assert "Scheduling" in STUDIO_ROLES["Production Coordinator"]
     import inspect
     from slate.core.domain import user_manager

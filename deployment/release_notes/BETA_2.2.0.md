@@ -363,9 +363,12 @@ On each machine, a settings file damaged by the old `&` / apostrophe bug is also
 - **New "Edit bids" right.** Making and changing bids now needs it. Every role that has the Bidding tab is given it on the first start, so nobody loses the right to make bids. A role without it sees Bidding read-only. New roles get it by default for Admin, Developer, Production Head, Production Coordinator and Producer.
 - **Bidding settings:** margins, complexities, day rates, GST and the studio name are changed by the people who approve bids, the same rule as Settings → Studio currency, rates and hours.
 - **The Producer role gains the VFX Dashboard tab.** It also keeps Excel export now that it is no longer treated as a supervisor.
+- **On a new database, Production Coordinator and Producer get the Bidding tab.** They already had Edit bids. Existing studios' roles are not changed; an admin can tick the tab on them.
+- **On a new database, the IT role gets the Users tab** (create accounts, reset passwords, deactivate) **and the Admin Panel's Live Ops with its broadcast message, restart and shut down**, through the new **Message and restart workstations** ability. Audit Logs and the Data Center stay with Admin and Developer. Existing studios' IT roles are not changed; an admin can tick "Manage users", the Admin Panel tab and the new ability on them.
+- The ability once called "Excel import / export" is now called **Excel export**, which is all it does.
 - **Some defaults changed:**
   - **Supervisors** no longer manage users, and no longer see the whole studio's attendance. They see the attendance of everyone under them (their reports, and their leads' reports), read-only.
-  - In the **Admin Panel**, supervisors get **Live Ops, read-only**. Audit Logs, Data Center and the remote machine actions are for Admin and Developer.
+  - In the **Admin Panel**, supervisors get **Live Ops, read-only**. Audit Logs, Data Center and the remote machine actions are for Admin and Developer (and the remote actions for IT on a new database).
   - If a studio wants supervisors to keep the old rights, an admin can tick "Manage users" or "See team attendance" on the role.
 - **Coordinators are no longer treated as supervisors** on the dashboard. They cannot force a save over someone else's edit unless "Force-save over others" is ticked on their role.
 - Someone who edits roles can now only hand on what they have themselves. Only Admin and Developer can give Full access.

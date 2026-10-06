@@ -87,8 +87,8 @@ ABILITIES = (
             "Ingest into and delete from the stock library."),
     Ability("force_save", "Force-save over others",
             "Overwrite another user's edit when a conflict is reported."),
-    Ability("excel_sync", "Excel import / export",
-            "Import from and export to the project Excel backup."),
+    Ability("excel_sync", "Excel export",
+            "Export to the project Excel backup."),
     # Added 2026-09. Existing roles were upgraded once so nobody lost what
     # they could already do (UserManager._upgrade_role_abilities).
     Ability("assignable", "Can be given shots",
@@ -107,6 +107,9 @@ ABILITIES = (
             "Open Licences read-only."),
     Ability("manage_system", "System administration",
             "Data Center, table editing, the SQL console, Audit Logs and remote workstation actions."),
+    Ability("fleet_control", "Message and restart workstations",
+            "On the Admin Panel's Live Ops: broadcast a message, restart or shut down a "
+            "workstation. Not the Audit Logs or the Data Center."),
     Ability("studio_settings", "Studio settings",
             "Change studio-wide settings: studio policy, server and database, branding, updates."),
     Ability("tester_destructive", "Destructive test tools",
@@ -118,7 +121,7 @@ ABILITIES = (
 # these - they are how somebody would give themselves everything else.
 SENSITIVE_ABILITIES = frozenset({
     "manage_permissions", "manage_users", "manage_system",
-    "studio_settings", "tester_destructive", "delete_project",
+    "studio_settings", "tester_destructive", "delete_project", "fleet_control",
 })
 
 # What makes one person's account more powerful than another's, for giving
@@ -179,9 +182,10 @@ STUDIO_ROLES = {
     "Admin": [t.key for t in TABS if t.key != "Tester Panel"]
              + [ability_key(a.key) for a in ABILITIES
                 if a.key not in RESTRICTIONS | {"assignable", "tester_destructive"}],
-    "IT": ["IT", "Settings",
-           ability_key("manage_it"), ability_key("manage_permissions"),
-           ability_key("studio_settings"), ability_key("view_licences")],
+    # IT makes the accounts, resets passwords and restarts PCs.
+    "IT": ["IT", "Admin Panel", "Settings",
+           ability_key("manage_it"), ability_key("manage_permissions"), ability_key("manage_users"),
+           ability_key("studio_settings"), ability_key("view_licences"), ability_key("fleet_control")],
     "HR": ["HRMS", "Settings",
            ability_key("manage_leave"), ability_key("manage_users"),
            ability_key("view_team_attendance"), ability_key("manage_permissions")],
@@ -192,14 +196,14 @@ STUDIO_ROLES = {
                            "view_team_attendance", "ingest_stock", "force_save", "excel_sync",
                            "dashboard_view_all", "schedule_write", "bid_write", "approve_bid",
                            "view_licences")],
-    "Production Coordinator": ["Dashboard", "Shot Review", "Scheduling", "Stock Browser",
+    "Production Coordinator": ["Dashboard", "Shot Review", "Scheduling", "Bidding", "Stock Browser",
                                "Folder Creator", "Rename Tool", "Settings"]
                               + [ability_key(a) for a in (
                                   "dashboard_write", "artist_own_status", "excel_sync",
                                   "dashboard_view_all", "schedule_write")],
     # access.json gives producer dashboard_write and dashboard_view_all; without
     # a role row a Producer had no Dashboard tab at all.
-    "Producer": ["Dashboard", "Shot Review", "Scheduling", "Stock Browser",
+    "Producer": ["Dashboard", "Shot Review", "Scheduling", "Bidding", "Stock Browser",
                  "Folder Creator", "Rename Tool", "Settings"]
                 + [ability_key(a) for a in (
                     "dashboard_write", "artist_own_status", "excel_sync",

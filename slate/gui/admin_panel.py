@@ -78,6 +78,8 @@ class AdminPanelTab(QWidget):
         # open the tab had a SQL console and fleet restart.
         self.roles = roles_of_user(roles, getattr(self, "user_role", None), self.app_context)
         self.can_manage_system = access.can(self.roles, "manage_system")
+        # Broadcasts, restart and shut down - IT's job - without the logs or the database.
+        self.can_control_fleet = self.can_manage_system or access.can(self.roles, "fleet_control")
 
         self.log_file = self.hub.get_attendance_dir().parent / "Config" / "audit.log"
         try: self.log_file.parent.mkdir(parents=True, exist_ok=True)
@@ -127,7 +129,7 @@ class AdminPanelTab(QWidget):
         # One page needs no switcher.
         switcher.setVisible(len(self.pages) > 1)
 
-        if not self.can_manage_system:
+        if not self.can_control_fleet:
             note = QLabel("Live Ops, read-only. Remote actions, the logs and the database "
                           "are for admins and developers.")
             note.setObjectName("AdminReadOnlyNote")
@@ -143,7 +145,7 @@ class AdminPanelTab(QWidget):
         self.live_dashboard = LiveDashboard(
             self.hub,
             verify_callback=self.verify_admin_action,
-            read_only=not self.can_manage_system,
+            read_only=not self.can_control_fleet,
             log_action=self.log_action,
             admin_user=self.current_username or "",
         )
@@ -199,7 +201,7 @@ class AdminPanelTab(QWidget):
         btn_export.setIcon(draw_icon("download"))
         dashboard.add_tool(btn_export)
 
-        if not self.can_manage_system:
+        if not self.can_control_fleet:
             return
 
         control_frame = QFrame()

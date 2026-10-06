@@ -18,7 +18,7 @@ from PySide6.QtWidgets import QFileDialog
 
 from .....core.infra.stock_repository import REMOVED
 
-MANAGERS = "Only leads, supervisors and admins can"
+MANAGERS = "Only people with the Ingest stock ability can"
 
 
 def import_sentence(summary: dict) -> tuple:
