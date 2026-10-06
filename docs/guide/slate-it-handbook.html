@@ -1,0 +1,981 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Slate for IT</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --ground: #F5F4F0; --panel: #FFFFFF; --raised: #ECEAE4; --line: #D3D0C7; --line-soft: #E5E2DA;
+    --text: #1B1B1F; --text-2: #4A4A52; --text-dim: #77767F;
+    --studio: #2A7A8C; --studio-soft: #DCEEF2;
+    --ops: #A8761E; --ops-soft: #F6ECD6;
+    --server: #2F8B5F; --server-soft: #DDF0E5;
+    --bad: #B9433F; --bad-soft: #F7DEDD; --warn: #A8761E; --ok: #2F8B5F; --info: #3F7DA8; --idle: #8A8883;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0D0D0F; --panel: #16161A; --raised: #1D1D22; --line: #2C2C34; --line-soft: #212128;
+      --text: #E8E6E1; --text-2: #B4B1AA; --text-dim: #87857F;
+      --studio: #3EA8BF; --studio-soft: #12343B; --ops: #D9A441; --ops-soft: #3A2C10; --server: #5FBF8F; --server-soft: #12352A;
+      --bad: #D9635F; --bad-soft: #3B1C1B; --warn: #D9A441; --ok: #5FBF8F; --info: #6BA4C9; --idle: #6E6C67;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0D0D0F; --panel: #16161A; --raised: #1D1D22; --line: #2C2C34; --line-soft: #212128;
+    --text: #E8E6E1; --text-2: #B4B1AA; --text-dim: #87857F;
+    --studio: #3EA8BF; --studio-soft: #12343B; --ops: #D9A441; --ops-soft: #3A2C10; --server: #5FBF8F; --server-soft: #12352A;
+    --bad: #D9635F; --bad-soft: #3B1C1B; --warn: #D9A441; --ok: #5FBF8F; --info: #6BA4C9; --idle: #6E6C67;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--ground); color: var(--text); font-family: Inter, "Segoe UI", system-ui, sans-serif; font-size: 17px; line-height: 1.6; padding-inline: clamp(16px, 4vw, 48px); padding-block: 32px 80px; }
+  .wrap { max-width: 960px; margin: 0 auto; }
+  h1, h2, h3, h4 { font-family: "Barlow Semi Condensed", Bahnschrift, "Segoe UI", sans-serif; text-wrap: balance; margin: 0; }
+  h1 { font-size: 46px; font-weight: 700; line-height: 1.05; }
+  h2 { font-size: 34px; font-weight: 700; margin-top: 72px; padding-top: 22px; border-top: 3px solid var(--line); }
+  h3 { font-size: 24px; font-weight: 600; margin-top: 40px; }
+  h4 { font-size: 18px; font-weight: 600; margin-top: 22px; }
+  p { max-width: 62ch; margin: 10px 0; }
+  .eyebrow { font-family: "Barlow Semi Condensed", Bahnschrift, sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 1.8px; text-transform: uppercase; color: var(--text-dim); }
+  .lede { font-size: 20px; color: var(--text-2); max-width: 60ch; }
+  code { font-family: Consolas, "Cascadia Mono", monospace; font-size: 15px; background: var(--raised); padding: 1px 6px; border-radius: 4px; }
+  ul, ol { max-width: 66ch; }
+  li { margin: 6px 0; }
+  a { color: var(--studio); }
+
+  /* Product colouring */
+  .studio h2, .studio h3 { color: var(--studio); }
+  .ops h2, .ops h3 { color: var(--ops); }
+  .server h2, .server h3 { color: var(--server); }
+
+  /* Cover cards */
+  .covers { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 28px; }
+  .cover { border-radius: 10px; padding: 20px 22px; color: var(--text); text-decoration: none; border: 2px solid var(--line); background: var(--panel); display: block; }
+  .cover.studio { border-color: var(--studio); background: var(--studio-soft); }
+  .cover.ops { border-color: var(--ops); background: var(--ops-soft); }
+  .cover.server { border-color: var(--server); background: var(--server-soft); }
+  .cover .who { font-size: 14px; color: var(--text-2); margin-top: 6px; }
+  .cover h3 { margin: 0; font-size: 26px; }
+  .cover svg { width: 56px; height: 56px; display: block; margin-bottom: 10px; }
+
+  /* Steps */
+  .steps { list-style: none; padding: 0; margin: 18px 0; counter-reset: s; max-width: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; }
+  .steps li { counter-increment: s; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 16px 16px 16px; position: relative; margin: 0; }
+  .steps li::before { content: counter(s); font-family: "Barlow Semi Condensed", Bahnschrift, sans-serif; font-weight: 700; font-size: 30px; line-height: 1; color: var(--text-dim); display: block; margin-bottom: 8px; }
+  .steps li b { display: block; font-size: 18px; margin-bottom: 4px; }
+  .steps li span { color: var(--text-2); font-size: 15px; }
+  .steps svg { width: 44px; height: 44px; display: block; margin-bottom: 8px; }
+
+  /* Callouts */
+  .note { border-left: 5px solid var(--info); background: var(--panel); padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 18px 0; max-width: 70ch; }
+  .note.bad { border-color: var(--bad); background: var(--bad-soft); }
+  .note.ok { border-color: var(--ok); }
+  .note.warn { border-color: var(--warn); }
+  .note b { display: block; font-family: "Barlow Semi Condensed", Bahnschrift, sans-serif; font-size: 18px; margin-bottom: 4px; }
+
+  /* Figures */
+  figure { margin: 22px 0; padding: 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  figure svg { width: 100%; height: auto; display: block; }
+  figcaption { margin-top: 10px; font-size: 15px; color: var(--text-2); max-width: 70ch; }
+  svg text { font-family: Inter, "Segoe UI", sans-serif; }
+
+  /* Tables */
+  .tablewrap { overflow-x: auto; margin: 14px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 16px; background: var(--panel); }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  th { font-family: "Barlow Semi Condensed", Bahnschrift, sans-serif; font-size: 14px; letter-spacing: 1px; text-transform: uppercase; color: var(--text-dim); }
+  .dot { display: inline-block; width: 14px; height: 14px; border-radius: 50%; vertical-align: -2px; margin-right: 6px; }
+
+  /* Sidebar mock */
+  .side { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; margin: 14px 0; }
+  .side .grp { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .side .grp .h { font-family: "Barlow Semi Condensed", Bahnschrift, sans-serif; font-size: 13px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 8px; }
+  .side .grp div.i { padding: 6px 0; border-top: 1px solid var(--line-soft); font-size: 16px; }
+  .side .grp div.i small { display: block; color: var(--text-2); font-size: 14px; }
+
+  .keep { break-inside: avoid; }
+  td code, .steps code { overflow-wrap: anywhere; word-break: break-word; }
+  table.fixed { table-layout: fixed; }
+  .mono { font-family: Consolas, "Cascadia Mono", monospace; }
+  .card-print { page-break-inside: avoid; }
+  @media print {
+    @page { size: A4; margin: 14mm 14mm 16mm; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body { background: #fff; color: #000; font-size: 13px; padding: 0; }
+    h2 { page-break-before: always; margin-top: 0; border: 0; }
+    h3, h4 { break-after: avoid; }
+    table { font-size: 12.5px; }
+    tr, .keep { break-inside: avoid; }
+    thead { display: table-header-group; break-after: avoid; }
+    .tablewrap { overflow: visible; }
+    code { font-size: 11.5px; padding: 0 4px; }
+    .steps { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+    .steps li span { font-size: 12.5px; }
+    figure, .steps li, .note { break-inside: avoid; }
+    a { color: inherit; text-decoration: none; }
+  }
+  @media (max-width: 480px) { h1 { font-size: 34px; } h2 { font-size: 28px; } }
+</style>
+
+<div class="wrap">
+
+<div class="eyebrow">Slate BETA 2.2.0 &middot; for IT</div>
+<h1 style="margin-top:8px">Slate for IT</h1>
+<p class="lede">Everything IT does with Slate, from the first install to the day you move the server. Each step is one thing to do. The words in bold are the words on the screen.</p>
+
+<div class="covers">
+  <a class="cover server" href="#setup">
+    <svg viewBox="0 0 56 56" role="img" aria-label="Server"><rect x="8" y="8" width="40" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><rect x="8" y="32" width="40" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><circle cx="16" cy="16" r="3" fill="currentColor"/><circle cx="16" cy="40" r="3" fill="currentColor"/></svg>
+    <h3>Set up a studio</h3>
+    <div class="who">Server, Recovery Key, the studio's password, firewall, workstations, the first administrator.</div>
+  </a>
+  <a class="cover server" href="#care">
+    <svg viewBox="0 0 56 56" role="img" aria-label="Heart line"><path d="M4 30 h12 l6 -14 l8 26 l6 -12 h16" fill="none" stroke="currentColor" stroke-width="3"/></svg>
+    <h3>Keep it healthy</h3>
+    <div class="who">Dashboard, Analytics, backups every 6 hours, maintenance, logs, publishing updates.</div>
+  </a>
+  <a class="cover studio" href="#recover">
+    <svg viewBox="0 0 56 56" role="img" aria-label="Key"><circle cx="18" cy="28" r="10" fill="none" stroke="currentColor" stroke-width="3"/><path d="M28 28 h22 M42 28 v8 M48 28 v6" fill="none" stroke="currentColor" stroke-width="3"/></svg>
+    <h3>Recover Slate</h3>
+    <div class="who">When nobody can sign in. Passwords, administrators, security switches, snapshots.</div>
+  </a>
+  <a class="cover ops" href="#ops">
+    <svg viewBox="0 0 56 56" role="img" aria-label="Ticket"><path d="M6 16 h44 v8 a4 4 0 0 0 0 8 v8 h-44 v-8 a4 4 0 0 0 0 -8 z" fill="none" stroke="currentColor" stroke-width="3"/><line x1="22" y1="16" x2="22" y2="40" stroke="currentColor" stroke-width="2" stroke-dasharray="3 3"/></svg>
+    <h3>Your daily screens</h3>
+    <div class="who">IT Support tickets, Hardware, Licences, Deployment, Joining &amp; Leaving, Admin Panel.</div>
+  </a>
+</div>
+
+<p style="margin-top:22px">Sections in this handbook: <a href="#map">What the studio is made of</a> &middot; <a href="#setup">Setting up a new studio</a> &middot; <a href="#password">The studio's database password</a> &middot; <a href="#people">The first administrator, people and roles</a> &middot; <a href="#care">Looking after the server</a> &middot; <a href="#updates">Publishing updates</a> &middot; <a href="#recover">Recover Slate and the security switches</a> &middot; <a href="#ops">Your screens in Slate Operations</a> &middot; <a href="#admin">The Admin Panel</a> &middot; <a href="#move">Moving, uninstalling, where things live</a> &middot; <a href="#help">When something goes wrong</a>.</p>
+
+<!-- ============================================================ -->
+<h2 id="map">What the studio is made of</h2>
+<p>Slate has three parts. One <b>server PC</b> runs Slate Server and keeps the studio database on its own disk. One <b>shared folder</b> on the network, called <code>Slate_Central</code>, holds files every PC needs. Every other PC is a <b>workstation</b> with Slate Studio, Slate Operations, or both.</p>
+
+<figure>
+<svg viewBox="0 0 900 400" role="img" aria-label="The server PC runs Slate Server, PostgreSQL on port 5440 and the connection pool on port 6432, and keeps the database, backups and the slate_recovery folder on its own disk. Workstations with Slate Studio and Slate Operations talk to the server over the network. All PCs read and write the Slate_Central shared folder, which holds Updates, Commands, LiveStatus, Logs, Cache and Config.">
+  <defs><marker id="arA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+  <!-- workstations -->
+  <g stroke-width="2">
+    <rect x="20" y="40" width="200" height="96" rx="10" fill="var(--studio-soft)" stroke="var(--studio)"/>
+    <rect x="20" y="160" width="200" height="96" rx="10" fill="var(--ops-soft)" stroke="var(--ops)"/>
+    <rect x="20" y="280" width="200" height="96" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+  </g>
+  <g fill="currentColor" font-size="15" font-weight="600">
+    <text x="36" y="66">Artist PC</text><text x="36" y="186">HR / IT / office PC</text><text x="36" y="306">Supervisor PC</text>
+  </g>
+  <g fill="currentColor" font-size="13">
+    <text x="36" y="90">Studio + Operations</text><text x="36" y="110" fill="var(--text-2)">shots; punch, leave, tickets</text>
+    <text x="36" y="210">Slate Operations</text><text x="36" y="230" fill="var(--text-2)">people, IT, admin</text>
+    <text x="36" y="330">Studio + Operations</text><text x="36" y="350" fill="var(--text-2)">plus leave approval</text>
+  </g>
+  <!-- server -->
+  <rect x="330" y="40" width="250" height="240" rx="12" fill="var(--server-soft)" stroke="var(--server)" stroke-width="2"/>
+  <g fill="currentColor"><text x="346" y="68" font-size="15" font-weight="600">Server PC</text><text x="346" y="88" font-size="12" fill="var(--text-2)">Slate Server is open here</text></g>
+  <g fill="var(--panel)" stroke="var(--server)" stroke-width="1.5">
+    <rect x="346" y="100" width="218" height="34" rx="6"/><rect x="346" y="142" width="218" height="34" rx="6"/><rect x="346" y="184" width="218" height="80" rx="6"/>
+  </g>
+  <g fill="currentColor" font-size="12.5">
+    <text x="358" y="122">Database  &#183;  TCP 5440</text>
+    <text x="358" y="164">Connection pool  &#183;  TCP 6432</text>
+    <text x="358" y="204" font-weight="600">On this PC's own disk:</text>
+    <text x="358" y="222">LocalDatabase (the data)</text>
+    <text x="358" y="240">Backups</text>
+    <text x="358" y="258">slate_recovery (key, passwords)</text>
+  </g>
+  <!-- share -->
+  <path d="M660 52 h60 l16 16 h144 v196 h-220 z" fill="var(--panel)" stroke="currentColor" stroke-width="2"/>
+  <g fill="currentColor"><text x="672" y="92" font-size="15" font-weight="600">Slate_Central</text><text x="672" y="110" font-size="12" fill="var(--text-2)">shared folder on the network</text></g>
+  <g fill="currentColor" font-size="12.5" class="mono">
+    <text x="672" y="136">Updates\releases</text><text x="672" y="156">Commands</text><text x="672" y="176">LiveStatus</text><text x="672" y="196">Logs, Logs\Audit</text><text x="672" y="216">Cache, Thumbnails</text><text x="672" y="236">Config, Attendance</text>
+  </g>
+  <!-- arrows -->
+  <g stroke="var(--server)" stroke-width="3" fill="none" marker-end="url(#arA)" marker-start="url(#arA)">
+    <line x1="226" y1="88" x2="324" y2="130"/><line x1="226" y1="208" x2="324" y2="170"/><line x1="226" y1="320" x2="324" y2="240"/>
+  </g>
+  <g stroke="var(--text-2)" stroke-width="2" fill="none" stroke-dasharray="6 4" marker-end="url(#arA)" marker-start="url(#arA)">
+    <path d="M120 380 C 300 400 640 400 770 270"/>
+    <line x1="586" y1="160" x2="654" y2="160"/>
+  </g>
+  <g fill="currentColor" font-size="12.5" font-style="italic">
+    <text x="276" y="34" text-anchor="middle">data: TCP 6432, else 5440</text>
+    <text x="470" y="362" text-anchor="middle">files: every PC, including the server PC</text>
+  </g>
+  <text x="346" y="300" font-size="12.5" fill="var(--text-2)">Discovery: UDP 54320 (Find server)</text>
+</svg>
+<figcaption>Workstations save and read through the server. Files go to the shared folder. The server PC also needs the shared folder: it publishes updates there.</figcaption>
+</figure>
+
+<div class="note warn"><b>Two folders called Slate_Central</b>The <strong>shared</strong> <code>Slate_Central</code> is on the network, for example <code>Z:\Slate_Central</code> or <code>\\server\share\Slate_Central</code>. The server PC also has a <strong>local</strong> folder with the same name, <code>%LOCALAPPDATA%\Slate_Central</code>. That local one holds the database, the backups and the Recovery Key's fingerprint. Never mix them up, and never delete the local one.</div>
+
+<h3>Three installers: who gets which</h3>
+<div class="tablewrap keep"><table>
+  <tr><th>Installer</th><th>Start menu</th><th>Holds</th></tr>
+  <tr><td><code>setup_Slate Server_vBETA 2.2.0.exe</code></td><td><b>Slate Server</b>, <b>Recover Slate</b></td><td>Slate Server, the database (PostgreSQL 17), the connection pool (PgBouncer), Recover Slate</td></tr>
+  <tr><td><code>setup_Slate_Studio_vBETA 2.2.0.exe</code></td><td><b>Slate</b></td><td>Slate Studio (window title <b>Slate VFX</b>): the PRODUCTION screens, ffmpeg, OpenRV</td></tr>
+  <tr><td><code>setup_Slate_Ops_vBETA 2.2.0.exe</code></td><td><b>Slate Operations</b></td><td>Slate Operations: Attendance, Leave, IT Support and the office screens, ffmpeg</td></tr>
+</table></div>
+
+<p>Slate Studio shows only <b>Home</b>, the <b>PRODUCTION</b> screens and <b>Settings</b>. Everything under <b>PEOPLE</b> (Attendance, Leave, Joining &amp; Leaving), <b>IT &amp; INFRA</b> (Hardware, Licences, IT Support, Deployment) and <b>ADMINISTRATION</b> (Users &amp; Roles, Admin Panel) is only in Slate Operations. Punching in, asking for leave and raising an IT ticket all happen in Slate Operations. So:</p>
+<div class="tablewrap keep"><table>
+  <tr><th>Kind of PC</th><th>Install</th><th>Why</th></tr>
+  <tr><td>Artist, lead, coordinator</td><td><b>Studio + Operations</b></td><td>Studio for the shot work; Operations to punch in, ask for leave and raise tickets</td></tr>
+  <tr><td>Supervisor (approves leave)</td><td><b>Studio + Operations</b></td><td>Leave approval, team attendance and the Admin Panel are only in Operations</td></tr>
+  <tr><td>HR, IT, production office</td><td><b>Operations</b></td><td>Everything they need is in Operations. Exception: anyone in the office who works on the VFX Dashboard, Scheduling or Bidding also needs Studio, because those screens are only there.</td></tr>
+  <tr><td>The server PC</td><td><b>Server</b> only</td><td>Nobody works on it. Keep it for the database.</td></tr>
+</table></div>
+<div class="note"><b>Both on one PC</b>The two workstation programs live side by side and share the same settings on that PC (<code>%LOCALAPPDATA%\Slate</code>). Install both, answer the shared-folder question the same way, and the second one already knows the server.</div>
+
+<p>All three installers install for the signed-in Windows user, with no administrator rights, into <code>%LOCALAPPDATA%\Programs\</code>. Each one starts its program when Windows starts. Nothing needs the internet.</p>
+
+<!-- ============================================================ -->
+<h2 id="setup">Setting up a brand-new studio</h2>
+<p class="lede">Do these in this order. The order matters: the server must exist before any workstation can sign in, and the first Slate that opens builds the studio's tables and roles.</p>
+
+<figure>
+<svg viewBox="0 0 900 250" role="img" aria-label="Eight steps in order: 1 install Slate Server; 2 first start and choose the database folder; 3 keep the Recovery Key; 4 Allow Firewall; 5 note the studio's database password; 6 install the first workstation; 7 sign in as admin and choose your own password; 8 create people in Users and Roles.">
+  <defs><marker id="arB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+  <g stroke-width="2">
+    <rect x="10" y="20" width="200" height="90" rx="10" fill="var(--server-soft)" stroke="var(--server)"/>
+    <rect x="235" y="20" width="200" height="90" rx="10" fill="var(--server-soft)" stroke="var(--server)"/>
+    <rect x="460" y="20" width="200" height="90" rx="10" fill="var(--server-soft)" stroke="var(--server)"/>
+    <rect x="685" y="20" width="205" height="90" rx="10" fill="var(--server-soft)" stroke="var(--server)"/>
+    <rect x="10" y="145" width="200" height="90" rx="10" fill="var(--server-soft)" stroke="var(--server)"/>
+    <rect x="235" y="145" width="200" height="90" rx="10" fill="var(--studio-soft)" stroke="var(--studio)"/>
+    <rect x="460" y="145" width="200" height="90" rx="10" fill="var(--server-soft)" stroke="var(--server)"/>
+    <rect x="685" y="145" width="205" height="90" rx="10" fill="var(--ops-soft)" stroke="var(--ops)"/>
+  </g>
+  <g stroke="currentColor" stroke-width="2.5" fill="none" marker-end="url(#arB)">
+    <line x1="210" y1="65" x2="232" y2="65"/><line x1="435" y1="65" x2="457" y2="65"/><line x1="660" y1="65" x2="682" y2="65"/>
+    <path d="M787 110 C787 130 110 125 110 142"/>
+    <line x1="210" y1="190" x2="232" y2="190"/><line x1="435" y1="190" x2="457" y2="190"/><line x1="660" y1="190" x2="682" y2="190"/>
+  </g>
+  <g fill="currentColor" font-size="26" font-weight="700"><text x="24" y="54">1</text><text x="249" y="54">2</text><text x="474" y="54">3</text><text x="699" y="54">4</text><text x="24" y="179">5</text><text x="249" y="179">6</text><text x="474" y="179">7</text><text x="699" y="179">8</text></g>
+  <g fill="currentColor" font-size="14" font-weight="600">
+    <text x="50" y="50">Install the server</text><text x="275" y="50">Switch it on</text><text x="500" y="50">Recovery Key</text><text x="725" y="50">Allow Firewall</text>
+    <text x="50" y="175">The password</text><text x="275" y="175">First workstation</text><text x="500" y="175">Your admin</text><text x="725" y="175">People and roles</text>
+  </g>
+  <g fill="currentColor" font-size="12">
+    <text x="24" y="80">server PC, shared folder</text><text x="24" y="98">path in the installer</text>
+    <text x="249" y="80">Create a new empty</text><text x="249" y="98">database here</text>
+    <text x="474" y="80">print it, store it away</text><text x="474" y="98">from the server PC</text>
+    <text x="699" y="80">Settings: TCP 5440,</text><text x="699" y="98">TCP 6432, UDP 54320</text>
+    <text x="24" y="205">Recover Slate &gt; Show</text><text x="24" y="223">app password</text>
+    <text x="249" y="205">Set up Slate on this</text><text x="249" y="223">computer; tables built</text>
+    <text x="474" y="205">sign in as admin,</text><text x="474" y="223">choose your password</text>
+    <text x="699" y="205">Users &amp; Roles in</text><text x="699" y="223">Slate Operations</text>
+  </g>
+</svg>
+<figcaption>Green steps happen on the server PC. Step 6 is on a workstation. Step 8 is in Slate Operations on any PC.</figcaption>
+</figure>
+
+<h3>1. Install Slate Server</h3>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><rect x="8" y="8" width="28" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="3"/><rect x="8" y="24" width="28" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="3"/></svg><b>Pick the server PC</b><span>Always on, wired network, a fixed address (a DHCP reservation). The database lives on its own disk.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M22 6 v20 M14 18 l8 8 l8 -8" fill="none" stroke="currentColor" stroke-width="3"/><line x1="8" y1="36" x2="36" y2="36" stroke="currentColor" stroke-width="3"/></svg><b>Run the server installer</b><span><code>setup_Slate Server_vBETA 2.2.0.exe</code>. Sign in to Windows as the account that will run the server every day.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M6 12 h12 l4 4 h16 v20 h-32 z" fill="none" stroke="currentColor" stroke-width="3"/></svg><b>Select Slate_Central Shared Folder</b><span>Type the shared folder in <strong>Server Root Path</strong>, e.g. <code>Z:\Slate_Central</code>. It cannot be left blank. Use the same path on every PC.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M8 24 L18 34 L36 12" fill="none" stroke="var(--ok)" stroke-width="4"/></svg><b>Finish</b><span>The Start menu now has <strong>Slate Server</strong> and <strong>Recover Slate</strong>.</span></li>
+</ol>
+<div class="note warn"><b>"This folder does not exist on this machine"</b>The installer asks <strong>Use it anyway?</strong> when it cannot see the shared folder. Answer <strong>Yes</strong> only if the drive is simply not mapped yet. If it is a typo, answer <strong>No</strong> and fix it. A wrong path means Slate works on that PC only and shares nothing.</div>
+
+<h3>2. First start: where the database lives</h3>
+<p>Open <b>Slate Server</b>. It opens on the <b>Dashboard</b>. If you want the database somewhere other than the default <code>%LOCALAPPDATA%\Slate_Central\LocalDatabase</code> (for example a second internal drive), go to <b>Settings</b> first, type it in <b>Database folder</b>, and press <b>Save Configuration</b>. Keep it on this PC's own disk: Recover Slate refuses a database on a network drive.</p>
+
+<figure>
+<svg viewBox="0 0 900 260" role="img" aria-label="The question Slate Server asks the first time the power switch is turned on with an empty folder: Where is the studio's database? There is no database in the folder. Buttons: Use an existing database folder, Create a new empty database here, and Cancel.">
+  <rect x="120" y="14" width="660" height="232" rx="10" fill="var(--panel)" stroke="var(--line)" stroke-width="2"/>
+  <rect x="120" y="14" width="660" height="34" rx="10" fill="var(--raised)"/>
+  <text x="138" y="37" font-size="14" font-weight="600" fill="currentColor">Where is the studio's database?</text>
+  <circle cx="160" cy="88" r="16" fill="var(--studio-soft)" stroke="var(--studio)" stroke-width="2"/><text x="160" y="94" text-anchor="middle" font-size="18" font-weight="700" fill="var(--studio)">?</text>
+  <g fill="currentColor" font-size="13">
+    <text x="192" y="80" font-weight="600">There is no database in</text>
+    <text x="192" y="100" class="mono" font-size="12">C:\Users\it\AppData\Local\Slate_Central\LocalDatabase</text>
+    <text x="192" y="130" fill="var(--text-2)">The server will not build one on its own. If this studio already has a</text>
+    <text x="192" y="150" fill="var(--text-2)">database, choose its folder. Only create a new one if this is genuinely a new studio.</text>
+  </g>
+  <g stroke-width="1.5">
+    <rect x="192" y="182" width="230" height="36" rx="6" fill="var(--studio)" stroke="var(--studio)"/>
+    <rect x="432" y="182" width="240" height="36" rx="6" fill="var(--bad-soft)" stroke="var(--bad)"/>
+    <rect x="682" y="182" width="80" height="36" rx="6" fill="var(--panel)" stroke="var(--line)"/>
+  </g>
+  <g font-size="12.5" text-anchor="middle" font-weight="600">
+    <text x="307" y="205" fill="var(--panel)">Use an existing database folder...</text>
+    <text x="552" y="205" fill="currentColor">Create a new empty database here</text>
+    <text x="722" y="205" fill="currentColor">Cancel</text>
+  </g>
+</svg>
+<figcaption>Brand-new studio: <b>Create a new empty database here</b>. A studio that already has data: <b>Use an existing database folder...</b> and pick the folder that holds the file <code>PG_VERSION</code>. A folder without it is refused with "Not a database".</figcaption>
+</figure>
+
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="14" width="32" height="16" rx="8" fill="var(--ok)"/><circle cx="30" cy="22" r="6" fill="var(--panel)"/></svg><b>Database Server Power</b><span>Turn the switch on. The badge says <strong>Starting...</strong>, then <strong>Server Online</strong>.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="8" width="32" height="28" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="12" y1="18" x2="32" y2="18" stroke="currentColor" stroke-width="2"/><line x1="12" y1="26" x2="28" y2="26" stroke="currentColor" stroke-width="2"/></svg><b>Read SYSTEM LOGS</b><span>A new studio shows: "This studio's own database password was made and is kept on this PC only."</span></li>
+  <li><svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="15" fill="none" stroke="currentColor" stroke-width="3"/><text x="22" y="28" text-anchor="middle" font-size="16" font-weight="700" fill="currentColor">0</text></svg><b>Tables in Database: 0</b><span>Normal now. The warning "exists but has no tables" goes away when the first workstation opens Slate.</span></li>
+</ol>
+
+<h3>3. The Recovery Key</h3>
+<p>Right after the database starts for the first time, Slate Server shows <b>Your Slate Recovery Key</b>. It looks like <code>XXXXX-XXXXX-XXXXX-XXXXX-XXXXX</code>. It is shown <b>once</b>. Slate keeps only a one-way fingerprint of it, so nobody can read it back later.</p>
+<figure>
+<svg viewBox="0 0 900 230" role="img" aria-label="The Recovery Key window: the key in large letters, buttons Copy, Save as a text file and Print, a tick box I have printed or stored the key somewhere safe, and a Close button that works only after the box is ticked.">
+  <rect x="20" y="10" width="520" height="210" rx="10" fill="var(--panel)" stroke="var(--line)" stroke-width="2"/>
+  <text x="40" y="42" font-size="16" font-weight="700" fill="currentColor">Your Slate Recovery Key</text>
+  <rect x="40" y="56" width="480" height="44" rx="6" fill="var(--raised)" stroke="var(--line)"/>
+  <text x="280" y="85" text-anchor="middle" font-size="18" class="mono" fill="currentColor" letter-spacing="1">K7QPM-2XW4R-H9TDC-6YBNF-3JVLA</text>
+  <g stroke="var(--line)" stroke-width="1.5" fill="var(--panel)"><rect x="40" y="114" width="70" height="28" rx="5"/><rect x="118" y="114" width="150" height="28" rx="5"/><rect x="276" y="114" width="70" height="28" rx="5"/></g>
+  <g font-size="12" text-anchor="middle" fill="currentColor"><text x="75" y="132">Copy</text><text x="193" y="132">Save as a text file...</text><text x="311" y="132">Print...</text></g>
+  <rect x="40" y="160" width="16" height="16" rx="3" fill="var(--panel)" stroke="currentColor" stroke-width="1.5"/>
+  <text x="64" y="173" font-size="12.5" fill="currentColor">I have printed or stored the key somewhere safe</text>
+  <rect x="440" y="182" width="80" height="28" rx="5" fill="var(--raised)" stroke="var(--line)"/><text x="480" y="200" text-anchor="middle" font-size="12" fill="var(--text-dim)">Close</text>
+  <g fill="currentColor" font-size="13">
+    <text x="570" y="40" font-weight="600">Keep it:</text>
+    <text x="570" y="64">&#8226; printed, in a locked drawer or the safe</text>
+    <text x="570" y="88">&#8226; or in the studio's password manager</text>
+    <text x="570" y="112">&#8226; never only on the server PC</text>
+    <text x="570" y="144" font-weight="600">It lets someone at the server PC:</text>
+    <text x="570" y="168">reset a password, restore an admin,</text>
+    <text x="570" y="190">change the database passwords,</text>
+    <text x="570" y="212">turn security switches on or off.</text>
+  </g>
+</svg>
+<figcaption>The key above is an example. <b>Close</b> stays grey until you tick the box. Esc and the window's cross do nothing until then.</figcaption>
+</figure>
+<div class="note bad"><b>Never lose the Recovery Key</b>It is the only way back in when nobody can sign in. If it is lost, a Windows administrator on the server PC can make a new one: right-click <strong>Recover Slate</strong>, <strong>Run as administrator</strong>, leave the key box empty and press <strong>Make a new Recovery Key</strong>. The old key stops working at once. Without the key and without Windows administrator rights on the server PC, there is no way back.</div>
+
+<h3>4. Open the firewall</h3>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="10" width="32" height="24" rx="2" fill="none" stroke="currentColor" stroke-width="3"/><line x1="6" y1="18" x2="38" y2="18" stroke="currentColor" stroke-width="2"/><line x1="6" y1="26" x2="38" y2="26" stroke="currentColor" stroke-width="2"/><line x1="18" y1="10" x2="18" y2="18" stroke="currentColor" stroke-width="2"/><line x1="26" y1="18" x2="26" y2="26" stroke="currentColor" stroke-width="2"/></svg><b>Settings &rarr; Allow Firewall</b><span>Windows asks for administrator rights. Say yes.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M8 24 L18 34 L36 12" fill="none" stroke="var(--ok)" stroke-width="4"/></svg><b>Check the log</b><span>"Firewall rules are in place; workstations can connect." Beside the buttons: <strong>Firewall allowed</strong>.</span></li>
+  <li><svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="15" fill="none" stroke="var(--bad)" stroke-width="3"/><line x1="12" y1="12" x2="32" y2="32" stroke="var(--bad)" stroke-width="3"/></svg><b>Firewall not changed</b><span>The request was refused. Press it again, or add the three rules by hand.</span></li>
+</ol>
+<div class="tablewrap keep"><table>
+  <tr><th>Windows firewall rule</th><th>Port</th><th>Used for</th></tr>
+  <tr><td>Slate Central Server (Database)</td><td>TCP 5440</td><td>The database (the <b>PostgreSQL port</b> in Settings)</td></tr>
+  <tr><td>Slate Central Server (Pool)</td><td>TCP 6432</td><td>The connection pool (the <b>Connection pool port</b>). Without it every workstation waits before it falls back to 5440.</td></tr>
+  <tr><td>Slate Central Server (Discovery)</td><td>UDP 54320</td><td><b>Find server</b> on the workstations</td></tr>
+</table></div>
+<p>No installer opens the firewall. Only this button does. If you change a port in Settings, press <b>Allow Firewall</b> again.</p>
+
+<p>Steps 5 to 8 have their own pages: <a href="#password">The studio's database password</a> and <a href="#people">The first administrator, people and roles</a>.</p>
+
+<!-- ============================================================ -->
+<h2 id="password">The studio's database password</h2>
+<p>Every workstation signs in to the database with one shared account, <code>ut_vfx_app</code>, and one password. People's own Slate passwords are separate: this one is only between the PCs and the server.</p>
+<ul>
+  <li><b>Each studio has its own.</b> Slate Server makes a strong random one when it creates a new database. No password ships with Slate any more.</li>
+  <li><b>On the server PC</b> it is kept encrypted by Windows, in <code>slate_recovery\db_secrets.dat</code> beside the database. Only this PC can read that file.</li>
+  <li><b>On a workstation</b> it is kept in Windows Credential Manager (a generic credential named <code>Slate</code>, user <code>db_password</code>), not in a settings file.</li>
+  <li><b>You read it</b> in Recover Slate: <b>Database passwords</b> &rarr; <b>Show app password</b>. Write it down and keep it with the Recovery Key. You need it again if you ever move the server.</li>
+</ul>
+
+<figure>
+<svg viewBox="0 0 900 330" role="img" aria-label="On the server PC, Recover Slate, unlocked, Database passwords, Show app password prints the password in the output box. On the new workstation, the window Set up Slate on this computer asks for Server root, Server address, Port 5440, Database name ut_vfx, Database user ut_vfx_app and Database password. Test connection says Connected. These details work.">
+  <defs><marker id="arC" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+  <rect x="10" y="10" width="380" height="310" rx="10" fill="var(--server-soft)" stroke="var(--server)" stroke-width="2"/>
+  <text x="26" y="38" font-size="15" font-weight="700" fill="currentColor">Server PC: Recover Slate</text>
+  <rect x="26" y="52" width="348" height="100" rx="6" fill="var(--panel)" stroke="var(--line)"/>
+  <text x="38" y="74" font-size="13" font-weight="600" fill="currentColor">Database passwords</text>
+  <g stroke="var(--line)" stroke-width="1.5" fill="var(--raised)"><rect x="38" y="86" width="150" height="26" rx="5"/><rect x="196" y="86" width="166" height="26" rx="5"/><rect x="38" y="118" width="150" height="26" rx="5" fill="var(--studio-soft)" stroke="var(--studio)" stroke-width="2"/><rect x="196" y="118" width="166" height="26" rx="5"/></g>
+  <g font-size="10.5" text-anchor="middle" fill="currentColor"><text x="113" y="103">Set app password (...)</text><text x="279" y="103">Set superuser password (...)</text><text x="113" y="135" font-weight="700">Show app password</text><text x="279" y="135">Publish a new app password</text></g>
+  <rect x="26" y="164" width="348" height="140" rx="6" fill="var(--panel)" stroke="var(--line)"/>
+  <g font-size="11.5" fill="currentColor" class="mono">
+    <text x="36" y="186">Workstations' database password now:</text>
+    <text x="36" y="204" font-weight="700">  Hq3v...(24 characters)...Zt</text>
+    <text x="36" y="226">A new workstation: Reconfigure server</text>
+    <text x="36" y="244">/ database on its sign-in screen, and</text>
+    <text x="36" y="262">type the password in use now.</text>
+  </g>
+  <text x="200" y="292" text-anchor="middle" font-size="12" fill="var(--text-2)">the output box at the bottom of the page</text>
+
+  <line x1="396" y1="170" x2="476" y2="170" stroke="currentColor" stroke-width="2.5" marker-end="url(#arC)"/>
+  <text x="436" y="160" text-anchor="middle" font-size="12" fill="currentColor">type it in</text>
+
+  <rect x="482" y="10" width="408" height="310" rx="10" fill="var(--studio-soft)" stroke="var(--studio)" stroke-width="2"/>
+  <text x="498" y="38" font-size="15" font-weight="700" fill="currentColor">Workstation: Set up Slate on this computer</text>
+  <g font-size="12" fill="currentColor">
+    <text x="498" y="72">Server root</text><text x="498" y="104">Server address</text><text x="498" y="136">Port</text><text x="498" y="168">Database name</text><text x="498" y="200">Database user</text><text x="498" y="232">Database password</text>
+  </g>
+  <g fill="var(--panel)" stroke="var(--line)" stroke-width="1.2">
+    <rect x="618" y="56" width="256" height="24" rx="4"/><rect x="618" y="88" width="170" height="24" rx="4"/><rect x="618" y="120" width="80" height="24" rx="4"/><rect x="618" y="152" width="256" height="24" rx="4"/><rect x="618" y="184" width="256" height="24" rx="4"/><rect x="618" y="216" width="256" height="24" rx="4"/>
+  </g>
+  <rect x="796" y="88" width="78" height="24" rx="4" fill="var(--raised)" stroke="var(--line)"/>
+  <g font-size="11.5" fill="currentColor" class="mono">
+    <text x="626" y="73">Z:\Slate_Central</text><text x="626" y="105">10.0.0.15</text><text x="626" y="137">5440</text><text x="626" y="169">ut_vfx</text><text x="626" y="201">ut_vfx_app</text><text x="626" y="233">&#9679;&#9679;&#9679;&#9679;&#9679;&#9679;&#9679;&#9679;&#9679;&#9679;</text>
+  </g>
+  <text x="835" y="105" text-anchor="middle" font-size="11" fill="currentColor">Find server</text>
+  <rect x="618" y="252" width="120" height="26" rx="5" fill="var(--raised)" stroke="var(--line)"/><text x="678" y="270" text-anchor="middle" font-size="11.5" fill="currentColor">Test connection</text>
+  <text x="498" y="302" font-size="12" fill="var(--ok)" font-weight="600">Connected. These details work.</text>
+</svg>
+<figcaption>Leave <b>Port</b>, <b>Database name</b> and <b>Database user</b> as they are unless you changed them on the server. <b>Find server</b> fills in the address when the discovery port is open. Later changes use <b>Reconfigure server / database</b> on the sign-in screen, which asks the same things.</figcaption>
+</figure>
+
+<h3>A database that still uses the old shared password</h3>
+<p>Every Slate before 2.2.0 shipped with the <b>same</b> database password, and it is public. When Slate Server 2.2.0 starts on such a database, it keeps that old password working for now and <b>publishes</b> a new one of the studio's own. The log says "This studio still uses the database password older Slate versions shipped with." The health check in Recover Slate warns <b>Studio password</b> until you switch.</p>
+
+<div class="note ok"><b>Recommended first step when no PC is running Slate yet</b>If your server already has its database from an older Slate, and no workstation runs Slate yet, switch to the studio's own password <strong>now</strong>, before you set up any workstation. Nobody is using the old one, so nobody can be cut off, and every workstation you set up afterwards gets the new password from the start.</div>
+
+<figure>
+<svg viewBox="0 0 900 250" role="img" aria-label="Five steps on the server PC: 1 Operations, Back up now. 2 Recovery, Check now, then type the Recovery Key and Unlock. 3 Database passwords, Show app password: it says the password is the public one and shows the published one with none yet having it. 4 Switch to the published password, answer Yes. 5 Show app password again and write the new password down with the Recovery Key, then Check now.">
+  <defs><marker id="arD" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+  <g stroke-width="2">
+    <rect x="10" y="20" width="160" height="150" rx="10" fill="var(--panel)" stroke="var(--server)"/>
+    <rect x="190" y="20" width="160" height="150" rx="10" fill="var(--panel)" stroke="var(--server)"/>
+    <rect x="370" y="20" width="160" height="150" rx="10" fill="var(--panel)" stroke="var(--server)"/>
+    <rect x="550" y="20" width="160" height="150" rx="10" fill="var(--server-soft)" stroke="var(--server)"/>
+    <rect x="730" y="20" width="160" height="150" rx="10" fill="var(--panel)" stroke="var(--server)"/>
+  </g>
+  <g stroke="currentColor" stroke-width="2.5" fill="none" marker-end="url(#arD)"><line x1="170" y1="95" x2="187" y2="95"/><line x1="350" y1="95" x2="367" y2="95"/><line x1="530" y1="95" x2="547" y2="95"/><line x1="710" y1="95" x2="727" y2="95"/></g>
+  <g fill="currentColor" font-size="24" font-weight="700"><text x="24" y="50">1</text><text x="204" y="50">2</text><text x="384" y="50">3</text><text x="564" y="50">4</text><text x="744" y="50">5</text></g>
+  <g fill="currentColor" font-size="13" font-weight="600"><text x="46" y="48">Back up</text><text x="226" y="48">Unlock</text><text x="406" y="48">Look</text><text x="586" y="48">Switch</text><text x="766" y="48">Write it down</text></g>
+  <g fill="currentColor" font-size="11.5">
+    <text x="24" y="76">Operations &gt;</text><text x="24" y="94" font-weight="600">Back up now</text><text x="24" y="122" fill="var(--text-2)">a copy before any</text><text x="24" y="138" fill="var(--text-2)">password change</text>
+    <text x="204" y="76">Recovery &gt; Check now</text><text x="204" y="94">then type the key</text><text x="204" y="112">and press <tspan font-weight="600">Unlock</tspan></text><text x="204" y="138" fill="var(--text-2)">"Unlocked for ten</text><text x="204" y="154" fill="var(--text-2)">minutes."</text>
+    <text x="384" y="76" font-weight="600">Show app password</text><text x="384" y="96" fill="var(--text-2)">"...it is public."</text><text x="384" y="114" fill="var(--text-2)">"Published, not in</text><text x="384" y="130" fill="var(--text-2)">use yet: ..."</text><text x="384" y="148" fill="var(--text-2)">"(0): none yet" is fine</text>
+    <text x="564" y="76" font-weight="600">Switch to the</text><text x="564" y="92" font-weight="600">published password</text><text x="564" y="114">Answer <tspan font-weight="600">Yes</tspan></text><text x="564" y="138" fill="var(--text-2)">checked before and</text><text x="564" y="154" fill="var(--text-2)">after, undone if not</text>
+    <text x="744" y="76" font-weight="600">Show app password</text><text x="744" y="94">again: the new one</text><text x="744" y="112">is "now". Keep it</text><text x="744" y="128">with the Recovery Key</text><text x="744" y="152" fill="var(--text-2)">then <tspan font-weight="600">Check now</tspan></text>
+  </g>
+  <text x="450" y="210" text-anchor="middle" font-size="13" fill="currentColor">The output box should say: <tspan font-weight="600">"Applied. Snapshot ... can undo it."</tspan> and <tspan font-weight="600">"The workstations now use the new password."</tspan></text>
+  <text x="450" y="234" text-anchor="middle" font-size="12.5" fill="var(--text-2)">If it says "No new app password is published yet", press Publish a new app password first, answer Yes, then Switch.</text>
+</svg>
+<figcaption>All five steps are on the server PC, in Slate Server's <b>Recovery</b> page or the <b>Recover Slate</b> Start-menu item. Both are the same page.</figcaption>
+</figure>
+
+<p>Then set up the workstations with the password <b>Show app password</b> now gives. If you ever need to go back, <b>Show app password</b> also prints "Before the last change it was: ...". Type that one in the two password boxes and press <b>Set app password (workstations)</b>.</p>
+
+<h3>The same switch on a studio where workstations are already running</h3>
+<p>Do not switch straight away. First get <b>every</b> workstation on 2.2.0 and open Slate on each once: each one learns the published password quietly. <b>Show app password</b> lists the ones that have it, under "Workstations that have it". When every PC is listed, press <b>Switch to the published password</b> at a quiet moment. Anyone who had Slate open may need to restart it. A PC that missed it says it has no password: use <b>Reconfigure server / database</b> on its sign-in screen.</p>
+
+<div class="note warn"><b>Do not use Settings to change the password</b>Typing a new password into Slate Server's <strong>Settings &rarr; Database password</strong> and saving changes it for the server at once, and cuts off every workstation that does not have it. The gentle way is always Recover Slate: <strong>Publish</strong>, then <strong>Switch</strong>.</div>
+
+
+<!-- ============================================================ -->
+<h2 id="people">The first administrator, people and roles</h2>
+
+<h3>The first workstation</h3>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="8" width="32" height="22" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="14" y1="38" x2="30" y2="38" stroke="currentColor" stroke-width="3"/></svg><b>Install on your own PC</b><span>Slate Operations (and Slate Studio if you want it). The installer asks for the same <strong>Server Root Path</strong> as the server.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="8" width="32" height="28" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="6" y1="16" x2="38" y2="16" stroke="currentColor" stroke-width="3"/></svg><b>Set up Slate on this computer</b><span>Opens at the first start. <strong>Find server</strong>, type the database password, <strong>Test connection</strong>, <strong>Save</strong>.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="8" y="8" width="28" height="28" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="8" y1="17" x2="36" y2="17" stroke="currentColor" stroke-width="2"/><line x1="8" y1="26" x2="36" y2="26" stroke="currentColor" stroke-width="2"/><line x1="20" y1="8" x2="20" y2="36" stroke="currentColor" stroke-width="2"/></svg><b>The sign-in window appears</b><span>Slate has now built the studio's tables and its starting roles. On the server, <strong>Tables in Database</strong> is above 0.</span></li>
+</ol>
+
+<h3>Make your administrator</h3>
+<p>A new database starts with one account, <code>admin</code>, with the <b>Developer</b> role (full access), while the switch <code>no_default_accounts</code> is off (it starts off). Its starter password is the well-known <code>admin123</code>, so Slate marks it: <b>the first sign-in must choose a new password</b> before anything opens. The same happens if Slate ever brings <code>admin</code> back after it was removed. Sign in as <code>admin</code> yourself, straight away, before you set up any other PC:</p>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><rect x="8" y="6" width="28" height="32" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="14" y1="16" x2="30" y2="16" stroke="currentColor" stroke-width="3"/><line x1="14" y1="24" x2="30" y2="24" stroke="currentColor" stroke-width="3"/></svg><b>User name admin</b><span>On your workstation's sign-in window. Password <code>admin123</code>. Press <strong>Sign in</strong>.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="8" width="32" height="28" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="6" y1="16" x2="38" y2="16" stroke="currentColor" stroke-width="3"/></svg><b>Choose your password</b><span>Opens by itself. Your own password twice, 8 or more characters. <strong>Save password</strong>.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="10" y="20" width="24" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><path d="M15 20 v-5 a7 7 0 0 1 14 0 v5" fill="none" stroke="currentColor" stroke-width="3"/></svg><b>Keep it with the key</b><span>Write the admin password down with the Recovery Key. <strong>Cancel</strong> on that window only goes back to sign-in.</span></li>
+  <li><svg viewBox="0 0 44 44"><circle cx="22" cy="16" r="7" fill="none" stroke="currentColor" stroke-width="3"/><path d="M8 38 c0 -12 28 -12 28 0" fill="none" stroke="currentColor" stroke-width="3"/></svg><b>Create people</b><span>In Users &amp; Roles, below. Give yourself a personal account too, and keep <code>admin</code> for emergencies.</span></li>
+</ol>
+<div class="note"><b>The other way in: Recover Slate</b>On the server PC: <strong>Recovery</strong>, type the Recovery Key, <strong>Unlock</strong>. In <strong>Accounts</strong> type a username (blank means <code>admin</code>) and a new password twice, then press <strong>Create or restore administrator</strong>. The output says "...is an active administrator again, with the new password." or "Created the administrator ... with the new password." That person chooses their own password at the next sign-in. This works at any time, even before any workstation has opened Slate: a new studio always gets its starting roles (Supervisor, Lead, Coordinator, Artist and the rest), whoever made the first account.</div>
+<div class="note"><b>With no_default_accounts on</b>No starter account is ever made or brought back. The first-run notice then says "To make the first administrator, open Recover Slate on the server PC and use Accounts &gt; Create or restore administrator." Type any username there; Slate creates it with the Developer role.</div>
+
+<h3>Users &amp; Roles</h3>
+<p>In <b>Slate Operations</b>, under <b>ADMINISTRATION</b>. It has two tabs. <b>Users</b> needs the ability <b>Manage users</b> (Admin, IT, HR, Developer). <b>Roles &amp; Permissions</b> needs <b>Edit roles and permissions</b> (Admin, IT, HR, Developer). The standard <b>IT</b> role has both, so IT creates accounts, resets passwords and deactivates. A studio upgraded from an older Slate gets this once, on the first start.</p>
+
+<figure>
+<svg viewBox="0 0 900 270" role="img" aria-label="The Users tab: buttons Add user, Edit, Reset password, Deactivate, Reactivate, Delete, Import, Export CSV, a search box and Show deactivated, then a table with Username, Display name, Department, Roles, Joined, Employment, Reports to, Location and Status.">
+  <rect x="10" y="10" width="880" height="250" rx="10" fill="var(--panel)" stroke="var(--line)" stroke-width="2"/>
+  <text x="30" y="40" font-size="18" font-weight="700" fill="currentColor">Users &amp; Roles</text>
+  <text x="170" y="40" font-size="12" fill="var(--text-2)">Who can sign in, and what each role may do</text>
+  <g font-size="12.5" font-weight="600"><text x="30" y="70" fill="var(--ops)">Users</text><text x="90" y="70" fill="var(--text-2)">Roles &amp; Permissions</text></g>
+  <line x1="30" y1="76" x2="72" y2="76" stroke="var(--ops)" stroke-width="2.5"/>
+  <g stroke="var(--line)" stroke-width="1.2" fill="var(--raised)">
+    <rect x="30" y="88" width="76" height="26" rx="4" fill="var(--ops-soft)" stroke="var(--ops)"/><rect x="112" y="88" width="44" height="26" rx="4"/><rect x="162" y="88" width="108" height="26" rx="4"/><rect x="276" y="88" width="84" height="26" rx="4"/><rect x="366" y="88" width="84" height="26" rx="4"/><rect x="456" y="88" width="62" height="26" rx="4"/><rect x="524" y="88" width="66" height="26" rx="4"/><rect x="596" y="88" width="84" height="26" rx="4"/>
+  </g>
+  <g font-size="11.5" text-anchor="middle" fill="currentColor"><text x="68" y="105">Add user</text><text x="134" y="105">Edit</text><text x="216" y="105">Reset password</text><text x="318" y="105">Deactivate</text><text x="408" y="105">Reactivate</text><text x="487" y="105">Delete...</text><text x="557" y="105">Import...</text><text x="638" y="105">Export CSV</text></g>
+  <rect x="30" y="124" width="520" height="26" rx="4" fill="var(--panel)" stroke="var(--line)"/><text x="40" y="141" font-size="11.5" fill="var(--text-dim)">Search any column: name, department, role, manager, location...</text>
+  <rect x="566" y="129" width="14" height="14" rx="3" fill="none" stroke="currentColor"/><text x="588" y="141" font-size="11.5" fill="currentColor">Show deactivated</text>
+  <rect x="30" y="160" width="840" height="26" fill="var(--raised)"/>
+  <g font-size="10.5" font-weight="700" fill="var(--text-dim)"><text x="38" y="177">USERNAME</text><text x="140" y="177">DISPLAY NAME</text><text x="262" y="177">DEPARTMENT</text><text x="360" y="177">ROLES</text><text x="470" y="177">JOINED</text><text x="550" y="177">EMPLOYMENT</text><text x="650" y="177">REPORTS TO</text><text x="790" y="177">STATUS</text></g>
+  <g font-size="11.5" fill="currentColor"><text x="38" y="207">admin</text><text x="140" y="207">System Admin</text><text x="360" y="207">Developer</text><text x="790" y="207">System account</text>
+  <text x="38" y="233">priya.sharma</text><text x="140" y="233">Priya Sharma</text><text x="262" y="233">Comp</text><text x="360" y="233">Compositor</text><text x="470" y="233">2026-04-01</text><text x="550" y="233">Staff</text><text x="650" y="233">ravi.k</text><text x="790" y="233" fill="var(--ok)">Active</text></g>
+  <line x1="30" y1="216" x2="870" y2="216" stroke="var(--line-soft)"/>
+</svg>
+<figcaption>The Users tab. The Location column sits between Reports to and Status; it is left out here for room.</figcaption>
+</figure>
+
+<div class="tablewrap keep"><table>
+  <tr><th>To do this</th><th>Press</th><th>What to know</th></tr>
+  <tr><td>Add one person</td><td><b>Add user</b></td><td><b>Username</b> (2 to 40 letters, numbers, dot, dash or underscore, e.g. <code>priya.sharma</code>), <b>Display name</b>, <b>Department</b>, <b>Roles</b> (at least one), a first <b>Password</b>, <b>Reports to</b>. They choose their own password at the first sign-in.</td></tr>
+  <tr><td>Add many people</td><td><b>Import...</b></td><td>Excel or CSV. <b>Download template</b> first. Pick a <b>Role for everyone</b> and a <b>First password</b> (8 or more characters). Admin, Developer and roles with sensitive abilities are never offered here.</td></tr>
+  <tr><td>Someone forgot their password</td><td><b>Reset password</b></td><td>8 characters or more. They must choose their own at the next sign-in. Nobody is ever locked out for wrong tries: Slate only waits one second.</td></tr>
+  <tr><td>Someone leaves</td><td><b>Deactivate</b></td><td>History is kept. Refused while they still have leave waiting or machines issued: handle those first. A manager with a team gets a <b>New manager</b> picker.</td></tr>
+  <tr><td>Someone comes back</td><td><b>Reactivate</b></td><td>Offers to clear a last working day that has passed.</td></tr>
+  <tr><td>Remove a mistake</td><td><b>Delete...</b></td><td>Only for an account with no history (no attendance, leave, machines, checklists or tickets). Everyone else: Deactivate.</td></tr>
+</table></div>
+
+<div class="note bad"><b>The last administrator is protected</b>Slate refuses any change that would leave no active administrator: "This would leave Slate with no active administrator, and then nobody could sign in to put it right." It also refuses to leave nobody who can manage users. <code>admin</code> is a system account: it cannot be deleted or deactivated.</div>
+
+<h3>Roles: what each one opens</h3>
+<p>The table shows the roles 2.2.0 starts with. A studio upgraded from an older Slate gets these additions once, on the first start: IT gets Users &amp; Roles (<b>Manage users</b>), the Admin Panel and <b>Message and restart workstations</b>; Production Coordinator and Producer get Bidding and <b>Edit bids</b>. Only roles with exactly those names are changed, nothing is taken away, and a role the studio changes afterwards keeps its choice. A role decides which screens appear in the sidebar and what the person may do there. A screen the role cannot open is simply not in the list. <b>Home</b>, <b>Attendance</b>, <b>Leave</b> and <b>IT Support</b> are always open to everyone (in Slate Operations).</p>
+<div class="tablewrap"><table>
+  <thead><tr><th>Role</th><th>Opens</th><th>Notable abilities</th></tr></thead>
+  <tr><td><b>Developer</b></td><td>Everything, including <b>Tester Panel</b></td><td>Full access. Cannot be changed or deleted. Recover Slate makes administrators with this role.</td></tr>
+  <tr><td><b>Admin</b></td><td>Every screen except Tester Panel</td><td>Every ability except the own-department limit, being given shots and destructive test tools.</td></tr>
+  <tr><td><b>IT</b></td><td>IT &amp; Infra (Hardware, Licences, IT queue, Deployment, IT side of Joining &amp; Leaving), <b>Users &amp; Roles</b>, <b>Admin Panel</b> (Live Ops), Settings</td><td>Work the IT desk, Manage users, Edit roles and permissions, Message and restart workstations, Studio settings, See licences</td></tr>
+  <tr><td><b>HR</b></td><td>HR (people, leave, joining), Settings</td><td>HR leave stage, Manage users, See team attendance, Edit roles and permissions</td></tr>
+  <tr><td><b>Production Head</b></td><td>VFX Dashboard, Timeline Viewer, Scheduling, Bidding, Stock Viewer, Build &amp; Ingest, CAP Rename, Settings</td><td>Edit the dashboard and schedule, Edit and Approve bids, Approve leave, See team attendance, See licences</td></tr>
+  <tr><td><b>Production Coordinator</b>, <b>Producer</b></td><td>As Production Head</td><td>Edit the dashboard and schedule, Edit bids, See every shot</td></tr>
+  <tr><td><b>Supervisor</b></td><td>Build &amp; Ingest, CAP Rename, Stock Viewer, Timeline Viewer, VFX Dashboard, Settings, <b>Admin Panel</b></td><td>Approve leave (first stage), Force-save over others. Admin Panel is Live Ops, read-only.</td></tr>
+  <tr><td><b>Comp Supervisor</b>, <b>Roto Prep Supervisor</b></td><td>VFX Dashboard, Timeline Viewer, Stock Viewer, CAP Rename, Settings</td><td>Supervisor abilities, limited to their own department</td></tr>
+  <tr><td><b>Coordinator</b></td><td>Build &amp; Ingest, VFX Dashboard, Stock Viewer, CAP Rename, Timeline Viewer, Settings</td><td>&ndash;</td></tr>
+  <tr><td><b>Lead</b>, <b>Team Lead</b></td><td>VFX Dashboard, Timeline Viewer, Stock Viewer, CAP Rename, Settings</td><td>Approve leave (first stage), own department; can be given shots</td></tr>
+  <tr><td><b>Editor</b></td><td>Timeline Viewer, Stock Viewer, VFX Dashboard, CAP Rename, Settings</td><td>See every shot</td></tr>
+  <tr><td><b>Artist</b>, <b>Compositor</b>, <b>Roto Artist</b>, <b>Paint Artist</b>, <b>Deage Artist</b>, <b>AI Artist</b>, <b>DMP</b>, <b>CG</b></td><td>VFX Dashboard, Stock Viewer, CAP Rename, Settings</td><td>Set own shot status, Can be given shots</td></tr>
+  <tr><td><b>Tester</b></td><td>Build &amp; Ingest, CAP Rename, Stock Viewer, Tester Panel, Settings</td><td>For testing Slate. Give it to nobody else.</td></tr>
+</table></div>
+
+<h3>Abilities: WHAT THIS ROLE CAN DO</h3>
+<p>Open <b>Roles &amp; Permissions</b>, pick a role on the left, then tick under <b>TABS THIS ROLE CAN OPEN</b> and <b>WHAT THIS ROLE CAN DO</b>, and press <b>Save changes</b>. A change shows the next time that person signs in. Some abilities come with a role's name: they show ticked and greyed out.</p>
+<div class="tablewrap"><table>
+  <tr><th>Ability</th><th>Plain meaning</th><th>Ability</th><th>Plain meaning</th></tr>
+  <tr><td>Edit the dashboard</td><td>Change shots on the VFX Dashboard</td><td>Can be given shots</td><td>Appears in the Artist pickers</td></tr>
+  <tr><td>&hellip;only their own department</td><td>Limits the one before to their department</td><td>See every shot</td><td>All shots of a project, not only their own</td></tr>
+  <tr><td>Set own shot status</td><td>Move their own shots along</td><td>Edit the schedule</td><td>Change Scheduling</td></tr>
+  <tr><td>Approve leave (first stage)</td><td>The supervisor's yes or no</td><td>Edit bids / Approve bids</td><td>Make bids / decide them. Approving bids also allows Bidding settings: Days per shot, margins, day rates, Tax on rupee bids (GST) and the Studio name</td></tr>
+  <tr><td>HR leave stage</td><td>The final, HR yes or no</td><td>Archive or delete projects</td><td>Archive, and Delete permanently</td></tr>
+  <tr><td><b>Work the IT desk</b></td><td>The IT queue, and changes in Hardware, Licences, Deployment and the IT checklist</td><td>See licences</td><td>Read Licences, get renewal reminders</td></tr>
+  <tr><td><b>Manage users</b></td><td>The Users tab</td><td><b>System administration</b></td><td>Everything in the Admin Panel, including Audit Logs and Data Center</td></tr>
+  <tr><td><b>Edit roles and permissions</b></td><td>The Roles &amp; Permissions tab</td><td><b>Studio settings</b></td><td>Studio-wide cards in Settings, such as working hours and the licence renewal warning</td></tr>
+  <tr><td>See team attendance</td><td>Everyone's attendance</td><td>Destructive test tools</td><td>Large Tester Panel runs</td></tr>
+  <tr><td>Ingest stock</td><td>Add to and delete from the stock library</td><td>Force-save over others</td><td>Keep their version when two people save one shot</td></tr>
+  <tr><td>Excel export</td><td>Export to the project's Excel backup</td><td><b>Message and restart workstations</b></td><td>Live Ops broadcast, Restart, Shut down, Remove from Live Ops. Not Audit Logs or Data Center</td></tr>
+  <tr><td></td><td></td><td>Full access (tick box)</td><td>Every tab and ability, including future ones</td></tr>
+</table></div>
+<div class="note"><b>Only Admin and Developer hand out the big ones</b>Full access, Manage users, Edit roles and permissions, System administration, Message and restart workstations, Studio settings, Archive or delete projects and Destructive test tools can be given only by Admin or Developer. Everyone else can hand on only what they have themselves.</div>
+
+<!-- ============================================================ -->
+<h2 id="care">Looking after the server</h2>
+<p>Slate Server has five pages in its left-hand list: <b>Dashboard</b>, <b>Analytics</b>, <b>Operations</b>, <b>Settings</b> and <b>Recovery</b>. Keep the window open, or in the tray. Closing it asks <b>Stop the studio database?</b>: <b>Keep running in the tray</b> closes only the window; <b>Stop server</b> takes every workstation offline.</p>
+
+<figure>
+<svg viewBox="0 0 900 340" role="img" aria-label="The Slate Server Dashboard: a sidebar with Dashboard, Analytics, Operations, Settings and Recovery. The page shows the Server Online badge, the Database Server Power switch, the Restart pool button, cards for Server IP (LAN), PostgreSQL Port, Active Connections, Data Directory, Cluster Size, Tables in Database and Connection Pool, and SYSTEM LOGS.">
+  <rect x="10" y="10" width="880" height="320" rx="10" fill="var(--panel)" stroke="var(--line)" stroke-width="2"/>
+  <rect x="10" y="10" width="170" height="320" rx="10" fill="var(--raised)"/>
+  <g font-size="14" fill="currentColor"><text x="28" y="44" font-weight="700">Slate Server</text>
+  <text x="28" y="84" font-weight="600" fill="var(--server)">Dashboard</text><text x="28" y="112">Analytics</text><text x="28" y="140">Operations</text><text x="28" y="168">Settings</text><text x="28" y="196">Recovery</text></g>
+  <text x="200" y="44" font-size="18" font-weight="700" fill="currentColor">Slate Server</text><text x="200" y="62" font-size="12" fill="var(--text-2)">The studio database</text>
+  <rect x="740" y="28" width="130" height="26" rx="13" fill="var(--server-soft)" stroke="var(--ok)"/><text x="805" y="45" text-anchor="middle" font-size="12" font-weight="700" fill="var(--ok)">Server Online</text>
+  <rect x="200" y="76" width="670" height="48" rx="8" fill="var(--raised)" stroke="var(--line)"/>
+  <text x="216" y="105" font-size="14" font-weight="600" fill="currentColor">Database Server Power</text>
+  <rect x="400" y="88" width="50" height="24" rx="12" fill="var(--ok)"/><circle cx="438" cy="100" r="9" fill="var(--panel)"/>
+  <rect x="740" y="88" width="114" height="24" rx="5" fill="var(--panel)" stroke="var(--info)"/><text x="797" y="104" text-anchor="middle" font-size="12" fill="currentColor">Restart pool</text>
+  <g stroke="var(--line)" fill="var(--panel)">
+    <rect x="200" y="136" width="160" height="56" rx="6"/><rect x="370" y="136" width="160" height="56" rx="6"/><rect x="540" y="136" width="160" height="56" rx="6"/><rect x="710" y="136" width="160" height="56" rx="6"/>
+    <rect x="200" y="200" width="330" height="56" rx="6"/><rect x="540" y="200" width="160" height="56" rx="6"/><rect x="710" y="200" width="160" height="56" rx="6"/>
+  </g>
+  <g fill="var(--text-dim)" font-size="10.5" letter-spacing="0.5"><text x="210" y="154">SERVER IP (LAN)</text><text x="380" y="154">POSTGRESQL PORT</text><text x="550" y="154">ACTIVE CONNECTIONS</text><text x="720" y="154">CLUSTER SIZE</text><text x="210" y="218">DATA DIRECTORY</text><text x="550" y="218">TABLES IN DATABASE</text><text x="720" y="218">CONNECTION POOL</text></g>
+  <g fill="currentColor" font-size="16" font-weight="700"><text x="210" y="180">10.0.0.15</text><text x="380" y="180">5440</text><text x="550" y="180">14</text><text x="720" y="180">2.1 GB</text><text x="550" y="244">128</text><text x="720" y="244">port 6432</text></g>
+  <text x="210" y="243" font-size="11" class="mono" fill="currentColor">C:\Users\it\AppData\Local\Slate_Central\LocalDatabase</text>
+  <text x="200" y="282" font-size="11" font-weight="700" fill="var(--text-dim)">SYSTEM LOGS</text>
+  <rect x="200" y="290" width="670" height="30" rx="5" fill="var(--raised)"/>
+  <text x="212" y="310" font-size="11.5" class="mono" fill="currentColor">&gt; Server successfully started on port 5440.</text>
+</svg>
+<figcaption>A healthy server: <b>Server Online</b>, tables above 0, the pool on port 6432 and no warning lines under the cards. The numbers here are examples.</figcaption>
+</figure>
+
+<h3>Every morning: two minutes</h3>
+<div class="tablewrap keep"><table>
+  <tr><th>Look at</th><th>Good</th><th>If not</th></tr>
+  <tr><td>Badge and power switch</td><td><b>Server Online</b>, switch on</td><td>Turn it on. If it fails, read the box "The database did not start".</td></tr>
+  <tr><td><b>Tables in Database</b></td><td>Above 0</td><td>0 on an old studio means the wrong folder. See <a href="#help">When something goes wrong</a>.</td></tr>
+  <tr><td><b>Connection Pool</b></td><td><code>port 6432</code></td><td><b>stopped</b> or <b>wrong database</b>: press <b>Restart pool</b>.</td></tr>
+  <tr><td>Warning lines under the cards</td><td>None</td><td>Read them. Each says what to do.</td></tr>
+  <tr><td>Operations: last backup</td><td>"Last backup less than a day ago"</td><td>Red text: press <b>Back up now</b> and find out why the automatic one failed (SYSTEM LOGS).</td></tr>
+</table></div>
+
+<h3>Analytics</h3>
+<p><b>Database Analytics</b> shows <b>Active PCs</b>, <b>Total Projects</b>, <b>Stock Assets</b>, <b>DB Load</b>, <b>Database Size</b>, <b>CPU Usage</b> and <b>RAM Usage</b>, then <b>Live Connected Clients</b>. When one PC holds the database up and everyone is slow, select its session and press <b>Disconnect selected</b>. Slate asks the session to stop first, and cuts it off only if it ignores that. Anything that PC was part way through saving is lost.</p>
+
+<h3>Operations: backups</h3>
+<figure>
+<svg viewBox="0 0 900 220" role="img" aria-label="A day on a timeline: Slate Server checks every 6 hours and 5 minutes after it starts. It takes a backup only when the newest one is more than a day old and the database is running. After each backup it deletes backups older than 30 days, but always keeps the newest 7.">
+  <line x1="40" y1="70" x2="860" y2="70" stroke="currentColor" stroke-width="2"/>
+  <g fill="currentColor" font-size="12" text-anchor="middle"><text x="40" y="100">start</text><text x="80" y="100">+5 min</text><text x="280" y="100">+6 h</text><text x="480" y="100">+12 h</text><text x="680" y="100">+18 h</text><text x="860" y="100">+24 h</text></g>
+  <g fill="var(--panel)" stroke="var(--server)" stroke-width="2"><circle cx="80" cy="70" r="9"/><circle cx="280" cy="70" r="9"/><circle cx="480" cy="70" r="9"/><circle cx="680" cy="70" r="9"/></g>
+  <circle cx="80" cy="70" r="9" fill="var(--server)"/>
+  <text x="80" y="44" text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--server)">backup taken</text>
+  <g fill="var(--text-2)" font-size="12" text-anchor="middle"><text x="280" y="44">checked: not due</text><text x="480" y="44">not due</text><text x="680" y="44">not due</text></g>
+  <rect x="40" y="128" width="400" height="80" rx="8" fill="var(--server-soft)" stroke="var(--server)"/>
+  <g fill="currentColor" font-size="13"><text x="56" y="152" font-weight="600">A backup is due when:</text><text x="56" y="174">the newest backup is more than a day old,</text><text x="56" y="194">and the database is running.</text></g>
+  <rect x="470" y="128" width="390" height="80" rx="8" fill="var(--panel)" stroke="var(--line)"/>
+  <g fill="currentColor" font-size="13"><text x="486" y="152" font-weight="600">Then old ones are deleted:</text><text x="486" y="174">older than <tspan font-weight="600">Keep 30 days</tspan>, but</text><text x="486" y="194"><tspan font-weight="600">always keep 7</tspan> newest, whatever their age.</text></g>
+</svg>
+<figcaption>So there is about one backup a day while the server runs. A server left off overnight catches up 5 minutes after it starts. Closing Slate Server waits for a running backup to finish.</figcaption>
+</figure>
+
+<div class="tablewrap keep"><table>
+  <tr><th>Button</th><th>What it does</th></tr>
+  <tr><td><b>Back up now</b></td><td>A full copy of the database, now. Do it before any upgrade, restore or password change.</td></tr>
+  <tr><td><b>Keep</b> 30 <b>days</b>, <b>always keep</b> 7</td><td>The tidy-up rule used after every automatic backup.</td></tr>
+  <tr><td><b>Delete old backups</b></td><td>Applies that rule now. It lists what it will delete and asks first. It cannot be undone.</td></tr>
+  <tr><td><b>Restore from file&hellip;</b></td><td>Replaces <b>everything</b> in the live database with a <code>.dump</code> file. Close every workstation first. You must type <code>RESTORE</code>.</td></tr>
+</table></div>
+<p>Backups are files named like <code>slate_ut_vfx_20261006_141800.dump</code> in the <code>Backups</code> folder beside the database folder, on the server PC. <b>Once a week, copy the newest one off the server PC</b> (to the file server, or a drive kept elsewhere). A backup on the same disk does not survive the disk.</p>
+
+<h3>Operations: maintenance, diagnostics, the log</h3>
+<div class="tablewrap keep"><table>
+  <tr><th>Job (Every)</th><th>Runs</th><th>Button</th></tr>
+  <tr><td>Vacuum and analyze (every 7 days)</td><td>By hand</td><td><b>Clean up the database (vacuum)</b>. Queries get slower without it.</td></tr>
+  <tr><td>Rebuild indexes (every 30 days)</td><td>By hand</td><td><b>Rebuild indexes</b>. Also after a big ingest or a restore.</td></tr>
+  <tr><td>Backup (every day)</td><td>By itself</td><td><b>Back up now</b></td></tr>
+  <tr><td>Credit comp off (every day)</td><td>By itself: about 5 minutes after Slate Server opens, then daily</td><td><b>Credit comp off</b>. A second run the same day does nothing more. Runs only while Slate Server is open (window or tray).</td></tr>
+</table></div>
+<p>The <b>Last run</b> column says "1 day late", "5 days late" or "Never run". <b>Run diagnostics</b> checks the configuration, the database, the server, the pool and the update folder, and lists what is wrong in plain words. Run it first on any support call. <b>Server log</b>: <b>Open log</b> opens <code>pg_server.log</code>; <b>Trim log</b> keeps the last 2 MB. <b>Danger zone</b>: <b>Force kill the database&hellip;</b> only when the power switch does not respond. It stops every PostgreSQL on the PC at once.</p>
+
+<h3>Settings</h3>
+<p><b>Server Configuration</b>: <b>Database folder</b>, <b>PostgreSQL port</b> (5440), <b>Connection pool port</b> (6432), <b>Database name</b> (<code>ut_vfx</code>), <b>Database password</b>, <b>Most connections</b> (100). Then <b>Allow Firewall</b> and <b>Save Configuration</b>. While the server runs, new folders and ports apply only after you turn the power off and on. If the note says <b>NOT saved</b>, nothing changed: read why.</p>
+<div class="note warn"><b>Do not change the Database name</b>Workstations ask for <code>ut_vfx</code>. The database answers an unknown name by making a new empty one, and the studio's work then seems to vanish.</div>
+
+<!-- ============================================================ -->
+<h2 id="updates">Publishing updates</h2>
+<p class="lede">From 2.2.0, the update is the installer itself. You install Slate by hand once. After that, you publish the new installers on Slate Server and every workstation updates itself from the shared folder.</p>
+
+<figure>
+<svg viewBox="0 0 900 340" role="img" aria-label="Updates flow: download the installers from the GitHub release. On the server PC, Settings, Publish update copies them into Slate_Central Updates releases with a manifest and checksum. Each workstation checks every 5 minutes, waits up to 10 minutes, copies the installer to the TEMP SlateUpdate folder, checks the checksum, and asks Update now or When I close Slate. A required update counts down 5 minutes.">
+  <defs><marker id="arE" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+  <rect x="10" y="30" width="190" height="120" rx="10" fill="var(--panel)" stroke="var(--line)" stroke-width="2"/>
+  <g fill="currentColor"><text x="26" y="58" font-size="14" font-weight="600">1. GitHub release</text><text x="26" y="82" font-size="12">the owner's release page</text><text x="26" y="104" font-size="11" class="mono">setup_Slate_Studio_v...</text><text x="26" y="122" font-size="11" class="mono">setup_Slate_Ops_v...</text><text x="26" y="140" font-size="11" class="mono">setup_Slate Server_v...</text></g>
+  <rect x="240" y="30" width="200" height="120" rx="10" fill="var(--server-soft)" stroke="var(--server)" stroke-width="2"/>
+  <g fill="currentColor"><text x="256" y="58" font-size="14" font-weight="600">2. Server PC</text><text x="256" y="82" font-size="12">Settings &gt;</text><text x="256" y="100" font-size="12" font-weight="600">Publish update&#8230;</text><text x="256" y="122" font-size="12">tick Required first</text><text x="256" y="140" font-size="12">if nobody may wait</text></g>
+  <path d="M480 40 h40 l12 12 h120 v98 h-172 z" fill="var(--panel)" stroke="currentColor" stroke-width="2"/>
+  <g fill="currentColor"><text x="492" y="76" font-size="14" font-weight="600">3. Shared folder</text><text x="492" y="98" font-size="11" class="mono">Updates\releases</text><text x="492" y="118" font-size="11.5">installer + manifest</text><text x="492" y="136" font-size="11.5">with its checksum</text></g>
+  <rect x="690" y="30" width="200" height="120" rx="10" fill="var(--studio-soft)" stroke="var(--studio)" stroke-width="2"/>
+  <g fill="currentColor"><text x="706" y="58" font-size="14" font-weight="600">4. Each workstation</text><text x="706" y="82" font-size="12">looks every 5 minutes</text><text x="706" y="100" font-size="12">waits 0 to 10 minutes</text><text x="706" y="118" font-size="12">copies to %TEMP%\</text><text x="706" y="136" font-size="12">SlateUpdate, checks it</text></g>
+  <g stroke="currentColor" stroke-width="2.5" fill="none" marker-end="url(#arE)"><line x1="200" y1="90" x2="237" y2="90"/><line x1="440" y1="90" x2="477" y2="90"/><line x1="652" y1="90" x2="687" y2="90"/></g>
+  <g stroke="var(--studio)" stroke-width="2.5" fill="none" marker-end="url(#arE)"><path d="M740 150 C700 200 560 190 520 215"/><path d="M840 150 C850 190 840 200 800 215"/></g>
+  <rect x="330" y="218" width="300" height="110" rx="10" fill="var(--panel)" stroke="var(--studio)" stroke-width="2"/>
+  <g fill="currentColor"><text x="346" y="244" font-size="13.5" font-weight="700">A new version of Slate is ready</text><text x="346" y="266" font-size="12" fill="var(--text-2)">Update now closes Slate, installs and opens</text><text x="346" y="284" font-size="12" fill="var(--text-2)">Slate again. Or it installs when you close it.</text></g>
+  <g stroke-width="1.5"><rect x="400" y="294" width="126" height="26" rx="5" fill="var(--panel)" stroke="var(--line)"/><rect x="534" y="294" width="86" height="26" rx="5" fill="var(--studio)" stroke="var(--studio)"/></g>
+  <g font-size="11.5" text-anchor="middle"><text x="463" y="311" fill="currentColor">When I close Slate</text><text x="577" y="311" fill="var(--panel)" font-weight="700">Update now</text></g>
+  <rect x="650" y="218" width="240" height="110" rx="10" fill="var(--bad-soft)" stroke="var(--bad)" stroke-width="2"/>
+  <g fill="currentColor"><text x="666" y="244" font-size="13.5" font-weight="700">Slate must update</text><text x="666" y="266" font-size="12" fill="var(--text-2)">"...close and update in 4:59,</text><text x="666" y="284" font-size="12" fill="var(--text-2)">so save your work now."</text></g>
+  <rect x="790" y="294" width="86" height="26" rx="5" fill="var(--bad)"/><text x="833" y="311" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--panel)">Update now</text>
+  <text x="20" y="240" font-size="12.5" fill="var(--text-2)">A required update:</text><text x="20" y="260" font-size="12.5" fill="var(--text-2)">no wait before copying,</text><text x="20" y="280" font-size="12.5" fill="var(--text-2)">no "later", Esc does nothing,</text><text x="20" y="300" font-size="12.5" fill="var(--text-2)">updates by itself at 0:00</text>
+</svg>
+<figcaption>Nothing goes to the internet except your own download in step 1. The installer runs silently on each PC and keeps that PC's settings.</figcaption>
+</figure>
+
+<h3>Publish an update, step by step</h3>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><path d="M22 6 v20 M14 18 l8 8 l8 -8" fill="none" stroke="currentColor" stroke-width="3"/><line x1="8" y1="36" x2="36" y2="36" stroke="currentColor" stroke-width="3"/></svg><b>Download</b><span>The new <code>setup_Slate_Studio_v&hellip;.exe</code> and <code>setup_Slate_Ops_v&hellip;.exe</code> from the owner's GitHub release, onto the server PC.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="8" width="32" height="28" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><circle cx="16" cy="22" r="4" fill="currentColor"/></svg><b>Back up now</b><span>Operations. A new version may change the database the first time a workstation opens it.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="10" y="12" width="20" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><path d="M14 22 l5 5 l9 -11" fill="none" stroke="var(--ok)" stroke-width="3"/></svg><b>Required?</b><span>Tick <strong>Required (installs even if the artist chose later)</strong> <strong>before</strong> publishing, if nobody may put it off.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="4" y="14" width="36" height="16" rx="4" fill="currentColor"/></svg><b>Publish update&hellip;</b><span>Settings. Choose one or both installers. Any other file name is refused.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M8 24 L18 34 L36 12" fill="none" stroke="var(--ok)" stroke-width="4"/></svg><b>Read the result</b><span>"Slate Studio BETA &hellip; is now offered to every Slate Studio workstation." and the folder.</span></li>
+</ol>
+<p>Slate Server copies each installer into <code>Slate_Central\Updates\releases</code>, checks the copy, then writes <code>manifest_studio.json</code> or <code>manifest_ops.json</code> beside it, then deletes that program's older installers. Installers are hundreds of MB, so this takes a while; the line above the buttons shows each step.</p>
+
+<h3>What the artist sees</h3>
+<ul>
+  <li>Within 5 minutes Slate finds the update (10 seconds after start, then every 5 minutes). To spare the network, each PC first waits a random time of up to 10 minutes, then copies the installer in the background.</li>
+  <li><b>A new version of Slate is ready</b>. <b>Update now</b> asks about unsaved work, closes Slate, installs and opens Slate again. <b>When I close Slate</b> installs it at the next real close (not a sign-out); Slate then does not reopen by itself.</li>
+  <li>If an update is made required while the ordinary offer is still open on a PC, the countdown replaces that offer. The silent installer starts only once Slate has fully closed.</li>
+  <li><b>Settings &rarr; Check for updates</b> looks at once, without the wait, and always says what it found.</li>
+  <li>A copy whose checksum does not match is deleted and never installed: "...is not the file that was published (its checksum does not match)...".</li>
+</ul>
+
+<h3>Required updates, rollback, the server itself</h3>
+<div class="tablewrap keep"><table>
+  <tr><th>You want</th><th>Do this</th></tr>
+  <tr><td>Everybody on it now</td><td>Press <b>Require the current update now</b>, answer <b>Yes</b>. PCs that chose "later" get <b>Slate must update</b> with a 5-minute countdown at their next check (within 5 minutes). Then Slate closes, updates and opens again.</td></tr>
+  <tr><td>Go back to the previous version</td><td>Publish the <b>older</b> installer the same way. Any version different from the running one is offered, so an older one is a rollback. Keep the last good installers on the server PC for this.</td></tr>
+  <tr><td>Update Slate Server</td><td><b>Update this server&hellip;</b>, choose <code>setup_Slate Server_v&hellip;.exe</code>, answer <b>Yes</b>. It says how many workstations are connected. The installer stops the database while it works; workstations reconnect by themselves. Database, backups and settings are kept. Do it at a quiet time.</td></tr>
+  <tr><td>Slate will not start on one PC</td><td>On that PC, run the installer from <code>Slate_Central\Updates\releases</code> by hand. It keeps the PC's settings.</td></tr>
+</table></div>
+<div class="note"><b>Updating to 2.2.0 itself</b>PCs on 2.0.32 still have the old update system. Install 2.2.0 by hand on every PC. Self-updating starts with the next version you publish. Try the first published update on one spare PC before relying on it.</div>
+
+<!-- ============================================================ -->
+<h2 id="recover">Recover Slate and the security switches</h2>
+<p class="lede">Recover Slate is for when nobody can sign in, or a security change went wrong. It works only on the server PC, and only with the Recovery Key. It never needs a Slate password or a database password.</p>
+<p>Open it from the Start menu (<b>Recover Slate</b>), or click <b>Recovery</b> in Slate Server's left-hand list. Both show the same page. The Start-menu one works even when the Slate Server window will not start. It refuses to run on any other PC, or against a database on a network drive.</p>
+
+<figure>
+<svg viewBox="0 0 900 400" role="img" aria-label="The Recovery page, top to bottom: Health check with Check now, Stop leftover pool and Close an interrupted repair; Unlock with the key box; Accounts with username and password boxes and two buttons; Database passwords with five buttons; Security switches and snapshots with a list, Turn off, Log only, Turn on, Restore the last snapshot and Make a new Recovery Key; and the output box.">
+  <rect x="10" y="10" width="880" height="380" rx="10" fill="var(--panel)" stroke="var(--line)" stroke-width="2"/>
+  <text x="28" y="40" font-size="20" font-weight="700" fill="currentColor">Recovery</text>
+  <g stroke="var(--line)" fill="var(--raised)">
+    <rect x="28" y="54" width="844" height="44" rx="6"/><rect x="28" y="104" width="844" height="44" rx="6"/><rect x="28" y="154" width="844" height="54" rx="6"/><rect x="28" y="214" width="844" height="72" rx="6"/><rect x="28" y="292" width="844" height="56" rx="6"/>
+  </g>
+  <g font-size="13" font-weight="700" fill="currentColor"><text x="40" y="81">Health check</text><text x="40" y="131">Unlock</text><text x="40" y="186">Accounts</text><text x="40" y="236">Database passwords</text><text x="40" y="314">Security switches</text><text x="40" y="330">and snapshots</text></g>
+  <g stroke="var(--line)" stroke-width="1.2" fill="var(--panel)">
+    <rect x="190" y="64" width="80" height="24" rx="4" fill="var(--studio-soft)" stroke="var(--studio)"/><rect x="278" y="64" width="124" height="24" rx="4"/><rect x="410" y="64" width="176" height="24" rx="4"/>
+    <rect x="190" y="114" width="300" height="24" rx="4"/><rect x="498" y="114" width="70" height="24" rx="4" fill="var(--studio-soft)" stroke="var(--studio)"/>
+    <rect x="190" y="162" width="130" height="18" rx="3"/><rect x="326" y="162" width="130" height="18" rx="3"/><rect x="462" y="162" width="130" height="18" rx="3"/>
+    <rect x="190" y="184" width="290" height="20" rx="4" fill="var(--studio-soft)" stroke="var(--studio)"/><rect x="488" y="184" width="190" height="20" rx="4"/>
+    <rect x="190" y="222" width="130" height="18" rx="3"/><rect x="326" y="222" width="130" height="18" rx="3"/>
+    <rect x="190" y="244" width="190" height="18" rx="4"/><rect x="388" y="244" width="200" height="18" rx="4"/>
+    <rect x="190" y="264" width="130" height="18" rx="4"/><rect x="328" y="264" width="178" height="18" rx="4"/><rect x="514" y="264" width="204" height="18" rx="4"/>
+    <rect x="190" y="300" width="200" height="20" rx="4"/><rect x="398" y="300" width="70" height="20" rx="4"/><rect x="474" y="300" width="70" height="20" rx="4"/><rect x="550" y="300" width="70" height="20" rx="4"/>
+    <rect x="190" y="324" width="170" height="20" rx="4" fill="var(--bad-soft)" stroke="var(--bad)"/><rect x="560" y="324" width="170" height="20" rx="4"/>
+    <rect x="28" y="356" width="844" height="26" rx="6" fill="var(--panel)"/>
+  </g>
+  <g font-size="10.5" fill="currentColor" text-anchor="middle">
+    <text x="230" y="80">Check now</text><text x="340" y="80">Stop leftover pool</text><text x="498" y="80">Close an interrupted repair</text>
+    <text x="533" y="130">Unlock</text>
+    <text x="335" y="198">Reset password and switch the account back on</text><text x="583" y="198">Create or restore administrator</text>
+    <text x="285" y="257">Set app password (workstations)</text><text x="488" y="257">Set superuser password (this server)</text>
+    <text x="255" y="277">Show app password</text><text x="417" y="277">Publish a new app password</text><text x="616" y="277">Switch to the published password</text>
+    <text x="290" y="314">Every security switch &#9662;</text><text x="433" y="314">Turn off</text><text x="509" y="314">Log only</text><text x="585" y="314">Turn on</text>
+    <text x="275" y="338">Restore the last snapshot</text><text x="645" y="338">Make a new Recovery Key</text>
+  </g>
+  <g font-size="10" fill="var(--text-dim)"><text x="198" y="130" class="mono">XXXXX-XXXXX-XXXXX-XXXXX-XXXXX</text><text x="196" y="175">Username, e.g. admin</text><text x="332" y="175">New password</text><text x="468" y="175">Type it again</text><text x="196" y="235">New password</text><text x="332" y="235">Type it again</text><text x="370" y="338" fill="currentColor">&#9744; Also put the users and roles back</text></g>
+  <text x="40" y="374" font-size="11" fill="var(--text-dim)">What the recovery tool did appears here.</text>
+</svg>
+<figcaption>The health check runs without the key and changes nothing. Everything below <b>Unlock</b> needs the key. Unlocking lasts ten minutes. Wrong keys make you wait (5 seconds, growing to 5 minutes at most), never a permanent lock.</figcaption>
+</figure>
+
+<h3>Every action, and when to use it</h3>
+<div class="tablewrap"><table>
+  <tr><th>Panel</th><th>Button</th><th>Use it when</th></tr>
+  <tr><td>Health check</td><td><b>Check now</b></td><td>Always first, and again after every fix. Lines such as <b>This PC</b>, <b>Server login</b>, <b>Workstation login</b>, <b>Administrator</b>, <b>Studio password</b>, <b>Clock</b>, <b>Recovery Key</b>.</td></tr>
+  <tr><td></td><td><b>Stop leftover pool</b></td><td>"A connection pool is still running from an earlier start." Or just start Slate Server.</td></tr>
+  <tr><td></td><td><b>Close an interrupted repair</b></td><td>"An interrupted recovery left the access rules open." Starting Slate Server also closes it.</td></tr>
+  <tr><td>Accounts</td><td><b>Reset password and switch the account back on</b></td><td>Someone forgot their password, or was switched off or given a past last day by mistake. Also clears that last day. They choose their own password at the next sign-in.</td></tr>
+  <tr><td></td><td><b>Create or restore administrator</b></td><td>No administrator is left, or a new studio needs its first. Makes or mends the account with the Developer role and gives Developer full access again.</td></tr>
+  <tr><td>Database passwords</td><td><b>Show app password</b></td><td>To set up a workstation, or to see who has learned a published password. Also shows the one before the last change.</td></tr>
+  <tr><td></td><td><b>Publish a new app password</b>, then <b>Switch to the published password</b></td><td>To change the workstations' password without cutting anyone off. See <a href="#password">the password page</a>.</td></tr>
+  <tr><td></td><td><b>Set app password (workstations)</b></td><td>Changes it at once. Use it to put back the password the workstations already have, for example after moving the server. Then press <b>Restart pool</b> on the Dashboard.</td></tr>
+  <tr><td></td><td><b>Set superuser password (this server)</b></td><td>The server says it cannot log in to its own database. Workstations are not affected. Keep this password with the Recovery Key.</td></tr>
+  <tr><td>Switches and snapshots</td><td><b>Turn off</b> / <b>Log only</b> / <b>Turn on</b></td><td>See the switches below.</td></tr>
+  <tr><td></td><td><b>Restore the last snapshot</b></td><td>A settings file or the access rules got damaged. Tick <b>Also put the users and roles back</b> only if accounts were damaged too. The current files are kept as a snapshot first.</td></tr>
+  <tr><td></td><td><b>Make a new Recovery Key</b></td><td>The key may have been seen by the wrong person, or is lost (then run as a Windows administrator, key box empty).</td></tr>
+</table></div>
+
+<div class="note ok"><b>The never-lock-out rules</b>
+Every switch starts <strong>Off</strong>. A snapshot is taken before every change and every repair, so each can be undone. <strong>Turn on</strong> first checks that people can still get in, refuses if not, and undoes itself if the check afterwards fails. <strong>Turn off</strong> works even when the database is down. Slate never removes, demotes or switches off the last administrator. A wrong Slate password only waits one second; nobody is ever locked out for wrong tries. Every action is written to <code>slate_recovery\recovery.log</code>, never with a password or the key.</div>
+
+<h3>The security switches</h3>
+<figure>
+<svg viewBox="0 0 900 170" role="img" aria-label="Each switch has three states. Off is the old behaviour. Log only refuses nothing and writes in the log what it would refuse. On refuses it. Turning on is checked first and undone by itself if the check after fails. Turn off goes back to the old behaviour at once.">
+  <defs><marker id="arF" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+  <g stroke-width="2"><rect x="20" y="30" width="220" height="80" rx="10" fill="var(--panel)" stroke="var(--idle)"/><rect x="340" y="30" width="220" height="80" rx="10" fill="var(--ops-soft)" stroke="var(--ops)"/><rect x="660" y="30" width="220" height="80" rx="10" fill="var(--server-soft)" stroke="var(--server)"/></g>
+  <g fill="currentColor" font-size="16" font-weight="700" text-anchor="middle"><text x="130" y="62">Off</text><text x="450" y="62">Log only</text><text x="770" y="62">On</text></g>
+  <g fill="currentColor" font-size="12.5" text-anchor="middle"><text x="130" y="86">as before; the starting state</text><text x="450" y="86">refuses nothing, logs what</text><text x="450" y="102">it would refuse</text><text x="770" y="86">refuses it; checked before</text><text x="770" y="102">and after, else undone</text></g>
+  <g stroke="currentColor" stroke-width="2.5" fill="none" marker-end="url(#arF)"><line x1="240" y1="60" x2="336" y2="60"/><line x1="560" y1="60" x2="656" y2="60"/></g>
+  <g stroke="var(--bad)" stroke-width="2" fill="none" stroke-dasharray="6 4" marker-end="url(#arF)"><path d="M770 112 C770 160 130 160 130 114"/></g>
+  <g font-size="12" text-anchor="middle"><text x="288" y="50" fill="currentColor">a day first</text><text x="608" y="50" fill="currentColor">log is clean</text><text x="450" y="160" fill="var(--bad)">Turn off: back to the old behaviour at once, even with the database down</text></g>
+</svg>
+<figcaption>Choose one switch in the list, read the line under it (what it does and its state now), then press a button. Switches are turned on one at a time. <b>Every security switch</b> allows <b>Turn off</b> only.</figcaption>
+</figure>
+
+<div class="tablewrap"><table class="fixed">
+  <colgroup><col style="width:10%"><col style="width:27%"><col style="width:32%"><col style="width:31%"></colgroup>
+  <tr><th>Order</th><th>Switch</th><th>When on, in plain words</th><th>Before you turn it on</th></tr>
+  <tr><td>1</td><td><code>split_superuser_password</code></td><td>The database's master account gets its own password, kept on the server PC only. Workstations keep theirs.</td><td>Nothing. If Recover Slate says the pool did not pick it up, press <b>Restart pool</b>.</td></tr>
+  <tr><td>2</td><td><code>no_default_accounts</code></td><td>The starter <code>admin</code> account is never created or brought back. The first-run notice points to Recover Slate instead.</td><td>You have your own administrator, and the Recovery Key is safe.</td></tr>
+  <tr><td>3</td><td><code>no_plaintext_passwords</code></td><td>Passwords stored in old, unsafe formats no longer open an account.</td><td>Let everybody sign in once: each sign-in re-stores the password safely. It is refused while an active account still has one.</td></tr>
+  <tr><td>4</td><td><code>refuse_inactive_signin</code></td><td>Deactivated people, and people past their last working day, cannot sign in. <code>admin</code> and <code>developer</code> are always let in.</td><td>Check Users &amp; Roles for anyone wrongly marked as left.</td></tr>
+  <tr><td>5</td><td><code>strict_pg_hba</code></td><td>The master account connects only from the server PC. Workstations reach only the studio database.</td><td>Refused while a workstation is connected as the master account. Try <b>Log only</b> first.</td></tr>
+  <tr><td>6</td><td><code>pgbouncer_hba</code></td><td>The pool's admin console works from the server PC only.</td><td>Refused while someone uses that console from another PC.</td></tr>
+  <tr><td>7</td><td><code>signed_fleet_commands</code></td><td>Messages, restarts and shut-downs carry a signature; workstations ignore any without one.</td><td>Everyone who sends messages or restarts (admins, and IT with <b>Message and restart workstations</b>) on 2.2.0. <b>Log only</b> for a day, then look for "would be refused" in the workstations' logs.</td></tr>
+  <tr><td>8</td><td><code>hide_password_hashes</code></td><td>Password fingerprints move where workstations cannot read them; the database checks passwords itself.</td><td><b>Every</b> workstation on 2.2.0 first. A workstation cut off from the server cannot sign anybody in from its local copy.</td></tr>
+  <tr><td>9</td><td><code>no_sqlite_fallback</code></td><td>When the server is down, workstations do not open their local copy (which has its own starter admin account).</td><td>With it on, <b>nobody can work while the server is down</b>. Last, and only if that is acceptable.</td></tr>
+</table></div>
+<p>The order above starts with the switches that cannot affect anyone's work and ends with the ones that can. Turn on one, work a normal day, check, then the next.</p>
+
+<!-- ============================================================ -->
+<section class="ops">
+<h2 id="ops">Your screens in Slate Operations</h2>
+<p class="lede">Under <b>IT &amp; INFRA</b>: IT Support, Hardware, Licences and Deployment. Under <b>PEOPLE</b>: your half of Joining &amp; Leaving. Changing anything here needs the ability <b>Work the IT desk</b>. Without it, Hardware, Licences and Deployment are read-only.</p>
+
+<h3>IT Support: the queue</h3>
+<p>With <b>Work the IT desk</b> you get two pages: <b>Queue</b> (everyone's tickets) and <b>My tickets</b> (your own). The queue is sorted by what is closest to breaching, not by what is newest. Five figures across the top work as filters: <b>Unresolved</b>, <b>Breached</b>, <b>At risk</b>, <b>Unassigned</b>, <b>Mine</b>. The sidebar badge counts the unassigned ones.</p>
+
+<figure>
+<svg viewBox="0 0 900 300" role="img" aria-label="A ticket goes Open, In Progress, Waiting on requester, Resolved, Closed. Waiting on requester pauses the clock and needs a note. Resolved and Closed need a note. The requester can press This is fixed, or Still broken - reopen. Priority comes from two answers: who is affected and whether they can carry on.">
+  <defs><marker id="arG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+  <g stroke-width="2">
+    <rect x="10" y="20" width="150" height="62" rx="8" fill="var(--panel)" stroke="var(--info)"/>
+    <rect x="195" y="20" width="150" height="62" rx="8" fill="var(--panel)" stroke="var(--warn)"/>
+    <rect x="380" y="20" width="170" height="62" rx="8" fill="var(--ops-soft)" stroke="var(--ops)"/>
+    <rect x="585" y="20" width="150" height="62" rx="8" fill="var(--server-soft)" stroke="var(--ok)"/>
+    <rect x="770" y="20" width="120" height="62" rx="8" fill="var(--panel)" stroke="var(--idle)"/>
+  </g>
+  <g stroke="currentColor" stroke-width="2.5" fill="none" marker-end="url(#arG)"><line x1="160" y1="51" x2="192" y2="51"/><line x1="345" y1="51" x2="377" y2="51"/><line x1="550" y1="51" x2="582" y2="51"/><line x1="735" y1="51" x2="767" y2="51"/></g>
+  <g stroke="var(--bad)" stroke-width="2" fill="none" stroke-dasharray="6 4" marker-end="url(#arG)"><path d="M660 84 C660 104 270 104 270 86"/></g>
+  <g fill="currentColor" font-size="14" font-weight="600" text-anchor="middle"><text x="85" y="47">Open</text><text x="270" y="47">In Progress</text><text x="465" y="47">Waiting on requester</text><text x="660" y="47">Resolved</text><text x="830" y="47">Closed</text></g>
+  <g fill="currentColor" font-size="11.5" text-anchor="middle"><text x="85" y="68">not picked up</text><text x="270" y="68">Assign to me</text><text x="465" y="68">clock paused; note needed</text><text x="660" y="68">note: what was done</text><text x="830" y="68">note needed</text></g>
+  <text x="465" y="126" text-anchor="middle" font-size="11.5" fill="var(--bad)">Still broken - reopen (requester must say what is still wrong)</text>
+
+  <text x="10" y="156" font-size="13.5" font-weight="700" fill="currentColor">Priority: Slate works it out from two answers</text>
+  <g font-size="11.5" fill="currentColor"><text x="10" y="178">Who is affected (rows) &#215; Can you carry on (columns)</text></g>
+  <g stroke="var(--line)" fill="var(--panel)"><rect x="10" y="188" width="420" height="104" rx="6"/></g>
+  <g font-size="11" fill="var(--text-dim)" font-weight="700" text-anchor="middle"><text x="190" y="208">High: cannot work</text><text x="300" y="208">Medium: workaround</text><text x="392" y="208">Low</text></g>
+  <g font-size="11.5" fill="currentColor"><text x="20" y="234">High: whole studio</text><text x="20" y="258">Medium: department</text><text x="20" y="282">Low: only me</text></g>
+  <g font-size="13" font-weight="700" text-anchor="middle">
+    <text x="190" y="234" fill="var(--bad)">P1</text><text x="300" y="234" fill="var(--warn)">P2</text><text x="392" y="234" fill="var(--warn)">P2</text>
+    <text x="190" y="258" fill="var(--warn)">P2</text><text x="300" y="258" fill="var(--info)">P3</text><text x="392" y="258" fill="var(--info)">P3</text>
+    <text x="190" y="282" fill="var(--info)">P3</text><text x="300" y="282" fill="var(--info)">P3</text><text x="392" y="282" fill="var(--idle)">P4</text>
+  </g>
+  <g stroke="var(--line)" fill="var(--panel)"><rect x="460" y="140" width="430" height="152" rx="6"/></g>
+  <g font-size="11.5" fill="var(--text-dim)" font-weight="700"><text x="474" y="162">PRIORITY</text><text x="620" y="162">REPLY WITHIN</text><text x="760" y="162">FIX WITHIN</text></g>
+  <g font-size="12.5" fill="currentColor">
+    <text x="474" y="190"><tspan fill="var(--bad)" font-weight="700">P1</tspan> Critical</text><text x="620" y="190">15 minutes</text><text x="760" y="190">4 hours</text>
+    <text x="474" y="216"><tspan fill="var(--warn)" font-weight="700">P2</tspan> High</text><text x="620" y="216">30 min (work)</text><text x="760" y="216">8 working hours</text>
+    <text x="474" y="242"><tspan fill="var(--info)" font-weight="700">P3</tspan> Medium</text><text x="620" y="242">2 working hours</text><text x="760" y="242">3 working days</text>
+    <text x="474" y="268"><tspan fill="var(--idle)" font-weight="700">P4</tspan> Low</text><text x="620" y="268">4 working hours</text><text x="760" y="268">5 working days</text>
+  </g>
+  <text x="474" y="286" font-size="10.5" fill="var(--text-2)">P1 runs round the clock; P2 to P4 count working time only</text>
+</svg>
+<figcaption>Nobody picks P1 by hand: the person raising the ticket answers <b>Who is affected</b> and <b>Can you carry on</b>, and the grid gives the priority. New P1 and P2 tickets notify IT.</figcaption>
+</figure>
+
+<div class="tablewrap keep"><table>
+  <tr><th>Button</th><th>What it does</th></tr>
+  <tr><td><b>Assign to me</b></td><td>Takes the ticket. It moves to In Progress.</td></tr>
+  <tr><td><b>Set status&hellip;</b></td><td>Waiting, Resolved and Closed all need a note, and the person who raised it reads that note. Waiting needs "What do you need from them?".</td></tr>
+  <tr><td><b>More &#9662;</b></td><td><b>Assign to&hellip;</b>, <b>Unassign</b>, <b>Change priority&hellip;</b> (needs a reason; raising it restarts the clock from now), <b>Responded by phone</b> (stops the reply clock when you answered off-screen).</td></tr>
+  <tr><td><b>New ticket</b></td><td>Log a problem for somebody else: a phone call or a walk-up.</td></tr>
+  <tr><td><b>SLA report</b>, <b>Export&hellip;</b></td><td>How many promises were kept, per priority, for the last 12 months or one month.</td></tr>
+</table></div>
+<p><b>Working time</b> is the <b>Working hours</b> in Settings &rarr; <b>Studio currency, rates and hours</b> (10:00 to 19:00 unless changed), on the studio's working days from Studio policy, skipping holidays. A day means one standard working day (9 hours unless changed). So a ticket raised on Saturday evening is not breached on Monday morning. <b>At risk</b> means the last quarter of the reply time, or the last fifth of the fix time. Inside a ticket, tick <b>Internal note (IT only)</b> for words the requester must not see.</p>
+
+<h3>Hardware</h3>
+<p><b>Machines the studio owns, who has them, and their state.</b> Figures: <b>Machines</b>, <b>Available</b>, <b>In repair</b>, <b>Out on loan</b>. Buttons: <b>Add machine</b>, <b>Edit</b>, <b>Issue to&hellip;</b>, <b>Collect</b>, <b>History</b>, <b>Delete</b>, <b>Sync from Live Ops</b>, <b>Export&hellip;</b>.</p>
+<div class="tablewrap keep"><table>
+  <tr><th>Status</th><th>Means</th></tr>
+  <tr><td>Available</td><td>Free to issue.</td></tr>
+  <tr><td>Active</td><td>Issued to someone. Shown as <b>In service</b> in the Edit window.</td></tr>
+  <tr><td>Repair</td><td>Never offered when issuing. Collecting it back does not clear Repair.</td></tr>
+  <tr><td>Retired, Lost, Disposed</td><td>Hidden unless you tick <b>Show retired</b>. A machine that was ever issued is retired, not deleted: <b>Delete</b> is only for a machine added by mistake.</td></tr>
+</table></div>
+<p>The Warranty column turns amber within 60 days of the end and red once expired. <b>History</b> lists every issue, return, status change and rename, with who did it.</p>
+
+<h3>Licences</h3>
+<p><b>What we bought, what we actually use, and what to do before each renewal.</b> The honest measure of a floating licence is its <b>peak</b> use, so record readings when the studio is busy. Buttons: <b>Readings&hellip;</b>, <b>Record usage</b>, <b>Import from licence server&hellip;</b> (reads a FlexLM <code>lmstat -a</code> or RLM <code>rlmstat -a</code> text report), <b>Add licence</b>, <b>Edit</b>, <b>Remove</b>, <b>Export&hellip;</b>. Choose <b>Peak over 30 days</b>, <b>90 days</b> or <b>a year</b>.</p>
+<div class="tablewrap keep"><table>
+  <tr><th>State</th><th>Means</th><th>Do</th></tr>
+  <tr><td><b>Over-subscribed</b></td><td>More in use than we own</td><td>First. This is the one that ends in an audit letter.</td></tr>
+  <tr><td><b>Expired</b></td><td>Past its renewal date</td><td>Renew or remove it. Anyone relying on it is stuck.</td></tr>
+  <tr><td><b>Renews soon</b></td><td>Inside the <b>Licence renewal warning</b> (45 days unless changed in Settings)</td><td>Decide before purchasing needs its lead time.</td></tr>
+  <tr><td><b>Under-used</b></td><td>Peak below 60% of the seats bought</td><td>Seats to drop at renewal.</td></tr>
+  <tr><td><b>No readings</b> / <b>Not measured lately</b></td><td>Bought but never, or not recently, measured</td><td>Record usage.</td></tr>
+  <tr><td><b>Healthy</b></td><td>Nothing to do</td><td>&ndash;</td></tr>
+</table></div>
+<p>The bell reminds IT and everyone with <b>See licences</b> when a licence enters the warning window, at 14 days and on the day. The <b>What this means</b> column says it in numbers you can take to purchasing.</p>
+
+<h3>Deployment</h3>
+<p><b>Deployment log: A record of what was installed where. Slate does not push it.</b> Press <b>Record deployment</b>, type the Package, Version and Machines (several, separated by commas, make one record each), then <b>Record</b>. A new record is <b>Pending</b>; later press <b>Mark success</b> or <b>Mark failed</b> (with an optional reason). Figures: <b>Installs recorded</b>, <b>Success rate</b>, <b>Awaiting outcome</b>. Slate updates published from Slate Server are not logged here by themselves: record them if you want the trail.</p>
+
+<h3>Joining &amp; Leaving: IT's half</h3>
+<p>HR start a joining or leaving checklist; IT never do. Your view is <b>Accounts, access and machines - what is still outstanding</b>, with the cards <b>On your list</b>, <b>Joining</b>, <b>Leaving</b>, and <b>Kit not returned</b> (machines issued to people who have left; shown only when there are some).</p>
+<div class="tablewrap keep"><table>
+  <tr><th>Joining: IT lines</th><th>Leaving: IT lines</th></tr>
+  <tr><td>Domain account created<br>Email and calendar set up<br>Workstation issued<br>DCC software installed<br>Project shares mounted<br>Render farm access</td><td>Render farm access revoked<br>Project shares unmounted<br>Workstation returned<br>Email forwarded and mailbox archived<br>Domain account disabled<br><i>plus one "Return &lt;machine&gt;" line per machine still issued</i></td></tr>
+</table></div>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><circle cx="22" cy="14" r="7" fill="none" stroke="currentColor" stroke-width="3"/><path d="M8 38 c0 -12 28 -12 28 0" fill="none" stroke="currentColor" stroke-width="3"/></svg><b>Select the person</b><span>The filter starts on <strong>Everyone outstanding</strong>.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="10" width="32" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="14" y1="36" x2="30" y2="36" stroke="currentColor" stroke-width="3"/></svg><b>Issue machine</b><span>Pick from the free machines. Hardware shows it as theirs, and <strong>Workstation issued</strong> ticks itself.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M8 24 L18 34 L36 12" fill="none" stroke="var(--ok)" stroke-width="4"/></svg><b>Mark done</b><span>For each other line, when it is really done. <strong>Reopen</strong> undoes it.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M30 10 l-12 12 l12 12" fill="none" stroke="currentColor" stroke-width="3"/></svg><b>Collect machine</b><span>On the way out. <strong>Workstation returned</strong> ticks once nothing is left out.</span></li>
+</ol>
+<div class="note warn"><b>Deactivating waits for you</b>HR cannot deactivate an account while machines are still issued to that person. Collect the kit first.</div>
+</section>
+
+<!-- ============================================================ -->
+<h2 id="admin">The Admin Panel</h2>
+<p>In Slate Operations, under <b>ADMINISTRATION</b>. It has three pages: <b>Live Ops</b>, <b>Audit Logs</b> and <b>Data Center</b>. It needs the studio server: in LOCAL MODE it says "Admin Panel needs the studio server". The standard <b>IT</b> role has it, with <b>Message and restart workstations</b>: broadcasts, restarts, shut-downs and Remove from Live Ops, but not Audit Logs or Data Center. Upgraded studios get this once, on the first start.</p>
+
+<div class="tablewrap keep"><table>
+  <tr><th>Part</th><th>Admin, Developer</th><th>IT</th><th>Supervisor</th><th>What it does</th></tr>
+  <tr><td>Live Ops: the machine cards, <b>Fleet report</b>, <b>Refresh</b></td><td>Yes</td><td>Yes</td><td>Yes, read-only</td><td>Every PC that runs Slate: Online, Not responding, Offline or Unknown. Problems first.</td></tr>
+  <tr><td><b>View system specs</b></td><td>Yes</td><td>Yes</td><td>Yes</td><td>The PC's hardware, from its own report.</td></tr>
+  <tr><td>Broadcast: <b>Send alert</b></td><td>Yes</td><td>Yes</td><td>No</td><td>A message to every workstation: "Message from &lt;you&gt;" with <b>OK</b>.</td></tr>
+  <tr><td><b>Restart&hellip;</b> / <b>Shut down&hellip;</b></td><td>Yes</td><td>Yes</td><td>No</td><td>One PC at a time, from its card's menu (<b>Actions for this machine</b> or right-click).</td></tr>
+  <tr><td><b>Remove from Live Ops&hellip;</b></td><td>Yes</td><td>Yes</td><td>No</td><td>For a PC that is gone for good (Offline or Unknown). It comes back if it reports again.</td></tr>
+  <tr><td><b>Audit Logs</b></td><td>Yes</td><td>No</td><td>No</td><td><b>Workstation logs</b>, <b>Change history</b>, <b>Audit trail</b> (every sign-in, success and failure, never a password).</td></tr>
+  <tr><td><b>Data Center</b></td><td>Yes</td><td>No</td><td>No</td><td>The database's tables, and a SQL console that is always read-only. Password columns are hidden. People are changed in Users &amp; Roles, never here.</td></tr>
+</table></div>
+
+<figure>
+<svg viewBox="0 0 900 200" role="img" aria-label="Restarting a PC: choose Restart on its card, confirm, type your own password in Admin Verification, give an optional reason. On that PC a window says who wants to restart it and why. The person saves work and chooses Restart, and Windows restarts 60 seconds later, or chooses Cancel to keep working.">
+  <defs><marker id="arH" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+  <g stroke-width="2">
+    <rect x="10" y="30" width="160" height="100" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+    <rect x="195" y="30" width="160" height="100" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+    <rect x="380" y="30" width="160" height="100" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+    <rect x="565" y="30" width="325" height="100" rx="10" fill="var(--ops-soft)" stroke="var(--ops)"/>
+  </g>
+  <g stroke="currentColor" stroke-width="2.5" fill="none" marker-end="url(#arH)"><line x1="170" y1="80" x2="192" y2="80"/><line x1="355" y1="80" x2="377" y2="80"/><line x1="540" y1="80" x2="562" y2="80"/></g>
+  <g fill="currentColor" font-size="13" font-weight="600"><text x="24" y="56">Restart&#8230;</text><text x="209" y="56">Admin Verification</text><text x="394" y="56">Reason (optional)</text><text x="581" y="56">On that PC: Restart this PC</text></g>
+  <g fill="currentColor" font-size="11.5"><text x="24" y="80">confirm; Cancel is</text><text x="24" y="98">the default</text><text x="209" y="80">type your own</text><text x="209" y="98">password</text><text x="394" y="80">shown to the person</text><text x="394" y="98">at that PC</text>
+  <text x="581" y="80">"&lt;admin&gt; wants to restart this PC." and the reason.</text><text x="581" y="98">Restart: Windows restarts 60 seconds later.</text><text x="581" y="116">Cancel (the default) keeps working.</text></g>
+  <text x="450" y="170" text-anchor="middle" font-size="12.5" fill="var(--text-2)">The old shared master password no longer approves anything: each admin confirms with their own.</text>
+</svg>
+<figcaption>Nobody's PC restarts without them agreeing. Use a broadcast first if many people must save their work.</figcaption>
+</figure>
+<p>Live Ops reads a small status file each PC writes to <code>Slate_Central\LiveStatus</code> about every 30 seconds, and judges it by the shared folder's clock, so a PC with a wrong clock does not look online. Messages and restarts travel through <code>Slate_Central\Commands</code>. A PC that cannot reach the shared folder neither shows in Live Ops nor gets commands.</p>
+
+<!-- ============================================================ -->
+<h2 id="move">Moving, uninstalling, and where things live</h2>
+
+<h3>Where things live</h3>
+<div class="tablewrap"><table class="fixed">
+  <colgroup><col style="width:18%"><col style="width:52%"><col style="width:30%"></colgroup>
+  <tr><th>What</th><th>Where</th><th>Safe to delete?</th></tr>
+  <tr><td>The programs</td><td><code>%LOCALAPPDATA%\Programs\Slate Server</code>, <code>...\Slate Studio</code>, <code>...\Slate Operations</code></td><td>Uninstall instead. A reinstall brings them back.</td></tr>
+  <tr><td><b>The database</b></td><td>Server PC: <code>%LOCALAPPDATA%\Slate_Central\LocalDatabase</code>, or the <b>Database folder</b> in Settings</td><td><b>No.</b> This is the studio's data.</td></tr>
+  <tr><td>Backups</td><td>Server PC: <code>Backups</code>, beside the database folder</td><td>Only old ones, with <b>Delete old backups</b>. Copy them away first.</td></tr>
+  <tr><td>Recovery folder</td><td>Server PC: <code>slate_recovery</code>, beside the database folder: the key's fingerprint, the passwords (<code>db_secrets.dat</code>), snapshots, <code>recovery.log</code></td><td><b>No.</b> Without it Recover Slate cannot unlock and the server loses its passwords.</td></tr>
+  <tr><td>Server settings and logs</td><td><code>%LOCALAPPDATA%\Slate_Central\slate_server_config.json</code>; <code>pg_server.log</code> and <code>pgbouncer\</code> beside the database folder</td><td>Trim the log from Operations. The pool's files are rewritten at every start; do not edit them.</td></tr>
+  <tr><td>Workstation settings</td><td><code>%LOCALAPPDATA%\Slate\config.json</code>; the database password in Credential Manager</td><td>Deleting them makes Slate ask <b>Set up Slate on this computer</b> again.</td></tr>
+  <tr><td>Workstation logs</td><td><code>%LOCALAPPDATA%\Slate\Logs</code> (<code>latest.log</code>, <code>native_crash.log</code>); a copy in <code>Slate_Central\Logs\&lt;PC&gt;_&lt;user&gt;.log</code></td><td>Yes, but send them with any bug report first.</td></tr>
+  <tr><td>Workstation cache</td><td><code>%LOCALAPPDATA%\Slate\Cache</code></td><td>Yes. It is rebuilt.</td></tr>
+  <tr><td>Downloaded updates</td><td><code>%TEMP%\SlateUpdate</code></td><td>Yes. Slate deletes them itself once installed.</td></tr>
+  <tr><td>Shared files</td><td>The shared <code>Slate_Central</code>: Updates, Commands, LiveStatus, Logs, Cache, Thumbnails, Config, Attendance, Lineups&hellip;</td><td>No. Every PC uses it.</td></tr>
+</table></div>
+
+<h3>Moving the server to another PC</h3>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="8" width="32" height="28" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><circle cx="16" cy="22" r="4" fill="currentColor"/></svg><b>Old PC: Back up now</b><span>Copy the <code>.dump</code> away. Note the app password (<strong>Show app password</strong>).</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="14" width="32" height="16" rx="8" fill="var(--idle)"/><circle cx="14" cy="22" r="6" fill="var(--panel)"/></svg><b>Turn the power off</b><span>Then copy the whole folder that holds <code>LocalDatabase</code>, <code>Backups</code> and <code>slate_recovery</code>.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M22 6 v20 M14 18 l8 8 l8 -8" fill="none" stroke="currentColor" stroke-width="3"/><line x1="8" y1="36" x2="36" y2="36" stroke="currentColor" stroke-width="3"/></svg><b>New PC: install, point</b><span>Install Slate Server. Turn on the power and choose <strong>Use an existing database folder...</strong>: the copied <code>LocalDatabase</code>.</span></li>
+  <li><svg viewBox="0 0 44 44"><circle cx="16" cy="22" r="8" fill="none" stroke="currentColor" stroke-width="3"/><path d="M24 22 h16 M34 22 v6" fill="none" stroke="currentColor" stroke-width="3"/></svg><b>Give it the password</b><span>The new PC cannot read the old PC's encrypted passwords. Recover Slate, Unlock, type the noted password, <strong>Set app password (workstations)</strong>, <strong>Restart pool</strong>.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="10" width="32" height="24" rx="2" fill="none" stroke="currentColor" stroke-width="3"/><line x1="6" y1="22" x2="38" y2="22" stroke="currentColor" stroke-width="2"/></svg><b>Allow Firewall</b><span>On the new PC. Then <strong>Check now</strong> in Recover Slate.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="8" width="32" height="22" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="14" y1="38" x2="30" y2="38" stroke="currentColor" stroke-width="3"/></svg><b>Point the workstations</b><span>Give the new PC the old address, or use <strong>Reconfigure server / database</strong> on each workstation.</span></li>
+</ol>
+<p>Instead of copying the folder you can create a new empty database on the new PC and use <b>Restore from file&hellip;</b> with the dump. Workstations never follow a moved server by themselves: a PC keeps the server it was set up with, so another PC answering on the network cannot take its place.</p>
+<div class="note bad"><b>Never run two servers on the same data</b>Two servers mean two sets of changes nobody can merge. Old one off, then new one on. Keep the old PC's folder untouched until the new one has run for a week.</div>
+
+<h3>Uninstalling</h3>
+<p>The uninstaller removes the program, then asks: <b>Delete its settings and data as well?</b> <b>No</b> is the default and keeps everything; a reinstall picks it up again.</p>
+<div class="tablewrap keep"><table>
+  <tr><th>Program</th><th>Yes deletes</th></tr>
+  <tr><td>Slate Server</td><td><b>THE STUDIO DATABASE</b> and everything around it: <code>%LOCALAPPDATA%\Slate_Central</code> with every backup, the recovery folder and the settings. If the database is kept elsewhere, it asks a second time. Answer Yes only to start the studio over.</td></tr>
+  <tr><td>Slate Studio / Slate Operations</td><td>On that PC only: <code>%LOCALAPPDATA%\Slate</code> (settings, cache, logs, the offline copy). The studio database is not touched. If the other workstation program is still installed, its settings file is kept.</td></tr>
+</table></div>
+
+<!-- ============================================================ -->
+<h2 id="help">When something goes wrong</h2>
+<div class="note"><b>First, every time</b>On the server PC: <strong>Operations &rarr; Run diagnostics</strong> and <strong>Recovery &rarr; Check now</strong>. On a workstation: <strong>Ctrl+Shift+D</strong> shows Slate's own diagnostics, including "Database problem at start-up".</div>
+<div class="tablewrap"><table class="fixed">
+  <colgroup><col style="width:30%"><col style="width:28%"><col style="width:42%"></colgroup>
+  <tr><th>What you see</th><th>What it means</th><th>What to do</th></tr>
+  <tr><td>Sign-in: "That user name and password do not match. Try again."</td><td>Wrong user name or password</td><td>Check both. Reset it in Users &amp; Roles. If no administrator can sign in: Recover Slate &rarr; <b>Reset password and switch the account back on</b>.</td></tr>
+  <tr><td>Sign-in: "This studio's database is new and has no accounts yet."</td><td>Only the starter account exists</td><td>Make the administrator (see <a href="#people">The first administrator</a>), then create people.</td></tr>
+  <tr><td>Sign-in: "This account is switched off or its last day has passed."</td><td><code>refuse_inactive_signin</code> is on and the account is deactivated or past its last day</td><td><b>Reactivate</b> in Users &amp; Roles, or Recover Slate &rarr; <b>Reset password and switch the account back on</b>.</td></tr>
+  <tr><td>Sign-in: "Your password is stored in an old, unsafe way..."</td><td><code>no_plaintext_passwords</code> is on</td><td><b>Reset password</b> for that person.</td></tr>
+  <tr><td>Button reads <b>Database unavailable</b>, with <b>Try again</b></td><td>The workstation cannot reach the database</td><td>Server PC: is it <b>Server Online</b>? Firewall rules in place? The PC's address changed? Then <b>Try again</b>.</td></tr>
+  <tr><td><b>Database unavailable</b> on one PC only, server fine</td><td>Often: this PC does not have the studio's database password</td><td><b>Ctrl+Shift+D</b> or Settings says "This PC does not have the studio's database password." Recover Slate &rarr; <b>Show app password</b>; on the PC, <b>Reconfigure server / database</b>.</td></tr>
+  <tr><td>Many PCs cut off right after a password change</td><td>The server's password changed and they do not have it</td><td>Recover Slate &rarr; <b>Show app password</b>, then <b>Set app password (workstations)</b> with the previous password it lists. <b>Restart pool</b>.</td></tr>
+  <tr><td>"...Slate is working on this computer's copy." and <b>LOCAL MODE</b> in the header</td><td>Slate could not reach the server and opened this PC's local copy</td><td>Fix the connection. Changes are kept and sent with <b>Sync</b> afterwards. The Admin Panel does not work meanwhile.</td></tr>
+  <tr><td>Pop-up: <b>Studio folder not found</b></td><td>The shared <code>Slate_Central</code> is not reachable from this PC</td><td>Map the drive or fix the network. Until then attendance, users and previews are not shared, Live Ops cannot see the PC, and updates do not arrive.</td></tr>
+  <tr><td>"...is not the file that was published (its checksum does not match)..."</td><td>The copied installer differs from what was published (a broken copy, or someone changed the file)</td><td>Publish it again from Slate Server. Never copy installers into <code>Updates\releases</code> by hand.</td></tr>
+  <tr><td>Publish update: "...is not a Slate workstation installer."</td><td>The file name is not <code>setup_Slate_Studio_v&hellip;.exe</code> or <code>setup_Slate_Ops_v&hellip;.exe</code></td><td>Use the installers exactly as named in the release. Renamed files are refused.</td></tr>
+  <tr><td>Check for updates: "No update has been published for this Slate..."</td><td>Nothing in <code>Updates\releases</code>, or this PC looks at another shared folder</td><td>Publish, or check this PC's <b>Server root</b>.</td></tr>
+  <tr><td>Slate will not start after an update</td><td>A broken install</td><td>Run the installer from <code>Slate_Central\Updates\releases</code> on that PC by hand. Settings are kept.</td></tr>
+  <tr><td>Server: <b>Tables in Database</b> 0 on a studio that has data</td><td>The server is serving an empty folder</td><td>If the warning names "another database on this machine", point <b>Settings &rarr; Database folder</b> at it, Save, power off and on. Never create a new one.</td></tr>
+  <tr><td>Server: "...not the path in its settings..."</td><td>The configured folder was unreachable</td><td>Make the drive available, then power off and on.</td></tr>
+  <tr><td>Server: <b>Connection Pool</b> says <b>wrong database</b> or <b>stopped</b></td><td>The pool does not match the settings</td><td><b>Restart pool</b>.</td></tr>
+  <tr><td>Server: "The database could not be read: ..."</td><td>Often the server has no password to log in with</td><td>Recover Slate &rarr; <b>Check now</b>. "Server login" failing: <b>Set superuser password (this server)</b>.</td></tr>
+  <tr><td>Nobody can sign in at all, or no administrator is left</td><td>Locked out</td><td>Recover Slate on the server PC with the Recovery Key: <b>Create or restore administrator</b>.</td></tr>
+  <tr><td>People stopped working after a switch was turned on</td><td>The switch refuses something they need</td><td>Recover Slate &rarr; choose it (or <b>Every security switch</b>) &rarr; <b>Turn off</b>. Works with the database down.</td></tr>
+  <tr><td>Recover Slate: "...is on a network drive" or "There is no Slate database in..."</td><td>Not the server PC, or the wrong folder</td><td>Run it on the server PC, signed in as the Windows account that runs Slate Server.</td></tr>
+  <tr><td>Recover Slate: "That is not this server's Recovery Key." / "Too many wrong keys."</td><td>Wrong key, or too many tries</td><td>Wait as told and try again. Lost it: <b>Make a new Recovery Key</b> as a Windows administrator.</td></tr>
+  <tr><td>One workstation slows everyone</td><td>A session is stuck holding the database</td><td>Analytics &rarr; select it &rarr; <b>Disconnect selected</b>.</td></tr>
+  <tr><td>Slate closes by itself, nothing in the log</td><td>A crash inside a picture or video library</td><td>Send <code>%LOCALAPPDATA%\Slate\Logs\native_crash.log</code> with the report.</td></tr>
+  <tr><td>"No free machines" when issuing</td><td>Nothing Available in Hardware</td><td>Add the machine in Hardware, or finish a repair.</td></tr>
+  <tr><td>Assign to: "Nobody holds the manage_it ability yet"</td><td>No role has <b>Work the IT desk</b></td><td>Tick it on the IT role in Roles &amp; Permissions.</td></tr>
+</table></div>
+
+<p style="margin-top:48px;color:var(--text-dim);font-size:14px">Slate BETA 2.2.0 &middot; Slate for IT &middot; Keep a printed copy with the Recovery Key, away from the server PC. Each part starts on a new page.</p>
+
+</div>

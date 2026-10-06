@@ -1,17 +1,15 @@
 # The studio guide
 
-Written for the people who use Slate, not the people who build it.
-
-Slate shows you what your job needs and hides what it does not, so each of these is a
-complete account of one person's side of the software. There is nothing in the others
-you are missing.
+Written for the people who use Slate, not the people who build it. Five handbooks, one
+per job. Open one in a browser; each prints to A4, with every part on a new page.
 
 | | |
 |---|---|
-| **[Artists](artists.md)** | Asking for leave, why a day off sometimes costs three, raising a ticket, attendance |
-| **[Supervisors and leads](supervisors.md)** | The first of the two leave approvals, and the production screens |
-| **[HR](hr.md)** | The approval queue, the holiday calendar, the year end, and joining and leaving |
-| **[IT](it.md)** | The service desk, provisioning, machines, licences, and the server |
+| **[Slate Studio Handbook](slate-studio-handbook.html)** | Everyone: signing in, your shots, review in RV, stock, attendance, leave, IT tickets |
+| **[Supervisors and leads](slate-supervisor-handbook.html)** | Reviewing shots, your team, the first leave approval, team attendance, the Admin Panel |
+| **[Production](slate-production-handbook.html)** | Projects, ingest, the dashboard, Timeline Viewer and EDLs, scheduling, bidding |
+| **[HR](slate-hr-handbook.html)** | The leave queue, comp off, attendance and the biometric import, holidays, joining and leaving |
+| **[IT](slate-it-handbook.html)** | Setting up a studio, the server, publishing updates, Recover Slate, the IT screens |
 
 Building or deploying it instead? See [installing it](../install.md), the
 [architecture](../architecture.md) and [working on it](../development.md).

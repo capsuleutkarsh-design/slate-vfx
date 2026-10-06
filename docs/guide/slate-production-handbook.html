@@ -1,0 +1,1071 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Slate for Production</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --ground: #F5F4F0; --panel: #FFFFFF; --raised: #ECEAE4; --line: #D3D0C7; --line-soft: #E5E2DA;
+    --text: #1B1B1F; --text-2: #4A4A52; --text-dim: #77767F;
+    --studio: #2A7A8C; --studio-soft: #DCEEF2;
+    --ops: #A8761E; --ops-soft: #F6ECD6;
+    --server: #2F8B5F; --server-soft: #DDF0E5;
+    --bad: #B9433F; --bad-soft: #F7DEDD; --warn: #A8761E; --ok: #2F8B5F; --info: #3F7DA8; --idle: #8A8883;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0D0D0F; --panel: #16161A; --raised: #1D1D22; --line: #2C2C34; --line-soft: #212128;
+      --text: #E8E6E1; --text-2: #B4B1AA; --text-dim: #87857F;
+      --studio: #3EA8BF; --studio-soft: #12343B; --ops: #D9A441; --ops-soft: #3A2C10; --server: #5FBF8F; --server-soft: #12352A;
+      --bad: #D9635F; --bad-soft: #3B1C1B; --warn: #D9A441; --ok: #5FBF8F; --info: #6BA4C9; --idle: #6E6C67;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0D0D0F; --panel: #16161A; --raised: #1D1D22; --line: #2C2C34; --line-soft: #212128;
+    --text: #E8E6E1; --text-2: #B4B1AA; --text-dim: #87857F;
+    --studio: #3EA8BF; --studio-soft: #12343B; --ops: #D9A441; --ops-soft: #3A2C10; --server: #5FBF8F; --server-soft: #12352A;
+    --bad: #D9635F; --bad-soft: #3B1C1B; --warn: #D9A441; --ok: #5FBF8F; --info: #6BA4C9; --idle: #6E6C67;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--ground); color: var(--text); font-family: Inter, "Segoe UI", system-ui, sans-serif; font-size: 17px; line-height: 1.6; padding-inline: clamp(16px, 4vw, 48px); padding-block: 32px 80px; }
+  .wrap { max-width: 960px; margin: 0 auto; }
+  h1, h2, h3, h4 { font-family: "Barlow Semi Condensed", Bahnschrift, "Segoe UI", sans-serif; text-wrap: balance; margin: 0; }
+  h1 { font-size: 46px; font-weight: 700; line-height: 1.05; }
+  h2 { font-size: 34px; font-weight: 700; margin-top: 72px; padding-top: 22px; border-top: 3px solid var(--line); }
+  h3 { font-size: 24px; font-weight: 600; margin-top: 40px; }
+  h4 { font-size: 18px; font-weight: 600; margin-top: 22px; }
+  p { max-width: 62ch; margin: 10px 0; }
+  .eyebrow { font-family: "Barlow Semi Condensed", Bahnschrift, sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 1.8px; text-transform: uppercase; color: var(--text-dim); }
+  .lede { font-size: 20px; color: var(--text-2); max-width: 60ch; }
+  code { font-family: Consolas, "Cascadia Mono", monospace; font-size: 15px; background: var(--raised); padding: 1px 6px; border-radius: 4px; }
+  ul, ol { max-width: 66ch; }
+  li { margin: 6px 0; }
+  a { color: var(--studio); }
+
+  /* Product colouring */
+  .studio h2, .studio h3 { color: var(--studio); }
+  .ops h2, .ops h3 { color: var(--ops); }
+  .server h2, .server h3 { color: var(--server); }
+
+  /* Cover cards */
+  .covers { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 28px; }
+  .cover { border-radius: 10px; padding: 20px 22px; color: var(--text); text-decoration: none; border: 2px solid var(--line); background: var(--panel); display: block; }
+  .cover.studio { border-color: var(--studio); background: var(--studio-soft); }
+  .cover.ops { border-color: var(--ops); background: var(--ops-soft); }
+  .cover.server { border-color: var(--server); background: var(--server-soft); }
+  .cover .who { font-size: 14px; color: var(--text-2); margin-top: 6px; }
+  .cover h3 { margin: 0; font-size: 26px; }
+  .cover svg { width: 56px; height: 56px; display: block; margin-bottom: 10px; }
+
+  /* Steps */
+  .steps { list-style: none; padding: 0; margin: 18px 0; counter-reset: s; max-width: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; }
+  .steps li { counter-increment: s; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 16px 16px 16px; position: relative; margin: 0; }
+  .steps li::before { content: counter(s); font-family: "Barlow Semi Condensed", Bahnschrift, sans-serif; font-weight: 700; font-size: 30px; line-height: 1; color: var(--text-dim); display: block; margin-bottom: 8px; }
+  .steps li b { display: block; font-size: 18px; margin-bottom: 4px; }
+  .steps li span { color: var(--text-2); font-size: 15px; }
+  .steps svg { width: 44px; height: 44px; display: block; margin-bottom: 8px; }
+
+  /* Callouts */
+  .note { border-left: 5px solid var(--info); background: var(--panel); padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 18px 0; max-width: 70ch; }
+  .note.bad { border-color: var(--bad); background: var(--bad-soft); }
+  .note.ok { border-color: var(--ok); }
+  .note.warn { border-color: var(--warn); }
+  .note b { display: block; font-family: "Barlow Semi Condensed", Bahnschrift, sans-serif; font-size: 18px; margin-bottom: 4px; }
+
+  /* Figures */
+  figure { margin: 22px 0; padding: 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  figure svg { width: 100%; height: auto; display: block; }
+  figcaption { margin-top: 10px; font-size: 15px; color: var(--text-2); max-width: 70ch; }
+  svg text { font-family: Inter, "Segoe UI", sans-serif; }
+
+  /* Tables */
+  .tablewrap { overflow-x: auto; margin: 14px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 16px; background: var(--panel); }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  th { font-family: "Barlow Semi Condensed", Bahnschrift, sans-serif; font-size: 14px; letter-spacing: 1px; text-transform: uppercase; color: var(--text-dim); }
+  .dot { display: inline-block; width: 14px; height: 14px; border-radius: 50%; vertical-align: -2px; margin-right: 6px; }
+
+  /* Sidebar mock */
+  .side { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; margin: 14px 0; }
+  .side .grp { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .side .grp .h { font-family: "Barlow Semi Condensed", Bahnschrift, sans-serif; font-size: 13px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 8px; }
+  .side .grp div.i { padding: 6px 0; border-top: 1px solid var(--line-soft); font-size: 16px; }
+  .side .grp div.i small { display: block; color: var(--text-2); font-size: 14px; }
+
+  .card-print { page-break-inside: avoid; }
+  @media print {
+    @page { size: A4; margin: 14mm 14mm 16mm; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body { background: #fff; color: #000; font-size: 13px; padding: 0; }
+    h3, h4 { break-after: avoid; }
+    h2 { page-break-before: always; margin-top: 0; border: 0; }
+    figure, .steps li, .note, tr { break-inside: avoid; }
+    a { color: inherit; text-decoration: none; }
+  }
+  @media (max-width: 480px) { h1 { font-size: 34px; } h2 { font-size: 28px; } }
+</style>
+
+
+<div class="wrap">
+
+<div class="eyebrow">Slate BETA 2.2.0 &middot; for the production office</div>
+<h1 style="margin-top:8px">Slate for Production</h1>
+<p class="lede">For coordinators, producers and the production head. How a job lives in Slate, from the client drive to the EDL, one step at a time.</p>
+
+<div class="covers">
+  <a class="cover studio" href="#setup">
+    <svg viewBox="0 0 56 56" role="img" aria-label="Folder"><path d="M6 14 h16 l6 6 h22 v26 h-44 z" fill="none" stroke="currentColor" stroke-width="3"/><line x1="6" y1="26" x2="50" y2="26" stroke="currentColor" stroke-width="3"/></svg>
+    <h3>Set up and ingest</h3>
+    <div class="who">Build &amp; Ingest: project folders, the check before copying, reports, retries. CAP Rename and the Stock Viewer.</div>
+  </a>
+  <a class="cover studio" href="#dashboard">
+    <svg viewBox="0 0 56 56" role="img" aria-label="Table"><rect x="6" y="8" width="44" height="40" rx="4" fill="none" stroke="currentColor" stroke-width="3"/><line x1="6" y1="20" x2="50" y2="20" stroke="currentColor" stroke-width="3"/><line x1="22" y1="20" x2="22" y2="48" stroke="currentColor" stroke-width="2"/><line x1="6" y1="34" x2="50" y2="34" stroke="currentColor" stroke-width="2"/></svg>
+    <h3>Run the job</h3>
+    <div class="who">VFX Dashboard: statuses, assigning, batch edit, filters, the Excel backup, reviews and deliveries.</div>
+  </a>
+  <a class="cover studio" href="#timeline">
+    <svg viewBox="0 0 56 56" role="img" aria-label="Film strip"><rect x="4" y="14" width="48" height="28" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><g fill="currentColor"><rect x="8" y="18" width="4" height="4"/><rect x="8" y="34" width="4" height="4"/><rect x="44" y="18" width="4" height="4"/><rect x="44" y="34" width="4" height="4"/></g><polygon points="24,21 24,35 35,28" fill="currentColor"/></svg>
+    <h3>Review and plan</h3>
+    <div class="who">Timeline Viewer (proxies, RV, EDLs), Scheduling, Bidding, and the office side in Slate Operations.</div>
+  </a>
+</div>
+
+<!-- ============================================================ -->
+<section class="studio">
+<h2 id="place">Your place in Slate</h2>
+<p class="lede">Production runs the job from Slate Studio. Its window title says <b>Slate VFX</b>. Your own attendance and leave are in Slate Operations, so a production PC has both installed.</p>
+
+<h3>A job's life in Slate</h3>
+<figure>
+<svg viewBox="0 0 900 290" role="img" aria-label="A job moves through Slate: Bidding prices it; Build and Ingest makes the folders and brings the client drive in; the VFX Dashboard tracks every shot; the Timeline Viewer plays the lineup in RV and exports EDLs; Deliveries on the dashboard package approved versions for the client. Scheduling holds the milestones alongside, and Bidding tracking compares the dashboard with the bid.">
+  <defs><marker id="ia" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+  <g fill="var(--studio-soft)" stroke="var(--studio)" stroke-width="2">
+    <rect x="10" y="40" width="150" height="76" rx="8"/><rect x="190" y="40" width="160" height="76" rx="8"/><rect x="380" y="40" width="150" height="76" rx="8"/><rect x="560" y="40" width="150" height="76" rx="8"/><rect x="740" y="40" width="150" height="76" rx="8"/>
+  </g>
+  <g stroke="currentColor" stroke-width="2.5" fill="none" marker-end="url(#ia)">
+    <line x1="160" y1="78" x2="187" y2="78"/><line x1="350" y1="78" x2="377" y2="78"/><line x1="530" y1="78" x2="557" y2="78"/><line x1="710" y1="78" x2="737" y2="78"/>
+  </g>
+  <g fill="currentColor" font-size="15" font-weight="600" text-anchor="middle">
+    <text x="85" y="70">Bidding</text><text x="270" y="70">Build &amp; Ingest</text><text x="455" y="70">VFX Dashboard</text><text x="635" y="70">Timeline Viewer</text><text x="815" y="70">Deliveries</text>
+  </g>
+  <g fill="currentColor" font-size="12" text-anchor="middle">
+    <text x="85" y="92">price the job,</text><text x="85" y="107">win it</text>
+    <text x="270" y="92">folders, plates,</text><text x="270" y="107">shots on the dashboard</text>
+    <text x="455" y="92">status, artists,</text><text x="455" y="107">versions, reviews</text>
+    <text x="635" y="92">lineup in RV,</text><text x="635" y="107">EDL for editorial</text>
+    <text x="815" y="92">approved versions</text><text x="815" y="107">to the client</text>
+  </g>
+  <!-- scheduling bar -->
+  <rect x="500" y="150" width="390" height="60" rx="8" fill="var(--panel)" stroke="var(--studio)" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="695" y="176" text-anchor="middle" font-size="14" fill="currentColor"><tspan font-weight="600">Scheduling</tspan> runs alongside:</text>
+  <text x="695" y="196" text-anchor="middle" font-size="12" fill="currentColor">turnovers, first passes, reviews, deliveries</text>
+  <!-- CAP rename / stock -->
+  <g fill="currentColor" font-size="12" text-anchor="middle"><text x="270" y="140">+ CAP Rename, Stock Viewer</text></g>
+  <!-- tracking loop -->
+  <g stroke="var(--ops)" stroke-width="2" fill="none" stroke-dasharray="5 4" marker-end="url(#ia)"><path d="M420 116 C420 250 85 250 85 120"/></g>
+  <text x="250" y="262" text-anchor="middle" font-size="12" fill="var(--ops)">Bidding Tracking reads the dashboard's bid and actual days</text>
+  <text x="85" y="26" text-anchor="middle" font-size="12" fill="var(--text-dim)">Production Head</text>
+  <text x="270" y="26" text-anchor="middle" font-size="12" fill="var(--text-dim)">coordinator</text>
+  <text x="455" y="26" text-anchor="middle" font-size="12" fill="var(--text-dim)">everyone</text>
+  <text x="635" y="26" text-anchor="middle" font-size="12" fill="var(--text-dim)">coordinator, supervisor</text>
+  <text x="815" y="26" text-anchor="middle" font-size="12" fill="var(--text-dim)">coordinator</text>
+</svg>
+<figcaption>The grey words above each box say who usually does that step. Everything you change is saved in the studio database, so everybody sees the same job.</figcaption>
+</figure>
+
+<h3>Your sidebar</h3>
+<div class="side">
+  <div class="grp"><div class="h">Production (Slate Studio)</div>
+    <div class="i">Build &amp; Ingest<small>Scan the client drive, build the project, bring the plates in.</small></div>
+    <div class="i">CAP Rename<small>Rename delivered files, in batches.</small></div>
+    <div class="i">Stock Viewer<small>Browse and preview the stock library.</small></div>
+    <div class="i">Timeline Viewer<small>The reel lineup: play it here or in RV, export an EDL.</small></div>
+    <div class="i">VFX Dashboard<small>Every shot: status, artist, versions and figures.</small></div>
+    <div class="i">Scheduling<small>Milestones, dependencies and a Gantt timeline.</small></div>
+    <div class="i">Bidding<small>Bids, their revisions and cost tracking.</small></div>
+  </div>
+  <div class="grp"><div class="h">People (Slate Operations)</div>
+    <div class="i">Attendance<small>Punch in and out, see your month.</small></div>
+    <div class="i">Leave<small>Ask for leave. A Production Head also decides the team's requests.</small></div>
+    <div class="i">IT Support<small>Raise a ticket when a drive, RV or a PC fails.</small></div>
+  </div>
+  <div class="grp"><div class="h">Both apps</div>
+    <div class="i">Home<small>Your shots, the studio's figures, quick links.</small></div>
+    <div class="i">Settings<small>Your preferences; the Project report.</small></div>
+    <div class="i">Workspace Info<small>Version, database, shared folder: for IT tickets.</small></div>
+  </div>
+</div>
+
+<h3>Which role you have</h3>
+<p>A screen your role does not use is not in your sidebar at all; it is never greyed out. Slate has three production roles:</p>
+<div class="tablewrap"><table>
+  <tr><th>Role</th><th>Screens</th><th>Can also</th></tr>
+  <tr><td><b>Production Coordinator</b></td><td>Build &amp; Ingest, CAP Rename, Stock Viewer, Timeline Viewer, VFX Dashboard, Scheduling, Bidding, Settings</td><td>Edit the dashboard, see every shot, export the Excel backup, edit the schedule, make and change bids.</td></tr>
+  <tr><td><b>Producer</b></td><td>The same as Production Coordinator</td><td>The same as Production Coordinator.</td></tr>
+  <tr><td><b>Production Head</b></td><td>All of the above, plus Licences (read-only) in Slate Operations</td><td>Approve bids (Won or Lost), approve the team's leave (first stage), see team attendance, ingest stock, force a save over someone else's.</td></tr>
+</table></div>
+<div class="note"><b>Something is missing?</b>The studio can change any role in Users &amp; Roles, and its choices are kept. A common request: <strong>Ingest stock</strong> for whoever looks after the stock library. A role change shows the next time you sign in.</div>
+
+<h3>Moving fast</h3>
+<div class="tablewrap"><table>
+  <tr><th>Keys</th><th>Does</th></tr>
+  <tr><td><b>Ctrl+K</b> or <b>Ctrl+P</b></td><td>Search or jump: a screen, a command, or a shot. Type <code>shot 042</code> to open SH042 on the dashboard, in any active project.</td></tr>
+  <tr><td><b>Ctrl+1</b> … <b>Ctrl+9</b></td><td>Open the 1st to 9th screen in your sidebar.</td></tr>
+  <tr><td><b>F5</b> or <b>Ctrl+R</b></td><td>Refresh the screen you are on.</td></tr>
+  <tr><td><b>F1</b></td><td>Help for the screen you are on.</td></tr>
+</table></div>
+<p>The <b>bell</b> in the header collects your notifications. Double-click one to open the shot it is about. Long jobs such as an ingest or a proxy run show their progress on their own screen, and Slate asks before you close or sign out while one is running.</p>
+<p><b>Home</b> shows you <b>Shots waiting for review</b> and <b>Active projects</b>, because your role sees every shot. Amber means something is waiting on you.</p>
+</section>
+<!-- ============================================================ -->
+<section class="studio">
+<h2 id="setup">Setting up a project</h2>
+<p class="lede">A new job starts on <b>Build &amp; Ingest</b>. One screen builds the project folders from a template, brings the client's plates in, and puts every shot on the VFX Dashboard.</p>
+
+<figure>
+<svg viewBox="0 0 900 430" role="img" aria-label="The Build and Ingest screen. Left: the Project box with Project code, Projects folder with Browse, and Template with Templates; the Client drive box with Client drive and Browse, Target reel, Files Copy or Move, and Options Dry run, Fast mode (check by size) and Add shots to the Dashboard. Right: Structure preview and Process log with Problems only, Save log and Open report. Bottom: the run bar with Ready, Reset, Retry failed files, Pause, Stop and Build project.">
+  <rect x="10" y="10" width="880" height="410" rx="10" fill="none" stroke="currentColor" stroke-width="2"/>
+  <!-- Project group -->
+  <rect x="24" y="26" width="400" height="128" rx="8" fill="none" stroke="var(--line)" stroke-width="2"/>
+  <text x="36" y="44" font-size="13" font-weight="700" fill="currentColor">Project</text>
+  <g fill="currentColor" font-size="12"><text x="36" y="72">Project code</text><text x="36" y="104">Projects folder</text><text x="36" y="136">Template</text></g>
+  <g fill="var(--panel)" stroke="currentColor" stroke-width="1.2"><rect x="140" y="58" width="270" height="22" rx="3"/><rect x="140" y="90" width="196" height="22" rx="3"/><rect x="140" y="122" width="196" height="22" rx="3"/><rect x="342" y="90" width="68" height="22" rx="3"/><rect x="342" y="122" width="68" height="22" rx="3"/></g>
+  <g fill="currentColor" font-size="11"><text x="148" y="74">KLC</text><text x="148" y="106">P:\Projects</text><text x="148" y="138">Standard Pipeline (Studio) (bu…</text></g>
+  <g fill="currentColor" font-size="11" text-anchor="middle"><text x="376" y="106">Browse…</text><text x="376" y="138">Templates…</text></g>
+  <!-- Client drive group -->
+  <rect x="24" y="166" width="400" height="174" rx="8" fill="none" stroke="var(--line)" stroke-width="2"/>
+  <text x="36" y="184" font-size="13" font-weight="700" fill="currentColor">Client drive</text>
+  <g fill="currentColor" font-size="12"><text x="36" y="212">Client drive</text><text x="36" y="244">Target reel</text><text x="36" y="272">Files</text><text x="36" y="300">Options</text></g>
+  <g fill="var(--panel)" stroke="currentColor" stroke-width="1.2"><rect x="140" y="198" width="196" height="22" rx="3"/><rect x="342" y="198" width="68" height="22" rx="3"/><rect x="140" y="230" width="270" height="22" rx="3"/></g>
+  <g fill="currentColor" font-size="11"><text x="148" y="214">E:\</text><text x="148" y="246" fill="var(--text-dim)">Leave empty to use the reels on the drive</text></g>
+  <text x="376" y="214" font-size="11" text-anchor="middle" fill="currentColor">Browse…</text>
+  <g fill="currentColor" font-size="12"><text x="140" y="272">◉ Copy     ○ Move</text><text x="140" y="300">☐ Dry run    ☐ Fast mode (check by size)</text><text x="140" y="322">☑ Add shots to the Dashboard</text></g>
+  <!-- right -->
+  <rect x="440" y="26" width="436" height="190" rx="8" fill="none" stroke="var(--line)" stroke-width="2"/>
+  <text x="452" y="44" font-size="13" font-weight="700" fill="currentColor">Structure preview</text>
+  <g fill="currentColor" font-size="11" font-family="Consolas, monospace"><text x="460" y="68">KLC</text><text x="476" y="86">01_Frm Client  (client deliveries and reports)</text><text x="476" y="102">04_Production</text><text x="476" y="118">05_Reels</text><text x="492" y="134">REEL_01 / SH010</text><text x="508" y="150">00_Annotation</text><text x="508" y="166">01_Scan</text><text x="508" y="182">02_Dmp … 11_Mgfx</text><text x="476" y="200">08_To Client</text></g>
+  <rect x="440" y="228" width="436" height="112" rx="8" fill="none" stroke="var(--line)" stroke-width="2"/>
+  <text x="452" y="246" font-size="13" font-weight="700" fill="currentColor">Process log</text>
+  <g fill="currentColor" font-size="11"><text x="590" y="246">☐ Problems only</text><text x="700" y="246">Save log…</text><text x="790" y="246">Open report</text></g>
+  <g fill="currentColor" font-size="11" font-family="Consolas, monospace"><text x="452" y="270">[START] Copying into P:\Projects\KLC</text><text x="452" y="288">[OK] plate [1001-1060].exr (60 file(s))</text><text x="452" y="306" fill="var(--bad)">[ERR] SH030 … failed</text></g>
+  <!-- run bar -->
+  <line x1="10" y1="356" x2="890" y2="356" stroke="currentColor" stroke-width="1.5"/>
+  <text x="24" y="382" font-size="14" font-weight="700" fill="var(--ok)">Ready</text>
+  <rect x="24" y="394" width="300" height="8" rx="4" fill="var(--raised)"/>
+  <g stroke-width="1.5"><rect x="380" y="368" width="70" height="28" rx="4" fill="var(--panel)" stroke="currentColor"/><rect x="458" y="368" width="128" height="28" rx="4" fill="var(--panel)" stroke="currentColor"/><rect x="594" y="368" width="62" height="28" rx="4" fill="var(--panel)" stroke="currentColor"/><rect x="664" y="368" width="58" height="28" rx="4" fill="var(--panel)" stroke="currentColor"/><rect x="730" y="368" width="146" height="28" rx="4" fill="var(--studio)" stroke="var(--studio)"/></g>
+  <g fill="currentColor" font-size="12" text-anchor="middle"><text x="415" y="387">Reset</text><text x="522" y="387">Retry failed files</text><text x="625" y="387">Pause</text><text x="693" y="387">Stop</text><text x="803" y="387" fill="var(--panel)" font-weight="700">Build project</text></g>
+</svg>
+<figcaption>Simplified Build &amp; Ingest. The big button reads <b>Build project</b> for a new project and <b>Update project</b> once the project folder exists. While a field is wrong the word on the left says <b>Not ready</b>, and the line under it says what to fix.</figcaption>
+</figure>
+
+<h3>Build a new project</h3>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="14" width="32" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="12" y1="22" x2="26" y2="22" stroke="currentColor" stroke-width="3"/></svg><b>Project code and folder</b><span>Type the code, for example <code>KLC</code>: it becomes the top folder and the project's code, exactly as typed. Choose the <strong>Projects folder</strong>; the grey line below says <strong>Builds …</strong> with the full path.</span></li>
+  <li><svg viewBox="0 0 44 44"><g fill="none" stroke="currentColor" stroke-width="3"><line x1="10" y1="8" x2="10" y2="36"/><line x1="10" y1="16" x2="22" y2="16"/><line x1="10" y1="28" x2="22" y2="28"/><rect x="22" y="10" width="14" height="10" rx="2"/><rect x="22" y="23" width="14" height="10" rx="2"/></g></svg><b>Template</b><span>The folders every project and every shot gets. The preview on the right shows them.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="12" width="32" height="22" rx="4" fill="none" stroke="currentColor" stroke-width="3"/><circle cx="30" cy="28" r="2.5" fill="currentColor"/></svg><b>Client drive, then Build project</b><span>Choose the delivery. Leave <strong>Target reel</strong> empty to use the reel folders on the drive. Press <strong>Build project</strong> (or Enter). Nothing is copied yet: Slate first shows you the plan.</span></li>
+</ol>
+
+<h3>The naming rules</h3>
+<p>Slate refuses a bad name with the reason. It never changes your project code for you.</p>
+<div class="tablewrap"><table>
+  <tr><th>Name</th><th>Rule</th></tr>
+  <tr><td>Project code and shot names</td><td>English letters A–Z, digits, <code>_</code> <code>-</code> and <code>.</code> only. Must start with a letter or digit. No spaces, no <code>/</code>, no <code>..</code>. Up to 64 characters. The same rule is used by Add shots on the dashboard, Build &amp; Ingest and Create shots from a bid, so a name refused in one place cannot arrive another way. Shots you already have are never refused.</td></tr>
+  <tr><td>On the dashboard's Add project</td><td>The code is stored in capitals and can never be changed later. An archived project's code cannot be used again until that project is deleted for good.</td></tr>
+  <tr><td>Target reel and template names</td><td>Any name Windows accepts: no <code>&lt; &gt; : " | ? *</code>, no space at the start or end, no dot at the end, up to 200 characters.</td></tr>
+</table></div>
+<p>If a folder with almost the same name already exists (for example <code>My-Show</code> when you type <code>MYSHOW</code>), Slate says so and later asks whether to use it or create a new one.</p>
+
+<h3>Templates</h3>
+<p>The built-in template is <b>Standard Pipeline (Studio)</b>. It cannot be changed, but it can be duplicated. <b>Templates…</b> opens <b>New template…</b>, <b>Edit</b>, <b>Duplicate</b> and <b>Delete</b>. Templates are shared with the whole studio, so every coordinator builds projects the same way.</p>
+<div class="tablewrap"><table>
+  <tr><th>Template section</th><th>What goes there (built-in template)</th></tr>
+  <tr><td>Project folders</td><td>01_Frm Client, 02_Edit, 03_References, 04_Production, 05_Reels, 06_Feedback, 07_Outsource, 08_To Client</td></tr>
+  <tr><td>Production sub-folders</td><td>Inside 04_Production: 01_ARTIST_SOW_SHEET, 02_Contact_sheet</td></tr>
+  <tr><td>Per shot</td><td>00_Annotation, 01_Scan, 02_Dmp, 03_Cg, 04_Roto, 05_Prep, 06_Cmm, 07_Comp, 08_Deliver, 09_Deage, 10_AI, 11_Mgfx (each with its own sub-folders)</td></tr>
+  <tr><td>Inside each scan version</td><td>Denoise</td></tr>
+  <tr><td>Client deliveries go in</td><td>01_Frm Client unless the template names another folder. Documents, LUTs and the ingest reports go here.</td></tr>
+</table></div>
+<div class="note warn"><b>A template with no "Per shot" folders</b>Every shot then gets only 01_Scan, 07_Comp and 08_Deliver. The editor and the preview both warn you.</div>
+
+<h3>Project settings on the dashboard</h3>
+<p>Build &amp; Ingest adds the project to the VFX Dashboard by itself. You can also add one by hand there: <b>Manage project</b> &rarr; <b>Add new project…</b> asks only for the <b>Code</b>, <b>Name</b> and <b>Project root</b>. Everything else is in <b>Manage project</b> &rarr; <b>Edit current project…</b>:</p>
+<div class="tablewrap"><table>
+  <tr><th>Field</th><th>What it is</th></tr>
+  <tr><td>Name</td><td>The project's full name, for example Kaalchakra.</td></tr>
+  <tr><td>Project root</td><td>The project folder on the file server. The Timeline Viewer and EDLs use it.</td></tr>
+  <tr><td>Excel backup</td><td>Where Slate writes the project's Excel copy. Leave it as Slate set it unless the client needs another file.</td></tr>
+  <tr><td><b>Frame rate (sequences)</b></td><td>The frame rate image sequences play and are written at: in the lineup, EDLs, review proxies and the player. <b>24</b> until you change it. Movies keep their own frame rate.</td></tr>
+</table></div>
+<div class="note bad"><b>Set the frame rate first</b>A project made by Build &amp; Ingest starts at 24. If the show is 25 fps, change <strong>Frame rate (sequences)</strong> before anyone makes proxies or exports an EDL. If proxies were already made at the old rate, use <strong>Rebuild all</strong> in the Timeline Viewer (see Timeline Viewer).</div>
+</section>
+
+<!-- ============================================================ -->
+<section class="studio">
+<h2 id="ingest">Bringing footage in</h2>
+<p class="lede">Slate reads the whole drive, shows you exactly what it will do, and copies nothing until you press the button that says how many files.</p>
+
+<figure>
+<svg viewBox="0 0 900 270" role="img" aria-label="An ingest in five steps: Slate looks at the drive in the background; if folders look like parts of one shot it asks the stitch question; the check shows every shot and what will happen; the copy runs with Pause and Stop; the result box and the delivery report follow. From the result, Retry failed files or Finish the stopped run brings in what is missing.">
+  <defs><marker id="ga" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+  <g stroke-width="2">
+    <rect x="10" y="40" width="160" height="90" rx="8" fill="var(--studio-soft)" stroke="var(--studio)"/>
+    <rect x="190" y="40" width="160" height="90" rx="8" fill="var(--panel)" stroke="var(--studio)" stroke-dasharray="6 4"/>
+    <rect x="370" y="40" width="160" height="90" rx="8" fill="var(--studio-soft)" stroke="var(--studio)"/>
+    <rect x="550" y="40" width="160" height="90" rx="8" fill="var(--studio-soft)" stroke="var(--studio)"/>
+    <rect x="730" y="40" width="160" height="90" rx="8" fill="var(--server-soft)" stroke="var(--ok)"/>
+  </g>
+  <g stroke="currentColor" stroke-width="2.5" fill="none" marker-end="url(#ga)"><line x1="170" y1="85" x2="187" y2="85"/><line x1="350" y1="85" x2="367" y2="85"/><line x1="530" y1="85" x2="547" y2="85"/><line x1="710" y1="85" x2="727" y2="85"/></g>
+  <g fill="currentColor" font-size="22" font-weight="700" fill-opacity="0.35"><text x="20" y="34">1</text><text x="200" y="34">2</text><text x="380" y="34">3</text><text x="560" y="34">4</text><text x="740" y="34">5</text></g>
+  <g fill="currentColor" font-size="14" font-weight="600" text-anchor="middle"><text x="90" y="66">Look at the drive</text><text x="270" y="66">Stitch question</text><text x="450" y="66">The check</text><text x="630" y="66">Copy</text><text x="810" y="66">Result + report</text></g>
+  <g fill="currentColor" font-size="12" text-anchor="middle">
+    <text x="90" y="88">in the background,</text><text x="90" y="104">Stop cancels,</text><text x="90" y="120">nothing copied</text>
+    <text x="270" y="88">only if parts of</text><text x="270" y="104">one shot are found</text><text x="270" y="120">(SH010_A, SH010_B)</text>
+    <text x="450" y="88">every shot, its name,</text><text x="450" y="104">Copy or Move,</text><text x="450" y="120">warnings</text>
+    <text x="630" y="88">progress, speed,</text><text x="630" y="104">time left;</text><text x="630" y="120">Pause, Stop</text>
+    <text x="810" y="88">Open report,</text><text x="810" y="104">Open folder;</text><text x="810" y="120">shots on dashboard</text>
+  </g>
+  <g stroke="var(--bad)" stroke-width="2" fill="none" stroke-dasharray="6 4" marker-end="url(#ga)"><path d="M810 130 C810 220 630 220 630 134"/></g>
+  <text x="720" y="236" text-anchor="middle" font-size="12" fill="var(--bad)">Retry failed files / Finish the stopped run</text>
+</svg>
+<figcaption>Step 2 appears only when the drive holds folders that look like parts of one shot. Nothing merges unless you leave it ticked.</figcaption>
+</figure>
+
+<h3>How Slate reads a client drive</h3>
+<figure>
+<svg viewBox="0 0 900 300" role="img" aria-label="Left, the client drive: REEL_01 holds SH010 with EXR and MOV folders, SH020_A and SH020_B, a LUT folder and notes.pdf. Right, the project: 05_Reels REEL_01 SH010 01_Scan v001 with EXR and MOV inside; SH020 is one stitched shot; the LUT and PDF go to 01_Frm Client in a dated docs folder; reports go to _ingest_reports.">
+  <defs><marker id="gb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+  <rect x="10" y="10" width="330" height="280" rx="10" fill="var(--ops-soft)" stroke="var(--ops)" stroke-width="2"/>
+  <rect x="470" y="10" width="420" height="280" rx="10" fill="var(--studio-soft)" stroke="var(--studio)" stroke-width="2"/>
+  <g font-size="14" font-weight="600" fill="currentColor"><text x="24" y="36">Client drive E:\</text><text x="484" y="36">Project P:\Projects\KLC</text></g>
+  <g font-size="12" font-family="Consolas, monospace" fill="currentColor">
+    <text x="30" y="66">REEL_01\</text>
+    <text x="50" y="88">SH010\</text><text x="70" y="108">EXR\  plate.1001-1060.exr</text><text x="70" y="128">MOV\  SH010.mov</text>
+    <text x="50" y="154">SH020_A\</text><text x="50" y="174">SH020_B\</text>
+    <text x="30" y="204">LUT\  show.cube</text>
+    <text x="30" y="226">notes.pdf</text>
+    <text x="490" y="66">05_Reels\REEL_01\</text>
+    <text x="510" y="88">SH010\01_Scan\v001\</text><text x="530" y="108">EXR\  (60 frames)</text><text x="530" y="128">MOV\</text>
+    <text x="510" y="164">SH020\01_Scan\v001\  (both parts)</text>
+    <text x="490" y="204">01_Frm Client\2026-10-06_docs\</text>
+    <text x="490" y="226">01_Frm Client\_ingest_reports\</text>
+  </g>
+  <g stroke="currentColor" stroke-width="2" fill="none" marker-end="url(#gb)"><line x1="270" y1="98" x2="466" y2="98"/><line x1="160" y1="164" x2="466" y2="160"/><line x1="200" y1="214" x2="466" y2="200"/></g>
+  <g font-size="11" fill="currentColor" text-anchor="middle" font-style="italic"><text x="405" y="90">one shot</text><text x="405" y="152">stitch: one shot</text><text x="405" y="194">client material</text></g>
+  <text x="24" y="270" font-size="12" fill="currentColor">Format folders (EXR, MOV, 4K, 1920x1080…) belong to the shot above them.</text>
+  <text x="484" y="270" font-size="12" fill="currentColor">A second delivery of SH010 lands in v002. Nothing is overwritten.</text>
+</svg>
+<figcaption>The whole drive is read, however deep the folders go. LUTs, references, audio, edit lists and paperwork are client material: filed under the client folder, never made into shots. So are loose files at the top of the drive, unless the check turns them into a shot.</figcaption>
+</figure>
+
+<h3>The check before copying</h3>
+<p>The window is called <b>Check before bringing files into</b> and the project code. Its headline says what will happen, for example "Copy 1,240 files (85 GB) - 42 shots in 3 reels - into …". Read it top to bottom:</p>
+<ul>
+  <li><b>Files: Copy or Move.</b> <b>Copy - leave the client drive as it is</b> is the default. Use <b>Move - empty the client drive</b> only when the source is a scratch copy you no longer need. Each file is removed from the drive only after its copy is checked.</li>
+  <li><b>The table</b> lists every shot with its reel, how it was delivered, files, size and notes. Double-click a shot name to change it before anything is copied. Tick <b>Only rows that need a look</b> to see just the problems.</li>
+  <li><b>Colours.</b> Red: a bad name, or two folders that would become the same shot (rename one). Amber: Slate spelled a non-Latin name out in Latin letters; check it. A highlighted name: Slate tidied it (for example <code>sh 060 (client)</code> became <code>SH_060</code>); change it if you need to.</li>
+  <li><b>Notes</b> under the table say what else Slate noticed: names it tidied, shots already in the project with exactly these files (not copied again), stitches, documents to be filed, paths over 260 characters.</li>
+</ul>
+<p>The buttons say what they will do: <b>Copy 1,240 files</b>, <b>Move 1,240 files</b>, <b>Dry run</b>, or <b>Cancel</b>. When there is nothing new the window says "Nothing new on this drive".</p>
+<div class="note"><b>Dry run first on a big or strange drive</b><strong>Dry run</strong> goes through everything and writes a report without copying or creating anything, and without touching the dashboard. Its report is kept in Slate's own folder, not in the project. Settings &rarr; <strong>Start Build &amp; Ingest in dry run</strong> makes it the default for you.</div>
+
+<h3>While it runs</h3>
+<p>Progress, speed and the time left stay at the bottom of the screen ("Copying 410 of 1,240 files · 220 MB/s · about 6 min left"). An image sequence is one line in the log, not 1,200. Every copy arrives as a <code>.partial</code> file and gets its real name only after it is checked, so a copy that dies half-way never leaves a short plate in the project.</p>
+<ul>
+  <li><b>Pause</b>, <b>Resume</b> and <b>Stop</b> act between files. Nothing is left half copied.</li>
+  <li><b>Fast mode (check by size)</b> skips only the slower MD5 comparison; every copy is still checked against the source size. Leave it off for a client delivery.</li>
+  <li>Only one ingest can run on a project at a time.</li>
+  <li>Slate checks free space first. If the disk does not have about the size of the delivery plus 10%, it stops before copying. If it cannot tell, it asks before starting.</li>
+  <li>Closing Slate or signing out asks first, with <b>Stop and close Slate</b> or <b>Keep working</b>.</li>
+</ul>
+
+<h3>Afterwards: the result and the report</h3>
+<div class="tablewrap"><table>
+  <tr><th>Result box title</th><th>What it means</th></tr>
+  <tr><td><b>Ingest finished</b></td><td>Everything arrived.</td></tr>
+  <tr><td><b>Finished with problems</b></td><td>Some files could not be brought in. <b>Retry failed files</b> tries them again.</td></tr>
+  <tr><td><b>Short delivery</b></td><td>Frames are missing in some sequences. The report lists which.</td></tr>
+  <tr><td><b>Nothing new</b></td><td>The project already has everything on this drive.</td></tr>
+  <tr><td><b>Stopped</b></td><td>You pressed Stop. The box says how many files were copied and how many were not.</td></tr>
+  <tr><td><b>Ingest failed</b></td><td>The ingest stopped with an error. Read the log, then raise an IT Support ticket if it is not a disk or name problem.</td></tr>
+</table></div>
+<p>The box lists shots, files copied, failures, documents filed, and the dashboard: new shots, and new scans on shots already tracked. Its buttons are <b>Open report</b>, <b>Open folder</b> and <b>Close</b>. The last run's result stays on screen.</p>
+<p><b>The delivery report</b> is a page saved in <b>01_Frm Client\_ingest_reports</b>. It lists the shots received, sequences short of frames, files that failed, sequences not fully brought in, shots already in the project, documents filed and anything ignored on the drive. Send it to the client's VFX editor when frames are missing.</p>
+
+<h3>Getting the rest in</h3>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><path d="M34 22 a12 12 0 1 1 -4 -9" fill="none" stroke="currentColor" stroke-width="3"/><path d="M30 6 v8 h-8" fill="none" stroke="currentColor" stroke-width="3"/></svg><b>Retry N failed files</b><span>The button names how many. It works after Slate is restarted too, and also adds the shots it brought in to the dashboard.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="8" y="10" width="28" height="24" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><polygon points="18,16 18,28 28,22" fill="currentColor"/></svg><b>Finish the stopped run</b><span>After a Stop, brings the files the run never reached into the <strong>same</strong> scan version.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M6 12 h12 l4 4 h16 v20 h-32 z" fill="none" stroke="currentColor" stroke-width="3"/><text x="22" y="31" text-anchor="middle" font-size="10" fill="currentColor" font-weight="700">v002</text></svg><b>The next delivery</b><span>Same code, new drive, <strong>Update project</strong>. Each new delivery of a shot becomes the next scan version.</span></li>
+</ol>
+<p>Running the same drive again copies only what is new. Your answers to the stitch question are remembered for the project, so only new groups are asked about.</p>
+
+<h3>The ingest lock</h3>
+<p>If Slate says <b>Ingest already running</b>, someone else is bringing files into this project. Wait for them. If that ingest is not really running (Slate crashed or was closed), the window offers <b>Clear the lock and continue</b> at once to the person who started it, an admin or a developer, and to anyone else once nobody has touched the lock for 6 hours.</p>
+<div class="note bad"><b>Clear a lock only when you are sure</b>Clearing a lock that is in use lets two deliveries mix in one scan version.</div>
+
+<h3>What happens on the dashboard</h3>
+<p>With <b>Add shots to the Dashboard</b> ticked (the default), every new shot appears on the VFX Dashboard with status <b>YTS</b> and a Scan Status such as "v001 received" and the date. Shots already tracked are left as they are; only their scan status and frame range are updated, and their artists get a notification that a new scan arrived. Build &amp; Ingest makes no review proxies: make them in the Timeline Viewer when you need them.</p>
+
+</section>
+<!-- ============================================================ -->
+<section class="studio">
+<h2 id="rename">CAP Rename: giving files the right names</h2>
+<p class="lede">Rename many files at once. Slate shows every new name first. Read the preview, then press the button.</p>
+
+<h3>Two ways to rename</h3>
+<div class="tablewrap"><table>
+  <tr><th>Mode</th><th>Use it when</th><th>Example</th></tr>
+  <tr><td><b>Find and replace</b></td><td>Part of every name is wrong.</td><td>Find <code>shot_v01</code>, Replace with <code>shot_v02</code></td></tr>
+  <tr><td><b>Number as a sequence</b></td><td>Files need one base name and a running number, in list order.</td><td>Base name <code>shot_010_v01_</code>, Start frame 1001, Padding 4: <code>shot_010_v01_1001.exr</code>, <code>shot_010_v01_1002.exr</code>…</td></tr>
+</table></div>
+
+<figure>
+<svg viewBox="0 0 900 300" role="img" aria-label="The CAP Rename preview. Each file is one row with its current name, its new name and a status: Will rename in green, Unchanged in grey, Conflict in red with the reason. The rename button stays off while any row is a conflict.">
+  <rect x="10" y="10" width="880" height="282" rx="10" fill="none" stroke="currentColor" stroke-width="2"/>
+  <g fill="currentColor" font-size="13"><text x="30" y="40">Find</text><text x="380" y="40">Replace with</text></g>
+  <g fill="var(--panel)" stroke="currentColor" stroke-width="1.5"><rect x="70" y="24" width="280" height="26" rx="4"/><rect x="480" y="24" width="250" height="26" rx="4"/></g>
+  <g fill="currentColor" font-size="13" font-family="Consolas, monospace"><text x="80" y="42">_v01</text><text x="490" y="42">_v02</text></g>
+  <g fill="currentColor" font-size="12"><text x="30" y="74">☐ Use regex    ☐ Case sensitive    ☑ Keep extension    ☐ To lowercase    ☐ Sanitize    ☐ Re-pad numbers to 4 digits</text></g>
+  <line x1="30" y1="90" x2="870" y2="90" stroke="currentColor" stroke-width="1"/>
+  <rect x="20" y="214" width="860" height="34" rx="3" fill="var(--bad-soft)"/>
+<g fill="currentColor" font-size="12" font-weight="600" letter-spacing="1"><text x="30" y="110">ORIGINAL NAME</text><text x="330" y="110">NEW NAME</text><text x="600" y="110">STATUS</text></g>
+  <g font-size="13" font-family="Consolas, monospace" fill="currentColor">
+    <text x="30" y="140">SH010_comp_v01.mov</text><text x="330" y="140">SH010_comp_v02.mov</text>
+    <text x="30" y="170">SH020_comp_v01.mov</text><text x="330" y="170">SH020_comp_v02.mov</text>
+    <text x="30" y="200">SH030_notes.txt</text><text x="330" y="200">SH030_notes.txt</text>
+    <text x="30" y="230">SH040_comp_v01.mov</text><text x="330" y="230">SH040_comp_v02.mov</text>
+  </g>
+    <g font-size="13" font-weight="600"><text x="600" y="140" fill="var(--ok)">Will rename</text><text x="600" y="170" fill="var(--ok)">Will rename</text><text x="600" y="200" fill="var(--idle)">Unchanged</text></g><g font-size="12" font-weight="600" fill="var(--bad)"><text x="600" y="228">Conflict - A file with this name</text><text x="600" y="243">is already in the folder.</text></g>
+  <g stroke-width="1.5"><rect x="30" y="254" width="110" height="26" rx="4" fill="var(--panel)" stroke="currentColor"/><rect x="150" y="254" width="160" height="26" rx="4" fill="var(--panel)" stroke="currentColor"/><rect x="740" y="254" width="130" height="26" rx="4" fill="var(--raised)" stroke="var(--idle)"/></g>
+  <g font-size="12" text-anchor="middle" fill="currentColor"><text x="85" y="271">Add files…</text><text x="230" y="271">Undo last rename</text><text x="805" y="271" fill="var(--text-dim)">Rename files</text><text x="725" y="271" text-anchor="end" fill="var(--bad)">off while a row is a conflict</text></g>
+</svg>
+<figcaption>Simplified preview. One conflict stops the whole rename until you fix it or take that file out with <b>Remove selected</b>.</figcaption>
+</figure>
+
+<h3>Rename a batch</h3>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><path d="M6 12 h12 l4 4 h16 v20 h-32 z" fill="none" stroke="currentColor" stroke-width="3"/></svg><b>Add the files, set the order</b><span><strong>Add files…</strong>, <strong>Add folder…</strong> (not its sub-folders), or drop them on the list. For a sequence: <strong>Sort by name</strong> (IMG_2 before IMG_10), <strong>Sort by date modified</strong>, or the up and down arrows (<strong>Custom order</strong>).</span></li>
+  <li><svg viewBox="0 0 44 44"><circle cx="20" cy="20" r="11" fill="none" stroke="currentColor" stroke-width="3"/><line x1="28" y1="28" x2="38" y2="38" stroke="currentColor" stroke-width="3"/></svg><b>Read every row</b><span>Status says <strong>Will rename</strong>, <strong>Unchanged</strong> or <strong>Conflict</strong>, and why.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M8 24 L18 34 L36 12" fill="none" stroke="var(--ok)" stroke-width="4"/></svg><b>Rename files</b><span>Slate shows a few examples and asks. All or nothing: if one file cannot be renamed, no file is.</span></li>
+</ol>
+
+<h3>The options</h3>
+<ul>
+  <li><b>Case sensitive</b> is off: <code>Shot</code> also matches <code>shot</code>.</li>
+  <li><b>Use regex</b>: Find is a regular expression. In Replace with, groups are written <code>\1</code>, <code>\2</code> (not <code>$1</code>). A pattern that is not valid is explained under Find.</li>
+  <li><b>Keep extension</b> is on: <code>.exr</code>, <code>.jpg</code> are left alone.</li>
+  <li><b>Sanitize</b>, <b>To lowercase</b> and <b>Re-pad numbers</b> work on the name before the extension. Sanitize keeps letters in any language and keeps the dot before a frame number: <code>plate.1001.exr</code> stays as it is.</li>
+  <li><b>Number as a sequence</b> has <b>Base name</b> (required), <b>Start frame</b> (1001 unless changed), <b>Step</b> and <b>Padding</b> (4). The number goes straight after the base name, so type a <code>_</code> or <code>.</code> at the end of the base name if you want one. If the numbers grow past the padding, Slate offers <b>Use N digits</b>.</li>
+  <li>The filter above the list can show <b>Show changes</b> or <b>Show conflicts</b> only, which helps in a list of 3,000 frames. Each frame file is its own row.</li>
+</ul>
+
+<h3>What counts as a conflict</h3>
+<p>Two files landing on one name. A name with a folder in it (<code>/</code>, <code>\</code> or <code>..</code>). Characters Windows refuses (<code>&lt; &gt; : " | ? *</code>), a space at the start or end, a dot at the end, or a name Windows keeps for itself (CON, NUL…). A name over 200 characters, or a full path of 260 characters or more. A file with that name already in the folder. The Status column says <b>Conflict - </b> and the reason. Point at the greyed <b>Rename files</b> button to read every reason at once.</p>
+
+<h3>Undo</h3>
+<p><b>Undo last rename</b> puts the old names back, even when names were swapped or shifted. It runs in the background with progress and <b>Cancel</b>. You see only your own renames (admins and developers see everyone's), and the newest 50 are kept. Undo refuses, changing nothing, if the files were moved or renamed again since. Every rename and undo is written to the studio audit log.</p>
+<div class="note warn"><b>Close the files first</b>A file open in Nuke or RV cannot be renamed, and because a rename is all or nothing, the whole batch keeps its old names. The Status column names the file and the reason. Close it and press Rename again. If you close Slate during a rename, Slate waits for it to finish.</div>
+</section>
+<!-- ============================================================ -->
+<section class="studio">
+<h2 id="stock">Stock Viewer: the studio's library</h2>
+<p class="lede">Footage, elements, textures and references reused across jobs. Find a clip, look at it, copy its path for the artist.</p>
+
+<figure>
+<svg viewBox="0 0 900 330" role="img" aria-label="The Stock Viewer has three panels. Left: Categories with All, Favourites, Studio picks, each category with its count, and Removed; below them Ingest a folder, Rescan folders and Reload. Middle: the search box, Look, Sort, All Images Videos, Grid or List, and the cards. Right: the preview player and the facts with Copy path and Show in Explorer.">
+  <rect x="10" y="10" width="880" height="310" rx="10" fill="none" stroke="currentColor" stroke-width="2"/>
+  <line x1="200" y1="10" x2="200" y2="320" stroke="currentColor" stroke-width="2"/><line x1="620" y1="10" x2="620" y2="320" stroke="currentColor" stroke-width="2"/>
+  <!-- left -->
+  <g fill="currentColor" font-size="11" letter-spacing="1"><text x="24" y="36">CATEGORIES</text></g>
+  <g fill="currentColor" font-size="13"><text x="24" y="60" font-weight="600" fill="var(--studio)">All</text><text x="24" y="82">Favourites</text><text x="24" y="104">Studio picks</text><text x="24" y="130">Fire  (1,234)</text><text x="24" y="152">Smoke  (412)</text><text x="24" y="174">Sparks  (96)</text><text x="24" y="200" fill="var(--text-dim)">Removed</text></g>
+  <g stroke-width="1.5"><rect x="22" y="222" width="160" height="24" rx="4" fill="var(--studio-soft)" stroke="var(--studio)"/><rect x="22" y="252" width="160" height="24" rx="4" fill="var(--panel)" stroke="currentColor"/><rect x="22" y="282" width="160" height="24" rx="4" fill="var(--panel)" stroke="currentColor"/></g>
+  <g fill="currentColor" font-size="12" text-anchor="middle"><text x="102" y="238">Ingest a folder…</text><text x="102" y="268">Rescan folders</text><text x="102" y="298">Reload</text></g>
+  <!-- middle -->
+  <rect x="214" y="22" width="392" height="26" rx="4" fill="var(--panel)" stroke="currentColor" stroke-width="1.5"/>
+  <text x="224" y="40" font-size="12" fill="var(--text-dim)">Search name, tag, 4K, 24fps, folder…</text>
+  <g stroke="currentColor" stroke-width="1.2" fill="var(--panel)"><rect x="214" y="56" width="90" height="22" rx="4"/><rect x="310" y="56" width="100" height="22" rx="4"/><rect x="416" y="56" width="110" height="22" rx="4"/><rect x="532" y="56" width="74" height="22" rx="4"/></g>
+  <g fill="currentColor" font-size="11" text-anchor="middle"><text x="259" y="71">Any look ▾</text><text x="360" y="71">Newest first ▾</text><text x="471" y="71">All · Images · Videos</text><text x="569" y="71">Grid · List</text></g>
+  <g fill="var(--raised)" stroke="var(--line)"><rect x="214" y="88" width="122" height="90" rx="6"/><rect x="349" y="88" width="122" height="90" rx="6"/><rect x="484" y="88" width="122" height="90" rx="6"/><rect x="214" y="190" width="122" height="90" rx="6"/><rect x="349" y="190" width="122" height="90" rx="6"/><rect x="484" y="190" width="122" height="90" rx="6"/></g>
+  <rect x="349" y="88" width="122" height="90" rx="6" fill="none" stroke="var(--studio)" stroke-width="3"/>
+  <g font-size="10" fill="currentColor"><text x="220" y="102">MOV</text><text x="355" y="102">SEQ</text><text x="490" y="102">IMG</text><text x="440" y="102" fill="var(--ops)">★</text><text x="355" y="172">4K · 1001–1024</text></g>
+  <text x="410" y="304" text-anchor="middle" font-size="12" fill="var(--text-2)">350 assets</text>
+  <!-- right -->
+  <rect x="634" y="22" width="242" height="120" rx="6" fill="#111"/>
+  <polygon points="742,66 742,98 770,82" fill="#eee"/>
+  <g fill="currentColor" font-size="12"><text x="634" y="164" font-weight="600">fire_burst_01.[1001-1024].exr</text>
+  <text x="634" y="188">Type</text><text x="720" y="188">Image sequence</text>
+  <text x="634" y="206">Resolution</text><text x="720" y="206">3840 × 2160</text>
+  <text x="634" y="224">Length</text><text x="720" y="224">1001–1024 (24 f)</text>
+  <text x="634" y="242">Category</text><text x="720" y="242">Fire</text>
+  <text x="634" y="260">Added by</text><text x="720" y="260">(name, date)</text></g>
+  <g stroke-width="1.5"><rect x="634" y="276" width="100" height="24" rx="4" fill="var(--panel)" stroke="currentColor"/><rect x="742" y="276" width="134" height="24" rx="4" fill="var(--panel)" stroke="currentColor"/></g>
+  <g fill="currentColor" font-size="12" text-anchor="middle"><text x="684" y="292">Copy path</text><text x="809" y="292">Show in Explorer</text></g>
+</svg>
+<figcaption>Simplified Stock Viewer. The blue button and <b>Removed</b> appear only for people who may ingest stock. Below 1150 pixels wide, the left panel folds away behind a <b>Filters</b> button.</figcaption>
+</figure>
+
+<h3>Find something for an artist</h3>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><circle cx="20" cy="20" r="11" fill="none" stroke="currentColor" stroke-width="3"/><line x1="28" y1="28" x2="38" y2="38" stroke="currentColor" stroke-width="3"/></svg><b>Search and narrow</b><span>Every word must match the start of a word: <code>fire 4K 24fps</code>. Then a category on the left, <strong>Look</strong>, or All / Images / Videos.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="10" width="32" height="24" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><polygon points="18,16 18,28 28,22" fill="currentColor"/></svg><b>Look</b><span>Select a card. <strong>Enter</strong> plays, <strong>Space</strong> opens Quick Look (Esc closes).</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="12" y="6" width="22" height="26" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><rect x="6" y="12" width="22" height="26" rx="3" fill="var(--panel)" stroke="currentColor" stroke-width="3"/></svg><b>Copy path</b><span>Or Ctrl+C, or drag the card into another program. Paste the path in the ticket or chat.</span></li>
+</ol>
+<p>"HD" finds HD clips, not UHD ones, because a word must match from its start. Search also reads resolution (<code>4K</code>, <code>1920</code>, <code>portrait</code>), frame rate (<code>24fps</code>), codec, kind (<code>still</code>, <code>movie</code>, <code>image sequence</code>, <code>camera raw</code>) and folder names. The count says <b>350 assets</b>, or <b>Showing X of N assets</b> when something narrows the list.</p>
+<div class="note"><b>Copying an image sequence</b>Copy path gives the path of the <strong>first frame</strong> of a sequence, not a <code>####</code> pattern. Tell the artist it is a sequence; the facts panel shows its frame range (for example 1001–1024).</div>
+
+<h3>Favourites and Studio picks</h3>
+<p><b>Favourites</b> are yours alone: the star on a card, the <b>Favourite</b> button in the preview, or Ctrl+D. <b>Studio picks</b> are shared with everyone; leads and supervisors mark them from the right-click menu. Use picks for "the approved smoke elements for this show".</p>
+
+<h3>Adding to the library</h3>
+<p>Adding, deleting, tagging and studio picks need the <b>Ingest stock</b> ability. By default leads, supervisors, Production Head and admins have it; the Production Coordinator and Producer roles do not, so for them the Stock Viewer is read-only. If production owns the library at your studio, ask an admin to tick <b>Ingest stock</b> on your role.</p>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><path d="M6 12 h12 l4 4 h16 v20 h-32 z" fill="none" stroke="currentColor" stroke-width="3"/></svg><b>Ingest a folder…</b><span>Or drag folders onto the gallery. Nothing is copied: Slate reads the files where they are and makes thumbnails, review proxies, tags and categories.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="10" y="10" width="8" height="24" fill="currentColor"/><rect x="26" y="10" width="8" height="24" fill="currentColor"/></svg><b>Pause or Stop</b><span>Both work mid-ingest. One ingest runs at a time.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M8 24 L18 34 L36 12" fill="none" stroke="var(--ok)" stroke-width="4"/></svg><b>Read the summary</b><span>How many were added, already there, could not be read, and left out (sound, 3D).</span></li>
+</ol>
+<div class="tablewrap"><table>
+  <tr><th>Option</th><th>What it does</th></tr>
+  <tr><td><b>Fast mode</b></td><td>Skips review proxies, so a big folder ingests much quicker. Thumbnails, sizes and tags are still made. The preview then plays the original file.</td></tr>
+  <tr><td><b>Rescan folders</b></td><td>Looks again in every folder the library was ingested from, and adds what is new. Deleted assets stay out.</td></tr>
+  <tr><td><b>Reload</b></td><td>Only re-reads the library from the database (F5). New files on disk need Rescan folders.</td></tr>
+  <tr><td><b>Edit tags…</b></td><td>Tags are shared with the studio. Slate also makes tags from the words of the file name.</td></tr>
+  <tr><td><b>Export…</b> / <b>Import…</b></td><td>Save the library list as a file in Documents, or add the assets of an export whose files exist.</td></tr>
+</table></div>
+<p><b>Stock proxies.</b> Stock thumbnails and proxies are kept apart from the project, in the server's <b>Cache</b> folder, so every PC sees the same ones. Movies and image sequences get an MP4 proxy; stills always play the original file. Camera raw (<code>.r3d</code>, <code>.ari</code>) gets no preview; the preview offers to open it in its own program.</p>
+<p><b>Big ingests.</b> Slate saves its results in batches as it goes. If Slate starts using a lot of memory, the ingest pauses itself and says so: save your work, restart Slate and run the ingest again. It continues where it stopped, because files already in the library are skipped.</p>
+<div class="note warn"><b>Delete and Clear library</b>Delete removes assets from the library, never from disk, and the message has <strong>Undo</strong>. Deleted assets wait under <strong>Removed</strong>, where <strong>Restore</strong> brings them back. After 24 hours their thumbnails, proxies, favourites and picks are cleared, but Rescan still leaves them out. <strong>Clear library…</strong> empties the whole library for everybody; you must type <code>CLEAR</code>, and it cannot be undone.</div>
+</section>
+<!-- ============================================================ -->
+<section class="studio">
+<h2 id="dashboard">VFX Dashboard: running the job</h2>
+<p class="lede">Every shot in the project, its status, and who has it. This is the screen production runs the job from.</p>
+
+<figure>
+<svg viewBox="0 0 900 370" role="img" aria-label="The VFX Dashboard. Top row: the project selector, status counters such as 262 shots, 18 YTS, 40 WIP, 12 SENT FOR REVIEW, Backup saved 19:21, and the Save 6 changes (1 shot) button. Second row: Scope All shots, the search box, All statuses, Group None, Filters, List or Board, View, Reports, Manage project and Add shots. Below, the grid with Reel/EP and Shot Name frozen on the left, then Status, Artist, SOW, Target and one column per department. A changed row is tinted with an amber dot.">
+  <rect x="10" y="10" width="880" height="350" rx="10" fill="none" stroke="currentColor" stroke-width="2"/>
+  <!-- row 1 -->
+  <g stroke="currentColor" stroke-width="1.2" fill="var(--panel)"><rect x="22" y="22" width="150" height="26" rx="4"/></g>
+  <text x="30" y="40" font-size="12" fill="currentColor">KLC - Kaalchakra ▾</text>
+  <g stroke-width="1.5">
+    <rect x="182" y="24" width="72" height="22" rx="11" fill="var(--raised)" stroke="var(--line)"/>
+    <rect x="260" y="24" width="60" height="22" rx="11" fill="var(--raised)" stroke="var(--idle)"/>
+    <rect x="326" y="24" width="62" height="22" rx="11" fill="var(--ops-soft)" stroke="var(--warn)"/>
+    <rect x="394" y="24" width="150" height="22" rx="11" fill="var(--panel)" stroke="var(--info)"/>
+    <rect x="550" y="24" width="64" height="22" rx="11" fill="var(--panel)" stroke="var(--line)"/>
+  </g>
+  <g font-size="11" text-anchor="middle" fill="currentColor"><text x="218" y="39">262 shots</text><text x="290" y="39">18 YTS</text><text x="357" y="39">40 WIP</text><text x="469" y="39">12 SENT FOR REVIEW</text><text x="582" y="39">+4 more</text></g>
+  <text x="624" y="39" font-size="11" fill="var(--text-2)">Backup saved 19:21</text>
+  <rect x="738" y="22" width="140" height="26" rx="4" fill="var(--studio)"/>
+  <text x="808" y="40" font-size="11" text-anchor="middle" fill="var(--panel)" font-weight="700">Save 6 changes (1 shot)</text>
+  <!-- row 2 -->
+  <g stroke="currentColor" stroke-width="1.2" fill="var(--panel)">
+    <rect x="22" y="58" width="90" height="24" rx="4"/><rect x="118" y="58" width="190" height="24" rx="4"/><rect x="314" y="58" width="86" height="24" rx="4"/><rect x="406" y="58" width="86" height="24" rx="4"/><rect x="498" y="58" width="64" height="24" rx="4"/><rect x="568" y="58" width="86" height="24" rx="4"/>
+  </g>
+  <g font-size="11" fill="currentColor"><text x="30" y="74">All shots ▾</text><text x="126" y="74" fill="var(--text-dim)">Search shot, SOW, status, artist…</text><text x="322" y="74">All statuses ▾</text><text x="414" y="74">Group: None ▾</text><text x="506" y="74">Filters…</text><text x="576" y="74">List | Board</text></g>
+  <g font-size="11" fill="currentColor"><text x="664" y="74">View ▾</text><text x="712" y="74">Reports ▾</text><text x="772" y="74">Manage project ▾</text></g>
+  <!-- grid header -->
+  <rect x="22" y="94" width="856" height="26" fill="var(--raised)"/>
+  <line x1="200" y1="94" x2="200" y2="246" stroke="var(--studio)" stroke-width="2"/>
+  <g font-size="11" font-weight="600" fill="currentColor"><text x="30" y="111">Reel/EP</text><text x="100" y="111">Shot Name</text><text x="208" y="111">Status</text><text x="318" y="111">Artist</text><text x="408" y="111">SOW</text><text x="520" y="111">Target</text><text x="600" y="111">Roto</text><text x="680" y="111">Prep / Paint</text><text x="790" y="111">Comp</text></g>
+  <!-- rows -->
+  <g font-size="11" fill="currentColor">
+    <text x="30" y="142">R01</text><text x="100" y="142">SH010</text><text x="318" y="142">Asha K</text><text x="408" y="142">sky replace</text><text x="520" y="142">10 Oct</text><text x="600" y="142">APPROVED</text><text x="680" y="142">APPROVED</text><text x="790" y="142">WIP</text>
+    <text x="30" y="202">R01</text><text x="100" y="202">SH030</text><text x="318" y="202">Unassigned</text><text x="408" y="202">cleanup</text><text x="600" y="202">RETAKE</text><text x="680" y="202">YTS</text><text x="790" y="202">YTS</text>
+    <text x="30" y="232">R02</text><text x="100" y="232">SH010</text><text x="318" y="232">Meera P</text><text x="408" y="232">screen comp</text><text x="520" y="232">20 Oct</text><text x="600" y="232">APPROVED</text><text x="680" y="232">APPROVED</text><text x="790" y="232">APPROVED</text>
+  </g>
+  <rect x="22" y="157" width="856" height="24" fill="var(--ops-soft)" opacity="0.7"/>
+  <text x="100" y="172" font-size="11" fill="currentColor">SH020</text><text x="30" y="172" font-size="11" fill="currentColor">R01</text>
+  <g font-size="11" fill="currentColor"><text x="318" y="172">Ravi M</text><text x="408" y="172">wire removal</text><text x="600" y="172">WIP</text><text x="680" y="172">YTS</text><text x="790" y="172">YTS</text></g>
+  <circle cx="90" cy="168" r="4" fill="var(--warn)"/>
+  <g stroke-width="1.5">
+    <rect x="206" y="130" width="70" height="18" rx="9" fill="var(--ops-soft)" stroke="var(--warn)"/>
+    <rect x="206" y="160" width="104" height="18" rx="9" fill="var(--panel)" stroke="var(--info)"/>
+    <rect x="206" y="190" width="70" height="18" rx="9" fill="var(--bad-soft)" stroke="var(--bad)"/>
+    <rect x="206" y="220" width="78" height="18" rx="9" fill="var(--server-soft)" stroke="var(--ok)"/>
+  </g>
+  <g font-size="10" font-weight="700" fill="currentColor" text-anchor="middle"><text x="241" y="143">WIP</text><text x="258" y="173" font-size="9">SENT FOR REVIEW</text><text x="241" y="203">RETAKE</text><text x="245" y="233">APPROVED</text></g>
+  <text x="520" y="142" font-size="11" fill="var(--bad)" font-weight="600">10 Oct</text>
+  <g stroke="var(--line-soft)"><line x1="22" y1="152" x2="878" y2="152"/><line x1="22" y1="182" x2="878" y2="182"/><line x1="22" y1="212" x2="878" y2="212"/><line x1="22" y1="242" x2="878" y2="242"/></g>
+  <!-- callouts -->
+  <g font-size="12" fill="var(--text-2)">
+    <text x="30" y="270">◀ Reel/EP and Shot Name stay frozen on the left while you scroll across departments.</text>
+    <text x="30" y="292">Tinted row with an amber dot = a pending edit, not saved yet. Red target = overdue, amber = due within a week.</text>
+    <text x="30" y="314">The same shot name can live in two reels (R01 SH010, R02 SH010). They are two shots with separate versions.</text>
+  </g>
+  <text x="878" y="350" font-size="11" fill="var(--text-dim)" text-anchor="end">Showing 4 of 262 shots</text>
+</svg>
+<figcaption>Simplified dashboard. On a narrow screen View, Reports, Manage project and Add shots fold into <b>More</b>. Each department column holds that department's status on that shot.</figcaption>
+</figure>
+
+<h3>The statuses</h3>
+<div class="tablewrap"><table>
+  <tr><th>Status</th><th>Colour</th><th>Meaning</th></tr>
+  <tr><td><b>YTS</b></td><td style="white-space:nowrap"><span class="dot" style="background:var(--idle)"></span>Grey</td><td>Yet to start: nobody has begun work. New shots from Build &amp; Ingest start here.</td></tr>
+  <tr><td><b>READY</b></td><td style="white-space:nowrap"><span class="dot" style="background:var(--ok)"></span>Green</td><td>Ready to start: everything the artist needs is in place.</td></tr>
+  <tr><td><b>WIP</b></td><td style="white-space:nowrap"><span class="dot" style="background:var(--warn)"></span>Amber</td><td>Work in progress.</td></tr>
+  <tr><td><b>SENT FOR REVIEW</b></td><td style="white-space:nowrap"><span class="dot" style="background:var(--info)"></span>Blue</td><td>Waiting for a verdict.</td></tr>
+  <tr><td><b>RETAKE</b></td><td style="white-space:nowrap"><span class="dot" style="background:var(--bad)"></span>Red</td><td>The review asked for changes.</td></tr>
+  <tr><td><b>APPROVED</b></td><td style="white-space:nowrap"><span class="dot" style="background:var(--ok)"></span>Green</td><td>Finished. Counted as done.</td></tr>
+  <tr><td><b>OMIT</b></td><td style="white-space:nowrap"><span class="dot" style="background:var(--idle)"></span>Grey</td><td>Cut from the show. Not counted as outstanding or overdue anywhere.</td></tr>
+  <tr><td>No status</td><td>—</td><td>Nothing set yet.</td></tr>
+</table></div>
+<p>The counters along the top count the shots on screen by status, in this order. Click one to show only those shots; click it again to show all. Artists may set only YTS, READY, WIP and SENT FOR REVIEW, and only on the department they are named on. <b>APPROVED</b>, <b>RETAKE</b> and <b>OMIT</b> are verdicts for supervisors and production.</p>
+
+<h3>Assigning work</h3>
+<ul>
+  <li><b>The shot's artist:</b> click the <b>Artist</b> cell and pick a name, or <b>Unassigned</b>. Or select several shots, right-click, <b>Assign artist</b>.</li>
+  <li><b>A department's artist, bid days and target:</b> double-click the shot (or press Enter) to open the shot panel. In <b>Departments</b>, each row has Artist, Status, Bid, Actual and Target. Press <b>Apply</b>.</li>
+  <li><b>On the Board:</b> switch to <b>Board</b> and drag a person from <b>Assign by dragging</b> onto a card. The numbers beside names are their open shots.</li>
+</ul>
+<p>Only people whose role <b>Can be given shots</b> appear in the lists. The person is told in the bell ("You have been assigned to…") when the change is saved. A saved status change rings the bell too, for the department's artist or, for the shot's own status, the shot's artist ("SH010 is now RETAKE.").</p>
+<p>In the shot panel you can type a department's artist, but it must be a person in Slate; Slate saves it under their real name. Anything else is refused: "… is not a person in Slate. Pick a name from the list, or leave it blank for nobody."</p>
+
+<h3>Batch edit: many shots at once</h3>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><g fill="none" stroke="currentColor" stroke-width="3"><rect x="6" y="8" width="32" height="8" rx="2"/><rect x="6" y="20" width="32" height="8" rx="2" fill="var(--studio-soft)"/><rect x="6" y="32" width="32" height="8" rx="2" fill="var(--studio-soft)"/></g></svg><b>Select, then right-click</b><span>Ctrl-click or Shift-click rows in the grid. <strong>Batch edit N shots…</strong>, or the quick menus <strong>Set status</strong>, <strong>Assign artist</strong>, <strong>Set priority</strong>.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="8" y="8" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="3"/><path d="M10 14 l3 3 l6 -7" fill="none" stroke="var(--ok)" stroke-width="3"/><line x1="24" y1="14" x2="38" y2="14" stroke="currentColor" stroke-width="3"/><rect x="8" y="26" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="3"/><line x1="24" y1="32" x2="38" y2="32" stroke="currentColor" stroke-width="3"/></svg><b>Tick what to change</b><span>Status, Artist, Priority, Type, Target. Then <strong>Apply to N shots</strong>.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="14" width="32" height="16" rx="4" fill="currentColor"/><text x="22" y="26" text-anchor="middle" font-size="8" fill="var(--panel)" font-weight="700">SAVE</text></svg><b>Save N changes</b><span>Batch edit is a pending edit like any other. Ctrl+Z takes it back.</span></li>
+</ol>
+<p>Batch edit changes shot fields only, never department rows. Use the shot panel for department work.</p>
+
+<h3>Finding shots</h3>
+<div class="tablewrap"><table>
+  <tr><th>Control</th><th>Does</th></tr>
+  <tr><td><b>Scope</b></td><td><b>All shots</b>, <b>My shots</b>, or one department (which also hides the other departments' columns).</td></tr>
+  <tr><td><b>Search</b> (Ctrl+F)</td><td>Looks in every column: shot, reel, status, artists, scope of work, type, target, version, priority, description.</td></tr>
+  <tr><td><b>All statuses</b></td><td>One status across the project, including <b>No status</b>.</td></tr>
+  <tr><td>Column funnel</td><td>Hover a column heading and click its funnel (or right-click the heading). Tick the values to show, then <b>Apply</b>.</td></tr>
+  <tr><td><b>Group</b></td><td>By reel, status, artist or priority. Each group heading shows shots, % done, frames and bid days.</td></tr>
+  <tr><td><b>Filters…</b></td><td>Rules: a field, a condition (contains, is, is not, does not contain, is empty, is not empty) and a value. <b>Match all rules</b> or <b>Match any rule</b>, then <b>Apply filters</b>.</td></tr>
+</table></div>
+<p>Whenever anything narrows the grid, a chip says "2 filters on · Clear", and the foot of the grid says "Showing X of Y shots". <b>No shots match</b> means the filters hid everything, not that the project is empty. Filters cannot be saved, and switching project starts with none.</p>
+<p><b>Example:</b> to find every shot the client wants warmer, open <b>Filters…</b>, choose <b>Client feedback</b>, <b>contains</b>, type <code>warmer</code>, press <b>Apply filters</b>, then select them all and batch edit.</p>
+<h3 id="saving">Saving and conflicts</h3>
+<p>Every change waits as a pending edit until you press one button. Nothing you type is lost silently, even when two people edit the same shot.</p>
+
+<figure>
+<svg viewBox="0 0 900 300" role="img" aria-label="You edit cells, the board, a batch edit or the shot panel; each becomes a pending edit that Ctrl+Z can take back. Save N changes writes only the changed shots. If someone else saved one of the same shots first, a window shows both sides: Keep theirs, re-apply mine; Overwrite with mine, for people allowed to force a save; or Cancel. After a save, the Excel backup is written in the background.">
+  <defs><marker id="da" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+  <g stroke-width="2">
+    <rect x="10" y="30" width="170" height="80" rx="8" fill="var(--panel)" stroke="var(--studio)"/>
+    <rect x="215" y="30" width="170" height="80" rx="8" fill="var(--ops-soft)" stroke="var(--warn)"/>
+    <rect x="420" y="30" width="170" height="80" rx="8" fill="var(--studio)" stroke="var(--studio)"/>
+    <rect x="640" y="30" width="250" height="80" rx="8" fill="var(--server-soft)" stroke="var(--ok)"/>
+    <rect x="420" y="170" width="470" height="116" rx="8" fill="var(--bad-soft)" stroke="var(--bad)"/>
+  </g>
+  <g stroke="currentColor" stroke-width="2.5" fill="none" marker-end="url(#da)"><line x1="180" y1="70" x2="212" y2="70"/><line x1="385" y1="70" x2="417" y2="70"/><line x1="590" y1="70" x2="637" y2="70"/></g>
+  <g stroke="var(--bad)" stroke-width="2.5" fill="none" stroke-dasharray="6 4" marker-end="url(#da)"><line x1="505" y1="110" x2="505" y2="166"/></g>
+  <g fill="currentColor" font-size="14" font-weight="600" text-anchor="middle"><text x="95" y="60">You edit</text><text x="300" y="60">Pending edit</text><text x="505" y="60" fill="var(--panel)">Save N changes</text><text x="765" y="60">Saved</text></g>
+  <g fill="currentColor" font-size="12" text-anchor="middle">
+    <text x="95" y="80">cell, board, batch edit,</text><text x="95" y="96">shot panel Apply</text>
+    <text x="300" y="80">row tinted, amber dot;</text><text x="300" y="96">Ctrl+Z / Ctrl+Y</text>
+    <text x="505" y="80" fill="var(--panel)">only the changed</text><text x="505" y="96" fill="var(--panel)">shots (Ctrl+S)</text>
+    <text x="765" y="80">history kept, artists told,</text><text x="765" y="96">Excel backup written</text>
+  </g>
+  <text x="515" y="146" font-size="12" fill="var(--bad)">someone saved first</text>
+  <g fill="currentColor" font-size="13"><text x="436" y="194" font-weight="700">Someone else saved these shots</text>
+  <text x="436" y="216">who and when, your edits, their changes</text>
+  <text x="436" y="240"><tspan font-weight="600">Keep theirs, re-apply mine</tspan>: their save, then yours on top</text>
+  <text x="436" y="260"><tspan font-weight="600">Overwrite with mine</tspan>: only if your role may force a save</text>
+  <text x="436" y="280"><tspan font-weight="600">Cancel</tspan>: nothing saved, your edits still waiting</text></g>
+  <g fill="currentColor" font-size="12"><text x="10" y="170">Closing Slate, signing out or switching</text><text x="10" y="188">project with pending edits asks first:</text><text x="10" y="206" font-weight="600">Save / Discard / Cancel.</text><text x="10" y="236">Artists' own status changes save at</text><text x="10" y="254">once, with Undo on the message.</text></g>
+</svg>
+<figcaption>Coordinators and producers do not get <b>Overwrite with mine</b> by default. <b>Keep theirs, re-apply mine</b> is the safe choice: their save loads, your other edits come back on top, unsaved, for you to check and save.</figcaption>
+</figure>
+
+<h4>Saving</h4>
+<ul>
+  <li>The button at the top right counts your edits: <b>Save 6 changes (1 shot)</b>. <b>Ctrl+S</b> does the same. It reads <b>Saved</b> when nothing is waiting.</li>
+  <li><b>Ctrl+Z</b> takes back the last change, <b>Ctrl+Y</b> puts it back. The <b>Undo</b> on a message takes back only that change.</li>
+  <li>Other people's changes arrive without a refresh. A shot you have pending edits on is never replaced, only marked with <b>⚠</b>; check it before you save.</li>
+  <li>When the studio database cannot be reached, a red banner says so and the dashboard is read-only until it is back. Nothing you see is lost; press <b>Try again</b>.</li>
+</ul>
+<div class="note"><b>Publishing approved shots</b>When a shot is saved as <strong>APPROVED</strong>, Slate asks <strong>Publish approved shots</strong>: copy the comp renders to the shot's output folder (<code>08_Deliver</code> on new projects) now? Choose the copy button, or <strong>Not now</strong>. Files with the same name there are replaced.</div>
+
+<h3>The Excel backup</h3>
+<p>Slate writes a copy of the project to an Excel file in the background after every save. The top bar says <b>Backup saved 19:21</b>, or <b>Backup failing</b> when the file is open in Excel on someone's PC or the share cannot be reached. <b>Manage project</b> &rarr; <b>Export to Excel (backup now)</b> writes it at once.</p>
+<ul>
+  <li>The file is in the server's <b>Tracking</b> folder, named after the project code, unless <b>Edit current project…</b> points it somewhere else.</li>
+  <li>It has every column: targets, In/OS, edit status, description, versions and each department's artist, status, bid and actual days, with a frozen header and a filter.</li>
+  <li>Text that starts with <code>=</code>, <code>+</code>, <code>-</code> or <code>@</code> is stored as plain text, so opening the file can never run anything.</li>
+</ul>
+<div class="note bad"><b>Slate never reads the Excel file back</b>The backup is a copy for the client and for safety. Typing into the sheet changes nothing in Slate. Make every change on the dashboard. Close the sheet after looking, or the next backup fails.</div>
+
+<h3>Projects</h3>
+<p><b>Manage project</b> holds <b>Add new project…</b>, <b>Edit current project…</b>, <b>Set project root…</b> and <b>Export to Excel (backup now)</b>. Only Admin and Developer can <b>Archive project…</b> (hidden, history kept, brought back from <b>Show archived projects…</b>) or <b>Delete project permanently…</b>, which asks you to type the project code and also removes its versions, review notes and delivery packages. If someone archives a project while you have edits open, your save is refused with a message. <b>Add shots</b> creates shots by hand: one name per line, and a reel is required. Most shots arrive by Build &amp; Ingest instead.</p>
+<p><b>History.</b> Right-click a shot and choose <b>View history</b>: every saved change, who made it and when, newest first, with <b>Load older</b>.</p>
+</section>
+
+<!-- ============================================================ -->
+<section class="studio">
+<h2 id="reports">Reviews, deliveries and reports</h2>
+<p class="lede">Three reports sit under <b>Reports</b> on the VFX Dashboard. They follow the project you have open.</p>
+
+<div class="tablewrap"><table>
+  <tr><th>Report</th><th>Shows</th><th>Use it to</th></tr>
+  <tr><td><b>Review queue</b></td><td>Versions sent for review and still waiting for a verdict, oldest first, with their reel.</td><td>Chase supervisors. Double-click a version to play it, add notes, <b>Approve</b> or <b>Retake</b>.</td></tr>
+  <tr><td><b>Deliveries</b></td><td>Packages of versions sent to the client, and a delivery note to copy into an email.</td><td>Record exactly what went to the client, and when.</td></tr>
+  <tr><td><b>Production summary</b></td><td>Done or approved %, bid days left, artist load (busiest first), overdue shots, shots due in the next 7 days, open shots with no artist.</td><td>The weekly production meeting.</td></tr>
+</table></div>
+
+<h3>Recording versions and verdicts</h3>
+<p>In the shot panel, the <b>Versions</b> box records each version: <b>New version</b> asks for the version, department, artist, status (Pending or In Review), <b>Sent to</b> (Not sent, Internal, Client, Director), the media path and a comment. Versions sent somewhere appear in the Review queue. A verdict (Approved or Retake), given in the Review queue, the review player or the Versions box, asks first, can be undone, and puts the matching status on the shot as a pending edit. A verdict from RV's Slate menu does the same (see Timeline Viewer). <b>Save N changes</b> then records it and tells the artist.</p>
+<p>The <b>Feedback</b> tabs (Client, Director, Internal) show the notes on the shot's versions; <b>Add note</b> puts a note on the selected or newest version.</p>
+
+<h3>Make a delivery package</h3>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="14" width="32" height="22" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><path d="M6 14 l6 -8 h20 l6 8" fill="none" stroke="currentColor" stroke-width="3"/></svg><b>New delivery, and name it</b><span>Press <strong>New delivery</strong>. <strong>Package name</strong> is suggested as <code>DEL_YYYYMMDD_01</code>. Add <strong>Recipient</strong> and <strong>Notes for the recipient</strong>.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M8 24 L18 34 L36 12" fill="none" stroke="var(--ok)" stroke-width="4"/></svg><b>Tick the versions</b><span>The latest approved version of each shot and department is offered. <strong>Show every version</strong> lists the rest.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="12" y="6" width="22" height="26" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><rect x="6" y="12" width="22" height="26" rx="3" fill="var(--panel)" stroke="currentColor" stroke-width="3"/></svg><b>Create delivery</b><span>Then <strong>Copy delivery note</strong> and paste it into the email.</span></li>
+</ol>
+<p>Slate warns before a version that is not approved, or has no media recorded, goes in. A package is saved whole or not at all, and keeps each version's <b>Status when sent</b>. Deleting a package never deletes the versions.</p>
+
+<h3>Other reports</h3>
+<ul>
+  <li><b>Settings &rarr; Maintenance &rarr; Project report</b>: save a PDF summary of a project's history.</li>
+  <li><b>Build &amp; Ingest &rarr; Open report</b>: the delivery report of the last ingest (see Bringing footage in).</li>
+  <li><b>Bidding</b>: <b>Export list…</b>, <b>Export bid as PDF…</b> and the tracking <b>Export…</b> (see Bidding).</li>
+  <li><b>Scheduling</b>: <b>Export PNG…</b> of the timeline or the People view.</li>
+</ul>
+<p>The Production summary is on screen only. To share it, take a screenshot, or send the Excel backup.</p>
+</section>
+<!-- ============================================================ -->
+<section class="studio">
+<h2 id="timeline">Timeline Viewer: the lineup, RV and EDLs</h2>
+<p class="lede">The edit as the dashboard knows it: plates in reel order, each department's render on its own layer. Watch it here or in RV, and hand it to editorial as an EDL.</p>
+
+<figure>
+<svg viewBox="0 0 900 380" role="img" aria-label="The Timeline Viewer. Header Timeline with Refresh from Dashboard. Left: buttons Open in RV, Export EDL, Make review proxies and the tick box Use proxies in RV; All reels, Search shots, Tick all and Untick all; the lineup table with Reel, Shot, Frames, FPS, Layers and Scan version, where a shot without a scan is greyed out and a different frame rate is amber. Right: the player with a strip of the lineup, the Layer choice, Play lineup and Make proxy.">
+  <rect x="10" y="10" width="880" height="360" rx="10" fill="none" stroke="currentColor" stroke-width="2"/>
+  <text x="26" y="40" font-size="18" font-weight="700" fill="currentColor">Timeline</text>
+  <rect x="728" y="22" width="150" height="26" rx="4" fill="var(--panel)" stroke="currentColor" stroke-width="1.5"/>
+  <text x="803" y="40" font-size="12" text-anchor="middle" fill="currentColor">Refresh from Dashboard</text>
+  <!-- left -->
+  <g stroke-width="1.5"><rect x="22" y="60" width="100" height="26" rx="4" fill="var(--studio)" stroke="var(--studio)"/><rect x="128" y="60" width="90" height="26" rx="4" fill="var(--panel)" stroke="currentColor"/><rect x="224" y="60" width="150" height="26" rx="4" fill="var(--panel)" stroke="currentColor"/></g>
+  <g font-size="12" text-anchor="middle"><text x="72" y="78" fill="var(--panel)" font-weight="700">Open in RV</text><text x="173" y="78" fill="currentColor">Export EDL</text><text x="299" y="78" fill="currentColor">Make review proxies</text></g>
+  <text x="22" y="106" font-size="12" fill="currentColor">☑ Use proxies in RV</text><text x="300" y="106" font-size="11" fill="var(--text-dim)">EDL written today 19:24</text>
+  <g stroke="currentColor" stroke-width="1.2" fill="var(--panel)"><rect x="22" y="116" width="84" height="22" rx="4"/><rect x="112" y="116" width="150" height="22" rx="4"/></g>
+  <g font-size="11" fill="currentColor"><text x="30" y="131">All reels ▾</text><text x="120" y="131" fill="var(--text-dim)">Search shots…</text><text x="272" y="131">Tick all</text><text x="322" y="131">Untick all</text></g>
+  <rect x="22" y="146" width="430" height="22" fill="var(--raised)"/>
+  <g font-size="11" font-weight="600" fill="currentColor"><text x="30" y="161">✓</text><text x="48" y="161">Reel</text><text x="90" y="161">Shot</text><text x="146" y="161">Frames</text><text x="206" y="161">FPS</text><text x="246" y="161">Layers</text><text x="378" y="161">Scan ver.</text></g>
+  <g font-size="11" fill="currentColor">
+    <text x="30" y="188">☑</text><text x="48" y="188">R01</text><text x="90" y="188">SH010</text><text x="146" y="188">60</text><text x="206" y="188">24</text><text x="246" y="188">Scan + Roto + Comp</text><text x="378" y="188">v002</text>
+    <text x="30" y="212">☑</text><text x="48" y="212">R01</text><text x="90" y="212">SH020</text><text x="146" y="212">112</text><text x="206" y="212" fill="var(--warn)" font-weight="700">25</text><text x="246" y="212">Scan</text><text x="378" y="212">v001</text>
+    <text x="30" y="236">☐</text><text x="48" y="236">R01</text><text x="90" y="236">SH030</text><text x="146" y="236">length unknown</text><text x="246" y="236">Scan + Prep</text><text x="378" y="236">v001</text>
+  </g>
+  <g font-size="11" fill="var(--text-dim)"><text x="30" y="260">☐</text><text x="48" y="260">R02</text><text x="90" y="260">SH010</text><text x="146" y="260">no scan yet</text></g>
+  <g stroke="var(--line-soft)"><line x1="22" y1="196" x2="452" y2="196"/><line x1="22" y1="220" x2="452" y2="220"/><line x1="22" y1="244" x2="452" y2="244"/></g>
+  <g font-size="12" fill="var(--text-2)"><text x="22" y="292">amber FPS = differs from the lineup</text><text x="22" y="312">grey = no scan on disk yet, cannot be ticked</text><text x="22" y="332">order: by reel, then every number in the name</text></g>
+  <!-- right -->
+  <line x1="466" y1="56" x2="466" y2="360" stroke="currentColor" stroke-width="1.5"/>
+  <g stroke-width="1"><rect x="480" y="62" width="70" height="16" fill="var(--studio-soft)" stroke="var(--studio)"/><rect x="550" y="62" width="120" height="16" fill="var(--studio)" stroke="var(--studio)"/><rect x="670" y="62" width="60" height="16" fill="var(--raised)" stroke="var(--line)"/><rect x="730" y="62" width="146" height="16" fill="var(--studio-soft)" stroke="var(--studio)"/></g>
+  <text x="480" y="96" font-size="12" fill="currentColor">R01  SH020  ·  2 of 3</text>
+  <rect x="480" y="104" width="396" height="170" rx="4" fill="#111"/>
+  <polygon points="666,170 666,208 698,189" fill="#eee"/>
+  <text x="678" y="264" font-size="11" text-anchor="middle" fill="#ccc">No Comp render yet - showing the plate.</text>
+  <g font-size="12" fill="currentColor"><text x="480" y="300">Layer</text></g>
+  <g stroke-width="1.5"><rect x="520" y="286" width="90" height="22" rx="4" fill="var(--panel)" stroke="currentColor"/><rect x="620" y="284" width="110" height="26" rx="4" fill="var(--studio)" stroke="var(--studio)"/><rect x="740" y="284" width="100" height="26" rx="4" fill="var(--panel)" stroke="currentColor"/></g>
+  <g font-size="12"><text x="528" y="301" fill="currentColor">Comp ▾</text><text x="675" y="302" text-anchor="middle" fill="var(--panel)" font-weight="700">Play lineup</text><text x="790" y="302" text-anchor="middle" fill="currentColor">Make proxy</text></g>
+  <text x="480" y="340" font-size="12" fill="var(--text-2)">The strip is the lineup: each block as long as the shot runs.</text>
+</svg>
+<figcaption>Simplified Timeline Viewer. It loads the project the dashboard is set to. You cannot reorder or add shots here: the lineup is every dashboard shot, in edit order. Change the dashboard, then press <b>Refresh from Dashboard</b>.</figcaption>
+</figure>
+
+<h3>Check the lineup</h3>
+<ul>
+  <li>Every shot with a scan starts ticked. Untick a shot to leave it out of RV and the EDL. Ticks are not saved: <b>Refresh from Dashboard</b> ticks everything again.</li>
+  <li><b>Frames</b> and <b>FPS</b> come from the plate: a sequence's frames, a movie's own length and rate. Image sequences use the project's <b>Frame rate (sequences)</b>. A rate in <b>amber</b> differs from the rest of the lineup; ask the client before you export.</li>
+  <li><b>length unknown</b> means neither the plate nor the dashboard says how long the shot is. It is drawn hatched in the strip and gets a 100-frame placeholder in the EDL.</li>
+  <li>Where a department keeps versions (<code>Output\v002</code>, or <code>_v002</code> in the file name), the newest is used. The plate is always the newest scan version.</li>
+</ul>
+
+<h3>Render proxies</h3>
+<p>Heavy EXR frames stutter. A review proxy is a small MP4 that plays smoothly here and in RV.</p>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><path d="M8 24 L18 34 L36 12" fill="none" stroke="var(--ok)" stroke-width="4"/></svg><b>Tick the shots</b><span>Proxies are made for every department of the ticked shots that has frames, plate first.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="10" width="32" height="24" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><g fill="currentColor"><rect x="10" y="14" width="3" height="3"/><rect x="10" y="27" width="3" height="3"/><rect x="31" y="14" width="3" height="3"/><rect x="31" y="27" width="3" height="3"/></g></svg><b>Make review proxies</b><span>Greyed out until a shot is ticked. Slate counts what is missing or out of date and asks <strong>Make N proxies?</strong></span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="10" y="10" width="24" height="24" rx="3" fill="currentColor"/></svg><b>Stop, or read the summary</b><span><strong>Stop making proxies</strong> stops between shots. At the end: "3 proxies made, 1 already there, 2 failed"; failures are under Details.</span></li>
+</ol>
+<ul>
+  <li><b>Where they go:</b> into a <code>proxy</code> folder next to the frames. For a plate that is inside its scan version, for example <code>01_Scan\v001\EXR\proxy</code>.</li>
+  <li><b>What they are:</b> H.264 MP4, no sound, fitted inside 1920×1080 without cropping or stretching, at the project's frame rate. A missing frame holds the previous one. Movies get no proxy; they play as they are.</li>
+  <li>A proxy older than its render is made again. When everything is current, Slate says "Every proxy for the ticked shots is already there." and offers <b>Rebuild all</b>. Use Rebuild all after changing the project's frame rate.</li>
+  <li><b>Make proxy</b> under the player makes one for the shot you are watching, when it plays raw EXR, DPX or TIFF frames.</li>
+</ul>
+<div class="note warn"><b>When a proxy fails</b>Each proxy gets a minute plus 2 seconds per frame, so long shots have time; only a proxy that hangs is stopped and counted as failed. Open Details to see which. If the message says ffmpeg was not found, no proxies can be made on this PC: raise an IT Support ticket.</div>
+
+<h3>Open in RV</h3>
+<p><b>Open in RV</b> plays the ticked shots in RV, in edit order, showing the <b>Layer</b> chosen beside the player. A shot without that render shows its plate. With <b>Use proxies in RV</b> ticked (the default), an up-to-date proxy plays instead of the frames. Each press opens a new RV window.</p>
+<p>Inside RV, the <b>Slate</b> menu has <b>Approve Current Shot</b>, <b>Retake Current Shot</b> and <b>Send Note on This Frame...</b>. It needs the VFX Dashboard open on that project, and a role that may edit the dashboard.</p>
+<ul>
+  <li>When Slate can tell which waiting version you were watching (from its folder or its <code>vNNN</code>), the verdict is saved on that version, as in the Review queue: "RV: SH010 v002 set to Approved." The version leaves the Review queue, and the shot's status changes as a pending edit for you to save.</li>
+  <li>Otherwise the verdict goes on the shot as a pending edit: "RV: SH010 marked Approved. Not saved yet - save it in the VFX Dashboard."</li>
+  <li>A note with no verdict is saved on the version ("RV: note saved on SH010 v002.") or, when no version can be told, reported as "RV: SH010 given a note…".</li>
+</ul>
+<div class="note bad"><b>"RV is not installed on this machine, or could not start - tell IT."</b>RV comes with Slate Studio. This message also appears when the shot's media is not where Slate expects it. Check the project share is connected, then raise an IT Support ticket with the shot name.</div>
+
+<h3>Export EDL: one per reel, and one of every reel</h3>
+<figure>
+<svg viewBox="0 0 900 250" role="img" aria-label="Export EDL takes the ticked shots of one layer and writes one CMX 3600 EDL per reel and one with every reel, into the project's editorial lineups folder. Each EDL starts at 01:00:00:00. Each event names its clip and its source file. A sequence keeps its frame numbers as source timecode.">
+  <defs><marker id="ea" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+  <rect x="10" y="70" width="190" height="90" rx="8" fill="var(--studio-soft)" stroke="var(--studio)" stroke-width="2"/>
+  <g fill="currentColor" text-anchor="middle"><text x="105" y="100" font-size="14" font-weight="600">Ticked shots</text><text x="105" y="122" font-size="12">Layer: Comp</text><text x="105" y="140" font-size="12">(plate where no Comp yet)</text></g>
+  <g stroke="currentColor" stroke-width="2.5" fill="none" marker-end="url(#ea)"><path d="M200 100 C260 100 260 50 312 50"/><line x1="200" y1="115" x2="312" y2="115"/><path d="M200 130 C260 130 260 180 312 180"/></g>
+  <text x="256" y="215" text-anchor="middle" font-size="12" fill="currentColor" font-weight="600">Export EDL</text>
+  <g stroke-width="2"><rect x="315" y="30" width="250" height="40" rx="6" fill="var(--panel)" stroke="currentColor"/><rect x="315" y="95" width="250" height="40" rx="6" fill="var(--panel)" stroke="currentColor"/><rect x="315" y="160" width="250" height="40" rx="6" fill="var(--server-soft)" stroke="var(--ok)"/></g>
+  <g font-size="12" font-family="Consolas, monospace" fill="currentColor"><text x="327" y="55">KLC_R01_comp.edl</text><text x="327" y="120">KLC_R02_comp.edl</text><text x="327" y="185">KLC_All_Reels_comp.edl</text></g>
+  <g fill="currentColor" font-size="12"><text x="590" y="44" font-weight="600">Saved in</text><text x="590" y="62" font-family="Consolas, monospace">&lt;project&gt;\editorial\lineups</text>
+  <text x="590" y="96" font-weight="600">Inside each EDL</text><text x="590" y="114">CMX 3600, non-drop frame</text><text x="590" y="132">record starts at 01:00:00:00</text><text x="590" y="150">* FROM CLIP NAME and * SOURCE FILE</text><text x="590" y="168">for relinking in Resolve, Premiere, Avid</text><text x="590" y="186">frame 1001 = source TC 00:00:41:17 at 24</text></g>
+</svg>
+<figcaption>One click writes both kinds. A file with the same name is replaced without asking. A shot with no reel goes in "Unsorted".</figcaption>
+</figure>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><g stroke="currentColor" stroke-width="3" fill="none"><rect x="6" y="10" width="32" height="24" rx="3"/><line x1="6" y1="18" x2="38" y2="18"/></g></svg><b>Choose the Layer, tick the shots</b><span><strong>Layer</strong> beside the player: Scan for plates, Comp for comps, and so on. Ticked shots hidden by a filter still go in.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M22 6 v22 M12 18 l10 10 l10 -10" fill="none" stroke="currentColor" stroke-width="3"/><line x1="8" y1="38" x2="36" y2="38" stroke="currentColor" stroke-width="3"/></svg><b>Export EDL</b><span>The <strong>EDL written</strong> window says how many shots and reels, and what it left out.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M6 12 h12 l4 4 h16 v20 h-32 z" fill="none" stroke="currentColor" stroke-width="3"/></svg><b>Open folder</b><span>Or <strong>Copy path</strong>, and send the files to editorial.</span></li>
+</ol>
+<p>The EDL's frame rate is the most common rate among its shots. Shots at another rate are still written, and the summary counts them. Shots with no scan on disk are left out and listed under "No scan on disk yet, so left out:".</p>
+</section>
+<!-- ============================================================ -->
+<section class="studio">
+<h2 id="schedule">Scheduling: the plan on the calendar</h2>
+<p class="lede">Milestones for every project: turnovers, first passes, reviews, deliveries. Who owns them, what waits on what, and where they sit on the calendar.</p>
+
+<p>Open <b>Scheduling</b> in the sidebar. The same plan has three views. Search, the <b>Project</b>, <b>Status</b> and <b>Owner</b> filters and <b>Show archived projects</b> work in all three.</p>
+<div class="tablewrap"><table>
+  <tr><th>View</th><th>What you see</th></tr>
+  <tr><td><b>Table</b></td><td>Every milestone with its project, what it depends on, dates, status, owner and department. Click a heading to sort.</td></tr>
+  <tr><td><b>Timeline</b></td><td>A Gantt chart: one bar per milestone, grouped by project.</td></tr>
+  <tr><td><b>People</b></td><td>One lane per person: the milestones they own, their work from the VFX Dashboard, and their approved leave. Read-only.</td></tr>
+</table></div>
+
+<figure>
+<svg viewBox="0 0 900 330" role="img" aria-label="The Scheduling Timeline view: the zoom controls Day, Week, Month, Fit, Today, PNG and a question mark sit in the top-left corner. Bars show milestones by project. A grey arrow runs from a milestone to the one that waits on it; a red arrow means the second starts before the first ends. Weekends are shaded, a holiday is shaded amber, and a vertical line marks today.">
+  <defs><marker id="sa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
+  <marker id="sb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--bad)"/></marker></defs>
+  <rect x="10" y="10" width="880" height="300" rx="10" fill="none" stroke="currentColor" stroke-width="2"/>
+  <!-- controls -->
+  <g stroke="currentColor" stroke-width="1.5" fill="var(--panel)">
+    <rect x="24" y="22" width="44" height="24" rx="4"/><rect x="72" y="22" width="52" height="24" rx="4"/><rect x="128" y="22" width="56" height="24" rx="4"/><rect x="188" y="22" width="36" height="24" rx="4"/><rect x="228" y="22" width="28" height="24" rx="4"/><rect x="260" y="22" width="28" height="24" rx="4"/><rect x="292" y="22" width="24" height="24" rx="4"/>
+  </g>
+  <g fill="currentColor" font-size="12" text-anchor="middle"><text x="46" y="38">Day</text><text x="98" y="38">Week</text><text x="156" y="38">Month</text><text x="206" y="38">Fit</text></g><g stroke="currentColor" stroke-width="1.5" fill="none"><rect x="235" y="28" width="14" height="12" rx="1"/><line x1="235" y1="32" x2="249" y2="32"/><path d="M274 27 v9 M270 32 l4 4 l4 -4 M268 40 h12"/></g><g fill="currentColor" font-size="11"><text x="330" y="38" fill="var(--text-dim)">today · Export PNG… · legend</text><text x="304" y="38">?</text></g>
+  <!-- weekend shading and holiday -->
+  <g fill="var(--raised)"><rect x="330" y="60" width="40" height="236"/><rect x="610" y="60" width="40" height="236"/></g>
+  <rect x="470" y="60" width="20" height="236" fill="var(--ops-soft)"/>
+  <text x="480" y="292" text-anchor="middle" font-size="11" fill="var(--ops)">holiday</text>
+  <text x="350" y="292" text-anchor="middle" font-size="11" fill="currentColor">weekly off</text>
+  <!-- today line -->
+  <line x1="540" y1="56" x2="540" y2="300" stroke="var(--bad)" stroke-width="2"/>
+  <text x="546" y="70" font-size="12" fill="var(--bad)" font-weight="600">today</text>
+  <!-- project rows -->
+  <g fill="currentColor" font-size="13" font-weight="600"><text x="24" y="92">▾ KLC</text><text x="24" y="212">▾ MYSHOW</text></g>
+  <g fill="currentColor" font-size="12"><text x="40" y="120">Turnover R01</text><text x="40" y="150">First pass R01</text><text x="40" y="180">Client review</text><text x="40" y="240">Turnover</text><text x="40" y="270">Delivery</text></g>
+  <g stroke-width="2">
+    <rect x="180" y="106" width="120" height="20" rx="4" fill="var(--server-soft)" stroke="var(--ok)" opacity="0.6"/>
+    <rect x="310" y="136" width="250" height="20" rx="4" fill="var(--studio-soft)" stroke="var(--studio)"/>
+    <rect x="530" y="166" width="90" height="20" rx="4" fill="var(--panel)" stroke="var(--idle)"/>
+    <rect x="200" y="226" width="200" height="20" rx="4" fill="var(--studio-soft)" stroke="var(--bad)" stroke-width="3"/>
+    <rect x="380" y="256" width="160" height="20" rx="4" fill="var(--panel)" stroke="var(--idle)"/>
+  </g>
+  <g stroke="currentColor" stroke-width="1.8" fill="none" marker-end="url(#sa)"><path d="M300 116 C306 116 304 146 308 146"/><path d="M560 146 C566 146 524 176 528 176"/></g>
+  <g stroke="var(--bad)" stroke-width="2" fill="none" marker-end="url(#sb)"><path d="M400 236 C410 236 370 266 378 266"/></g>
+  <g font-size="11" fill="currentColor"><text x="700" y="100">faded = Completed</text><text x="700" y="122">red outline = overdue</text><text x="700" y="144">arrow = waits on</text><text x="700" y="166" fill="var(--bad)">red arrow = starts</text><text x="700" y="182" fill="var(--bad)">before it may</text></g>
+</svg>
+<figcaption>Timeline view. The calendar button scrolls to today, the download button is <b>Export PNG…</b>, and <b>?</b> explains every colour. Click a project name to fold it. Ctrl + mouse wheel also zooms. Hover an amber holiday to see its name. A PNG of the Timeline or People view is the only export; the milestone table has none.</figcaption>
+</figure>
+
+<h3>Add a milestone</h3>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="14" width="32" height="16" rx="4" fill="currentColor"/><text x="22" y="26" text-anchor="middle" font-size="12" fill="var(--panel)" font-weight="700">+</text></svg><b>Press Add milestone</b><span>Choose the project. Type a name (up to 120 characters, not used before in that project).</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="8" width="32" height="30" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="6" y1="16" x2="38" y2="16" stroke="currentColor" stroke-width="3"/></svg><b>Dates, status, owner</b><span>Start, End, Status and what it depends on (same project only). Optionally an Owner, a Department and the Effort in artist days.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M8 24 L18 34 L36 12" fill="none" stroke="var(--ok)" stroke-width="4"/></svg><b>Add milestone</b><span>The button at the foot of the form. It stays off, and its tooltip says why, until the milestone makes sense.</span></li>
+</ol>
+<p>Picking what it depends on moves <b>Start</b> to the working day after that milestone ends, and says so. The form checks as you type. The end cannot be before the start. Nothing can start before the milestone it waits on has ended. A date on a weekend or a holiday is pointed out, but allowed. Giving the milestone an owner who has approved leave in those dates is allowed too, but the form tells you, so it is your decision and not a surprise.</p>
+<p>To change a milestone, double-click it, or select it and press <b>Edit…</b>. Opening a milestone never changes it. <b>Delete…</b> asks first, and the message afterwards has <b>Undo</b>. Milestones that waited on a deleted one are kept; they simply stop depending on it.</p>
+
+<h3>Status</h3>
+<p>Select one or more milestones and press <b>Change status…</b>. The statuses are <b>Scheduled</b>, <b>In Progress</b>, <b>On Hold</b>, <b>Blocked</b>, <b>Completed</b> and <b>Cancelled</b>. Slate records the date a milestone was completed. Marking something <b>Completed</b> while the milestone it waits on is still open asks first. <b>Undo</b> is offered for a few seconds afterwards.</p>
+
+<h3>Shift dates: when the client moves a date</h3>
+<p>Select the milestone and press <b>Shift dates…</b>, or drag its bar on the Timeline (drag an edge to move only the start or only the end). Nothing is saved until you have seen the preview. It lists every milestone that moves with it, the ones that stay and why, and any dependency the move would break.</p>
+<div class="tablewrap"><table>
+  <tr><th>You choose</th><th>What it means</th></tr>
+  <tr><td>Working days or calendar days</td><td>Working days step over the weekly offs and the studio-wide holidays.</td></tr>
+  <tr><td>How far to push what follows</td><td>Only as far as it has to (any slack is kept), or by the same amount.</td></tr>
+  <tr><td>Completed and cancelled milestones</td><td>Normally they stay where they are. You can tick them to move too.</td></tr>
+</table></div>
+<p>Breaking a dependency needs its own tick. Everything is saved together, all or nothing, and <b>Undo</b> puts the old dates back.</p>
+<div class="note warn"><b>Which days are working days</b>The weekly offs come from Studio policy (Sunday only, unless your studio changed it, so Saturday counts as a working day). Shifting never looks at anyone's leave. Only holidays for the whole studio (place "All") are non-working days in Scheduling. A holiday of one office only is not skipped, because projects do not belong to an office yet.</div>
+
+<h3>People: who is overbooked, who is away</h3>
+<p>The <b>People</b> view draws each person's milestones and their dashboard work (artist, department, bid days and target date). Their approved leave is shaded as away. The list beside it names every problem: <b>work planned while somebody is away</b>, and <b>days booked with more than a day of work</b>. Click a problem to jump to that person and day. A dashboard task is drawn ending on its target date, as many working days long as its bid days; tasks without a target date or bid days are only counted. A milestone counts towards overbooking only if it has an <b>Effort</b>. The list only warns.</p>
+<div class="note"><b>Only approved leave shows</b>A leave request still pending is not on the plan. Chase the approver; do not plan around a request that may be refused. To change who does what, change the shot on the VFX Dashboard. The People view only reads it.</div>
+<p><b>Who can change the plan:</b> anyone whose role opens Scheduling can see it. Changing it needs <b>Edit the schedule</b>; without it the screen says <b>Read-only</b> and a double-click opens a milestone to read. Every change is kept in the history.</p>
+</section>
+
+<!-- ============================================================ -->
+<section class="studio">
+<h2 id="bidding">Bidding: pricing the job</h2>
+<p class="lede">What each job is priced at before it is agreed, every revision of that price, and, once it is won, how the real work is tracking against it.</p>
+
+<figure>
+<svg viewBox="0 0 900 230" role="img" aria-label="A bid starts as Draft. Mark sent makes it Sent. Won or Lost records the client's answer. New revision makes a draft v2; when v2 is decided, v1 becomes Superseded. Archive hides a bid from the list and the pipeline but keeps it.">
+  <defs><marker id="ba" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+  <g stroke-width="2">
+    <rect x="20" y="40" width="150" height="64" rx="8" fill="var(--panel)" stroke="var(--idle)"/>
+    <rect x="230" y="40" width="150" height="64" rx="8" fill="var(--panel)" stroke="var(--info)"/>
+    <rect x="440" y="10" width="150" height="56" rx="8" fill="var(--server-soft)" stroke="var(--ok)"/>
+    <rect x="440" y="80" width="150" height="56" rx="8" fill="var(--bad-soft)" stroke="var(--bad)"/>
+    <rect x="680" y="40" width="200" height="64" rx="8" fill="var(--panel)" stroke="var(--idle)" stroke-dasharray="5 4"/>
+  </g>
+  <g stroke="currentColor" stroke-width="2.5" fill="none" marker-end="url(#ba)">
+    <line x1="170" y1="72" x2="227" y2="72"/><line x1="380" y1="64" x2="437" y2="40"/><line x1="380" y1="80" x2="437" y2="106"/>
+  </g>
+  <g fill="currentColor" font-size="15" font-weight="600" text-anchor="middle">
+    <text x="95" y="68">Draft</text><text x="305" y="68">Sent</text><text x="515" y="36">Won</text><text x="515" y="106">Lost</text><text x="780" y="68">Superseded</text>
+  </g>
+  <g fill="currentColor" font-size="12" text-anchor="middle">
+    <text x="95" y="88">only a draft changes</text><text x="305" y="88">with the client</text><text x="515" y="54">who and when kept</text><text x="515" y="124">who and when kept</text><text x="780" y="88">a newer revision won/lost</text>
+  </g>
+  <g fill="currentColor" font-size="11" text-anchor="middle"><text x="200" y="30">Mark sent</text></g><line x1="200" y1="34" x2="200" y2="66" stroke="currentColor" stroke-width="1" stroke-dasharray="2 2"/>
+  <g stroke="var(--studio)" stroke-width="2" fill="none" stroke-dasharray="6 4" marker-end="url(#ba)"><path d="M590 120 C640 170 760 170 780 108"/></g>
+  <text x="690" y="182" text-anchor="middle" font-size="12" fill="var(--studio)">New revision (v2) decided: v1 becomes Superseded</text>
+  <g fill="currentColor" font-size="13"><text x="20" y="212">A revised Won bid stays <tspan font-weight="600">Won</tspan> until v2 is decided; the list says "Won – v2 in progress".</text></g>
+</svg>
+<figcaption>Only the newest revision can be revised or decided. <b>Reopen as draft</b> (under <b>More</b>) puts a bid back to draft. A bid that was ever sent or decided can never be deleted.</figcaption>
+</figure>
+
+<h3>Build a bid</h3>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="14" width="32" height="16" rx="4" fill="currentColor"/><text x="22" y="26" text-anchor="middle" font-size="12" fill="var(--panel)" font-weight="700">+</text></svg><b>New bid, then add lines</b><span>Choose the project and the client. Each line: shot and reel (both optional), department, complexity, number of shots, days per shot, day rate, note.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="8" width="32" height="28" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="6" y1="18" x2="38" y2="18" stroke="currentColor" stroke-width="2"/><line x1="20" y1="8" x2="20" y2="36" stroke="currentColor" stroke-width="2"/></svg><b>Add shots from tracker…</b><span>One line per shot already on the dashboard. Omitted and cancelled shots are left out.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M8 24 L18 34 L36 12" fill="none" stroke="var(--ok)" stroke-width="4"/></svg><b>Create bid</b><span>Stays off, saying why, until every line has a description, days and a day rate.</span></li>
+</ol>
+<p>Picking a complexity fills in the studio's days per shot for it; you can still change it on the line. The editor totals as you type: artist days, cost, margin, price, discount, subtotal, tax and the total the client pays. <b>Enter</b> moves to the next field. It never saves the bid.</p>
+<div class="tablewrap"><table>
+  <tr><th>Word</th><th>Means</th></tr>
+  <tr><td><b>Price</b></td><td>The amount <b>before</b> the discount.</td></tr>
+  <tr><td><b>Subtotal</b></td><td>The amount <b>after</b> the discount. The bid list shows this.</td></tr>
+  <tr><td><b>below cost</b></td><td>The discount is bigger than the margin. The editor warns, and Save asks first.</td></tr>
+</table></div>
+
+<h3>Money, currency and tax</h3>
+<p>A bid is in rupees (<b>INR</b>; the currency list shows the rupee sign) unless the studio changed it, or in the client's currency: US dollars, euros or pounds. Totals in different currencies are never added together. Rupee bids start with GST at the studio rate (18% unless changed); other currencies start with no tax. Both can be changed on the bid. Changing the currency of a draft asks whether to use the studio's day rate in the new currency, so 8,000 rupees a day does not become 8,000 dollars a day. Bids made before currencies were recorded are in US dollars.</p>
+
+<h3>Send, win, lose, revise</h3>
+<ul>
+  <li><b>Mark sent</b> records when it went to the client. <b>Won</b> and <b>Lost</b> record the answer, with who and when, and ask first. All three offer <b>Undo</b>.</li>
+  <li>Won and Lost need the <b>Approve bids</b> ability. <b>Nobody decides a bid they made themselves</b>, except Admin and Developer.</li>
+  <li>A sent or decided bid opens read-only. To change it, press <b>New revision</b>: a draft copy (v2, v3…). The earlier revision is kept exactly as it was. Tick <b>All revisions</b> to see old ones.</li>
+  <li><b>More</b> holds <b>Compare revisions…</b> (lines added, removed and changed, and how the price moved), <b>Duplicate to project…</b>, <b>Export bid as PDF…</b>, <b>Export list…</b> and <b>Create shots on the dashboard…</b>.</li>
+</ul>
+<p><b>The cards.</b> <b>Open pipeline</b> counts draft and sent work, but only the newest open bid per project, because several drafts for one job are versions of one price. <b>Won</b> counts every won bid. Archived and superseded bids count in neither.</p>
+
+<h3>After the bid is won</h3>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="8" width="32" height="28" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="6" y1="18" x2="38" y2="18" stroke="currentColor" stroke-width="2"/><line x1="20" y1="8" x2="20" y2="36" stroke="currentColor" stroke-width="2"/></svg><b>Create shots on the dashboard…</b><span>Under More. Adds the shots the bid names, with each department's bid days. Shots already there are left exactly as they are.</span></li>
+  <li><svg viewBox="0 0 44 44"><g fill="currentColor"><rect x="8" y="24" width="6" height="12"/><rect x="19" y="16" width="6" height="20"/><rect x="30" y="8" width="6" height="28"/></g></svg><b>Watch Tracking</b><span>Select the won bid. Tracking below the list compares it with the dashboard, department by department.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M22 6 v22 M12 18 l10 10 l10 -10" fill="none" stroke="currentColor" stroke-width="3"/><line x1="8" y1="38" x2="36" y2="38" stroke="currentColor" stroke-width="3"/></svg><b>Export…</b><span>Saves the tracking figures as numbers, for a spreadsheet.</span></li>
+</ol>
+<div class="tablewrap"><table>
+  <tr><th>Tracking column</th><th>Where the number comes from</th></tr>
+  <tr><td>Bid</td><td>The days on the bid.</td></tr>
+  <tr><td>Planned</td><td>The bid days on the dashboard's department tasks.</td></tr>
+  <tr><td>Delivered</td><td>Days of tasks in a done status. <b>Delivered %</b> is the share of the bid delivered.</td></tr>
+  <tr><td>Actual</td><td>The <b>Actual</b> days typed in the dashboard's shot panel. A dash there means "not recorded".</td></tr>
+</table></div>
+<p>A department planned or spent above its bid is red. Tracking also lists shots that were bid but are not on the dashboard, and dashboard shots the bid never priced. Omitted shots are left out.</p>
+<div class="note"><b>Fill in Actual days</b>Tracking can only compare what was recorded. Ask leads to fill in each department's <strong>Actual</strong> days in the shot panel when a shot is finished. The gap between bid and actual is the best input to the next bid, which is why sent bids are never deleted.</div>
+<p><b>Bidding settings…</b> (under More, for people who approve bids) holds the studio's figures: days per shot by complexity, the default and highest margin, the day rate per currency, the GST rate, and the <b>studio name</b> printed on bid PDFs. The people who approve bids change them, the same as in Settings &rarr; <b>Studio currency, rates and hours</b>. Bids already made keep their own figures. A bid PDF leaves out cost and margin, and says it is valid for 30 days.</p>
+<p><b>Who can do what:</b> making and changing bids needs <b>Edit bids</b>; without it the screen says <b>Read-only</b>. Won and Lost need <b>Approve bids</b> (Production Head, Admin, Developer by default). Only an Admin or Developer can delete a draft for good (you type <code>DELETE</code>), and only one never sent, decided or revised.</p>
+<div class="note"><b>Who has Bidding</b>Production Head, Production Coordinator and Producer have the Bidding screen and <strong>Edit bids</strong>, on new studios and on studios upgraded to 2.2.0. If your studio took Bidding off your role, ask an admin.</div>
+</section>
+<!-- ============================================================ -->
+<section class="ops">
+<h2 id="office">The production office in Slate Operations</h2>
+<p class="lede">Your own attendance and leave, the team's leave if you are the Production Head, and project rest after a delivery.</p>
+
+<p>Slate Operations shows the <b>PEOPLE</b> group: <b>Attendance</b>, <b>Leave</b> and, for HR and IT only, <b>Joining &amp; Leaving</b>. Production roles see Attendance, Leave and IT Support like everyone else. Closing Slate or signing out never punches you out.</p>
+
+<h3>Production Head: the first leave decision</h3>
+<p>The Production Head role can approve leave at the first stage, for the people who report to them. Open <b>Leave</b> &rarr; <b>Queue</b>. The filter starts on <b>Waiting on me</b>.</p>
+<ul>
+  <li>The <b>Days</b> column is what the request really costs; Slate has already applied holidays and the sandwich rule, and the person saw the same figure before sending. <b>Balance after</b> shows what is left.</li>
+  <li>Your question is only: <b>can the job spare them those days?</b> Check the delivery dates in Scheduling. The <b>Away today</b> card counts approved leave running now.</li>
+  <li><b>Approve</b> sends the request on to HR for the final decision. <b>Reject</b> needs a reason. Either way the person is told in the bell, with the reason for a rejection, and when you approve, the HR approvers are told a request is waiting.</li>
+  <li>A request already with HR shows <b>HR</b> in <b>Waiting on</b>, and your buttons stay off.</li>
+</ul>
+<p>In Attendance, a day covered by a request nobody has decided yet shows as <b>Leave pending</b> (LP in the export); it still counts as absent until it is approved. Production Coordinator and Producer roles do not approve leave. If your team's requests reach nobody, HR decides them.</p>
+
+<h3>Project rest after a delivery</h3>
+<figure>
+<svg viewBox="0 0 900 200" role="img" aria-label="After a hard delivery, production tells HR who gets rest and which dates. HR opens Leave, Queue, HR tools, Grant project rest, picks the person, From and To dates and a reason, and presses Grant. The rest is approved leave that is not taken from the paid leave balance, and it shows as away in the Scheduling People view.">
+  <defs><marker id="oa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+  <g stroke-width="2">
+    <rect x="10" y="40" width="200" height="90" rx="8" fill="var(--studio-soft)" stroke="var(--studio)"/>
+    <rect x="250" y="40" width="300" height="90" rx="8" fill="var(--ops-soft)" stroke="var(--ops)"/>
+    <rect x="590" y="40" width="300" height="90" rx="8" fill="var(--server-soft)" stroke="var(--ok)"/>
+  </g>
+  <g stroke="currentColor" stroke-width="2.5" fill="none" marker-end="url(#oa)"><line x1="210" y1="85" x2="247" y2="85"/><line x1="550" y1="85" x2="587" y2="85"/></g>
+  <g fill="currentColor" font-size="14" font-weight="600" text-anchor="middle"><text x="110" y="68">Production</text><text x="400" y="68">HR: Grant project rest</text><text x="740" y="68">Approved rest</text></g>
+  <g fill="currentColor" font-size="12" text-anchor="middle">
+    <text x="110" y="92">tells HR who,</text><text x="110" y="110">and which dates</text>
+    <text x="400" y="92">Leave → Queue → HR tools →</text><text x="400" y="110">Person, From, To, Reason → Grant</text>
+    <text x="740" y="92">not from the paid leave balance;</text><text x="740" y="110">shows as away in Scheduling</text>
+  </g>
+  <text x="450" y="170" text-anchor="middle" font-size="13" fill="currentColor">The window shows how many working days the dates give, for example "3 working days of project rest".</text>
+</svg>
+<figcaption>Project rest cannot be requested by the person; only HR grants it, and only when Studio policy says "HR may grant project rest at the end of a project".</figcaption>
+</figure>
+
+<h3>Joining &amp; Leaving</h3>
+<p>The checklist has an HR half and an IT half. No line belongs to production, and production roles do not see the screen. When a freelancer's last day on the show is decided, tell HR: HR starts the leaving checklist, and IT collects every machine the person holds.</p>
+
+<h3>Your settings</h3>
+<p><b>Settings</b> &rarr; <b>Your preferences</b> holds three things worth setting once:</p>
+<ul>
+  <li><b>Project root</b>: the project folder Build &amp; Ingest opens with.</li>
+  <li><b>Start Build &amp; Ingest in dry run</b>: Dry run starts ticked, so nothing is copied by mistake.</li>
+  <li><b>Remember last folders</b>.</li>
+</ul>
+<p>Settings has one <b>Save changes</b> for the whole page. <b>Workspace Info</b> (bottom of the sidebar) shows the version, database and shared folder, with <b>Copy details</b>: paste it into every IT Support ticket.</p>
+</section>
+
+<!-- ============================================================ -->
+<h2 id="help">When something goes wrong</h2>
+<div class="tablewrap"><table>
+  <tr><th>What you see</th><th>What it means</th><th>What to do</th></tr>
+  <tr><td>Build &amp; Ingest: <b>Not ready</b></td><td>A field is empty or wrong.</td><td>Read the line under it, or point at the greyed button. It names the first thing to fix.</td></tr>
+  <tr><td>"… can only use letters, digits, _ - and . (English A-Z only) …"</td><td>The project code or a shot name breaks the naming rule.</td><td>Use A–Z, 0–9, <code>_ - .</code>, no spaces, up to 64 characters. In the check, double-click the shot name to change it.</td></tr>
+  <tr><td>The check: a red row, "Two different folders would both become …"</td><td>Two folders on the drive would land on one shot.</td><td>Double-click one shot name and rename it. The copy button stays off until you do.</td></tr>
+  <tr><td><b>Ingest already running</b></td><td>Someone holds this project's ingest lock.</td><td>Wait. If you are sure their ingest is not running, the person who started it, an admin or a developer can clear it; anyone can after 6 hours untouched.</td></tr>
+  <tr><td>"Not enough free space on …"</td><td>The disk cannot hold the delivery plus 10%.</td><td>Free space or choose another projects folder. Tell IT if the server disk is full.</td></tr>
+  <tr><td><b>Short delivery</b></td><td>Frames are missing in some sequences on the client drive.</td><td><b>Open report</b>, and send the "Sequences short of frames" list to the client.</td></tr>
+  <tr><td><b>Finished with problems</b> or <b>Stopped</b></td><td>Some files did not come in.</td><td><b>Retry N failed files</b>, or <b>Finish the stopped run</b>. Both work after a restart.</td></tr>
+  <tr><td>CAP Rename: "Nothing was renamed: … could not be (in use?)"</td><td>A file is open in Nuke, RV or Explorer's preview.</td><td>Close it, then <b>Rename files</b> again. A rename is all or nothing.</td></tr>
+  <tr><td>Undo last rename: "… were moved or renamed again, so nothing was changed."</td><td>The files changed since the rename.</td><td>Put them back by hand, or choose <b>Forget this rename</b> to undo an older one.</td></tr>
+  <tr><td>Stock Viewer has no <b>Ingest a folder…</b> button</td><td>Your role does not have <b>Ingest stock</b>.</td><td>Ask a lead or supervisor to ingest, or ask an admin to add the ability to your role.</td></tr>
+  <tr><td>Dashboard: <b>Someone else saved these shots</b></td><td>Another person saved one of the shots you edited.</td><td>Read both sides. Press <b>Keep theirs, re-apply mine</b>, check, then save.</td></tr>
+  <tr><td>Dashboard: <b>⚠</b> before a shot name</td><td>Someone changed a shot you have unsaved edits on.</td><td>Check the shot before you save.</td></tr>
+  <tr><td>Dashboard: <b>Backup failing</b></td><td>The Excel backup is open in Excel somewhere, or the share is down.</td><td>Close the sheet everywhere, then <b>Export to Excel (backup now)</b>. Your save itself is safe in the database.</td></tr>
+  <tr><td>Red banner: "Can't reach the studio database - the dashboard is read-only …"</td><td>The server cannot be reached.</td><td>Press <b>Try again</b>. If it stays, tell IT. Nothing you see is lost.</td></tr>
+  <tr><td>Dashboard: <b>No shots match</b></td><td>Filters hide every shot.</td><td>Press the chip's <b>Clear</b>, or the button under the message.</td></tr>
+  <tr><td>Timeline: "No shots loaded - click Refresh from Dashboard."</td><td>No project is loaded yet.</td><td>Open the project on the VFX Dashboard, then <b>Refresh from Dashboard</b>.</td></tr>
+  <tr><td>"RV is not installed on this machine, or could not start - tell IT."</td><td>RV is missing, or the shot's media is not on the share.</td><td>Check the project share is connected; then raise an IT Support ticket with the shot name.</td></tr>
+  <tr><td>Proxies: "… 2 failed"</td><td>A proxy could not be made, or ffmpeg hung and was stopped.</td><td>Open Details. Play those shots from their frames in RV, and raise an IT Support ticket with the shot names.</td></tr>
+  <tr><td>"ffmpeg was not found, so no proxies can be made …"</td><td>A program Slate needs is missing on this PC.</td><td>Raise an IT Support ticket. Include Workspace Info.</td></tr>
+  <tr><td>"RV: … marked Approved, but no matching shot is open in the dashboard."</td><td>The RV verdict found no open shot to apply to.</td><td>Open that project on the VFX Dashboard and give the verdict again.</td></tr>
+  <tr><td>Scheduling: <b>Read-only</b></td><td>Your role lacks <b>Edit the schedule</b>.</td><td>Ask an admin, or ask the coordinator to make the change.</td></tr>
+  <tr><td>Milestone: Save is off, "It starts before "…" ends …"</td><td>The milestone starts before the one it waits on has ended.</td><td>Move the start, choose another dependency, or use <b>Shift dates…</b> on the earlier milestone.</td></tr>
+  <tr><td>No <b>Bidding</b> in the sidebar</td><td>Your role lacks the Bidding screen.</td><td>Ask an admin to add it in Users &amp; Roles.</td></tr>
+  <tr><td>Bid: "You made this bid, so somebody else has to decide it."</td><td>Nobody decides their own bid, except Admin and Developer.</td><td>Ask another person with <b>Approve bids</b> to mark it Won or Lost.</td></tr>
+  <tr><td>Bid: <b>Create bid</b> is off</td><td>A line is missing a description, shots, days or a day rate, or the margin is over the limit.</td><td>Read the red line in the editor, or point at the greyed button. It names the line to fix.</td></tr>
+</table></div>
+
+<div class="note"><b>Raising a ticket</b>Use IT Support rather than a message: a ticket carries a clock. Say which screen, which project and shot, what you pressed and what the message said. Paste <strong>Copy details</strong> from Workspace Info.</div>
+
+<p style="margin-top:16px;color:var(--text-dim);font-size:14px">Slate BETA 2.2.0 &middot; Slate for Production &middot; This page can be printed. Each part starts on a new page.</p>
+</div>
+
+</html>

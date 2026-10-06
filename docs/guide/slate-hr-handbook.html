@@ -1,0 +1,995 @@
+<title>Slate for HR</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --ground: #F5F4F0; --panel: #FFFFFF; --raised: #ECEAE4; --line: #D3D0C7; --line-soft: #E5E2DA;
+    --text: #1B1B1F; --text-2: #4A4A52; --text-dim: #77767F;
+    --studio: #2A7A8C; --studio-soft: #DCEEF2;
+    --ops: #A8761E; --ops-soft: #F6ECD6;
+    --server: #2F8B5F; --server-soft: #DDF0E5;
+    --bad: #B9433F; --bad-soft: #F7DEDD; --warn: #A8761E; --ok: #2F8B5F; --info: #3F7DA8; --idle: #8A8883;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0D0D0F; --panel: #16161A; --raised: #1D1D22; --line: #2C2C34; --line-soft: #212128;
+      --text: #E8E6E1; --text-2: #B4B1AA; --text-dim: #87857F;
+      --studio: #3EA8BF; --studio-soft: #12343B; --ops: #D9A441; --ops-soft: #3A2C10; --server: #5FBF8F; --server-soft: #12352A;
+      --bad: #D9635F; --bad-soft: #3B1C1B; --warn: #D9A441; --ok: #5FBF8F; --info: #6BA4C9; --idle: #6E6C67;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0D0D0F; --panel: #16161A; --raised: #1D1D22; --line: #2C2C34; --line-soft: #212128;
+    --text: #E8E6E1; --text-2: #B4B1AA; --text-dim: #87857F;
+    --studio: #3EA8BF; --studio-soft: #12343B; --ops: #D9A441; --ops-soft: #3A2C10; --server: #5FBF8F; --server-soft: #12352A;
+    --bad: #D9635F; --bad-soft: #3B1C1B; --warn: #D9A441; --ok: #5FBF8F; --info: #6BA4C9; --idle: #6E6C67;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--ground); color: var(--text); font-family: Inter, "Segoe UI", system-ui, sans-serif; font-size: 17px; line-height: 1.6; padding-inline: clamp(16px, 4vw, 48px); padding-block: 32px 80px; }
+  .wrap { max-width: 960px; margin: 0 auto; }
+  h1, h2, h3, h4 { font-family: "Barlow Semi Condensed", Bahnschrift, "Segoe UI", sans-serif; text-wrap: balance; margin: 0; }
+  h1 { font-size: 46px; font-weight: 700; line-height: 1.05; }
+  h2 { font-size: 34px; font-weight: 700; margin-top: 72px; padding-top: 22px; border-top: 3px solid var(--line); }
+  h3 { font-size: 24px; font-weight: 600; margin-top: 40px; }
+  h4 { font-size: 18px; font-weight: 600; margin-top: 22px; }
+  p { max-width: 62ch; margin: 10px 0; }
+  .eyebrow { font-family: "Barlow Semi Condensed", Bahnschrift, sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 1.8px; text-transform: uppercase; color: var(--text-dim); }
+  .lede { font-size: 20px; color: var(--text-2); max-width: 60ch; }
+  code { font-family: Consolas, "Cascadia Mono", monospace; font-size: 15px; background: var(--raised); padding: 1px 6px; border-radius: 4px; }
+  ul, ol { max-width: 66ch; }
+  li { margin: 6px 0; }
+  a { color: var(--studio); }
+
+  /* Product colouring */
+  .studio h2, .studio h3 { color: var(--studio); }
+  .ops h2, .ops h3 { color: var(--ops); }
+  .server h2, .server h3 { color: var(--server); }
+
+  /* Cover cards */
+  .covers { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 28px; }
+  .cover { border-radius: 10px; padding: 20px 22px; color: var(--text); text-decoration: none; border: 2px solid var(--line); background: var(--panel); display: block; }
+  .cover.studio { border-color: var(--studio); background: var(--studio-soft); }
+  .cover.ops { border-color: var(--ops); background: var(--ops-soft); }
+  .cover.server { border-color: var(--server); background: var(--server-soft); }
+  .cover .who { font-size: 14px; color: var(--text-2); margin-top: 6px; }
+  .cover h3 { margin: 0; font-size: 26px; }
+  .cover svg { width: 56px; height: 56px; display: block; margin-bottom: 10px; }
+
+  /* Steps */
+  .steps { list-style: none; padding: 0; margin: 18px 0; counter-reset: s; max-width: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; }
+  .steps li { counter-increment: s; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 16px 16px 16px; position: relative; margin: 0; }
+  .steps li::before { content: counter(s); font-family: "Barlow Semi Condensed", Bahnschrift, sans-serif; font-weight: 700; font-size: 30px; line-height: 1; color: var(--text-dim); display: block; margin-bottom: 8px; }
+  .steps li b { display: block; font-size: 18px; margin-bottom: 4px; }
+  .steps li span { color: var(--text-2); font-size: 15px; }
+  .steps svg { width: 44px; height: 44px; display: block; margin-bottom: 8px; }
+
+  /* Callouts */
+  .note { border-left: 5px solid var(--info); background: var(--panel); padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 18px 0; max-width: 70ch; }
+  .note.bad { border-color: var(--bad); background: var(--bad-soft); }
+  .note.ok { border-color: var(--ok); }
+  .note.warn { border-color: var(--warn); }
+  .note b { display: block; font-family: "Barlow Semi Condensed", Bahnschrift, sans-serif; font-size: 18px; margin-bottom: 4px; }
+
+  /* Figures */
+  figure { margin: 22px 0; padding: 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  figure svg { width: 100%; height: auto; display: block; }
+  figcaption { margin-top: 10px; font-size: 15px; color: var(--text-2); max-width: 70ch; }
+  svg text { font-family: Inter, "Segoe UI", sans-serif; }
+
+  /* Tables */
+  .tablewrap { overflow-x: auto; margin: 14px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 16px; background: var(--panel); }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  th { font-family: "Barlow Semi Condensed", Bahnschrift, sans-serif; font-size: 14px; letter-spacing: 1px; text-transform: uppercase; color: var(--text-dim); }
+  .dot { display: inline-block; width: 14px; height: 14px; border-radius: 50%; vertical-align: -2px; margin-right: 6px; }
+
+  /* Sidebar mock */
+  .side { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; margin: 14px 0; }
+  .side .grp { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .side .grp .h { font-family: "Barlow Semi Condensed", Bahnschrift, sans-serif; font-size: 13px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 8px; }
+  .side .grp div.i { padding: 6px 0; border-top: 1px solid var(--line-soft); font-size: 16px; }
+  .side .grp div.i small { display: block; color: var(--text-2); font-size: 14px; }
+
+  .card-print { page-break-inside: avoid; }
+  @media print {
+    @page { size: A4; margin: 14mm 14mm 16mm; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body { background: #fff; color: #000; font-size: 13px; padding: 0; }
+    h2 { page-break-before: always; margin-top: 0; border: 0; }
+    h2, h3, h4 { break-after: avoid; }
+    figure, .steps li, .note { break-inside: avoid; }
+    tr { break-inside: avoid; }
+    .covers { grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .cover { break-inside: avoid; padding: 14px 16px; }
+    .cover h3 { font-size: 21px; }
+    .steps { grid-template-columns: repeat(4, 1fr); gap: 10px; }
+    .steps li { padding: 12px; }
+    .steps li b { font-size: 15px; }
+    .steps li span { font-size: 12.5px; }
+    .steps svg { width: 34px; height: 34px; }
+    .steps.six { grid-template-columns: repeat(3, 1fr); }
+    .tablewrap { break-inside: avoid; }
+    .tablewrap.long { break-inside: auto; }
+    h2#day { page-break-before: auto; margin-top: 36px; }
+    table { font-size: 13px; }
+    th, td { padding: 6px 10px; }
+    th { font-size: 12px; }
+    figcaption { font-size: 12.5px; }
+    a { color: inherit; text-decoration: none; }
+  }
+  @media (max-width: 480px) { h1 { font-size: 34px; } h2 { font-size: 28px; } }
+</style>
+
+<div class="wrap">
+
+<div class="eyebrow">Slate BETA 2.2.0 &middot; for HR</div>
+<h1 style="margin-top:8px">Slate for HR</h1>
+<p class="lede">Everything HR does in Slate Operations: leave, balances, comp off, attendance, holidays, the year end, joining and leaving, and people records. One action per step.</p>
+
+<div class="covers">
+  <a class="cover ops" href="#day">
+    <svg viewBox="0 0 56 56" role="img" aria-label="A window with a sidebar"><rect x="6" y="10" width="44" height="36" rx="4" fill="none" stroke="currentColor" stroke-width="3"/><line x1="20" y1="10" x2="20" y2="46" stroke="currentColor" stroke-width="3"/><line x1="26" y1="20" x2="44" y2="20" stroke="currentColor" stroke-width="3"/><line x1="26" y1="28" x2="40" y2="28" stroke="currentColor" stroke-width="3"/></svg>
+    <h3>Your day</h3>
+    <div class="who">Signing in, what HR sees, Home, your own leave.</div>
+  </a>
+  <a class="cover ops" href="#queue">
+    <svg viewBox="0 0 56 56" role="img" aria-label="A list with a tick"><line x1="8" y1="14" x2="34" y2="14" stroke="currentColor" stroke-width="3"/><line x1="8" y1="26" x2="34" y2="26" stroke="currentColor" stroke-width="3"/><line x1="8" y1="38" x2="26" y2="38" stroke="currentColor" stroke-width="3"/><path d="M34 38 L40 44 L50 30" fill="none" stroke="currentColor" stroke-width="4"/></svg>
+    <h3>The leave queue</h3>
+    <div class="who">Approve, reject, withdrawals, revoke. Supervisor first, you last.</div>
+  </a>
+  <a class="cover ops" href="#cost">
+    <svg viewBox="0 0 56 56" role="img" aria-label="A calendar"><rect x="8" y="12" width="40" height="36" rx="4" fill="none" stroke="currentColor" stroke-width="3"/><line x1="8" y1="22" x2="48" y2="22" stroke="currentColor" stroke-width="3"/><rect x="16" y="28" width="8" height="8" fill="currentColor"/><rect x="26" y="28" width="8" height="8" fill="currentColor"/><rect x="36" y="28" width="8" height="8" fill="currentColor"/></svg>
+    <h3>What leave costs</h3>
+    <div class="who">Balances, accrual, the sandwich rule, leave types.</div>
+  </a>
+  <a class="cover ops" href="#compoff">
+    <svg viewBox="0 0 56 56" role="img" aria-label="Arrows going round"><path d="M14 22 A16 16 0 0 1 44 20" fill="none" stroke="currentColor" stroke-width="3"/><path d="M42 34 A16 16 0 0 1 12 36" fill="none" stroke="currentColor" stroke-width="3"/><path d="M44 12 L44 22 L34 20 Z" fill="currentColor"/><path d="M12 44 L12 34 L22 36 Z" fill="currentColor"/></svg>
+    <h3>Comp off</h3>
+    <div class="who">Earned from attendance, credited, spent, lapsed.</div>
+  </a>
+  <a class="cover studio" href="#attendance">
+    <svg viewBox="0 0 56 56" role="img" aria-label="A clock"><circle cx="28" cy="28" r="20" fill="none" stroke="currentColor" stroke-width="3"/><line x1="28" y1="28" x2="28" y2="16" stroke="currentColor" stroke-width="3"/><line x1="28" y1="28" x2="37" y2="33" stroke="currentColor" stroke-width="3"/></svg>
+    <h3>Attendance</h3>
+    <div class="who">Punches, WFH, automatic punches, corrections, Excel export.</div>
+  </a>
+  <a class="cover studio" href="#biometric">
+    <svg viewBox="0 0 56 56" role="img" aria-label="A fingerprint"><path d="M18 44 C14 36 14 22 28 18 C42 22 42 36 38 44" fill="none" stroke="currentColor" stroke-width="3"/><path d="M23 42 C21 34 22 26 28 25 C34 26 35 34 33 42" fill="none" stroke="currentColor" stroke-width="3"/><line x1="28" y1="32" x2="28" y2="44" stroke="currentColor" stroke-width="3"/></svg>
+    <h3>Biometric import</h3>
+    <div class="who">The machine's file into Slate, step by step.</div>
+  </a>
+  <a class="cover ops" href="#calendar">
+    <svg viewBox="0 0 56 56" role="img" aria-label="A calendar with a red day"><rect x="8" y="12" width="40" height="36" rx="4" fill="none" stroke="currentColor" stroke-width="3"/><line x1="8" y1="22" x2="48" y2="22" stroke="currentColor" stroke-width="3"/><circle cx="28" cy="35" r="6" fill="var(--bad)"/></svg>
+    <h3>Holidays &amp; year end</h3>
+    <div class="who">The holiday list, and closing a leave year.</div>
+  </a>
+  <a class="cover server" href="#joining">
+    <svg viewBox="0 0 56 56" role="img" aria-label="A door with an arrow"><rect x="10" y="8" width="22" height="40" rx="2" fill="none" stroke="currentColor" stroke-width="3"/><line x1="36" y1="28" x2="50" y2="28" stroke="currentColor" stroke-width="3"/><path d="M44 22 L50 28 L44 34" fill="none" stroke="currentColor" stroke-width="3"/></svg>
+    <h3>Joining &amp; leaving</h3>
+    <div class="who">HR's half of the checklist, and kit not returned.</div>
+  </a>
+  <a class="cover server" href="#people">
+    <svg viewBox="0 0 56 56" role="img" aria-label="People"><circle cx="20" cy="18" r="8" fill="none" stroke="currentColor" stroke-width="3"/><path d="M6 46 C6 32 34 32 34 46" fill="none" stroke="currentColor" stroke-width="3"/><circle cx="40" cy="20" r="6" fill="none" stroke="currentColor" stroke-width="3"/><path d="M34 44 C36 34 52 34 52 44" fill="none" stroke="currentColor" stroke-width="3"/></svg>
+    <h3>People records</h3>
+    <div class="who">Users &amp; Roles, import, reports to, departments, policy.</div>
+  </a>
+</div>
+
+<!-- ============================================================ -->
+<section class="ops">
+<h2 id="day">Your day in Slate Operations</h2>
+<p class="lede">HR works in <b>Slate Operations</b>. Your role decides what you see. HR sees more than an artist, on the same screens.</p>
+
+<h3>Signing in</h3>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="8" width="32" height="22" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="14" y1="38" x2="30" y2="38" stroke="currentColor" stroke-width="3"/></svg><b>Open Slate Operations</b><span>The sign-in window opens at once, even while it is still connecting.</span></li>
+  <li><svg viewBox="0 0 44 44"><circle cx="22" cy="15" r="7" fill="none" stroke="currentColor" stroke-width="3"/><path d="M8 38 C8 26 36 26 36 38" fill="none" stroke="currentColor" stroke-width="3"/></svg><b>Type your User name</b><span>It looks like <code>priya.sharma</code>. Then your <strong>Password</strong>.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="14" width="32" height="16" rx="4" fill="currentColor"/><text x="22" y="25" text-anchor="middle" font-size="8" fill="var(--panel)" font-weight="700">SIGN IN</text></svg><b>Press Sign in</b><span>A brand-new account must choose its own password first: "Choose your own password to sign in."</span></li>
+  <li><svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="16" fill="none" stroke="currentColor" stroke-width="3"/><line x1="22" y1="22" x2="22" y2="12" stroke="currentColor" stroke-width="3"/><line x1="22" y1="22" x2="29" y2="26" stroke="currentColor" stroke-width="3"/></svg><b>You are punched in</b><span>Signing in starts your day if it has not started. Not on a day of approved full-day leave.</span></li>
+</ol>
+
+<figure>
+<svg viewBox="0 0 900 360" role="img" aria-label="Slate Operations for HR. The sidebar shows Home; under People: Attendance, Leave, Joining and Leaving; under IT and Infra: IT Support; under Administration: Users and Roles; under System: Settings. Home shows the punch panel with In since 09:04, a Punch out button and a Fix a punch link, three figures (People online, Leave to decide, Leave in the next 2 weeks) and the list Leave: now and next.">
+  <g fill="none" stroke="currentColor" stroke-width="2">
+    <rect x="20" y="20" width="860" height="330" rx="10"/>
+    <line x1="210" y1="20" x2="210" y2="350"/>
+  </g>
+  <g fill="currentColor" font-size="14">
+    <text x="36" y="54" font-weight="700" font-size="15">SLATE</text>
+    <text x="36" y="88" fill="var(--ops)" font-weight="600">Home</text>
+    <text x="36" y="138">Attendance</text><text x="36" y="160">Leave</text><text x="36" y="182">Joining &amp; Leaving</text>
+    <text x="36" y="232">IT Support</text>
+    <text x="36" y="282">Users &amp; Roles</text>
+    <text x="36" y="332">Settings</text>
+  </g>
+  <g fill="var(--text-dim)" font-size="11" letter-spacing="1.2">
+    <text x="36" y="116">PEOPLE</text><text x="36" y="210">IT &amp; INFRA</text><text x="36" y="260">ADMINISTRATION</text><text x="36" y="310">SYSTEM</text>
+  </g>
+  <!-- punch panel -->
+  <rect x="230" y="40" width="630" height="70" rx="8" fill="var(--studio-soft)" stroke="var(--studio)" stroke-width="2"/>
+  <text x="250" y="72" font-size="15" font-weight="700" fill="currentColor">In since 09:04 (2 h 10 min)</text>
+  <text x="250" y="96" font-size="12" fill="var(--studio)" text-decoration="underline">Fix a punch</text>
+  <rect x="740" y="58" width="100" height="30" rx="5" fill="var(--bad-soft)" stroke="var(--bad)" stroke-width="1.5"/>
+  <text x="790" y="78" text-anchor="middle" font-size="13" fill="currentColor">Punch out</text>
+  <!-- figures -->
+  <text x="230" y="136" font-size="11" letter-spacing="1.5" fill="var(--ops)" font-weight="700">AT A GLANCE</text>
+  <g fill="var(--panel)" stroke="var(--line)" stroke-width="1.5">
+    <rect x="230" y="146" width="200" height="70" rx="6"/><rect x="445" y="146" width="200" height="70" rx="6"/><rect x="660" y="146" width="200" height="70" rx="6"/>
+  </g>
+  <g fill="currentColor" font-size="24" font-weight="700"><text x="246" y="180">31</text><text x="461" y="180" fill="var(--warn)">4</text><text x="676" y="180">6</text></g>
+  <g fill="var(--text-2)" font-size="12"><text x="246" y="204">People online</text><text x="461" y="204">Leave to decide</text><text x="676" y="204">Leave in the next 2 weeks</text></g>
+  <!-- leave list -->
+  <text x="230" y="244" font-size="11" letter-spacing="1.5" fill="var(--ops)" font-weight="700">LEAVE: NOW AND NEXT</text>
+  <rect x="230" y="252" width="630" height="86" rx="6" fill="var(--panel)" stroke="var(--line)" stroke-width="1.5"/>
+  <g font-size="13" fill="currentColor">
+    <text x="246" y="276">Asha Rao - Casual, 12 – 14 Oct 2026</text>
+    <text x="246" y="300">Vikram Iyer - Sick, 7 Oct 2026</text>
+    <text x="246" y="324">You - Earned, 2 – 6 Nov 2026</text>
+  </g>
+  <g font-size="12" text-anchor="end"><text x="844" y="276" fill="var(--ok)">Approved</text><text x="844" y="300" fill="var(--warn)">Pending HR</text><text x="844" y="324" fill="var(--warn)">Pending Supervisor</text></g>
+</svg>
+<figcaption>What HR sees in Slate Operations (simplified). Home shows your punch, the figures you can act on and the next five leave requests that are still live. HR sees the leave type; a supervisor only sees "away".</figcaption>
+</figure>
+
+<h3>What the HR role gives you</h3>
+<div class="tablewrap"><table>
+  <tr><th>Screen</th><th>What HR can do there</th></tr>
+  <tr><td><b>Leave</b></td><td>Two tabs: <b>Queue</b> (the final decision on everybody's leave, plus <b>HR tools</b>) and <b>My leave</b> (your own).</td></tr>
+  <tr><td><b>Attendance</b></td><td>Two tabs: <b>My month</b> and <b>Team overview</b> (the whole studio). Correct days, import the biometric file, export the month to Excel, open <b>Holidays</b>.</td></tr>
+  <tr><td><b>Joining &amp; Leaving</b></td><td>Start people joining or leaving. Tick HR's lines.</td></tr>
+  <tr><td><b>Users &amp; Roles</b></td><td><b>Users</b>: add, edit, import, export, deactivate. <b>Roles &amp; Permissions</b>: within what you hold yourself.</td></tr>
+  <tr><td><b>Settings</b></td><td>The <b>Studio policy</b> card: HR and admins can change it. Everyone else reads it.</td></tr>
+  <tr><td><b>IT Support</b></td><td>Your own tickets to IT, like everybody.</td></tr>
+</table></div>
+<p>The HR role is called <b>HR</b> (or <b>Human Resources</b>). Admin and Developer accounts can do all of the HR work too. A change to somebody's role shows the next time they sign in.</p>
+
+<div class="note warn"><b>Your own leave</b>Ask for it in <strong>Leave &rarr; My leave</strong>, like anybody. Nobody can decide their own request. In your queue it shows "Needs another approver", and Approve stays off. Another HR person, or an admin, has to decide it. In a one-person HR team, agree in advance who that is.</div>
+</section>
+
+<!-- ============================================================ -->
+<section class="ops">
+<h2 id="queue">The leave queue: supervisor first, HR last</h2>
+<p class="lede">Every request needs two yeses. The supervisor says whether the team can spare the person. HR gives the final yes, and only then are the days spent.</p>
+
+<figure>
+<svg viewBox="0 0 900 300" role="img" aria-label="How a request moves. Sent, then Pending Supervisor where the supervisor decides, then Pending HR where HR decides, then Approved and the days are deducted. If nobody at the supervisor stage can act it goes straight to Pending HR. Either approver can reject with a reason. Approved leave that has not started can be withdrawn: it becomes Cancellation requested, and when HR approves that it becomes Cancelled. HR can also revoke approved leave.">
+  <defs><marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
+  <marker id="a1r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--bad)"/></marker>
+  <marker id="a1w" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--warn)"/></marker></defs>
+  <g stroke-width="2">
+    <rect x="20" y="80" width="140" height="60" rx="8" fill="var(--panel)" stroke="var(--idle)"/>
+    <rect x="210" y="80" width="170" height="60" rx="8" fill="var(--panel)" stroke="var(--warn)"/>
+    <rect x="430" y="80" width="150" height="60" rx="8" fill="var(--ops-soft)" stroke="var(--ops)" stroke-width="3"/>
+    <rect x="630" y="80" width="130" height="60" rx="8" fill="var(--server-soft)" stroke="var(--ok)"/>
+    <rect x="200" y="220" width="150" height="54" rx="8" fill="var(--bad-soft)" stroke="var(--bad)"/>
+    <rect x="470" y="220" width="190" height="54" rx="8" fill="var(--panel)" stroke="var(--warn)"/>
+    <rect x="720" y="220" width="160" height="54" rx="8" fill="var(--panel)" stroke="var(--idle)"/>
+  </g>
+  <g fill="currentColor" font-size="14" font-weight="600" text-anchor="middle">
+    <text x="90" y="106">Sent</text><text x="295" y="106">Pending Supervisor</text><text x="505" y="106">Pending HR</text><text x="695" y="106">Approved</text>
+    <text x="275" y="243">Rejected</text><text x="565" y="243">Cancellation requested</text><text x="800" y="243">Cancelled</text>
+  </g>
+  <g fill="var(--text-2)" font-size="12" text-anchor="middle">
+    <text x="90" y="126">Request leave</text><text x="295" y="126">the supervisor decides</text><text x="505" y="126">you decide: final</text><text x="695" y="126">days deducted</text>
+    <text x="275" y="262">reason is shown</text><text x="565" y="262">you agree or refuse</text><text x="800" y="262">days come back</text>
+  </g>
+  <g stroke="currentColor" stroke-width="2.5" fill="none" marker-end="url(#a1)">
+    <line x1="160" y1="110" x2="207" y2="110"/><line x1="380" y1="110" x2="427" y2="110"/><line x1="580" y1="110" x2="627" y2="110"/>
+    <line x1="660" y1="247" x2="717" y2="247"/>
+  </g>
+  <path d="M90 80 C110 34 470 34 500 77" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="6 4" marker-end="url(#a1)"/>
+  <text x="300" y="30" text-anchor="middle" font-size="12" fill="currentColor">nobody at the supervisor stage can act: straight to HR</text>
+  <g stroke="var(--bad)" stroke-width="2" fill="none" stroke-dasharray="5 4" marker-end="url(#a1r)">
+    <line x1="290" y1="140" x2="278" y2="217"/><path d="M480 140 C460 190 380 200 340 218"/>
+    <path d="M760 120 C850 120 850 170 820 217"/>
+  </g>
+  <text x="270" y="185" text-anchor="end" font-size="12" fill="var(--bad)">rejected, with a reason</text>
+  <text x="770" y="190" text-anchor="middle" font-size="12" fill="var(--bad)">Revoke</text>
+  <path d="M690 140 C680 180 620 190 600 217" stroke="var(--warn)" stroke-width="2" fill="none" stroke-dasharray="5 4" marker-end="url(#a1w)"/>
+  <text x="640" y="172" text-anchor="end" font-size="12" fill="var(--warn)">withdraw (not started)</text>
+  <text x="688" y="266" text-anchor="middle" font-size="11" fill="currentColor">Approve</text>
+</svg>
+<figcaption>The thick box is your stage. A request still pending can be withdrawn by the person at any time (it becomes Cancelled). If you refuse a withdrawal, the leave stays Approved.</figcaption>
+</figure>
+
+<p><b>Leave &rarr; Queue</b> opens on <b>Waiting on me</b>. The list is sorted: your decisions first, then the soonest start date. Somebody leaving on Monday needs an answer before somebody leaving next month.</p>
+
+<figure>
+<svg viewBox="0 0 900 395" role="img" aria-label="The leave queue screen. Tabs Queue and My leave. Four figures: Waiting on you, Elsewhere in the chain, Away today, Approved this month. A filter set to Waiting on me, a search box, and the buttons Approve, Reject, Revoke and HR tools. A table of requests with Person, From, Type, Days, Balance after, Status and Waiting on. On the right, the details of the selected request.">
+  <g font-size="13" fill="currentColor">
+    <rect x="30" y="12" width="80" height="26" rx="4" fill="var(--ops-soft)" stroke="var(--ops)" stroke-width="1.5"/><text x="70" y="30" text-anchor="middle" font-weight="600">Queue</text>
+    <text x="150" y="30" text-anchor="middle" fill="var(--text-2)">My leave</text>
+    <text x="30" y="66" font-size="18" font-weight="700">Leave requests</text>
+    <text x="30" y="86" font-size="12" fill="var(--text-2)">Waiting on your decision. Change the filter to see everything else.</text>
+  </g>
+  <g fill="var(--panel)" stroke="var(--line)" stroke-width="1.5">
+    <rect x="30" y="100" width="195" height="56" rx="6" stroke="var(--warn)"/><rect x="245" y="100" width="195" height="56" rx="6"/><rect x="460" y="100" width="195" height="56" rx="6"/><rect x="675" y="100" width="195" height="56" rx="6"/>
+  </g>
+  <g font-size="11" fill="var(--text-dim)" letter-spacing="0.8"><text x="44" y="120">WAITING ON YOU</text><text x="259" y="120">ELSEWHERE IN THE CHAIN</text><text x="474" y="120">AWAY TODAY</text><text x="689" y="120">APPROVED THIS MONTH</text></g>
+  <g font-size="20" font-weight="700" fill="currentColor"><text x="44" y="146" fill="var(--warn)">4</text><text x="259" y="146">3</text><text x="474" y="146">2</text><text x="689" y="146">9</text></g>
+  <!-- controls -->
+  <g stroke-width="1.5">
+    <rect x="30" y="170" width="150" height="28" rx="4" fill="var(--panel)" stroke="var(--line)"/>
+    <rect x="190" y="170" width="300" height="28" rx="4" fill="var(--panel)" stroke="var(--line)"/>
+    <rect x="500" y="170" width="80" height="28" rx="4" fill="var(--ops)" stroke="var(--ops)"/>
+    <rect x="588" y="170" width="70" height="28" rx="4" fill="var(--bad-soft)" stroke="var(--bad)"/>
+    <rect x="666" y="170" width="74" height="28" rx="4" fill="var(--panel)" stroke="var(--line)"/>
+    <rect x="748" y="170" width="122" height="28" rx="4" fill="var(--panel)" stroke="var(--line)"/>
+  </g>
+  <g font-size="13" fill="currentColor">
+    <text x="42" y="189">Waiting on me &#9662;</text>
+    <text x="202" y="189" fill="var(--text-dim)" font-size="12">Search by name, reason or type...</text>
+    <text x="540" y="189" text-anchor="middle" fill="var(--panel)" font-weight="600">Approve</text>
+    <text x="623" y="189" text-anchor="middle">Reject</text>
+    <text x="703" y="189" text-anchor="middle">Revoke</text>
+    <text x="809" y="189" text-anchor="middle">HR tools &#9662;</text>
+  </g>
+  <!-- table -->
+  <rect x="30" y="212" width="600" height="170" rx="6" fill="var(--panel)" stroke="var(--line)" stroke-width="1.5"/>
+  <rect x="31" y="241" width="598" height="24" fill="var(--ops-soft)"/>
+  <g font-size="11" fill="var(--text-dim)"><text x="40" y="230">Person</text><text x="125" y="230">From</text><text x="200" y="230">Type</text><text x="258" y="230">Days</text><text x="292" y="230">Balance after</text><text x="380" y="230">Status</text><text x="500" y="230">Waiting on</text></g>
+  <g font-size="11" fill="currentColor">
+    <text x="40" y="257">Asha Rao</text><text x="125" y="257">12 Oct 2026</text><text x="200" y="257">Casual</text><text x="266" y="257">3</text><text x="300" y="257">9</text><text x="380" y="257" fill="var(--warn)">Pending HR</text><text x="500" y="257" fill="var(--warn)">HR</text>
+    <text x="40" y="285">Vikram Iyer</text><text x="125" y="285">14 Oct 2026</text><text x="200" y="285">Sick</text><text x="266" y="285">1</text><text x="300" y="285" fill="var(--bad)">-1</text><text x="380" y="285" fill="var(--warn)">Pending HR</text><text x="500" y="285" fill="var(--warn)">HR</text>
+    <text x="40" y="313">Neha Joshi</text><text x="125" y="313">19 Oct 2026</text><text x="200" y="313">Earned</text><text x="266" y="313">8</text><text x="300" y="313">4</text><text x="380" y="313" fill="var(--warn)">Pending Supervisor</text><text x="500" y="313" fill="var(--bad)">No supervisor can...</text>
+    <text x="40" y="341">Ravi Menon</text><text x="125" y="341">2 Nov 2026</text><text x="200" y="341">Comp Off</text><text x="266" y="341">1</text><text x="300" y="341">-</text><text x="380" y="341" fill="var(--warn)">Pending HR</text><text x="500" y="341" fill="var(--warn)">HR</text>
+  </g>
+  <!-- details -->
+  <rect x="645" y="212" width="225" height="170" rx="6" fill="var(--panel)" stroke="var(--line)" stroke-width="1.5"/>
+  <text x="657" y="234" font-size="13" font-weight="700" fill="currentColor">Asha Rao – Casual</text>
+  <g font-size="11" fill="var(--text-2)">
+    <text x="657" y="254" font-weight="600" fill="currentColor">Mon 12 Oct to Wed 14 Oct</text>
+    <text x="657" y="271">Working days: 3</text>
+    <text x="657" y="288">Charged: 3 days</text>
+    <text x="657" y="308" font-weight="600" fill="currentColor">Paid leave</text>
+    <text x="657" y="325">Before this request: 12</text>
+    <text x="657" y="342">After this request: 9</text>
+    <text x="657" y="362" font-weight="600" fill="currentColor">Also away from the team</text>
+    <text x="657" y="376">Ravi Menon: 13 Oct 2026</text>
+  </g>
+</svg>
+<figcaption>The queue (simplified; the real table also has To and Reason). <b>Balance after</b> is the paid leave left if only that request is approved. A red figure means the person would be overdrawn.</figcaption>
+</figure>
+
+<p><b>Waiting on you</b> counts requests at Pending HR, withdrawals (Cancellation requested), and requests stuck with a supervisor who cannot act. <b>Elsewhere in the chain</b> is open requests still with a supervisor who can act. <b>Away today</b> is approved leave covering today; <b>Approved this month</b> is approved leave starting this month.</p>
+<p>The filter offers <b>Waiting on me</b>, <b>Everything outstanding</b>, <b>Everything</b>, and each status on its own. The search finds a name, a reason or a type. A person who has left shows "(left)" after their name. Their request still needs a decision.</p>
+
+<h3>Approve</h3>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="10" width="32" height="24" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="12" y1="18" x2="32" y2="18" stroke="currentColor" stroke-width="3"/><line x1="12" y1="26" x2="26" y2="26" stroke="currentColor" stroke-width="3"/></svg><b>Pick a request</b><span>Read the panel on the right: working days, sandwich days, balance before and after, who else is away.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M8 24 L18 34 L36 12" fill="none" stroke="var(--ok)" stroke-width="4"/></svg><b>Press Approve</b><span>You can select several rows first (Ctrl or Shift and click).</span></li>
+  <li><svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="16" fill="none" stroke="currentColor" stroke-width="3"/><text x="22" y="28" text-anchor="middle" font-size="18" fill="currentColor" font-weight="700">!</text></svg><b>Read the question</b><span>"That is the final approval - the days will be deducted." It also names anybody who will be overdrawn.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="14" width="32" height="16" rx="4" fill="currentColor"/><text x="22" y="26" text-anchor="middle" font-size="9" fill="var(--panel)" font-weight="700">YES</text></svg><b>Press Yes</b><span>A short message says how many were recorded.</span></li>
+</ol>
+
+<h3>Reject, withdrawals, revoke</h3>
+<p>Every Approve and Reject rings the bell of the person who asked; a rejection carries your reason. When a supervisor approves, every active HR approver gets a bell: "... is waiting for HR." <strong>Withdrawal decisions and Revoke send no bell</strong>: tell the person yourself.</p>
+<div class="tablewrap"><table>
+  <tr><th>You want to</th><th>Do this</th><th>What happens</th></tr>
+  <tr><td>Say no</td><td>Select, press <b>Reject</b>, type the reason, press <b>Reject</b>.</td><td>A reason is required. The person sees it under <b>Decision</b>.</td></tr>
+  <tr><td>Decide for an absent supervisor</td><td>Change the filter to <b>Everything outstanding</b>. Select a <b>Pending Supervisor</b> row. Approve or Reject.</td><td>Both stages are done at once. It is recorded as "Decided by HR on behalf of the supervisor."</td></tr>
+  <tr><td>Agree to a withdrawal</td><td>Select a <b>Cancellation requested</b> row, press <b>Approve</b>.</td><td>The leave becomes Cancelled. The days, and any comp off, come back.</td></tr>
+  <tr><td>Refuse a withdrawal</td><td>Select it, press <b>Reject</b>, give the reason.</td><td>The leave stays Approved. The note says "Withdrawal refused: ...".</td></tr>
+  <tr><td>Take back approved leave</td><td>Select an Approved row, press <b>Revoke</b>, give the reason.</td><td>The days come back. If the leave has already started, Slate warns: those days will show as absent in attendance.</td></tr>
+</table></div>
+
+<div class="note warn"><b>Correcting a request with wrong dates</b>There is no button to change the dates of a request. If it is still pending, the person presses <strong>Withdraw</strong> in My leave and asks again. If it is approved and not started, they press <strong>Withdraw</strong> and you approve the withdrawal. If it has already started, the person cannot withdraw it: you <strong>Revoke</strong> it with a reason, and they ask again for the right days. Past dates are allowed; Slate marks them as a retrospective request.</div>
+
+<h4>The words in the "Waiting on" column</h4>
+<div class="tablewrap"><table>
+  <tr><th>You see</th><th>It means</th></tr>
+  <tr><td><b>HR</b></td><td>It is at your stage.</td></tr>
+  <tr><td>A person's name, or <b>You</b></td><td>The supervisor who decides first.</td></tr>
+  <tr><td><b style="color:var(--bad)">No supervisor can act - yours to decide</b></td><td>Stuck at the supervisor stage: the manager on record was deactivated or cannot approve leave. It is in your "Waiting on me". Decide it, then fix <b>Reports to</b> in Users &amp; Roles.</td></tr>
+  <tr><td><b>Needs another approver</b></td><td>It is your own request.</td></tr>
+</table></div>
+<p>Point at the <b>Status</b> of a row to see why it went where it went (for example "No supervisor recorded, so it went straight to HR.") and both approvers' notes.</p>
+<div class="note"><b>"Already decided or withdrawn - the list has been refreshed."</b>Somebody else acted on the request while you were looking at it, or the person withdrew it. Nothing was changed. Read the refreshed list and decide again if it is still yours.</div>
+</section>
+
+<!-- ============================================================ -->
+<section class="ops">
+<h2 id="cost">Balances: what leave costs</h2>
+<p class="lede">Casual, Sick and Earned share one balance, called paid leave. Slate works out what each request costs when it is sent, and keeps that number.</p>
+
+<h3>How paid leave is earned</h3>
+<ul>
+  <li><b>2 days for every completed calendar month</b> (the studio default). The days arrive on the last day of the month.</li>
+  <li><b>A month the person did not work all of does not count.</b> Somebody who joined on 15 January earns nothing for January. On 30 March they have 2 days (February). On 31 March they have 4.</li>
+  <li><b>No joining date means accrual from 1 January.</b> Users &amp; Roles shows a missing joining date in amber. Fix it before the year end.</li>
+  <li><b>Nothing is earned after the last working day.</b></li>
+</ul>
+
+<p>On <b>My leave</b> the person sees <b>Paid leave available</b> (earned, minus approved leave including leave booked for later, minus requests still waiting; it can be negative, which means overdrawn), <b>Earned</b>, <b>Awaiting approval</b>, <b>Booked</b> (approved, not started) and, where the studio operates it, <b>Comp off</b>.</p>
+
+<h3>Why one day off can cost three</h3>
+<p>The <b>sandwich rule</b> is on by default. If the working days somebody takes have a day off <b>on both sides</b>, those days off are charged too. Slate judges this on the working days taken, so asking for more days never costs less.</p>
+
+<figure>
+<svg viewBox="0 0 900 300" role="img" aria-label="Two examples of the sandwich rule in a Monday to Saturday week. First: Friday 2 October is a holiday and Sunday 4 October is the weekly off. Taking only Saturday 3 October costs 3 days: Friday, Saturday and Sunday. Second: taking a whole week, Monday 12 to Saturday 17 October, costs 8 days, because the Sunday before and the Sunday after are both charged.">
+  <text x="20" y="28" font-size="14" font-weight="700" fill="currentColor">One Saturday, with a holiday on the Friday before</text>
+  <g stroke-width="2">
+    <rect x="20" y="40" width="140" height="70" rx="6" fill="var(--panel)" stroke="var(--line)"/>
+    <rect x="170" y="40" width="140" height="70" rx="6" fill="var(--bad-soft)" stroke="var(--bad)"/>
+    <rect x="320" y="40" width="140" height="70" rx="6" fill="var(--bad-soft)" stroke="var(--bad)" stroke-width="3"/>
+    <rect x="470" y="40" width="140" height="70" rx="6" fill="var(--bad-soft)" stroke="var(--bad)"/>
+    <rect x="620" y="40" width="140" height="70" rx="6" fill="var(--panel)" stroke="var(--line)"/>
+  </g>
+  <g fill="currentColor" font-size="14" font-weight="600" text-anchor="middle">
+    <text x="90" y="68">Thu 1 Oct</text><text x="240" y="68">Fri 2 Oct</text><text x="390" y="68">Sat 3 Oct</text><text x="540" y="68">Sun 4 Oct</text><text x="690" y="68">Mon 5 Oct</text>
+  </g>
+  <g fill="var(--text-2)" font-size="12" text-anchor="middle">
+    <text x="90" y="92">working</text><text x="240" y="92">holiday</text><text x="390" y="92" fill="var(--bad)" font-weight="600">asked for</text><text x="540" y="92">weekly off</text><text x="690" y="92">working</text>
+  </g>
+  <path d="M170 120 L170 128 L610 128 L610 120" fill="none" stroke="var(--bad)" stroke-width="2"/>
+  <text x="390" y="146" text-anchor="middle" font-size="13" fill="var(--bad)" font-weight="600">charged</text>
+  <text x="830" y="84" text-anchor="middle" font-size="28" font-weight="700" fill="var(--bad)">3</text>
+  <text x="830" y="104" text-anchor="middle" font-size="12" fill="var(--text-2)">days</text>
+
+  <text x="20" y="182" font-size="14" font-weight="700" fill="currentColor">A whole week, Monday to Saturday</text>
+  <g stroke-width="2" fill="var(--bad-soft)" stroke="var(--bad)">
+    <rect x="20" y="194" width="88" height="56" rx="6"/>
+    <rect x="113" y="194" width="88" height="56" rx="6" stroke-width="3"/><rect x="206" y="194" width="88" height="56" rx="6" stroke-width="3"/><rect x="299" y="194" width="88" height="56" rx="6" stroke-width="3"/>
+    <rect x="392" y="194" width="88" height="56" rx="6" stroke-width="3"/><rect x="485" y="194" width="88" height="56" rx="6" stroke-width="3"/><rect x="578" y="194" width="88" height="56" rx="6" stroke-width="3"/>
+    <rect x="671" y="194" width="88" height="56" rx="6"/>
+  </g>
+  <g fill="currentColor" font-size="13" font-weight="600" text-anchor="middle">
+    <text x="64" y="218">Sun 11</text><text x="157" y="218">Mon 12</text><text x="250" y="218">Tue 13</text><text x="343" y="218">Wed 14</text><text x="436" y="218">Thu 15</text><text x="529" y="218">Fri 16</text><text x="622" y="218">Sat 17</text><text x="715" y="218">Sun 18</text>
+  </g>
+  <g fill="var(--text-2)" font-size="12" text-anchor="middle">
+    <text x="64" y="238">weekly off</text><text x="157" y="238">asked</text><text x="250" y="238">asked</text><text x="343" y="238">asked</text><text x="436" y="238">asked</text><text x="529" y="238">asked</text><text x="622" y="238">asked</text><text x="715" y="238">weekly off</text>
+  </g>
+  <text x="830" y="230" text-anchor="middle" font-size="28" font-weight="700" fill="var(--bad)">8</text>
+  <text x="830" y="250" text-anchor="middle" font-size="12" fill="var(--text-2)">days</text>
+  <text x="20" y="286" font-size="13" fill="currentColor">The same Saturday as a <tspan font-weight="700">half day</tspan> costs 0.5: somebody who works half of the day did come in, so the sandwich does not apply.</text>
+</svg>
+<figcaption>Taken in a six-day week (Sunday off). Monday to Friday alone costs 5: the Saturday after is a working day, so nothing is sandwiched. A holiday <i>inside</i> a request, with working days on both outer sides, is not charged: Thursday to Saturday around a Friday holiday costs 2.</figcaption>
+</figure>
+
+<div class="note warn"><b>Before you approve a long request</b>Look at <strong>Sandwich days</strong> in the details panel. People are often surprised that a full week costs 8 days. Request leave shows them the cost before they send it, but it is worth saying once more.</div>
+
+<h3>The cost is fixed when the request is sent</h3>
+<p>Changing the holiday list or the policy later does not change approved leave. For requests still waiting, Slate offers to work the cost out again when you add, change or remove a holiday ("Re-cost waiting requests").</p>
+
+<h3>Leave types</h3>
+<div class="tablewrap"><table>
+  <tr><th>Type</th><th>Comes from</th><th>Notes</th></tr>
+  <tr><td>Casual, Sick, Earned</td><td>The one paid leave balance</td><td>The type is a label for reports. It is not a separate balance.</td></tr>
+  <tr><td>Comp Off</td><td>The comp off record</td><td>Only offered when the studio operates comp off. See Comp off below.</td></tr>
+  <tr><td>Project Rest</td><td>Nothing: HR grants it</td><td>Nobody can ask for it. <b>HR tools &rarr; Grant project rest...</b>: person, From, To, Reason, <b>Grant</b>. It is approved at once and shows how many working days it gives. Somebody else in HR has to grant your own rest.</td></tr>
+  <tr><td>Unpaid</td><td>Nothing</td><td>No balance needed. Ask people to use it when their paid leave runs out.</td></tr>
+</table></div>
+
+<h3>When a request is refused before it reaches you</h3>
+<ul>
+  <li>It overlaps a request the person already has (pending, approved, or waiting on a withdrawal).</li>
+  <li>The dates hold no working days.</li>
+  <li>It starts before the joining date, ends after the last working day, or falls in a leave year HR has closed.</li>
+  <li>Paid leave beyond the balance: Request leave says "ask for Unpaid instead, or shorten it".</li>
+  <li>The holiday list could not be read. Nothing is saved, so holidays are never charged as leave by mistake.</li>
+</ul>
+<div class="note"><b>Overdrawn is still possible</b>A balance can go below zero later, for example after a correction. When you approve, Slate names who will be overdrawn and by how much, and suggests rejecting and asking for Unpaid instead.</div>
+<h3 id="compoff">Comp off</h3>
+<p>Comp off is a day back for working a day off. Slate earns it from the attendance record, never by hand. It is <b>off by default</b>.</p>
+
+<h4>Turning it on</h4>
+<p><b>Settings &rarr; Studio policy &rarr; Comp-off</b>: tick "Working a weekly off or a holiday earns comp-off", set the values, press <b>Save changes</b> at the top. Until then, nobody can ask for Comp Off and nothing is credited.</p>
+
+<figure>
+<svg viewBox="0 0 900 270" role="img" aria-label="The life of a comp-off day. Earned: a weekly off or holiday worked for 4.5 hours or more, or a long day. Credited: by Slate Server once a day, or by HR in Comp off earned. In the balance: valid for 90 days, oldest used first. Spent: HR's final approval of a Comp Off request. Not used in time: it lapses in the daily job. Withdrawn or revoked: the days come back.">
+  <defs><marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+  <g stroke-width="2">
+    <rect x="20" y="30" width="190" height="96" rx="8" fill="var(--studio-soft)" stroke="var(--studio)"/>
+    <rect x="245" y="30" width="190" height="96" rx="8" fill="var(--panel)" stroke="var(--info)"/>
+    <rect x="470" y="30" width="190" height="96" rx="8" fill="var(--server-soft)" stroke="var(--ok)"/>
+    <rect x="695" y="30" width="185" height="96" rx="8" fill="var(--ops-soft)" stroke="var(--ops)"/>
+    <rect x="470" y="170" width="190" height="64" rx="8" fill="var(--bad-soft)" stroke="var(--bad)"/>
+    <rect x="695" y="170" width="185" height="64" rx="8" fill="var(--panel)" stroke="var(--idle)"/>
+  </g>
+  <g stroke="currentColor" stroke-width="2.5" fill="none" marker-end="url(#a2)">
+    <line x1="210" y1="78" x2="242" y2="78"/><line x1="435" y1="78" x2="467" y2="78"/><line x1="660" y1="78" x2="692" y2="78"/>
+    <line x1="565" y1="126" x2="565" y2="167"/>
+    <path d="M800 170 L800 129" stroke-dasharray="5 4"/>
+  </g>
+  <g fill="currentColor" font-size="15" font-weight="700">
+    <text x="36" y="56">Earned</text><text x="261" y="56">Credited</text><text x="486" y="56">In the balance</text><text x="711" y="56">Spent</text>
+    <text x="486" y="194" fill="var(--bad)">Lapsed unused</text><text x="711" y="194">Given back</text>
+  </g>
+  <g fill="var(--text-2)" font-size="12">
+    <text x="36" y="78">a weekly off or holiday</text><text x="36" y="96">worked 4.5 h or more,</text><text x="36" y="114">or a long working day</text>
+    <text x="261" y="78">by Slate Server, once</text><text x="261" y="96">a day, or by HR in</text><text x="261" y="114">Comp off earned...</text>
+    <text x="486" y="78">valid for 90 days</text><text x="486" y="96">from the day worked;</text><text x="486" y="114">oldest is used first</text>
+    <text x="711" y="78">your final approval</text><text x="711" y="96">of a Comp Off request</text><text x="711" y="114">takes it</text>
+    <text x="486" y="214">the daily job marks it</text><text x="486" y="228">"(lapsed unused)"</text>
+    <text x="711" y="214">withdrawn or revoked:</text><text x="711" y="228">the days return</text>
+  </g>
+  <text x="20" y="262" font-size="13" fill="currentColor"><tspan font-weight="700">Never earns:</tspan> a day still open, a day with a missing punch, or a day closed by the automatic punch-out.</text>
+</svg>
+<figcaption>The numbers are the studio defaults. Holidays are the person's own location's holidays: one office's festival earns nothing in another office.</figcaption>
+</figure>
+
+<p>The values, with their names in Studio policy: <b>For a weekly off worked</b> 1 day; <b>For a holiday worked</b> 1 day (both only from half a standard day, 4.5 h); <b>Half a day for working at least</b> 12 hours and <b>A whole day for working at least</b> 18 hours on a normal working day; <b>Unused comp-off lapses after</b> 90 days.</p>
+
+<h4>Crediting: two ways, never twice</h4>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><rect x="8" y="6" width="28" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="3"/><rect x="8" y="24" width="28" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="3"/><circle cx="14" cy="12" r="2" fill="currentColor"/><circle cx="14" cy="30" r="2" fill="currentColor"/></svg><b>By itself</b><span>While the Slate Server window is open: about 5 minutes after it opens, then once a day, from the last 90 days. It also lapses expired comp off. Skipped while the database is down.</span></li>
+  <li><svg viewBox="0 0 44 44"><line x1="8" y1="12" x2="36" y2="12" stroke="currentColor" stroke-width="3"/><line x1="8" y1="22" x2="36" y2="22" stroke="currentColor" stroke-width="3"/><line x1="8" y1="32" x2="36" y2="32" stroke="currentColor" stroke-width="3"/></svg><b>HR tools &rarr; Comp off earned...</b><span>Pick <strong>Look back</strong>: 90 days, 30 days or A year. Each row: Person, Day, Hours, Earns, Why. Greyed rows at the bottom are duplicates (see below).</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="8" y="8" width="28" height="28" rx="4" fill="none" stroke="currentColor" stroke-width="3"/><path d="M14 22 L20 28 L30 16" fill="none" stroke="currentColor" stroke-width="3"/></svg><b>Untick what is wrong</b><span>Every row starts ticked. Untick a day that should not count. It comes back next time: if a punch is wrong, correct the punch.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="4" y="14" width="36" height="16" rx="4" fill="currentColor"/><text x="22" y="25" text-anchor="middle" font-size="7" fill="var(--panel)" font-weight="700">CREDIT</text></svg><b>Credit these</b><span>Confirm. Each day is written with its reason and expiry. A day already credited is never credited again.</span></li>
+</ol>
+<div class="note"><b>"Duplicate - not counted"</b>Before 2.2.0 a day could be credited twice. The upgrade marked the later copies as duplicates and deleted nothing. A duplicate counts in no balance, no spend and no expiry. You see them greyed and read-only at the bottom of <strong>HR tools &rarr; Comp off earned...</strong>, marked "Duplicate - not counted", so you can explain them to people.</div>
+
+<h4>Spending comp off</h4>
+<p>The person asks for <b>Comp Off</b> in Request leave. Slate shows how much comp off is valid on that date. At your final approval Slate checks again. If there is not enough, Approve is refused with a message like "Ravi Menon has only 0.5 days of comp off left for 2 Nov 2026, and this needs 1 day. Reject it and ask for Unpaid instead." The days closest to expiring are used first.</p>
+</section>
+
+<!-- ============================================================ -->
+<section class="studio">
+<h2 id="attendance">Attendance</h2>
+<p class="lede">Everybody punches in and out. HR sees the whole studio, corrects days, and exports the month for payroll.</p>
+
+<h3>How a day is recorded</h3>
+<div class="tablewrap"><table>
+  <tr><th>Action</th><th>What happens</th></tr>
+  <tr><td><b>Punch in</b> / <b>Punch out</b></td><td>Only the next valid button is shown. Punch out asks first. The time is the database server's time, not the PC's.</td></tr>
+  <tr><td><b>Punch in again</b></td><td>Shown after a punch-out. Starts a second session the same day. Hours add up; the break is not counted.</td></tr>
+  <tr><td><b>Working from home today</b></td><td>A tick box beside the buttons. Tick it before or after punching in; the day follows the box.</td></tr>
+  <tr><td>Signing in</td><td>Punches the person in if the day has not started. Never a second session. Never on a day of approved full-day leave. Never for system accounts.</td></tr>
+  <tr><td>Punching in on approved leave</td><td>Slate asks first: "You are on approved leave today ... Punch in anyway?" The leave stays charged until HR revoke it.</td></tr>
+</table></div>
+
+<figure>
+<svg viewBox="0 0 900 240" role="img" aria-label="Three days on a time line from 08:00 to 22:00. A normal day from 09:40 to 19:05. A forgotten punch-out: the day is closed at 19:30 when the person next punches in, marked Auto punch-out. A punch-in at 20:15 that was never closed: it is after 19:30, so the day is marked Missing punch-out for HR to correct.">
+  <g stroke="var(--line)" stroke-width="1">
+    <line x1="200" y1="30" x2="200" y2="190"/><line x1="294" y1="30" x2="294" y2="190"/><line x1="388" y1="30" x2="388" y2="190"/><line x1="482" y1="30" x2="482" y2="190"/><line x1="576" y1="30" x2="576" y2="190"/><line x1="670" y1="30" x2="670" y2="190"/><line x1="764" y1="30" x2="764" y2="190"/><line x1="858" y1="30" x2="858" y2="190"/>
+  </g>
+  <g fill="var(--text-dim)" font-size="11" text-anchor="middle">
+    <text x="200" y="24">08:00</text><text x="294" y="24">10:00</text><text x="388" y="24">12:00</text><text x="482" y="24">14:00</text><text x="576" y="24">16:00</text><text x="670" y="24">18:00</text><text x="764" y="24">20:00</text><text x="858" y="24">22:00</text>
+  </g>
+  <g fill="currentColor" font-size="13" font-weight="600"><text x="20" y="66">Normal day</text><text x="20" y="116">Forgot to punch out</text><text x="20" y="166">In late, forgot</text></g>
+  <rect x="278" y="54" width="443" height="16" rx="4" fill="var(--ok)"/>
+  <text x="278" y="48" font-size="11" fill="var(--text-2)">in 09:40</text><text x="721" y="48" text-anchor="end" font-size="11" fill="var(--text-2)">out 19:05</text>
+  <rect x="278" y="104" width="467" height="16" rx="4" fill="var(--info)"/>
+  <line x1="745" y1="96" x2="745" y2="128" stroke="var(--info)" stroke-width="3"/>
+  <text x="740" y="98" text-anchor="end" font-size="11" fill="var(--text-2)">closed at 19:30 when they next punch in: Auto punch-out</text>
+  <rect x="776" y="154" width="82" height="16" rx="4" fill="var(--bad-soft)" stroke="var(--bad)" stroke-width="2" stroke-dasharray="4 3"/>
+  <text x="770" y="166" text-anchor="end" font-size="12" fill="var(--bad)" font-weight="600">in 20:15, after 19:30: Missing punch-out, HR corrects</text>
+  <text x="20" y="222" font-size="12" fill="currentColor">The automatic punch-out runs when the person next punches in, at the <tspan font-weight="700">Forgotten punch-out closes at</tspan> time (19:30 by default).</text>
+</svg>
+<figcaption>Closing Slate or signing out never punches anybody out. A forgotten day stays open until the person's next punch-in closes it. Days closed this way never earn comp off.</figcaption>
+</figure>
+
+<h3>Team overview</h3>
+<p><b>Attendance &rarr; Team overview</b> shows everybody, sorted by name, one month at a time. Each person is judged against their own location's holidays.</p>
+
+<figure>
+<svg viewBox="0 0 900 345" role="img" aria-label="The Team overview grid. Above it: month and year, Refresh, Export, Import biometric and Holidays buttons; then search and filters for departments, managers and locations, and Show system accounts. Each row is a person with Days, Late, Absent, Missing, Hours and WFH, then one cell per day with the in and out time, Leave, Absent, or shading for holidays and weekly offs. A legend explains the colours.">
+  <g font-size="13" fill="currentColor">
+    <text x="30" y="30" fill="var(--text-2)">My month</text>
+    <text x="110" y="30" font-weight="600">Team overview</text><line x1="110" y1="36" x2="208" y2="36" stroke="var(--studio)" stroke-width="3"/>
+    <text x="30" y="66" font-size="11" fill="var(--text-dim)">Updated 10:42</text>
+  </g>
+  <g stroke-width="1.5" fill="var(--panel)" stroke="var(--line)">
+    <rect x="340" y="50" width="90" height="26" rx="4"/><rect x="436" y="50" width="60" height="26" rx="4"/>
+    <rect x="504" y="50" width="70" height="26" rx="4"/><rect x="580" y="50" width="64" height="26" rx="4"/><rect x="650" y="50" width="130" height="26" rx="4"/><rect x="786" y="50" width="84" height="26" rx="4"/>
+    <rect x="30" y="86" width="250" height="26" rx="4"/><rect x="288" y="86" width="130" height="26" rx="4"/><rect x="424" y="86" width="116" height="26" rx="4"/><rect x="546" y="86" width="112" height="26" rx="4"/>
+  </g>
+  <g font-size="12" fill="currentColor" text-anchor="middle">
+    <text x="385" y="68">October &#9662;</text><text x="466" y="68">2026</text><text x="539" y="68">Refresh</text><text x="612" y="68">Export</text><text x="715" y="68">Import biometric</text><text x="828" y="68">Holidays</text>
+    <text x="353" y="104">All departments &#9662;</text><text x="482" y="104">All managers &#9662;</text><text x="602" y="104">All locations &#9662;</text>
+  </g>
+  <text x="42" y="104" font-size="12" fill="var(--text-dim)">Search people…</text>
+  <rect x="670" y="92" width="14" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><text x="690" y="104" font-size="12" fill="currentColor">Show system accounts</text>
+  <!-- grid header -->
+  <rect x="30" y="122" width="840" height="34" fill="var(--raised)"/>
+  <g font-size="11" fill="var(--text-2)">
+    <text x="38" y="143">Person</text>
+    <text x="184" y="143" text-anchor="middle">Days</text><text x="228" y="143" text-anchor="middle">Late</text><text x="272" y="143" text-anchor="middle">Absent</text><text x="318" y="143" text-anchor="middle">Missing</text><text x="364" y="143" text-anchor="middle">Hours</text><text x="406" y="143" text-anchor="middle">WFH</text>
+  </g>
+  <g font-size="11" fill="var(--text-2)" text-anchor="middle">
+    <text x="463" y="136">01</text><text x="463" y="150">Thu</text>
+    <text x="531" y="136">02</text><text x="531" y="150">Fri</text>
+    <text x="599" y="136">03</text><text x="599" y="150">Sat</text>
+    <text x="667" y="136">04</text><text x="667" y="150">Sun</text>
+    <text x="735" y="136">05</text><text x="735" y="150">Mon</text>
+    <text x="803" y="136">06</text><text x="803" y="150">Tue</text>
+  </g>
+  <rect x="497" y="122" width="68" height="34" fill="var(--line)" opacity="0.6"/><rect x="633" y="122" width="68" height="34" fill="var(--line)" opacity="0.6"/>
+  <line x1="772" y1="154" x2="834" y2="154" stroke="var(--studio)" stroke-width="3"/>
+  <!-- cells -->
+  <g stroke="var(--line-soft)" stroke-width="1">
+    <rect x="430" y="158" width="66" height="38" fill="var(--server-soft)"/><rect x="498" y="158" width="66" height="38" fill="var(--raised)"/><rect x="566" y="158" width="66" height="38" fill="var(--ops-soft)"/><rect x="634" y="158" width="66" height="38" fill="var(--raised)"/><rect x="702" y="158" width="66" height="38" fill="var(--server-soft)"/><rect x="770" y="158" width="66" height="38" fill="var(--panel)"/>
+    <rect x="430" y="198" width="66" height="38" fill="var(--server-soft)"/><rect x="498" y="198" width="66" height="38" fill="var(--raised)"/><rect x="566" y="198" width="66" height="38" fill="var(--raised)"/><rect x="634" y="198" width="66" height="38" fill="var(--raised)"/><rect x="702" y="198" width="66" height="38" fill="var(--bad-soft)"/><rect x="770" y="198" width="66" height="38" fill="var(--panel)"/>
+    <rect x="430" y="238" width="66" height="38" fill="var(--studio-soft)"/><rect x="498" y="238" width="66" height="38" fill="var(--raised)"/><rect x="566" y="238" width="66" height="38" fill="var(--bad-soft)"/><rect x="634" y="238" width="66" height="38" fill="var(--raised)"/><rect x="702" y="238" width="66" height="38" fill="var(--server-soft)"/><rect x="770" y="238" width="66" height="38" fill="var(--panel)"/>
+  </g>
+  <g font-size="12" fill="currentColor">
+    <text x="38" y="182">Asha Rao</text><text x="38" y="222">Neha Joshi</text><text x="38" y="262">Ravi Menon</text>
+  </g>
+  <g font-size="12" text-anchor="middle" fill="currentColor">
+    <text x="184" y="182" fill="var(--ok)">3</text><text x="228" y="182" fill="var(--warn)">1</text><text x="272" y="182">0</text><text x="318" y="182">0</text><text x="364" y="182">27.5</text><text x="406" y="182">0</text>
+    <text x="184" y="222" fill="var(--ok)">1</text><text x="228" y="222">0</text><text x="272" y="222" fill="var(--bad)">1</text><text x="318" y="222">0</text><text x="364" y="222">9.0</text><text x="406" y="222" fill="var(--studio)">1</text>
+    <text x="184" y="262" fill="var(--ok)">3</text><text x="228" y="262">0</text><text x="272" y="262">0</text><text x="318" y="262" fill="var(--bad)">1</text><text x="364" y="262">19.2</text><text x="406" y="262">0</text>
+  </g>
+  <g font-size="11" text-anchor="middle" fill="currentColor">
+    <text x="463" y="174">09:58</text><text x="463" y="188">19:02</text>
+    <text x="599" y="174" fill="var(--warn)">11:10</text><text x="599" y="188" fill="var(--warn)">20:05</text>
+    <text x="735" y="174">10:01</text><text x="735" y="188">19:20</text>
+    <text x="463" y="214" font-style="italic">09:45</text><text x="463" y="228" font-style="italic">18:50</text>
+    <text x="599" y="214">Leave</text><text x="599" y="228">Casual</text>
+    <text x="735" y="221" fill="var(--bad)">Absent</text>
+    <text x="463" y="254">09:40</text><text x="463" y="268">19:30</text>
+    <text x="599" y="254" fill="var(--bad)">10:05</text><text x="599" y="268" fill="var(--bad)">no out</text>
+    <text x="741" y="254">10:12</text><text x="741" y="268">19:00</text>
+  </g>
+  <!-- icons -->
+  <g stroke="var(--text-dim)" fill="none" stroke-width="1.3"><circle cx="440" cy="248" r="5"/><line x1="440" y1="248" x2="440" y2="245"/><line x1="440" y1="248" x2="442" y2="249"/>
+  <path d="M708 248 L716 240 L719 243 L711 251 L707 252 Z"/></g>
+  <text x="667" y="221" font-size="10" fill="var(--text-dim)" text-anchor="middle">weekly off</text>
+  <text x="531" y="221" font-size="10" fill="var(--text-dim)" text-anchor="middle">holiday</text>
+  <!-- legend -->
+  <g font-size="11" fill="var(--text-2)">
+    <rect x="30" y="298" width="12" height="12" rx="2" fill="var(--server-soft)" stroke="var(--ok)" stroke-width="2"/><text x="48" y="308">Present</text>
+    <rect x="104" y="298" width="12" height="12" rx="2" fill="var(--ops-soft)" stroke="var(--warn)" stroke-width="2"/><text x="122" y="308">Late</text>
+    <rect x="160" y="298" width="12" height="12" rx="2" fill="var(--ops-soft)" stroke="var(--warn)" stroke-width="2"/><text x="178" y="308">Short day</text>
+    <rect x="244" y="298" width="12" height="12" rx="2" fill="var(--panel)" stroke="var(--studio)" stroke-width="2"/><text x="262" y="308">Working now</text>
+    <rect x="342" y="298" width="12" height="12" rx="2" fill="var(--studio-soft)" stroke="var(--info)" stroke-width="2"/><text x="360" y="308">Auto punch-out</text>
+    <rect x="456" y="298" width="12" height="12" rx="2" fill="var(--bad-soft)" stroke="var(--bad)" stroke-width="2"/><text x="474" y="308">Missing punch</text>
+    <rect x="566" y="298" width="12" height="12" rx="2" fill="var(--raised)" stroke="var(--idle)" stroke-width="2"/><text x="584" y="308">On leave</text>
+    <rect x="30" y="322" width="12" height="12" rx="2" fill="var(--raised)" stroke="var(--idle)" stroke-width="2"/><text x="48" y="332">Leave pending</text>
+    <rect x="140" y="322" width="12" height="12" rx="2" fill="var(--bad-soft)" stroke="var(--bad)" stroke-width="2"/><text x="158" y="332">Absent</text>
+    <rect x="214" y="322" width="12" height="12" rx="2" fill="var(--raised)" stroke="var(--text-dim)" stroke-width="2"/><text x="232" y="332">Holiday / weekly off</text>
+  </g>
+</svg>
+<figcaption>Team overview (simplified; colours here are approximate). Italic times mean working from home. A small clock marks a day closed by the automatic punch-out; a pencil marks a day HR corrected. Orange text in a leave cell means somebody punched in on a day of approved leave: one of the two is wrong. Today is underlined in the header.</figcaption>
+</figure>
+
+<div class="tablewrap"><table>
+  <tr><th>Word</th><th>Meaning</th></tr>
+  <tr><td><b>Late</b></td><td>The first punch-in is after <b>Late after</b> (10:45 by default), on a day the person was expected in. Never on a day off or a day of leave. On a first-half leave day, the afternoon arrival is not late.</td></tr>
+  <tr><td><b>Short day</b></td><td>A finished day with fewer hours than the <b>Standard day</b> (9 hours by default).</td></tr>
+  <tr><td><b>Absent</b></td><td>A past working day with no punch and no <i>approved</i> leave. (With a request still waiting, the day says Leave pending, but counts as absent.) Never before the joining date or after the last working day.</td></tr>
+  <tr><td><b>Missing punch</b></td><td>An in with no out (after the day ended), or an out with no in. HR corrects it.</td></tr>
+  <tr><td><b>Days / Hours / WFH</b></td><td>Days with a punch, the hours of all sessions, and days worked from home.</td></tr>
+</table></div>
+<div class="note warn"><b>"Leave pending" still counts as absent</b>A past day covered by a request still waiting shows <strong>Leave / pending</strong> in the grid and <strong>Leave pending</strong> in My month. It is still counted in the <strong>Absent</strong> total and the export, so payroll figures do not change until you approve. A punch on a day of approved leave keeps both: the leave stays charged until you revoke it.</div>
+
+<h3>Correcting a day</h3>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="8" width="32" height="28" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="6" y1="18" x2="38" y2="18" stroke="currentColor" stroke-width="2"/><line x1="22" y1="8" x2="22" y2="36" stroke="currentColor" stroke-width="2"/><rect x="23" y="19" width="14" height="16" fill="var(--warn)"/></svg><b>Double-click the day</b><span>In Team overview. <strong>Edit punch</strong> opens with the name and date. A day that has not happened yet cannot be edited.</span></li>
+  <li><svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="16" fill="none" stroke="currentColor" stroke-width="3"/><line x1="22" y1="22" x2="22" y2="12" stroke="currentColor" stroke-width="3"/><line x1="22" y1="22" x2="29" y2="26" stroke="currentColor" stroke-width="3"/></svg><b>Pick the times</b><span><strong>In - out</strong>. Tick <strong>No in time</strong> or <strong>No out time</strong> if one is unknown. <strong>Add session</strong> / <strong>Remove</strong> for breaks.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M6 30 C14 30 14 14 22 14 C30 14 30 30 38 30" fill="none" stroke="currentColor" stroke-width="3"/><circle cx="38" cy="30" r="3" fill="currentColor"/></svg><b>Overnight?</b><span>Tick <strong>Ends next day (overnight shift)</strong> when the out time is after midnight. Only then may out be earlier than in.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M6 8 H38 V30 H18 L10 38 V30 H6 Z" fill="none" stroke="currentColor" stroke-width="3"/></svg><b>Type the reason, Save</b><span>A reason is required. The day keeps who changed it, why, when, and the old times (point at the cell).</span></li>
+</ol>
+<ul>
+  <li>A day that had no record opens at 10:00 to 19:00. Change both to the real times.</li>
+  <li>A day closed by the automatic punch-out says so: "Out was set by the automatic punch-out at 19:30 - enter the real time if it is known."</li>
+  <li><b>Clear day</b> removes the day's record. It also needs a reason, kept in the audit log.</li>
+  <li>A day of approved leave asks before adding punches.</li>
+</ul>
+<p>Supervisors see <b>My team</b>: the people under them, read-only. When they spot a wrong day, they ask you to correct it.</p>
+
+<h3>Excel export for payroll</h3>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><circle cx="18" cy="18" r="10" fill="none" stroke="currentColor" stroke-width="3"/><line x1="25" y1="25" x2="36" y2="36" stroke="currentColor" stroke-width="3"/></svg><b>Clear the filters</b><span>The export holds only the people the grid shows. A search or filter left on means people missing from payroll.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="8" width="32" height="28" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="6" y1="16" x2="38" y2="16" stroke="currentColor" stroke-width="3"/></svg><b>Pick the month and year</b><span>At the top right of Team overview.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M22 6 V28 M12 18 L22 28 L32 18" fill="none" stroke="currentColor" stroke-width="3"/><line x1="8" y1="36" x2="36" y2="36" stroke="currentColor" stroke-width="3"/></svg><b>Press Export</b><span>Save the file. It is called like <code>Attendance_2026_10.xlsx</code>.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="14" width="32" height="16" rx="4" fill="currentColor"/><text x="22" y="26" text-anchor="middle" font-size="9" fill="var(--panel)" font-weight="700">OPEN</text></svg><b>Open or Show in folder</b><span>"Saved Attendance_2026_10.xlsx". The sheet counts exactly as the grid does.</span></li>
+</ol>
+<div class="tablewrap"><table>
+  <tr><th>Code in the sheet</th><th>Meaning</th></tr>
+  <tr><td>P / L / S</td><td>Present / Late / Short day (with the hours)</td></tr>
+  <tr><td>A / LV</td><td>Absent / approved leave</td></tr>
+  <tr><td>LP</td><td>Leave pending: asked for, not yet decided. Counted as absent.</td></tr>
+  <tr><td>H / WO</td><td>Holiday / weekly off</td></tr>
+  <tr><td>M / W</td><td>Missing punch / still working (today)</td></tr>
+  <tr><td>AU</td><td>Closed by the automatic punch-out: the hours end at the cut-off time, not at a real punch</td></tr>
+  <tr><td>* after a code</td><td>HR corrected this day</td></tr>
+</table></div>
+<p>The totals columns are Present, Late, Absent, Leave, Missing, Hours and WFH. If the holidays or the approved leave cannot be read, Slate refuses the export rather than write those days as Absent. Try again in a moment.</p>
+<h3 id="biometric">The biometric import, step by step</h3>
+<p>The biometric machine's export file (CSV or Excel) goes into the same attendance record as the Punch buttons. Any machine works.</p>
+
+<figure>
+<svg viewBox="0 0 900 380" role="img" aria-label="The import window, Import attendance from the biometric machine. Step 1 File with Choose file. Step 2 Columns: a box above each column of the preview to say what it is, such as Employee code, Name, Date, Time and In or Out, and a tick box for day-first dates. A status line counts punches, days and people. Step 3 Codes Slate does not know: each unknown machine code, its number of punches, and a person picker. Cancel and Import buttons at the bottom.">
+  <rect x="20" y="10" width="860" height="360" rx="10" fill="var(--panel)" stroke="currentColor" stroke-width="2"/>
+  <rect x="20" y="10" width="860" height="32" rx="10" fill="var(--raised)"/>
+  <text x="36" y="31" font-size="13" font-weight="600" fill="currentColor">Import attendance from the biometric machine</text>
+  <g font-size="13" fill="currentColor">
+    <text x="36" y="72" font-weight="700">1. File</text>
+    <text x="110" y="72" fill="var(--text-2)">D:\Attendance\october.csv</text>
+    <text x="36" y="108" font-weight="700">2. Columns</text>
+    <text x="130" y="108" fill="var(--text-dim)" font-size="12">New file layout: check the column roles below.</text>
+  </g>
+  <rect x="740" y="54" width="120" height="26" rx="4" fill="var(--panel)" stroke="var(--line)" stroke-width="1.5"/><text x="800" y="72" text-anchor="middle" font-size="12" fill="currentColor">Choose file…</text>
+  <rect x="616" y="97" width="13" height="13" rx="2" fill="var(--studio)"/><path d="M618 103 L621 107 L627 99" stroke="var(--panel)" stroke-width="2" fill="none"/>
+  <text x="635" y="108" font-size="12" fill="currentColor">Dates are day first (31/12/2026)</text>
+  <!-- role pickers -->
+  <g fill="var(--studio-soft)" stroke="var(--studio)" stroke-width="1.5">
+    <rect x="36" y="120" width="160" height="26" rx="4"/><rect x="202" y="120" width="160" height="26" rx="4"/><rect x="368" y="120" width="160" height="26" rx="4"/><rect x="534" y="120" width="160" height="26" rx="4"/><rect x="700" y="120" width="160" height="26" rx="4"/>
+  </g>
+  <g font-size="12" fill="currentColor" text-anchor="middle"><text x="116" y="138">Employee code &#9662;</text><text x="282" y="138">Name &#9662;</text><text x="448" y="138">Date &#9662;</text><text x="614" y="138">Time &#9662;</text><text x="780" y="138">In / Out &#9662;</text></g>
+  <rect x="36" y="150" width="824" height="22" fill="var(--raised)"/>
+  <g font-size="12" fill="var(--text-2)"><text x="44" y="165">AC-No.</text><text x="210" y="165">Name</text><text x="376" y="165">Date</text><text x="542" y="165">Time</text><text x="708" y="165">State</text></g>
+  <g font-size="12" fill="currentColor">
+    <text x="44" y="190">101</text><text x="210" y="190">Asha Rao</text><text x="376" y="190">05/10/2026</text><text x="542" y="190">09:58</text><text x="708" y="190">C/In</text>
+    <text x="44" y="210">101</text><text x="210" y="210">Asha Rao</text><text x="376" y="210">05/10/2026</text><text x="542" y="210">19:02</text><text x="708" y="210">C/Out</text>
+    <text x="44" y="230">207</text><text x="210" y="230">Vikram Iyer</text><text x="376" y="230">05/10/2026</text><text x="542" y="230">23:30</text><text x="708" y="230">C/In</text>
+  </g>
+  <text x="36" y="258" font-size="12" fill="currentColor">96 punches read, 0 skipped. 47 days for 24 people. Dates 1 Oct 2026 to 5 Oct 2026.</text>
+  <text x="36" y="288" font-size="13" font-weight="700" fill="currentColor">3. Codes Slate does not know</text>
+  <text x="270" y="288" font-size="12" fill="var(--text-dim)">Pick the person each code belongs to, or leave it to skip them.</text>
+  <rect x="36" y="296" width="824" height="22" fill="var(--raised)"/>
+  <g font-size="12" fill="var(--text-2)"><text x="44" y="311">Machine code</text><text x="320" y="311">Punches</text><text x="560" y="311">Person</text></g>
+  <text x="44" y="336" font-size="12" fill="currentColor">207 – Vikram Iyer</text><text x="320" y="336" font-size="12" fill="currentColor">4</text>
+  <rect x="556" y="322" width="240" height="22" rx="4" fill="var(--panel)" stroke="var(--line)" stroke-width="1.5"/><text x="564" y="337" font-size="12" fill="currentColor">Vikram Iyer (vikram.iyer)</text>
+  <rect x="690" y="350" width="80" height="16" rx="3" fill="none"/>
+  <text x="752" y="362" font-size="12" text-anchor="middle" fill="var(--text-2)">Cancel</text>
+  <rect x="790" y="348" width="70" height="20" rx="4" fill="var(--studio)"/><text x="825" y="362" font-size="12" text-anchor="middle" fill="var(--panel)" font-weight="600">Import</text>
+</svg>
+<figcaption>The import window (simplified). The boxes above the preview say what each column is. Slate guesses them; you correct a wrong guess once.</figcaption>
+</figure>
+
+<ol class="steps six">
+  <li><svg viewBox="0 0 44 44"><rect x="8" y="14" width="28" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><rect x="14" y="8" width="16" height="6" rx="2" fill="currentColor"/></svg><b>Copy the export</b><span>From the machine to your PC (a USB drive is fine). CSV, TXT, XLSX, XLSM or XLS.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="4" y="14" width="36" height="16" rx="4" fill="currentColor"/><text x="22" y="25" text-anchor="middle" font-size="6.5" fill="var(--panel)" font-weight="700">IMPORT</text></svg><b>Attendance &rarr; Team overview &rarr; Import biometric</b><span>Then <strong>Choose file…</strong> and pick the file.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="10" width="9" height="24" fill="none" stroke="currentColor" stroke-width="3"/><rect x="18" y="10" width="9" height="24" fill="none" stroke="currentColor" stroke-width="3"/><rect x="30" y="10" width="9" height="24" fill="none" stroke="currentColor" stroke-width="3"/></svg><b>Check the column boxes</b><span>One must be <strong>Employee code</strong>. The time needs <strong>Date + time</strong>, or both <strong>Date</strong> and <strong>Time</strong>. <strong>In / Out</strong> if the file has it. Others: <strong>Ignore</strong>.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="8" width="32" height="28" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><text x="22" y="28" text-anchor="middle" font-size="11" fill="currentColor" font-weight="700">31/12</text></svg><b>Check the date order</b><span><strong>Dates are day first (31/12/2026)</strong> is ticked. Untick it only for a machine that writes the month first.</span></li>
+  <li><svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="16" fill="none" stroke="currentColor" stroke-width="3"/><text x="22" y="28" text-anchor="middle" font-size="18" fill="currentColor" font-weight="700">?</text></svg><b>Match unknown codes</b><span>Type a name in the person box. Leave it empty to skip that code. If the file has a Name column, Slate suggests the person. A code that is somebody's Slate user name matches by itself.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="4" y="14" width="36" height="16" rx="4" fill="currentColor"/><text x="22" y="26" text-anchor="middle" font-size="8" fill="var(--panel)" font-weight="700">IMPORT</text></svg><b>Press Import, then Yes</b><span>"Write 47 days of attendance for 24 people?" When it is done, Attendance says how many days were imported.</span></li>
+</ol>
+
+<h4>What Slate does with the punches</h4>
+<ul>
+  <li><b>One day per person:</b> the earliest punch is the in, the latest is the out.</li>
+  <li><b>Night shifts:</b> when the file has an In / Out column, a late IN and the next morning's OUT (within 16 hours) become one overnight day. Without In / Out nothing is moved.</li>
+  <li><b>A day the workstation also recorded</b> keeps the earlier in and the later out. A machine time replaces an out set by the automatic punch-out or a missing punch-out.</li>
+  <li><b>Importing the same file twice changes nothing.</b> Days already correct are counted as "already correct".</li>
+  <li><b>Days outside employment</b> (before joining, after the last working day) are listed and left out, unless you tick <b>Import those days anyway</b>.</li>
+  <li><b>Remembered for next time:</b> the column boxes and your code matches are saved in the studio's shared folder, for that file layout. The next file from the same machine shows "Known file layout".</li>
+</ul>
+<div class="note warn"><b>When something does not import</b><strong>Show skipped lines</strong> lists every line that could not be read, and why. If some days fail, the window stays open with a list: Person, Day, Reason. Fix the file or the record, then import again. Days already written are left alone.</div>
+</section>
+
+<!-- ============================================================ -->
+<section class="ops">
+<h2 id="calendar">Holidays and the year end</h2>
+<p class="lede">The holiday list decides what leave costs. The year end decides what carries into the next year. Both are HR's.</p>
+
+<h3>The holiday list</h3>
+<p>Two ways in: <b>Leave &rarr; Queue &rarr; HR tools &rarr; Holidays...</b>, or <b>Attendance &rarr; Team overview &rarr; Holidays</b> (it opens on the year you are looking at). Do the whole year in one sitting, before people book leave.</p>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="8" width="32" height="28" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="6" y1="16" x2="38" y2="16" stroke="currentColor" stroke-width="3"/><circle cx="22" cy="26" r="4" fill="var(--bad)"/></svg><b>Pick the Year</b><span>Or <strong>All years</strong>. Past holidays are dimmed.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="12" width="32" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="12" y1="22" x2="30" y2="22" stroke="currentColor" stroke-width="3"/></svg><b>Date and Name</b><span>For example "Diwali".</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M22 6 C14 6 10 12 10 18 C10 28 22 38 22 38 C22 38 34 28 34 18 C34 12 30 6 22 6 Z" fill="none" stroke="currentColor" stroke-width="3"/><circle cx="22" cy="18" r="4" fill="currentColor"/></svg><b>Applies to</b><span><strong>All</strong>, or one place. The place must be spelled as in people's <strong>Location</strong>.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="14" width="32" height="16" rx="4" fill="currentColor"/><text x="22" y="26" text-anchor="middle" font-size="9" fill="var(--panel)" font-weight="700">ADD</text></svg><b>Press Add</b><span>If waiting requests cover that date, Slate asks to re-cost them. Say <strong>Yes</strong>.</span></li>
+</ol>
+<ul>
+  <li><b>Edit</b> (or double-click) corrects a date, name or place in one step. <b>Remove</b> deletes. Both offer to re-cost waiting requests.</li>
+  <li>Approved leave keeps the day count it was charged at. Only waiting requests are re-costed.</li>
+  <li>A second holiday on the same date for the same place is refused ("Already on the calendar"), whatever the letter case.</li>
+  <li>A place nobody's record names asks first: "Nobody works there ... this holiday would apply to nobody."</li>
+</ul>
+
+<h3>Closing a leave year</h3>
+<p>Closing a year draws a line under it. Up to the carry-forward cap (12 days by default) moves into the new year. The rest <b>lapses</b>. Even before you close, balances already apply the cap to a finished year, and the queue shows a banner: "Leave year 2025 has not been closed." Closing writes the record that balances then count from.</p>
+
+<figure>
+<svg viewBox="0 0 900 290" role="img" aria-label="The Close a leave year window for 2025. A table with Person, Status, Balance at year end, Carries over and Lapses. Ravi Menon, No joining date - set it first, 20, 12, 8. Asha Rao, To close, 17, carries 12, lapses 5. Neha Joshi, To close, 8, carries 8, lapses 0. Kiran Das, Closed, 6, 6, 0. A tick box to also close people with no joining date, and the Close the year button.">
+  <rect x="20" y="10" width="860" height="270" rx="10" fill="var(--panel)" stroke="currentColor" stroke-width="2"/>
+  <rect x="20" y="10" width="860" height="32" rx="10" fill="var(--raised)"/>
+  <text x="36" y="31" font-size="13" font-weight="600" fill="currentColor">Close a leave year</text>
+  <text x="36" y="66" font-size="12" fill="currentColor">Leave year</text>
+  <rect x="110" y="52" width="90" height="24" rx="4" fill="var(--panel)" stroke="var(--line)" stroke-width="1.5"/><text x="122" y="69" font-size="12" fill="currentColor">2025 &#9662;</text>
+  <rect x="212" y="52" width="250" height="24" rx="4" fill="var(--panel)" stroke="var(--line)" stroke-width="1.5"/><text x="222" y="69" font-size="12" fill="var(--text-dim)">Search people...</text>
+  <text x="36" y="96" font-size="12" fill="var(--text-2)">2 people to close for 2025. 1 of them will lose leave. 1 person with no joining date is left out - set their joining date …</text>
+  <rect x="36" y="106" width="828" height="24" fill="var(--raised)"/>
+  <g font-size="12" fill="var(--text-2)"><text x="46" y="122">Person</text><text x="200" y="122">Status</text><text x="560" y="122" text-anchor="end">Balance at year end</text><text x="690" y="122" text-anchor="end">Carries over</text><text x="800" y="122" text-anchor="end">Lapses</text></g>
+  <g font-size="12" fill="currentColor">
+    <text x="46" y="150">Ravi Menon</text><text x="200" y="150" fill="var(--warn)">No joining date - set it first</text><text x="560" y="150" text-anchor="end">20</text><text x="690" y="150" text-anchor="end" fill="var(--ok)">12</text><text x="800" y="150" text-anchor="end" fill="var(--bad)" font-weight="700">8</text>
+    <text x="46" y="174">Asha Rao</text><text x="200" y="174">To close</text><text x="560" y="174" text-anchor="end">17</text><text x="690" y="174" text-anchor="end" fill="var(--ok)">12</text><text x="800" y="174" text-anchor="end" fill="var(--bad)" font-weight="700">5</text>
+    <text x="46" y="198">Neha Joshi</text><text x="200" y="198">To close</text><text x="560" y="198" text-anchor="end">8</text><text x="690" y="198" text-anchor="end" fill="var(--ok)">8</text><text x="800" y="198" text-anchor="end">0</text>
+    <g fill="var(--text-dim)"><text x="46" y="222">Kiran Das</text><text x="200" y="222">Closed</text><text x="560" y="222" text-anchor="end">6</text><text x="690" y="222" text-anchor="end">6</text><text x="800" y="222" text-anchor="end">0</text></g>
+  </g>
+  <rect x="36" y="240" width="13" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="56" y="251" font-size="12" fill="currentColor">Also close people with no joining date (their balance is counted from 1 January)</text>
+  <rect x="740" y="244" width="124" height="28" rx="4" fill="var(--bad-soft)" stroke="var(--bad)" stroke-width="1.5"/><text x="802" y="263" text-anchor="middle" font-size="12" fill="currentColor" font-weight="600">Close the year</text>
+</svg>
+<figcaption>The biggest loss is sorted to the top: those are the people who will ask you about it. "Kiran Das, Closed" was closed earlier and is not touched again.</figcaption>
+</figure>
+
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><circle cx="20" cy="14" r="7" fill="none" stroke="currentColor" stroke-width="3"/><path d="M6 38 C6 26 34 26 34 38" fill="none" stroke="currentColor" stroke-width="3"/></svg><b>Fix joining dates first</b><span>People with no joining date are listed as "No joining date - set it first" and are not closed. Set the date in Users &amp; Roles.</span></li>
+  <li><svg viewBox="0 0 44 44"><line x1="8" y1="12" x2="36" y2="12" stroke="currentColor" stroke-width="3"/><line x1="8" y1="22" x2="36" y2="22" stroke="currentColor" stroke-width="3"/><line x1="8" y1="32" x2="36" y2="32" stroke="currentColor" stroke-width="3"/></svg><b>HR tools &rarr; Year end...</b><span><strong>Leave year</strong> shows the next year to close. Read the table: nothing is written yet.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="14" width="32" height="16" rx="4" fill="var(--bad)"/><text x="22" y="26" text-anchor="middle" font-size="8" fill="var(--panel)" font-weight="700">CLOSE</text></svg><b>Close the year</b><span>Slate says how many people and how many days lapse in total. "It cannot be undone from this screen."</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M8 24 L18 34 L36 12" fill="none" stroke="var(--ok)" stroke-width="4"/></svg><b>Read the result</b><span>"2 closed, 1 were already done." Anyone not saved is named. Close again to finish them.</span></li>
+</ol>
+<div class="note bad"><b>Rules Slate holds you to</b>Only a finished year can be closed ("2026 has not finished yet"). Years close in order ("Close 2025 first"). A year already closed is never closed twice for the same person. After a close, nobody can ask for leave in that year, and balances count from what was carried.</div>
+<p>Service accounts, people who left before the year began, and people who joined after it ended are left out. A closed year can still be opened in the window to look back (marked "closed - view only"). If leave in that year changed after the close, the status says "Closed - now ..." with the new figure; balances still count from what was recorded.</p>
+</section>
+
+<!-- ============================================================ -->
+<section class="server">
+<h2 id="joining">Joining and leaving</h2>
+<p class="lede">One checklist, read in two directions. HR starts it and does the paperwork lines. IT does the accounts and machines. Each team sees only its own lines.</p>
+
+<figure>
+<svg viewBox="0 0 900 340" role="img" aria-label="The two checklists. Joining, HR lines: Signed contract received, ID and address proof on file, Added to payroll, Studio induction and policies, Introduced to the team. Joining, IT lines: Domain account created, Email and calendar set up, Workstation issued, DCC software installed, Project shares mounted, Render farm access. Leaving, HR lines: Last working day confirmed, Final settlement processed, Exit interview. Leaving, IT lines: Render farm access revoked, Project shares unmounted, Workstation returned, Email forwarded and mailbox archived, Domain account disabled, and Return a machine for each machine held. Payroll and final settlement are skipped for Freelance and Contract.">
+  <g stroke-width="2">
+    <rect x="20" y="20" width="420" height="280" rx="10" fill="var(--panel)" stroke="var(--server)"/>
+    <rect x="460" y="20" width="420" height="280" rx="10" fill="var(--panel)" stroke="var(--idle)"/>
+  </g>
+  <text x="36" y="48" font-size="16" font-weight="700" fill="var(--server)">Joining</text>
+  <text x="476" y="48" font-size="16" font-weight="700" fill="currentColor">Leaving</text>
+  <g font-size="12" font-weight="700" letter-spacing="1"><text x="36" y="76" fill="var(--ops)">HR (YOU)</text><text x="240" y="76" fill="var(--studio)">IT</text><text x="476" y="76" fill="var(--ops)">HR (YOU)</text><text x="680" y="76" fill="var(--studio)">IT</text></g>
+  <line x1="230" y1="62" x2="230" y2="255" stroke="var(--line)" stroke-width="1"/><line x1="670" y1="62" x2="670" y2="255" stroke="var(--line)" stroke-width="1"/>
+  <g fill="none" stroke="var(--ops)" stroke-width="1.5">
+    <rect x="36" y="90" width="11" height="11" rx="2"/><rect x="36" y="114" width="11" height="11" rx="2"/><rect x="36" y="138" width="11" height="11" rx="2"/><rect x="36" y="162" width="11" height="11" rx="2"/><rect x="36" y="186" width="11" height="11" rx="2"/>
+    <rect x="476" y="90" width="11" height="11" rx="2"/><rect x="476" y="114" width="11" height="11" rx="2"/><rect x="476" y="138" width="11" height="11" rx="2"/>
+  </g>
+  <g fill="none" stroke="var(--studio)" stroke-width="1.5">
+    <rect x="240" y="90" width="11" height="11" rx="2"/><rect x="240" y="114" width="11" height="11" rx="2"/><rect x="240" y="138" width="11" height="11" rx="2"/><rect x="240" y="162" width="11" height="11" rx="2"/><rect x="240" y="186" width="11" height="11" rx="2"/><rect x="240" y="210" width="11" height="11" rx="2"/>
+    <rect x="680" y="90" width="11" height="11" rx="2"/><rect x="680" y="114" width="11" height="11" rx="2"/><rect x="680" y="138" width="11" height="11" rx="2"/><rect x="680" y="162" width="11" height="11" rx="2"/><rect x="680" y="200" width="11" height="11" rx="2"/><rect x="680" y="224" width="11" height="11" rx="2"/>
+  </g>
+  <g font-size="12" fill="currentColor">
+    <text x="54" y="100">Signed contract received</text><text x="54" y="124">ID and address proof on file</text><text x="54" y="148">Added to payroll *</text><text x="54" y="172">Studio induction and policies</text><text x="54" y="196">Introduced to the team</text>
+    <text x="258" y="100">Domain account created</text><text x="258" y="124">Email and calendar set up</text><text x="258" y="148">Workstation issued</text><text x="258" y="172">DCC software installed</text><text x="258" y="196">Project shares mounted</text><text x="258" y="220">Render farm access</text>
+    <text x="494" y="100">Last working day confirmed</text><text x="494" y="124">Final settlement processed *</text><text x="494" y="148">Exit interview</text>
+    <text x="698" y="100">Render farm access revoked</text><text x="698" y="124">Project shares unmounted</text><text x="698" y="148">Workstation returned</text><text x="698" y="172">Email forwarded and</text><text x="698" y="186">mailbox archived</text><text x="698" y="210">Domain account disabled</text><text x="698" y="234">Return &lt;machine&gt;</text>
+  </g>
+  <text x="698" y="250" font-size="11" fill="var(--text-2)">one line per machine held</text>
+  <text x="36" y="270" font-size="12" fill="var(--text-2)">Starting joining records the joining date:</text>
+  <text x="36" y="286" font-size="12" fill="var(--text-2)">leave accrues from it.</text>
+  <text x="476" y="270" font-size="12" fill="var(--text-2)">Starting leaving records the last working day:</text>
+  <text x="476" y="286" font-size="12" fill="var(--text-2)">after it, the account is switched off.</text>
+  <text x="20" y="326" font-size="13" fill="currentColor">* not laid down for <tspan font-weight="700">Freelance (per project)</tspan> or <tspan font-weight="700">Contract</tspan>. Every other line is the same for everybody.</text>
+</svg>
+<figcaption>The default lines. HR sees the left half of each list; IT sees the right half. Admins, and people who are both HR and IT, get two tabs: HR checklist and IT checklist.</figcaption>
+</figure>
+
+<h3>Starting somebody joining</h3>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><circle cx="18" cy="15" r="7" fill="none" stroke="currentColor" stroke-width="3"/><path d="M4 38 C4 26 32 26 32 38" fill="none" stroke="currentColor" stroke-width="3"/><line x1="36" y1="10" x2="36" y2="22" stroke="currentColor" stroke-width="3"/><line x1="30" y1="16" x2="42" y2="16" stroke="currentColor" stroke-width="3"/></svg><b>Make the account first</b><span>In <strong>Users &amp; Roles &rarr; Add user</strong>. The checklist needs an account to belong to.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="4" y="14" width="36" height="16" rx="4" fill="currentColor"/><text x="22" y="25" text-anchor="middle" font-size="6.5" fill="var(--panel)" font-weight="700">START</text></svg><b>Joining &amp; Leaving &rarr; Start joining</b><span><strong>Person</strong>: type a name. Text that matches nobody is refused.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="8" width="32" height="28" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="12" y1="18" x2="32" y2="18" stroke="currentColor" stroke-width="3"/><line x1="12" y1="26" x2="26" y2="26" stroke="currentColor" stroke-width="3"/></svg><b>Employment, Department, Joining on</b><span>Filled from the person's record. If a joining date is already on record, Slate shows it and asks before changing it.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M8 24 L18 34 L36 12" fill="none" stroke="var(--ok)" stroke-width="4"/></svg><b>Press Start joining</b><span>The person appears on the left. Their lines appear on the right.</span></li>
+</ol>
+
+<h3>Working the list</h3>
+<ul>
+  <li>The left table: <b>Person</b>, <b>Joining / leaving</b>, <b>Date</b>, <b>Your tasks</b>, <b>Total open</b>. Total open counts both teams' lines, so you can see whether somebody is really ready.</li>
+  <li>Select lines, press <b>Mark done</b>. <b>Reopen</b> undoes it. <b>Done by</b> shows who ticked it and when.</li>
+  <li><b>Cancel this checklist</b> removes the open lines of a list started by mistake. Ticked lines stay as the record. For a leaving list, Slate also asks whether to clear the last working day.</li>
+  <li>The filter: <b>Everyone outstanding</b>, <b>Joining</b>, <b>Leaving</b>, <b>Everyone</b> (Everyone also shows finished lists).</li>
+</ul>
+
+<h3>Starting somebody leaving</h3>
+<p><b>Start leaving</b> asks for the <b>Last working day</b>. The picker also offers people who have already left, marked "(left)", so their kit is still chased.</p>
+<div class="note bad"><b>A last working day in the past switches the account off at once</b>Slate asks first. From the day after the last working day the person cannot sign in, earns no more leave, is not marked absent, and is left out of later year ends. A last day before the joining date is refused.</div>
+<p>If a machine is still out with somebody whose last day has passed (or who was deactivated), a red <b>Kit not returned</b> card appears at the top. It is there only when it is true. The heading of each list says what the person still holds ("Currently holding: ...").</p>
+
+<h3>Somebody coming back</h3>
+<p>A finished joining list is not reused. For a re-hire: <b>Reactivate</b> the account in Users &amp; Roles (it offers to clear a last day that has passed), then <b>Start joining</b>. A fresh list is laid down. An open list is topped up, never doubled. A joining list cannot be started for an account that is still switched off.</p>
+</section>
+
+<!-- ============================================================ -->
+<section class="server">
+<h2 id="people">People records</h2>
+<p class="lede">A person's record in Users &amp; Roles drives leave, attendance and the dashboard. Get it right once and everything else follows.</p>
+
+<h3>The fields that matter to HR</h3>
+<div class="tablewrap"><table>
+  <tr><th>Field</th><th>What it decides</th></tr>
+  <tr><td><b>Joined on</b></td><td>When leave starts to accrue. Before it, the person is never marked absent. Missing: accrual from 1 January, and the year end skips them.</td></tr>
+  <tr><td><b>Last working day</b></td><td>After it, the account is switched off. Leave stops accruing. Clear it (Not set) for somebody coming back.</td></tr>
+  <tr><td><b>Reports to</b></td><td>Whose queue the person's leave goes to first. "Nobody (their leave goes to HR)" sends it straight to you.</td></tr>
+  <tr><td><b>Department</b></td><td>See "Departments" below.</td></tr>
+  <tr><td><b>Location</b></td><td>Which holidays the person's leave, attendance and comp off are judged against.</td></tr>
+  <tr><td><b>Employment</b></td><td>Staff, Freelance or Contract. Freelance and Contract skip the payroll and final settlement lines.</td></tr>
+  <tr><td><b>Roles</b></td><td>Which screens the person sees, and whether they approve leave (Supervisor or Lead roles).</td></tr>
+</table></div>
+
+<h3>Who reports to whom</h3>
+<figure>
+<svg viewBox="0 0 900 280" role="img" aria-label="Where a request goes first, by the Reports to field. Asha reports to Arjun, a Lead: her request is Pending Supervisor and Arjun decides first, then HR. Ravi reports to nobody: straight to HR. Sam reports to Tom, who is now an artist and cannot approve leave: straight to HR, with the reason recorded. Meera's team reported to a supervisor who was deactivated: requests already waiting are stuck, and show in HR's queue as No supervisor can act, yours to decide.">
+  <defs><marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
+  <marker id="a3r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--bad)"/></marker></defs>
+  <g stroke-width="2" fill="var(--panel)" stroke="var(--line)">
+    <rect x="20" y="20" width="260" height="50" rx="8"/><rect x="20" y="84" width="260" height="50" rx="8"/><rect x="20" y="148" width="260" height="50" rx="8"/><rect x="20" y="212" width="260" height="50" rx="8"/>
+  </g>
+  <rect x="340" y="20" width="230" height="50" rx="8" fill="var(--panel)" stroke="var(--warn)" stroke-width="2"/>
+  <rect x="340" y="212" width="230" height="50" rx="8" fill="var(--bad-soft)" stroke="var(--bad)" stroke-width="2"/>
+  <rect x="640" y="20" width="240" height="242" rx="10" fill="var(--ops-soft)" stroke="var(--ops)" stroke-width="3"/>
+  <g fill="currentColor" font-size="13" font-weight="700"><text x="34" y="42">Asha</text><text x="34" y="106">Ravi</text><text x="34" y="170">Sam</text><text x="34" y="234">Meera's team</text></g>
+  <g fill="var(--text-2)" font-size="12"><text x="34" y="60">Reports to: Arjun (a Lead)</text><text x="34" y="124">Reports to: Nobody</text><text x="34" y="188">Reports to: Tom (now an artist)</text><text x="34" y="252">Reports to: Meera (deactivated)</text></g>
+  <text x="354" y="42" font-size="13" font-weight="700" fill="currentColor">Pending Supervisor</text><text x="354" y="60" font-size="12" fill="var(--text-2)">Arjun decides first</text>
+  <text x="354" y="234" font-size="13" font-weight="700" fill="var(--bad)">Stuck with Meera</text><text x="354" y="252" font-size="12" fill="var(--text-2)">nobody there can act</text>
+  <text x="760" y="120" text-anchor="middle" font-size="16" font-weight="700" fill="var(--ops)">Pending HR</text>
+  <text x="760" y="142" text-anchor="middle" font-size="12" fill="currentColor">your queue</text>
+  <text x="760" y="166" text-anchor="middle" font-size="12" fill="var(--text-2)">the reason it came straight</text>
+  <text x="760" y="182" text-anchor="middle" font-size="12" fill="var(--text-2)">to you is recorded on it</text>
+  <g stroke="currentColor" stroke-width="2.5" fill="none" marker-end="url(#a3)">
+    <line x1="280" y1="45" x2="337" y2="45"/><line x1="570" y1="45" x2="637" y2="45"/>
+    <line x1="280" y1="109" x2="637" y2="109"/><line x1="280" y1="173" x2="637" y2="173"/>
+  </g>
+  <path d="M280 237 L337 237" stroke="var(--bad)" stroke-width="2.5" fill="none" marker-end="url(#a3r)"/>
+  <path d="M570 237 L637 237" stroke="var(--bad)" stroke-width="2.5" fill="none" stroke-dasharray="6 4" marker-end="url(#a3r)"/>
+  <text x="458" y="102" text-anchor="middle" font-size="12" fill="currentColor">No supervisor recorded</text>
+  <text x="458" y="166" text-anchor="middle" font-size="12" fill="currentColor">Tom cannot approve leave</text>
+  <text x="600" y="226" text-anchor="middle" font-size="11" fill="var(--bad)">yours</text>
+</svg>
+<figcaption>Requests go to the supervisor only when the person on <b>Reports to</b> can approve leave. A stuck request shows in your "Waiting on me" as <b>No supervisor can act - yours to decide</b>.</figcaption>
+</figure>
+<ul>
+  <li><b>Reports to</b> only offers active people who approve leave (Supervisor and Lead roles) or keep it (HR). Never a system account.</li>
+  <li>Somebody cannot report to themselves, and loops are refused ("... would make a loop").</li>
+  <li>A supervisor's <b>My team</b> in Attendance shows everybody under them, through their leads too. A supervisor with nobody recorded under them sees "Nobody reports to you yet".</li>
+  <li>The Users list marks in amber anybody whose Reports to cannot approve leave, and anybody with no joining date.</li>
+</ul>
+
+<h3>Departments</h3>
+<p>The <b>Department</b> field is picked from the studio's list (Matte Painting, CG, Roto, Prep / Paint, Matchmove, Comp, Slap Comp, Face / De-age, AI, Motion Graphics, Production, IT, HR, Admin, Editorial, General). It is read from the person's <b>own record</b>, never from what a screen sends:</p>
+<ul>
+  <li><b>A Lead edits only their own department</b> on the VFX Dashboard. It comes only from the Department box on their own record. A Lead whose Department names no department can edit nothing there until you set it. A change reaches the dashboard at the lead's next sign-in.</li>
+  <li>The <b>All departments</b> filter in Team overview, and the Department suggested when you start a checklist.</li>
+  <li>For somebody with no manager, "Also away from the team" in the queue compares people of the same department.</li>
+</ul>
+
+<h3>Adding, importing, exporting</h3>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><circle cx="18" cy="15" r="7" fill="none" stroke="currentColor" stroke-width="3"/><path d="M4 38 C4 26 32 26 32 38" fill="none" stroke="currentColor" stroke-width="3"/><line x1="36" y1="10" x2="36" y2="22" stroke="currentColor" stroke-width="3"/><line x1="30" y1="16" x2="42" y2="16" stroke="currentColor" stroke-width="3"/></svg><b>One person: Add user</b><span>Username (2 to 40 letters, numbers, dot, dash, underscore), Display name, Department, Roles, a first Password, then the fields above.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="8" y="6" width="28" height="32" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="14" y1="16" x2="30" y2="16" stroke="currentColor" stroke-width="2"/><line x1="14" y1="22" x2="30" y2="22" stroke="currentColor" stroke-width="2"/><line x1="14" y1="28" x2="30" y2="28" stroke="currentColor" stroke-width="2"/></svg><b>Many: Import…</b><span><strong>Download template</strong>, fill it, <strong>Choose file…</strong>. Pick a <strong>Role for everyone</strong> and a <strong>First password</strong>.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M8 24 L18 34 L36 12" fill="none" stroke="var(--ok)" stroke-width="4"/></svg><b>Read the preview, Import</b><span>Each row says what will happen. <strong>Save report…</strong> keeps the list of what was set.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M22 6 V28 M12 18 L22 28 L32 18" fill="none" stroke="currentColor" stroke-width="3"/><line x1="8" y1="36" x2="36" y2="36" stroke="currentColor" stroke-width="3"/></svg><b>Export CSV</b><span>The whole list, with status and last day, as <code>slate_users.csv</code>.</span></li>
+</ol>
+<ul>
+  <li>The template columns: Username, Display Name, Department, Joined, Reports To, Location, Employment, Role.</li>
+  <li>People already in Slate are skipped, unless you tick <b>Update existing people (profile fields only - never passwords or roles)</b>. Then an exported list can be edited and imported back.</li>
+  <li>New people choose their own password the first time they sign in. Tell each one their user name and the first password.</li>
+</ul>
+
+<h3>When somebody leaves for good</h3>
+<ul>
+  <li><b>Deactivate</b>, do not delete. History (attendance, leave) is kept; the person disappears from lists and pickers. <b>Show deactivated</b> brings them into view; <b>Reactivate</b> switches them on again.</li>
+  <li>Deactivate is refused while the person has leave of their own waiting for a decision, or a machine still issued. Handle those first.</li>
+  <li>Deactivating a supervisor offers to move their team to a new manager ("Move N people and deactivate"). Leave waiting on them follows the team.</li>
+  <li><b>Delete…</b> is only for an account made by mistake, with no history. You cannot deactivate or delete yourself.</li>
+  <li><b>Reset password</b> sets a new one. Nobody can read a password, not even an admin.</li>
+</ul>
+
+<h3>Studio policy</h3>
+<p><b>Settings &rarr; Studio policy</b> holds the rules every workstation uses for leave and attendance. HR and admins can change it; press <b>Save changes</b> at the top of Settings. Everybody else sees a read-only summary. Change it between leave years if you can: approved leave keeps its cost, but balances, the late count and the export use the new values at once, on every workstation.</p>
+<div class="tablewrap"><table>
+  <tr><th>Setting</th><th>Default</th><th>Used for</th></tr>
+  <tr><td>Late after</td><td>10:45</td><td>The late count</td></tr>
+  <tr><td>Standard day</td><td>9 hours</td><td>Short days; half of it is the comp-off minimum</td></tr>
+  <tr><td>Forgotten punch-out closes at</td><td>19:30</td><td>The automatic punch-out (at least 4 hours after Late after)</td></tr>
+  <tr><td>Weekly off</td><td>Sunday</td><td>The studio's one working week: leave, attendance and IT's clocks</td></tr>
+  <tr><td>Leave earned</td><td>2 days a month</td><td>Accrual</td></tr>
+  <tr><td>Carry into next year, at most</td><td>12 days</td><td>The year end</td></tr>
+  <tr><td>Sandwich rule</td><td>On</td><td>What leave costs</td></tr>
+  <tr><td>Comp-off</td><td>Off</td><td>See Comp off, under Balances</td></tr>
+  <tr><td>Project rest</td><td>On</td><td>HR tools &rarr; Grant project rest</td></tr>
+</table></div>
+</section>
+
+<!-- ============================================================ -->
+<h2 id="help">When something goes wrong</h2>
+<div class="tablewrap long"><table>
+  <tr><th>What you see</th><th>What it means</th><th>What to do</th></tr>
+  <tr><td>Sign-in: <b>Cannot reach the studio database</b></td><td>The server is off or the network is down</td><td>Press <b>Try again</b>. Still failing: tell IT. If nobody at all can sign in, IT uses Recover Slate on the server PC.</td></tr>
+  <tr><td>Sign-in: <b>That user name and password do not match</b></td><td>Wrong user name or password</td><td>Check Caps Lock. Another HR person or an admin can <b>Reset password</b>.</td></tr>
+  <tr><td>Queue: <b>Already decided or withdrawn</b></td><td>Somebody acted first, or the person withdrew</td><td>Nothing changed. Read the refreshed list.</td></tr>
+  <tr><td>Approve refused: "... has only ... of comp off left"</td><td>Not enough comp off valid on that date</td><td>Reject, and ask the person for Unpaid (or other days).</td></tr>
+  <tr><td>Waiting on: <b>No supervisor can act - yours to decide</b></td><td>The manager on record cannot approve, or was deactivated</td><td>Decide it. Then fix <b>Reports to</b> in Users &amp; Roles.</td></tr>
+  <tr><td>Year end: <b>No joining date - set it first</b></td><td>The record has no joining date</td><td>Set <b>Joined on</b> in Users &amp; Roles, then open Year end again.</td></tr>
+  <tr><td>A day shows <b>Leave pending</b> (LP)</td><td>The request is not decided yet; it counts as absent</td><td>Decide the request. Approved leave shows as leave.</td></tr>
+  <tr><td>A day shows <b>Missing punch</b></td><td>No out (or no in) on a past day</td><td>Double-click the day, enter the real times and a reason.</td></tr>
+  <tr><td>Export: <b>The export was not made</b></td><td>Holidays or leave could not be read</td><td>Try again in a moment. Slate will not write those days as Absent.</td></tr>
+  <tr><td>Somebody is missing from the export</td><td>A search or filter was on</td><td>Clear the search and filters, export again.</td></tr>
+  <tr><td>Import: <b>Cannot import yet: no column is marked as the employee code</b></td><td>The column boxes are not set</td><td>Set <b>Employee code</b>, and Date + time (or Date and Time).</td></tr>
+  <tr><td>Import: some days failed</td><td>Those days could not be written</td><td>Read Person / Day / Reason, fix, import again. Written days stay.</td></tr>
+  <tr><td>Start joining: <b>No such person</b></td><td>There is no account with that name</td><td>Create it in Users &amp; Roles first.</td></tr>
+  <tr><td>Deactivate: "... still has ... Handle those first"</td><td>Own leave waiting, or a machine still issued</td><td>Decide or withdraw the leave; ask IT to collect the machine.</td></tr>
+  <tr><td>A screen says <b>Could not load</b></td><td>That screen could not read from the database</td><td>Press <b>Try again</b> (or F5). Still failing: <b>Copy details for IT</b> and raise it in <b>IT Support</b>.</td></tr>
+</table></div>
+
+<p style="margin-top:24px;color:var(--text-dim);font-size:14px">Slate BETA 2.2.0 &middot; Slate for HR &middot; The defaults named here can be changed in Settings &rarr; Studio policy. This page can be printed. Each part starts on a new page.</p>
+</div>

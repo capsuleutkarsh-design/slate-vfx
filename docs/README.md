@@ -10,10 +10,11 @@ not, so each page is a complete account of one person's side of the software.
 
 | | |
 |---|---|
-| **[Artists](guide/artists.md)** | Asking for leave, why a day off sometimes costs three, raising a ticket, attendance |
-| **[Supervisors and leads](guide/supervisors.md)** | The first of the two leave approvals, and the production screens |
-| **[HR](guide/hr.md)** | The approval queue, the holiday calendar, the year end, joining and leaving |
-| **[IT](guide/it.md)** | The service desk, provisioning, machines, licences, the server |
+| **[Everyone](guide/slate-studio-handbook.html)** | Signing in, your shots, review in RV, stock, attendance, leave, IT tickets |
+| **[Supervisors and leads](guide/slate-supervisor-handbook.html)** | Reviewing shots, your team, the first leave approval, team attendance |
+| **[Production](guide/slate-production-handbook.html)** | Projects, ingest, the dashboard, Timeline Viewer and EDLs, scheduling, bidding |
+| **[HR](guide/slate-hr-handbook.html)** | The leave queue, comp off, attendance and the biometric import, holidays, joining and leaving |
+| **[IT](guide/slate-it-handbook.html)** | Setting up a studio, the server, publishing updates, Recover Slate, the IT screens |
 
 ## If you run or build Slate
 

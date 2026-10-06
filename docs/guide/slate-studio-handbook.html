@@ -1,0 +1,1135 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Slate Studio Handbook</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --ground: #F5F4F0; --panel: #FFFFFF; --raised: #ECEAE4; --line: #D3D0C7; --line-soft: #E5E2DA;
+    --text: #1B1B1F; --text-2: #4A4A52; --text-dim: #77767F;
+    --studio: #2A7A8C; --studio-soft: #DCEEF2;
+    --ops: #A8761E; --ops-soft: #F6ECD6;
+    --server: #2F8B5F; --server-soft: #DDF0E5;
+    --bad: #B9433F; --bad-soft: #F7DEDD; --warn: #A8761E; --ok: #2F8B5F; --info: #3F7DA8; --idle: #8A8883;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0D0D0F; --panel: #16161A; --raised: #1D1D22; --line: #2C2C34; --line-soft: #212128;
+      --text: #E8E6E1; --text-2: #B4B1AA; --text-dim: #87857F;
+      --studio: #3EA8BF; --studio-soft: #12343B; --ops: #D9A441; --ops-soft: #3A2C10; --server: #5FBF8F; --server-soft: #12352A;
+      --bad: #D9635F; --bad-soft: #3B1C1B; --warn: #D9A441; --ok: #5FBF8F; --info: #6BA4C9; --idle: #6E6C67;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0D0D0F; --panel: #16161A; --raised: #1D1D22; --line: #2C2C34; --line-soft: #212128;
+    --text: #E8E6E1; --text-2: #B4B1AA; --text-dim: #87857F;
+    --studio: #3EA8BF; --studio-soft: #12343B; --ops: #D9A441; --ops-soft: #3A2C10; --server: #5FBF8F; --server-soft: #12352A;
+    --bad: #D9635F; --bad-soft: #3B1C1B; --warn: #D9A441; --ok: #5FBF8F; --info: #6BA4C9; --idle: #6E6C67;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--ground); color: var(--text); font-family: Inter, "Segoe UI", system-ui, sans-serif; font-size: 17px; line-height: 1.6; padding-inline: clamp(16px, 4vw, 48px); padding-block: 32px 80px; }
+  .wrap { max-width: 960px; margin: 0 auto; }
+  h1, h2, h3, h4 { font-family: "Barlow Semi Condensed", Bahnschrift, "Segoe UI", sans-serif; text-wrap: balance; margin: 0; }
+  h1 { font-size: 46px; font-weight: 700; line-height: 1.05; }
+  h2 { font-size: 34px; font-weight: 700; margin-top: 72px; padding-top: 22px; border-top: 3px solid var(--line); }
+  h3 { font-size: 24px; font-weight: 600; margin-top: 40px; }
+  h4 { font-size: 18px; font-weight: 600; margin-top: 22px; }
+  p { max-width: 62ch; margin: 10px 0; }
+  .eyebrow { font-family: "Barlow Semi Condensed", Bahnschrift, sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 1.8px; text-transform: uppercase; color: var(--text-dim); }
+  .lede { font-size: 20px; color: var(--text-2); max-width: 60ch; }
+  code { font-family: Consolas, "Cascadia Mono", monospace; font-size: 15px; background: var(--raised); padding: 1px 6px; border-radius: 4px; }
+  ul, ol { max-width: 66ch; }
+  li { margin: 6px 0; }
+  a { color: var(--studio); }
+
+  /* Product colouring */
+  .studio h2, .studio h3 { color: var(--studio); }
+  .ops h2, .ops h3 { color: var(--ops); }
+  .server h2, .server h3 { color: var(--server); }
+
+  /* Cover cards */
+  .covers { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 28px; }
+  .cover { border-radius: 10px; padding: 20px 22px; color: var(--text); text-decoration: none; border: 2px solid var(--line); background: var(--panel); display: block; }
+  .cover.studio { border-color: var(--studio); background: var(--studio-soft); }
+  .cover.ops { border-color: var(--ops); background: var(--ops-soft); }
+  .cover.server { border-color: var(--server); background: var(--server-soft); }
+  .cover .who { font-size: 14px; color: var(--text-2); margin-top: 6px; }
+  .cover h3 { margin: 0; font-size: 26px; }
+  .cover svg { width: 56px; height: 56px; display: block; margin-bottom: 10px; }
+
+  /* Steps */
+  .steps { list-style: none; padding: 0; margin: 18px 0; counter-reset: s; max-width: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; }
+  .steps li { counter-increment: s; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 16px 16px 16px; position: relative; margin: 0; }
+  .steps li::before { content: counter(s); font-family: "Barlow Semi Condensed", Bahnschrift, sans-serif; font-weight: 700; font-size: 30px; line-height: 1; color: var(--text-dim); display: block; margin-bottom: 8px; }
+  .steps li b { display: block; font-size: 18px; margin-bottom: 4px; }
+  .steps li span { color: var(--text-2); font-size: 15px; }
+  .steps svg { width: 44px; height: 44px; display: block; margin-bottom: 8px; }
+
+  /* Callouts */
+  .note { border-left: 5px solid var(--info); background: var(--panel); padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 18px 0; max-width: 70ch; }
+  .note.bad { border-color: var(--bad); background: var(--bad-soft); }
+  .note.ok { border-color: var(--ok); }
+  .note.warn { border-color: var(--warn); }
+  .note b { display: block; font-family: "Barlow Semi Condensed", Bahnschrift, sans-serif; font-size: 18px; margin-bottom: 4px; }
+
+  /* Figures */
+  figure { margin: 22px 0; padding: 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  figure svg { width: 100%; height: auto; display: block; }
+  figcaption { margin-top: 10px; font-size: 15px; color: var(--text-2); max-width: 70ch; }
+  svg text { font-family: Inter, "Segoe UI", sans-serif; }
+
+  /* Tables */
+  .tablewrap { overflow-x: auto; margin: 14px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 16px; background: var(--panel); }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  th { font-family: "Barlow Semi Condensed", Bahnschrift, sans-serif; font-size: 14px; letter-spacing: 1px; text-transform: uppercase; color: var(--text-dim); }
+  .dot { display: inline-block; width: 14px; height: 14px; border-radius: 50%; vertical-align: -2px; margin-right: 6px; }
+
+  /* Sidebar mock */
+  .side { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; margin: 14px 0; }
+  .side .grp { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .side .grp .h { font-family: "Barlow Semi Condensed", Bahnschrift, sans-serif; font-size: 13px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 8px; }
+  .side .grp div.i { padding: 6px 0; border-top: 1px solid var(--line-soft); font-size: 16px; }
+  .side .grp div.i small { display: block; color: var(--text-2); font-size: 14px; }
+
+  .card-print { page-break-inside: avoid; }
+  @media print {
+    @page { size: A4; margin: 14mm 14mm 16mm; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body { background: #fff; color: #000; font-size: 13px; padding: 0; }
+    h2 { page-break-before: always; margin-top: 0; border: 0; }
+    h3, h4 { break-after: avoid; }
+    table { font-size: 12.5px; }
+    .tablewrap, tr { break-inside: avoid; }
+    .steps { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+    .steps li span { font-size: 12.5px; }
+    figure, .steps li, .note { break-inside: avoid; }
+    a { color: inherit; text-decoration: none; }
+  }
+  @media (max-width: 480px) { h1 { font-size: 34px; } h2 { font-size: 28px; } }
+</style>
+
+<div class="wrap">
+
+<div class="eyebrow">Slate BETA 2.2.0 &middot; for everyone in the studio</div>
+<h1 style="margin-top:8px">Slate Studio Handbook</h1>
+<p class="lede">Your working day in Slate: signing in, your shots, review, stock, renaming, attendance, leave and IT help. One thing to do in each step.</p>
+
+<div class="covers">
+  <a class="cover server" href="#map">
+    <svg viewBox="0 0 56 56" role="img" aria-label="Network"><rect x="20" y="6" width="16" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="3"/><rect x="4" y="38" width="16" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="3"/><rect x="36" y="38" width="16" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="3"/><path d="M28 18 v10 M12 38 v-10 h32 v10" fill="none" stroke="currentColor" stroke-width="3"/></svg>
+    <h3>The studio and signing in</h3>
+    <div class="who">How the programs fit together. Signing in, your password, the header, updates.</div>
+  </a>
+  <a class="cover studio" href="#home">
+    <svg viewBox="0 0 56 56" role="img" aria-label="Clapperboard"><rect x="6" y="20" width="44" height="30" rx="4" fill="none" stroke="currentColor" stroke-width="3"/><path d="M6 20 L14 8 L50 8 L42 20 Z" fill="currentColor"/><line x1="22" y1="8" x2="16" y2="20" stroke="var(--panel)" stroke-width="3"/><line x1="34" y1="8" x2="28" y2="20" stroke="var(--panel)" stroke-width="3"/></svg>
+    <h3>Slate Studio</h3>
+    <div class="who">Home, your shots, the VFX Dashboard, review in RV, Timeline Viewer.</div>
+  </a>
+  <a class="cover studio" href="#stock">
+    <svg viewBox="0 0 56 56" role="img" aria-label="Film frames"><rect x="6" y="10" width="44" height="36" rx="4" fill="none" stroke="currentColor" stroke-width="3"/><rect x="14" y="18" width="12" height="9" fill="currentColor"/><rect x="30" y="18" width="12" height="9" fill="currentColor"/><rect x="14" y="30" width="12" height="9" fill="currentColor"/><rect x="30" y="30" width="12" height="9" fill="currentColor"/></svg>
+    <h3>Tools</h3>
+    <div class="who">Stock Viewer, CAP Rename, Settings and Workspace Info.</div>
+  </a>
+  <a class="cover ops" href="#attendance">
+    <svg viewBox="0 0 56 56" role="img" aria-label="Clock"><circle cx="28" cy="28" r="20" fill="none" stroke="currentColor" stroke-width="3"/><path d="M28 16 v12 l9 6" fill="none" stroke="currentColor" stroke-width="3"/></svg>
+    <h3>Attendance and leave</h3>
+    <div class="who">Punch in and out, work from home, asking for leave, comp-off.</div>
+  </a>
+  <a class="cover ops" href="#it">
+    <svg viewBox="0 0 56 56" role="img" aria-label="Ticket"><path d="M6 16 h44 v8 a4 4 0 0 0 0 8 v8 h-44 v-8 a4 4 0 0 0 0 -8 z" fill="none" stroke="currentColor" stroke-width="3"/><line x1="22" y1="16" x2="22" y2="40" stroke="currentColor" stroke-width="3" stroke-dasharray="3 3"/></svg>
+    <h3>IT Support</h3>
+    <div class="who">Report a problem, answer IT, follow your ticket.</div>
+  </a>
+  <a class="cover" href="#help">
+    <svg viewBox="0 0 56 56" role="img" aria-label="Warning"><path d="M28 6 L52 48 H4 Z" fill="none" stroke="var(--bad)" stroke-width="3"/><line x1="28" y1="20" x2="28" y2="34" stroke="var(--bad)" stroke-width="3"/><circle cx="28" cy="41" r="2.5" fill="var(--bad)"/></svg>
+    <h3>When something goes wrong</h3>
+    <div class="who">What you see, what it means, what to do.</div>
+  </a>
+</div>
+
+<!-- ============================================================ -->
+<section class="server">
+<h2 id="map">How the studio fits together</h2>
+<p>There is one server computer, one shared folder on the network, and everybody's workstations. Slate on your workstation talks to both.</p>
+
+<figure>
+<svg viewBox="0 0 900 350" role="img" aria-label="Workstations running Slate Studio and Slate Operations save and read data on the Slate Server PC, where the studio database lives, and read and write files in the Slate_Central shared folder.">
+  <defs><marker id="ar1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+  <g fill="none" stroke="currentColor" stroke-width="2">
+    <rect x="40" y="60" width="120" height="76" rx="8"/><rect x="60" y="76" width="80" height="40" rx="3"/><line x1="80" y1="136" x2="120" y2="136"/><line x1="100" y1="136" x2="100" y2="148"/>
+    <rect x="40" y="185" width="120" height="76" rx="8"/><rect x="60" y="201" width="80" height="40" rx="3"/><line x1="80" y1="261" x2="120" y2="261"/><line x1="100" y1="261" x2="100" y2="273"/>
+    <rect x="390" y="70" width="150" height="120" rx="10"/>
+    <rect x="410" y="86" width="110" height="26" rx="4"/><rect x="410" y="122" width="110" height="26" rx="4"/>
+    <ellipse cx="465" cy="164" rx="34" ry="8"/><path d="M431 164 v14 a34 8 0 0 0 68 0 v-14"/>
+    <path d="M700 84 h44 l14 14 h84 v100 h-142 z"/>
+    <line x1="700" y1="98" x2="842" y2="98"/>
+  </g>
+  <rect x="60" y="76" width="80" height="40" rx="3" fill="var(--studio-soft)" stroke="var(--studio)" stroke-width="2"/>
+  <rect x="60" y="201" width="80" height="40" rx="3" fill="var(--ops-soft)" stroke="var(--ops)" stroke-width="2"/>
+  <g fill="currentColor" font-size="15" font-weight="600">
+    <text x="100" y="50" text-anchor="middle">Workstations</text>
+    <text x="465" y="60" text-anchor="middle">Slate Server PC</text>
+    <text x="771" y="70" text-anchor="middle">Slate_Central shared folder</text>
+  </g>
+  <g font-size="13" font-weight="600" text-anchor="middle">
+    <text x="100" y="164" fill="var(--studio)">Slate Studio</text>
+    <text x="100" y="291" fill="var(--ops)">Slate Operations</text>
+  </g>
+  <g fill="currentColor" font-size="13" text-anchor="middle">
+    <text x="465" y="216">the studio database lives</text>
+    <text x="465" y="234">on this computer's own disk</text>
+    <text x="771" y="222">previews, updates, logs,</text>
+    <text x="771" y="240">shared stock library cache</text>
+  </g>
+  <g stroke="var(--studio)" stroke-width="3" fill="none" marker-end="url(#ar1)" marker-start="url(#ar1)">
+    <line x1="170" y1="105" x2="380" y2="120"/>
+    <line x1="170" y1="225" x2="380" y2="152"/>
+  </g>
+  <g stroke="var(--ops)" stroke-width="3" fill="none" marker-end="url(#ar1)" marker-start="url(#ar1)">
+    <path d="M100 300 C100 340 771 340 771 252"/>
+  </g>
+  <g fill="currentColor" font-size="13" font-style="italic">
+    <text x="275" y="96" text-anchor="middle">shots, people, leave, tickets</text>
+    <text x="436" y="330" text-anchor="middle">files both programs read and write</text>
+  </g>
+</svg>
+<figcaption>Your work is saved in the database on the server PC. Big files and shared files sit in the shared folder. If the server is off, the sign-in window says so. If the shared folder is not connected, Slate warns you and keeps working on your PC only.</figcaption>
+</figure>
+
+<h3>Two programs, one sign-in</h3>
+<p>Slate comes as two programs. They use the same account and the same password.</p>
+<div class="tablewrap"><table>
+  <tr><th>Program</th><th>Who uses it</th><th>What is inside</th></tr>
+  <tr><td><b>Slate Studio</b><br><small>badge <b>VFX</b> in the header</small></td><td>Artists, leads, supervisors, coordinators, production</td><td>Home, VFX Dashboard, CAP Rename, Stock Viewer, and for some roles Timeline Viewer, Build &amp; Ingest, Scheduling and Bidding. Settings and Workspace Info.</td></tr>
+  <tr><td><b>Slate Operations</b><br><small>badge <b>OPS</b> in the header</small></td><td>Everyone, for their own attendance, leave and IT tickets. HR, IT and the office for their work. Installed on every PC.</td><td>Home with your punch, <b>Attendance</b>, <b>Leave</b>, <b>IT Support</b>, and for some roles Joining &amp; Leaving, Hardware, Licences, Deployment, Users &amp; Roles, Admin Panel.</td></tr>
+</table></div>
+<div class="note warn"><b>Your PC has both programs</b>Artist, lead, coordinator and supervisor PCs get <strong>both</strong> Slate Studio and Slate Operations. HR, IT and office PCs get only Slate Operations. Slate Studio does not have Attendance, Leave or IT Support: open <strong>Slate Operations</strong> to punch in, ask for leave or report a problem to IT. If it is missing from your PC, ask IT.</div>
+
+<h3>What you see depends on your role</h3>
+<p>Your role decides which screens are in the list on the left. A screen your role does not use is not there at all. It is not greyed out. So if a colleague talks about a button you cannot find, you are probably both right. A change to your role shows the next time you sign in.</p>
+<div class="side">
+  <div class="grp"><div class="h">Slate Studio, an artist sees</div>
+    <div class="i">Home<small>Your shots, your figures, quick links.</small></div>
+    <div class="i">CAP Rename<small>Rename files in batches, with undo.</small></div>
+    <div class="i">Stock Viewer<small>The studio's stock library.</small></div>
+    <div class="i">VFX Dashboard<small>Your shots and their status.</small></div>
+    <div class="i">Settings &middot; Workspace Info<small>Your preferences. Facts for IT.</small></div>
+  </div>
+  <div class="grp"><div class="h">Slate Operations, everyone sees</div>
+    <div class="i">Home<small>Your punch: In since 09:04.</small></div>
+    <div class="i">Attendance<small>Punch in and out, see your month.</small></div>
+    <div class="i">Leave<small>Your balance and your requests.</small></div>
+    <div class="i">IT Support<small>Your tickets and IT's replies.</small></div>
+    <div class="i">Settings &middot; Workspace Info</div>
+  </div>
+</div>
+
+<div style="break-inside:avoid">
+<h3>The other handbooks</h3>
+<p>This book is for everyone. If you have another job in Slate, your own handbook covers it. This book does not repeat them.</p>
+<div class="tablewrap"><table>
+  <tr><th>Handbook</th><th>For</th><th>Covers</th></tr>
+  <tr><td>Slate IT Handbook</td><td>IT</td><td>Installing, the server PC, backups, Recover Slate, the IT desk, hardware, licences</td></tr>
+  <tr><td>Slate HR Handbook</td><td>HR</td><td>Users &amp; Roles, the leave queue, holidays, year end, attendance corrections, joining and leaving</td></tr>
+  <tr><td>Slate Production Handbook</td><td>Coordinators, producers, production heads</td><td>Build &amp; Ingest, projects, assigning shots, deliveries, Scheduling, Bidding</td></tr>
+  <tr><td>Slate Supervisors Handbook</td><td>Supervisors and leads</td><td>Review verdicts, the first leave approval, your team's attendance</td></tr>
+</table></div>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section class="server">
+<h2 id="signin">Every day: signing in</h2>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="8" width="32" height="22" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="14" y1="38" x2="30" y2="38" stroke="currentColor" stroke-width="3"/></svg><b>Turn on your PC</b><span>Slate opens by itself when Windows starts. It shows the sign-in window.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="8" y="6" width="28" height="32" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="14" y1="16" x2="30" y2="16" stroke="currentColor" stroke-width="3"/><line x1="14" y1="24" x2="30" y2="24" stroke="currentColor" stroke-width="3"/></svg><b>Type your User name</b><span>For example <code>priya.sharma</code>. Slate remembers it next time and puts you straight in the Password box.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="10" y="20" width="24" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><path d="M15 20 v-5 a7 7 0 0 1 14 0 v5" fill="none" stroke="currentColor" stroke-width="3"/></svg><b>Type your Password</b><span>Dots hide it. The eye shows it. <strong>Caps Lock is on</strong> warns you before you type it wrong.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="14" width="32" height="16" rx="4" fill="currentColor"/><text x="22" y="26" text-anchor="middle" font-size="9" fill="var(--panel)" font-weight="700">Sign in</text></svg><b>Press Sign in</b><span>Or press Enter. Your name shows at the top right when you are in.</span></li>
+</ol>
+
+<figure>
+<svg viewBox="0 0 900 340" role="img" aria-label="The sign-in window: SLATE, the app name and version, User name and Password boxes, the Sign in button, a message box under it and the Reconfigure server / database link. On the right, four messages and what each means.">
+  <rect x="20" y="10" width="300" height="320" rx="10" fill="var(--raised)" stroke="var(--line)" stroke-width="2"/>
+  <g fill="currentColor">
+    <text x="170" y="48" text-anchor="middle" font-size="24" font-weight="700" letter-spacing="4">SLATE</text>
+    <text x="170" y="70" text-anchor="middle" font-size="12" fill="var(--text-2)">VFX &#183; Version 2.2.0 beta</text>
+    <text x="44" y="100" font-size="12" font-weight="600">User name</text>
+    <text x="44" y="158" font-size="12" font-weight="600">Password</text>
+  </g>
+  <g fill="var(--panel)" stroke="var(--line)" stroke-width="1.5">
+    <rect x="44" y="106" width="252" height="32" rx="5"/><rect x="44" y="164" width="252" height="32" rx="5"/>
+  </g>
+  <text x="56" y="127" font-size="12" fill="var(--text-dim)">e.g. priya.sharma</text>
+  <text x="56" y="186" font-size="14" fill="currentColor" letter-spacing="2">&#9679;&#9679;&#9679;&#9679;&#9679;&#9679;&#9679;&#9679;</text>
+  <g fill="none" stroke="var(--text-2)" stroke-width="1.5"><path d="M266 180 q10 -9 20 0 q-10 9 -20 0 z"/><circle cx="276" cy="180" r="2.5" fill="var(--text-2)"/></g>
+  <rect x="44" y="210" width="252" height="34" rx="5" fill="var(--studio)"/>
+  <text x="170" y="232" text-anchor="middle" font-size="14" font-weight="700" fill="var(--panel)">Sign in</text>
+  <rect x="44" y="254" width="252" height="34" rx="5" fill="var(--bad-soft)" stroke="var(--bad)" stroke-width="1.5"/>
+  <text x="56" y="268" font-size="11" fill="currentColor">That user name and password do</text>
+  <text x="56" y="282" font-size="11" fill="currentColor">not match. Try again.</text>
+  <text x="170" y="314" text-anchor="middle" font-size="12" fill="var(--studio)">&#9881; Reconfigure server / database</text>
+
+  <g font-size="13">
+    <rect x="350" y="14" width="530" height="66" rx="8" fill="var(--bad-soft)" stroke="var(--bad)" stroke-width="1.5"/>
+    <text x="366" y="38" font-weight="700" fill="currentColor">That user name and password do not match.</text>
+    <text x="366" y="62" fill="var(--text-2)">Check both. Slate waits a second before you try again. Nobody is locked out.</text>
+    <rect x="350" y="92" width="530" height="66" rx="8" fill="var(--bad-soft)" stroke="var(--bad)" stroke-width="1.5"/>
+    <text x="366" y="116" font-weight="700" fill="currentColor">Can't reach the studio database&#8230;  (button: Database unavailable)</text>
+    <text x="366" y="140" fill="var(--text-2)">Slate Server is off or the network is down. Press Try again. Then tell IT.</text>
+    <rect x="350" y="170" width="530" height="66" rx="8" fill="var(--ops-soft)" stroke="var(--ops)" stroke-width="1.5"/>
+    <text x="366" y="194" font-weight="700" fill="currentColor">&#8230; Slate is working on this computer's copy.</text>
+    <text x="366" y="218" fill="var(--text-2)">LOCAL MODE. You can work, but nobody sees it until you press Sync.</text>
+    <rect x="350" y="248" width="530" height="66" rx="8" fill="var(--panel)" stroke="var(--info)" stroke-width="1.5"/>
+    <text x="366" y="272" font-weight="700" fill="currentColor">Reconfigure server / database</text>
+    <text x="366" y="296" fill="var(--text-2)">Only for IT. Clicked it by mistake? Cancel, and nothing changes.</text>
+  </g>
+</svg>
+<figcaption>Read the message under the Sign in button before you try again. It says what is wrong in plain words. Esc does not close Slate here; the cross at the top does.</figcaption>
+</figure>
+
+<h3>Your first sign-in with a new password</h3>
+<p>When your account is new, or an administrator has reset your password, Slate asks you to choose your own straight after you sign in.</p>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="8" width="32" height="28" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="6" y1="16" x2="38" y2="16" stroke="currentColor" stroke-width="3"/></svg><b>Choose your password</b><span>The window has this title. It does not ask for the old one.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="10" y="20" width="24" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><path d="M15 20 v-5 a7 7 0 0 1 14 0 v5" fill="none" stroke="currentColor" stroke-width="3"/></svg><b>New password, twice</b><span>Type it in <strong>New password</strong> and in <strong>New password again</strong>. At least 8 characters.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="4" y="14" width="36" height="16" rx="4" fill="currentColor"/><text x="22" y="25" text-anchor="middle" font-size="7" fill="var(--panel)" font-weight="700">Save password</text></svg><b>Save password</b><span><strong>Cancel</strong> takes you back to the sign-in window. You cannot go in without choosing one.</span></li>
+</ol>
+
+<h3>Changing your password</h3>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><circle cx="22" cy="16" r="7" fill="none" stroke="currentColor" stroke-width="3"/><path d="M8 38 c0 -12 28 -12 28 0" fill="none" stroke="currentColor" stroke-width="3"/></svg><b>Click your name</b><span>Top right of the window. The account menu opens.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="8" width="32" height="28" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="12" y1="18" x2="32" y2="18" stroke="currentColor" stroke-width="3"/><line x1="12" y1="26" x2="26" y2="26" stroke="currentColor" stroke-width="3"/></svg><b>Change password&#8230;</b><span>Type your <strong>Current password</strong>, then the new one twice.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M8 24 L18 34 L36 12" fill="none" stroke="var(--ok)" stroke-width="4"/></svg><b>Save password</b><span>"Password changed. Use it the next time you sign in." Use it in both Slate Studio and Slate Operations.</span></li>
+</ol>
+<div class="note"><b>Nobody can read your password</b>Slate keeps only a one-way lock of it. Not even an administrator can see it. If you forget it, ask your administrator to reset it; you then choose a new one at your next sign-in. Spaces at the start or end are ignored.</div>
+
+<h3>Signing out and closing</h3>
+<p>If a screen has changes you have not saved, or a rename is still running, Slate asks before it closes or signs you out. <b>Closing Slate or signing out never punches you out</b> of attendance. Starting Slate again while it is already open brings the open window to the front.</p>
+
+<h3>The top of the window</h3>
+<figure>
+<svg viewBox="0 0 900 290" role="img" aria-label="The header: SLATE and the VFX badge, the Search or jump to box, a LOCAL MODE badge that appears only offline, the notification bell, Help, your name with the account menu open showing Change password, Keyboard shortcuts, About Slate and Sign out, and a Sign out button.">
+  <rect x="20" y="20" width="860" height="48" rx="8" fill="var(--raised)" stroke="var(--line)" stroke-width="1.5"/>
+  <text x="36" y="51" font-size="18" font-weight="700" letter-spacing="3" fill="currentColor">SLATE</text>
+  <rect x="112" y="33" width="38" height="22" rx="4" fill="var(--studio-soft)" stroke="var(--studio)"/>
+  <text x="131" y="49" text-anchor="middle" font-size="11" font-weight="700" fill="var(--studio)">VFX</text>
+  <rect x="166" y="31" width="240" height="26" rx="13" fill="var(--panel)" stroke="var(--line)"/>
+  <text x="182" y="49" font-size="12" fill="var(--text-dim)">Search or jump to&#8230;   Ctrl+K</text>
+  <rect x="420" y="33" width="92" height="22" rx="4" fill="var(--ops-soft)" stroke="var(--ops)" stroke-dasharray="4 3"/>
+  <text x="466" y="49" text-anchor="middle" font-size="11" font-weight="700" fill="var(--ops)">LOCAL MODE</text>
+  <path d="M536 52 h18 l-3 -4 v-6 a6 6 0 0 0 -12 0 v6 z" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="555" cy="34" r="7" fill="var(--bad)"/><text x="555" y="38" text-anchor="middle" font-size="10" font-weight="700" fill="var(--panel)">2</text>
+  <text x="574" y="49" font-size="13" fill="currentColor">Help</text>
+  <circle cx="636" cy="44" r="11" fill="var(--studio-soft)" stroke="var(--studio)"/><text x="636" y="48" text-anchor="middle" font-size="10" font-weight="700" fill="var(--studio)">PS</text>
+  <text x="654" y="41" font-size="12" font-weight="600" fill="currentColor">Priya Sharma &#9662;</text>
+  <text x="654" y="56" font-size="10" fill="var(--text-2)">Compositor</text>
+  <rect x="796" y="32" width="72" height="24" rx="4" fill="var(--panel)" stroke="var(--line)"/>
+  <text x="832" y="48" text-anchor="middle" font-size="12" fill="currentColor">Sign out</text>
+  <rect x="624" y="74" width="256" height="150" rx="8" fill="var(--panel)" stroke="var(--line)" stroke-width="1.5"/>
+  <g font-size="13" fill="currentColor"><text x="640" y="102">Change password&#8230;</text><text x="640" y="132">Keyboard shortcuts</text><text x="640" y="162">About Slate &#183; Version 2.2.0 beta</text><text x="640" y="208">Sign out</text></g>
+  <line x1="636" y1="180" x2="868" y2="180" stroke="var(--line)"/>
+  <g font-size="13" fill="currentColor">
+    <text x="30" y="110" font-weight="600">Search or jump to&#8230;</text><text x="30" y="130" fill="var(--text-2)">Go to a screen, a command or a shot. "shot 042" finds SH042.</text>
+    <text x="30" y="166" font-weight="600" fill="var(--ops)">LOCAL MODE</text><text x="30" y="186" fill="var(--text-2)">Shows only when Slate cannot reach the studio database.</text>
+    <text x="30" y="222" font-weight="600">The bell</text><text x="30" y="242" fill="var(--text-2)">Your unread notifications. Double-click one to open what it is about.</text>
+    <text x="30" y="276" fill="var(--text-2)">Your name opens the account menu. Sign out lets somebody else use the PC.</text>
+  </g>
+</svg>
+<figcaption>The badge says <b>VFX</b> in Slate Studio and <b>OPS</b> in Slate Operations. On a narrow screen the badge hides and the search box becomes an icon.</figcaption>
+</figure>
+
+<div class="tablewrap"><table>
+  <tr><th>Keys</th><th>What they do</th></tr>
+  <tr><td><code>Ctrl+K</code> or <code>Ctrl+P</code></td><td>Search or jump: screens, actions and shots</td></tr>
+  <tr><td><code>Ctrl+1</code> &hellip; <code>Ctrl+9</code></td><td>Open the 1st to 9th screen in your list on the left</td></tr>
+  <tr><td><code>F5</code> or <code>Ctrl+R</code></td><td>Refresh the screen you are on</td></tr>
+  <tr><td><code>F1</code></td><td>Help for the screen you are on</td></tr>
+  <tr><td><code>Ctrl+Shift+S</code></td><td>Settings</td></tr>
+  <tr><td><code>Ctrl+Shift+D</code></td><td>Diagnostics: which database and shared folder this PC reached</td></tr>
+  <tr><td><code>F11</code></td><td>Full screen</td></tr>
+</table></div>
+
+<h3>Updates</h3>
+<div class="note warn"><b>When Slate shows an update</b>Choose <strong>Update now</strong> or <strong>When I close Slate</strong>. A required update counts down 5 minutes &mdash; save your work.<br><strong>Update now</strong> closes Slate, installs the update and opens Slate again. A required update replaces an ordinary offer you left open. Slate installs an update only after it has fully closed.</div>
+
+</section>
+
+<!-- ============================================================ -->
+<section class="studio">
+<h2 id="home">Home: your day at a glance</h2>
+<p class="lede">Home is the first screen after you sign in. It reads everything again every minute, and when you press F5.</p>
+
+<figure>
+<svg viewBox="0 0 900 330" role="img" aria-label="Home in Slate Studio: a greeting, QUICK LAUNCH tiles for VFX Dashboard, CAP Rename and Stock Viewer, MY RECENT SHOTS with See all my shots, and AT A GLANCE figures My open shots, My shots in review and Active projects.">
+  <rect x="10" y="10" width="880" height="310" rx="10" fill="var(--raised)" stroke="var(--line)" stroke-width="1.5"/>
+  <text x="34" y="48" font-size="22" font-weight="700" fill="currentColor">Good morning, Priya</text>
+  <text x="866" y="48" text-anchor="end" font-size="13" fill="var(--text-2)">Tuesday 6 October</text>
+  <g font-size="12" font-weight="700" letter-spacing="1.5" fill="var(--text-dim)"><text x="34" y="84">QUICK LAUNCH</text><text x="314" y="84">MY RECENT SHOTS</text><text x="634" y="84">AT A GLANCE</text></g>
+  <g fill="var(--panel)" stroke="var(--line)" stroke-width="1.5">
+    <rect x="34" y="96" width="250" height="56" rx="8"/><rect x="34" y="162" width="250" height="56" rx="8"/><rect x="34" y="228" width="250" height="56" rx="8"/>
+    <rect x="314" y="96" width="290" height="188" rx="8"/>
+    <rect x="634" y="96" width="232" height="56" rx="8"/><rect x="634" y="162" width="232" height="56" rx="8"/><rect x="634" y="228" width="232" height="56" rx="8"/>
+  </g>
+  <g font-size="14" font-weight="600" fill="currentColor"><text x="50" y="120">VFX Dashboard</text><text x="50" y="186">CAP Rename</text><text x="50" y="252">Stock Viewer</text></g>
+  <g font-size="12" fill="var(--text-2)"><text x="50" y="140">Every shot, status and version</text><text x="50" y="206">Rename delivered files</text><text x="50" y="272">Browse the stock library</text></g>
+  <g font-size="13" fill="currentColor">
+    <text x="330" y="124" font-weight="600">SH040</text><text x="390" y="124" fill="var(--text-2)">GLD &#183; Comp</text><rect x="510" y="111" width="80" height="18" rx="9" fill="var(--warn)" fill-opacity="0.18" stroke="var(--warn)"/><text x="550" y="124" text-anchor="middle" font-size="11" font-weight="700" fill="var(--warn)">WIP</text>
+    <text x="330" y="158" font-weight="600">SH020</text><text x="390" y="158" fill="var(--text-2)">GLD &#183; Comp</text><rect x="510" y="145" width="80" height="18" rx="9" fill="var(--bad)" fill-opacity="0.18" stroke="var(--bad)"/><text x="550" y="158" text-anchor="middle" font-size="11" font-weight="700" fill="var(--bad)">RETAKE</text>
+    <text x="330" y="192" font-weight="600">SH110</text><text x="390" y="192" fill="var(--text-2)">KSR &#183; Roto</text><rect x="510" y="179" width="80" height="18" rx="9" fill="var(--info)" fill-opacity="0.18" stroke="var(--info)"/><text x="550" y="192" text-anchor="middle" font-size="10" font-weight="700" fill="var(--info)">IN REVIEW</text>
+    <text x="330" y="266" fill="var(--studio)" font-weight="600">See all my shots</text>
+  </g>
+  <g fill="currentColor">
+    <text x="650" y="132" font-size="26" font-weight="700">4</text><text x="690" y="130" font-size="13">My open shots</text>
+    <text x="650" y="198" font-size="26" font-weight="700" fill="var(--warn)">1</text><text x="690" y="196" font-size="13">My shots in review</text>
+    <text x="650" y="264" font-size="26" font-weight="700">3</text><text x="690" y="262" font-size="13">Active projects</text>
+  </g>
+</svg>
+<figcaption>Tiles appear only for screens you have. Click a shot to open it on the VFX Dashboard with that shot selected. <b>See all my shots</b> opens the dashboard on <b>My shots</b>.</figcaption>
+</figure>
+
+<div class="tablewrap"><table>
+  <tr><th>Part of Home</th><th>What it tells you</th></tr>
+  <tr><td><b>MY RECENT SHOTS</b></td><td>The five most recently changed shots that name you, as the shot's artist or any department's artist, in active projects. <b>Nothing assigned to you right now.</b> means exactly that. If you think you have work, ask the coordinator to check the shot is assigned to your account.</td></tr>
+  <tr><td><b>My open shots</b></td><td>Your shots not yet approved, done or omitted.</td></tr>
+  <tr><td><b>My shots in review</b></td><td>Your shots waiting for a review.</td></tr>
+  <tr><td><b>Active projects</b></td><td>Projects not finished or archived.</td></tr>
+  <tr><td>A figure shows <b>-</b></td><td>It could not be read just now. The others still work.</td></tr>
+</table></div>
+
+<h3>Home in Slate Operations</h3>
+<p>In Slate Operations, Home carries your punch: <b>In since 09:04 (2 h 10 min)</b>, with <b>PUNCH IN</b> or <b>PUNCH OUT</b>, and a <b>Fix a punch</b> link that opens Attendance. Its left panel is <b>Leave: now and next</b>: your leave that is running or coming, soonest first.</p>
+
+<h3>The bell</h3>
+<p>The bell beside Help collects your notifications: shots given to you, a verdict that changes your shot ("SH010 is now RETAKE."), new scans, decisions on your leave and replies to your tickets. The number is what you have not read. Double-click a notification to open what it is about: the shot, or your ticket.</p>
+</section>
+
+<!-- ============================================================ -->
+<section class="studio">
+<h2 id="pipeline">The shot pipeline, as an artist sees it</h2>
+<p class="lede">Production brings the plates in and gives you the shot. You do the work and send it for review. A supervisor gives the verdict.</p>
+
+<figure>
+<svg viewBox="0 0 900 270" role="img" aria-label="A department's status moves YTS, READY, WIP, SENT FOR REVIEW, then APPROVED. A RETAKE sends it back to WIP. OMIT means cut from the show. The artist sets the first four; a supervisor or coordinator sets APPROVED, RETAKE and OMIT.">
+  <defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+  <g stroke-width="2">
+    <rect x="15" y="40" width="145" height="60" rx="8" fill="var(--panel)" stroke="var(--idle)"/>
+    <rect x="197" y="40" width="145" height="60" rx="8" fill="var(--server-soft)" stroke="var(--ok)"/>
+    <rect x="379" y="40" width="145" height="60" rx="8" fill="var(--ops-soft)" stroke="var(--warn)"/>
+    <rect x="561" y="40" width="145" height="60" rx="8" fill="var(--panel)" stroke="var(--info)"/>
+    <rect x="743" y="40" width="145" height="60" rx="8" fill="var(--server-soft)" stroke="var(--ok)"/>
+    <rect x="470" y="170" width="145" height="52" rx="8" fill="var(--bad-soft)" stroke="var(--bad)"/>
+    <rect x="743" y="170" width="145" height="52" rx="8" fill="var(--panel)" stroke="var(--idle)" stroke-dasharray="5 4"/>
+  </g>
+  <g stroke="currentColor" stroke-width="2.5" fill="none" marker-end="url(#ar2)">
+    <line x1="160" y1="70" x2="194" y2="70"/><line x1="342" y1="70" x2="376" y2="70"/><line x1="524" y1="70" x2="558" y2="70"/><line x1="706" y1="70" x2="740" y2="70"/>
+  </g>
+  <g stroke="var(--bad)" stroke-width="2.5" fill="none" stroke-dasharray="6 4" marker-end="url(#ar2)">
+    <path d="M633 100 C633 140 600 150 590 168"/><path d="M490 170 C470 150 455 130 452 103"/>
+  </g>
+  <g fill="currentColor" font-size="14" font-weight="700" text-anchor="middle">
+    <text x="87" y="66">YTS</text><text x="269" y="66" fill="var(--ok)">READY</text><text x="451" y="66" fill="var(--warn)">WIP</text><text x="633" y="66" fill="var(--info)">SENT FOR REVIEW</text><text x="815" y="66" fill="var(--ok)">APPROVED</text>
+    <text x="542" y="194" fill="var(--bad)">RETAKE</text><text x="815" y="194" fill="var(--text-2)">OMIT</text>
+  </g>
+  <g fill="var(--text-2)" font-size="12" text-anchor="middle">
+    <text x="87" y="86">yet to start</text><text x="269" y="86">all you need is there</text><text x="451" y="86">work in progress</text><text x="633" y="86">waiting for a verdict</text><text x="815" y="86">finished</text>
+    <text x="542" y="212">changes asked for</text><text x="815" y="212">cut from the show</text>
+  </g>
+  <rect x="15" y="6" width="327" height="24" rx="12" fill="var(--studio-soft)"/><rect x="379" y="6" width="327" height="24" rx="12" fill="var(--studio-soft)"/>
+  <text x="178" y="23" text-anchor="middle" font-size="12" font-weight="600" fill="var(--studio)">you set these</text>
+  <text x="542" y="23" text-anchor="middle" font-size="12" font-weight="600" fill="var(--studio)">you set these</text>
+  <text x="815" y="23" text-anchor="middle" font-size="12" font-weight="600" fill="var(--text-2)">supervisor sets</text>
+  <text x="380" y="252" font-size="12" fill="var(--text-2)">supervisor sets RETAKE; you set WIP again and carry on</text>
+</svg>
+<figcaption>Each department on a shot has its own status. You can change only the department you are named on, and only to YTS, READY, WIP or SENT FOR REVIEW.</figcaption>
+</figure>
+
+<h3>Where your shot lives on disk</h3>
+<p>Every shot has the same folders. This is the studio's standard template; a project can use another one, so look at your project's folders if they differ.</p>
+<figure>
+<svg viewBox="0 0 900 330" role="img" aria-label="Shot folders: project, 05_Reels, reel R01, shot SH010, with 01_Scan v001 EXR for the plate, department folders such as 04_Roto, 05_Prep and 07_Comp with Script and Output, 08_Deliver for approved renders, and 00_Annotation for notes drawn in RV.">
+  <g fill="none" stroke="var(--text-dim)" stroke-width="1.5">
+    <path d="M44 42 V57 H54"/><path d="M72 68 V83 H82"/><path d="M100 94 V109 H110"/>
+    <path d="M128 120 V305"/>
+    <path d="M128 137 H138"/>
+    <path d="M128 165 H138"/>
+    <path d="M128 193 H138"/>
+    <path d="M128 221 H138"/>
+    <path d="M128 249 H138"/>
+    <path d="M128 277 H138"/>
+    <path d="M128 305 H138"/>
+  </g>
+  <g font-size="14" fill="currentColor">
+    <text x="30" y="36" font-weight="700">GLD  (the project folder)</text>
+    <text x="58" y="62">05_Reels</text><text x="86" y="88">R01</text><text x="114" y="114" font-weight="700">SH010</text>
+    <text x="142" y="142">00_Annotation</text>
+    <text x="142" y="170">01_Scan \ v001 \ EXR</text>
+    <text x="142" y="198">04_Roto \ Script, Output</text>
+    <text x="142" y="226">05_Prep \ Script, Output</text>
+    <text x="142" y="254">07_Comp \ Script, Output</text>
+    <text x="142" y="282">08_Deliver \ EXR, MOV</text>
+    <text x="142" y="310">&#8230; also 02_Dmp, 03_Cg, 06_Cmm, 09_Deage, 10_AI, 11_Mgfx</text>
+  </g>
+  <g font-size="13" fill="var(--text-2)">
+    <text x="470" y="142">drawings sent with notes from RV</text>
+    <text x="470" y="170" fill="var(--studio)" font-weight="600">the plate, brought in by production</text>
+    <text x="470" y="198">each department: scripts and renders</text>
+    <text x="470" y="254" fill="var(--studio)" font-weight="600">your Nuke scripts and your renders</text>
+    <text x="470" y="282">approved comp renders are copied here</text>
+  </g>
+  <g stroke="var(--line)" stroke-width="1.5"><line x1="380" y1="137" x2="462" y2="137"/><line x1="380" y1="165" x2="462" y2="165"/><line x1="380" y1="193" x2="462" y2="193"/><line x1="380" y1="249" x2="462" y2="249"/><line x1="380" y1="277" x2="462" y2="277"/></g>
+</svg>
+<figcaption>Review proxies (small MP4 copies for smooth playback) sit in a <code>proxy</code> folder next to the frames, for example <code>01_Scan\v001\EXR\proxy</code>. Do not delete them; Slate makes them again when they are older than the render.</figcaption>
+</figure>
+
+<h3>Opening your shot in Nuke</h3>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="8" width="32" height="28" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="6" y1="18" x2="38" y2="18" stroke="currentColor" stroke-width="2"/><line x1="6" y1="27" x2="38" y2="27" stroke="currentColor" stroke-width="2"/></svg><b>Right-click your shot</b><span>On the VFX Dashboard. Or open the shot panel and press <strong>More</strong>.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="8" y="8" width="28" height="28" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><path d="M18 16 l8 6 l-8 6 z" fill="currentColor"/></svg><b>Open in &rarr; NukeX</b><span>Also Natron, BorisFX Silhouette, Blender, Adobe After Effects, Adobe Premiere Pro, or RV (review).</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="10" width="32" height="24" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><text x="22" y="27" text-anchor="middle" font-size="9" font-weight="700" fill="currentColor">Slate</text></svg><b>Use the Slate menu</b><span>In Nuke's toolbar: <strong>Load Scan (Alt+1)</strong> brings the plate in as a Read node. Alt+2, Alt+3 and Alt+4 load the Prep, Deage and Slapcomp output.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M10 6 h18 l8 8 v24 h-26 z" fill="none" stroke="currentColor" stroke-width="3"/><path d="M15 26 l5 5 l9 -11" fill="none" stroke="var(--ok)" stroke-width="3"/></svg><b>Save New Comp Version</b><span>Saves the next version (v004 after v003) in the shot's 07_Comp &rsaquo; Script folder. Prep and Deage have their own.</span></li>
+</ol>
+<div class="note"><b>Which Nuke opens</b>Settings &rarr; <strong>Open Nuke as</strong>: <strong>NukeX</strong> (the default), <strong>Nuke</strong> or <strong>Nuke Studio</strong>. <strong>Open folder</strong> in the same menu opens the Scan, a department or the Output folder in Explorer.</div>
+</section>
+
+<!-- ============================================================ -->
+<section class="studio">
+<h2 id="dashboard">The VFX Dashboard</h2>
+<p class="lede">Every shot, its status and who has it. As an artist you see the shots you are named on, and you change one thing: your own department's status.</p>
+
+<figure>
+<svg viewBox="0 0 900 350" role="img" aria-label="The VFX Dashboard as an artist sees it: Scope set to My shots (all departments), Search, Status, List or Board, Reports; status counters; and a grid with Reel and Shot Name on the left and a department column per department. The artist's own Comp cell is tinted.">
+  <rect x="10" y="10" width="880" height="335" rx="10" fill="var(--raised)" stroke="var(--line)" stroke-width="1.5"/>
+  <g fill="var(--panel)" stroke="var(--line)" stroke-width="1.5">
+    <rect x="26" y="26" width="214" height="28" rx="5"/><rect x="250" y="26" width="200" height="28" rx="5"/><rect x="460" y="26" width="110" height="28" rx="5"/><rect x="580" y="26" width="120" height="28" rx="5"/><rect x="710" y="26" width="90" height="28" rx="5"/>
+  </g>
+  <g font-size="12" fill="currentColor"><text x="36" y="45">My shots (all departments) &#9662;</text><text x="262" y="45" fill="var(--text-dim)">Search  (Ctrl+F)</text><text x="472" y="45">Status &#9662;</text><text x="598" y="45">List | Board</text><text x="722" y="45">Reports &#9662;</text></g>
+  <g font-size="11" font-weight="700">
+    <rect x="26" y="66" width="64" height="22" rx="11" fill="var(--idle)" fill-opacity="0.18" stroke="var(--idle)"/><text x="58" y="81" text-anchor="middle" fill="var(--text-2)">YTS 1</text>
+    <rect x="98" y="66" width="74" height="22" rx="11" fill="var(--ok)" fill-opacity="0.18" stroke="var(--ok)"/><text x="135" y="81" text-anchor="middle" fill="var(--ok)">READY 1</text>
+    <rect x="180" y="66" width="64" height="22" rx="11" fill="var(--warn)" fill-opacity="0.18" stroke="var(--warn)"/><text x="212" y="81" text-anchor="middle" fill="var(--warn)">WIP 2</text>
+    <rect x="252" y="66" width="140" height="22" rx="11" fill="var(--info)" fill-opacity="0.18" stroke="var(--info)"/><text x="322" y="81" text-anchor="middle" fill="var(--info)">SENT FOR REVIEW 1</text>
+    <rect x="400" y="66" width="84" height="22" rx="11" fill="var(--bad)" fill-opacity="0.18" stroke="var(--bad)"/><text x="442" y="81" text-anchor="middle" fill="var(--bad)">RETAKE 1</text>
+    <rect x="492" y="66" width="100" height="22" rx="11" fill="var(--ok)" fill-opacity="0.18" stroke="var(--ok)"/><text x="542" y="81" text-anchor="middle" fill="var(--ok)">APPROVED 3</text>
+  </g>
+  <rect x="26" y="102" width="848" height="210" fill="var(--panel)" stroke="var(--line)"/>
+  <g font-size="11" font-weight="700" letter-spacing="1" fill="var(--text-dim)"><text x="38" y="124">REEL</text><text x="100" y="124">SHOT NAME</text><text x="230" y="124">ROTO</text><text x="390" y="124">PREP / PAINT</text><text x="550" y="124">COMP</text><text x="720" y="124">TARGET</text></g>
+  <line x1="26" y1="134" x2="874" y2="134" stroke="var(--line)"/><line x1="210" y1="102" x2="210" y2="312" stroke="var(--line)" stroke-width="2"/>
+  <rect x="540" y="138" width="160" height="40" fill="var(--studio)" fill-opacity="0.10"/>
+  <rect x="540" y="182" width="160" height="40" fill="var(--studio)" fill-opacity="0.10"/>
+  <g font-size="13" fill="currentColor">
+    <text x="38" y="163">R01</text><text x="100" y="163" font-weight="600">SH010</text>
+    <text x="38" y="207">R01</text><text x="100" y="207" font-weight="600">SH020</text>
+    <text x="38" y="251">R02</text><text x="100" y="251" font-weight="600">SH110</text>
+    <text x="38" y="295">R02</text><text x="100" y="295" font-weight="600">SH120</text>
+    <text x="720" y="163" fill="var(--bad)">2 Oct</text><text x="720" y="207" fill="var(--warn)">9 Oct</text><text x="720" y="251">20 Oct</text><text x="720" y="295">24 Oct</text>
+  </g>
+  <g font-size="11" font-weight="700" text-anchor="middle">
+    <rect x="230" y="148" width="120" height="20" rx="10" fill="var(--ok)" fill-opacity="0.18" stroke="var(--ok)"/><text x="290" y="162" fill="var(--ok)">APPROVED</text>
+    <rect x="390" y="148" width="120" height="20" rx="10" fill="var(--ok)" fill-opacity="0.18" stroke="var(--ok)"/><text x="450" y="162" fill="var(--ok)">APPROVED</text>
+    <rect x="550" y="148" width="120" height="20" rx="10" fill="var(--warn)" fill-opacity="0.18" stroke="var(--warn)"/><text x="610" y="162" fill="var(--warn)">WIP</text>
+    <rect x="550" y="192" width="120" height="20" rx="10" fill="var(--bad)" fill-opacity="0.18" stroke="var(--bad)"/><text x="610" y="206" fill="var(--bad)">RETAKE</text>
+    <rect x="230" y="236" width="120" height="20" rx="10" fill="var(--info)" fill-opacity="0.18" stroke="var(--info)"/><text x="290" y="250" fill="var(--info)">SENT FOR REVIEW</text>
+    <rect x="390" y="280" width="120" height="20" rx="10" fill="var(--idle)" fill-opacity="0.18" stroke="var(--idle)"/><text x="450" y="294" fill="var(--text-2)">YTS</text>
+  </g>
+  <rect x="26" y="322" width="14" height="14" fill="var(--studio)" fill-opacity="0.18" stroke="var(--studio)"/>
+  <text x="48" y="334" font-size="12" fill="var(--studio)" font-weight="600">Tinted cells are yours: Comp on SH010 and SH020. You can set their status.</text>
+</svg>
+<figcaption>Reel and Shot Name stay on the left when you scroll sideways. A red target date is overdue; amber is due within a week. Point at a cell to read the full text.</figcaption>
+</figure>
+
+<h3>Status colours</h3>
+<div class="tablewrap"><table>
+  <tr><th>Colour</th><th>Words you will see</th><th>Meaning</th></tr>
+  <tr><td><span class="dot" style="background:var(--idle)"></span>Grey</td><td>YTS, OMIT</td><td>Yet to start. Or omitted: cut from the show, not counted as outstanding.</td></tr>
+  <tr><td><span class="dot" style="background:var(--ok)"></span>Green</td><td>READY, APPROVED</td><td>Ready to start: everything you need is in place. Or approved: finished.</td></tr>
+  <tr><td><span class="dot" style="background:var(--warn)"></span>Amber</td><td>WIP</td><td>Work in progress.</td></tr>
+  <tr><td><span class="dot" style="background:var(--info)"></span>Blue</td><td>SENT FOR REVIEW</td><td>Waiting for a verdict.</td></tr>
+  <tr><td><span class="dot" style="background:var(--bad)"></span>Red</td><td>RETAKE</td><td>The review asked for changes. Read the feedback.</td></tr>
+  <tr><td><span class="dot" style="background:var(--line)"></span>Empty</td><td>No status</td><td>Nothing set yet.</td></tr>
+</table></div>
+<p>The counters along the top count the shots on screen by status. Click one to show only those shots; click it again to show them all.</p>
+
+<h3>Setting your status</h3>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="12" width="32" height="20" rx="4" fill="var(--studio)" fill-opacity="0.15" stroke="var(--studio)" stroke-width="2.5"/></svg><b>Find your tinted cell</b><span>Your department on your shot. Its tip says "You can set this status."</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="10" width="32" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="2.5"/><line x1="10" y1="28" x2="34" y2="28" stroke="currentColor" stroke-width="2"/><line x1="10" y1="35" x2="28" y2="35" stroke="currentColor" stroke-width="2"/></svg><b>Pick the new status</b><span>Double-click the cell. You can choose YTS, READY, WIP or SENT FOR REVIEW.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M8 24 L18 34 L36 12" fill="none" stroke="var(--ok)" stroke-width="4"/></svg><b>It saves at once</b><span>"SH010 Comp set to WIP. Saved." with <strong>Undo</strong> for a few seconds. There is no Save button for you.</span></li>
+</ol>
+<div class="note warn"><b>What you cannot change</b>APPROVED, RETAKE and OMIT are set by a supervisor or coordinator. You cannot change another department, the artist, scope of work, target, priority, version or days. If you try, Slate says why: for example "'APPROVED' is a review verdict." or "You are not assigned to Roto on SH010."</div>
+
+<h3>Narrowing the list</h3>
+<div class="tablewrap"><table>
+  <tr><th>Control</th><th>What it does</th></tr>
+  <tr><td><b>Scope</b></td><td>For artists: <b>My shots (all departments)</b>. Roles that see every shot also get <b>All shots</b>, <b>My shots</b> and each department.</td></tr>
+  <tr><td><b>Search</b> (Ctrl+F)</td><td>Looks in every column: shot, reel, status, artists, scope of work, type, target, version, priority, description.</td></tr>
+  <tr><td><b>Status</b></td><td>One status across the project.</td></tr>
+  <tr><td><b>List | Board</b></td><td>The same shots as a table, or as cards with one column per status.</td></tr>
+  <tr><td><b>N filters on &middot; Clear</b></td><td>Something is narrowing the grid. <b>Clear</b> shows everything again.</td></tr>
+</table></div>
+<p><b>No shots assigned to you</b> means production has not named you on a shot of this project yet. Shots appear as soon as they do.</p>
+
+<h3>The shot panel</h3>
+<p>Double-click a shot, or press Enter, to open it beside the grid.</p>
+<ul>
+  <li><b>Preview</b> plays the latest render in Quick Look. <b>Space</b> does the same from the grid.</li>
+  <li><b>Departments</b> lists each department's Artist, Status, Bid, Actual and Target. Your row is bold. Change your status there and press <b>Save my status</b>; <b>Revert</b> puts it back.</li>
+  <li><b>Feedback</b> has three tabs: <b>Client</b>, <b>Director</b> and <b>Internal</b>. A dot after the name (<b>Client &bull;</b>) means a note you have not read yet. Notes sent from RV land under Internal.</li>
+  <li><b>Versions</b> lists each version sent, where to and its notes. Supervisors and coordinators record versions and verdicts there.</li>
+</ul>
+<p>Right-click a shot and choose <b>View history</b> to see every saved change, who made it and when, newest first.</p>
+
+<div class="note bad"><b>Red banner: "Can't reach the studio database"</b>The dashboard is read-only until the server is back. Nothing you see is lost. Press <strong>Try again</strong>. You cannot set statuses while the banner shows.</div>
+</section>
+
+<!-- ============================================================ -->
+<section class="studio">
+<h2 id="review">Review: RV and the Timeline Viewer</h2>
+<p class="lede">You look at your work in RV. Supervisors give verdicts in RV or on the dashboard, and the verdict changes the shot's status.</p>
+
+<h3>Review in RV</h3>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="8" width="32" height="28" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="6" y1="18" x2="38" y2="18" stroke="currentColor" stroke-width="2"/></svg><b>Right-click the shot</b><span>Choose <strong>Review in RV&#8230;</strong>. Or press <strong>Review in RV</strong> in the shot panel.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="8" y="8" width="12" height="12" rx="2" fill="currentColor"/><rect x="8" y="24" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="2.5"/><line x1="24" y1="14" x2="38" y2="14" stroke="currentColor" stroke-width="2.5"/><line x1="24" y1="30" x2="38" y2="30" stroke="currentColor" stroke-width="2.5"/></svg><b>Tick what to look at</b><span>The plate is ticked. Tick a render too to compare them in one RV session.</span></li>
+  <li><svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="16" fill="none" stroke="currentColor" stroke-width="3"/><path d="M18 14 l12 8 l-12 8 z" fill="currentColor"/></svg><b>Open in RV</b><span>With two ticked the button says <strong>Open 2 in RV</strong>. They load as a playlist.</span></li>
+</ol>
+
+<figure>
+<svg viewBox="0 0 900 320" role="img" aria-label="The Review in RV window lists the plate and each department render with Layer, Version and Frames or file, with Tick all, Untick all, Cancel and Open 2 in RV. Beside it, RV's Slate menu has Approve Current Shot, Retake Current Shot and Send Note on This Frame, used by supervisors.">
+  <rect x="10" y="10" width="540" height="300" rx="10" fill="var(--raised)" stroke="var(--line)" stroke-width="1.5"/>
+  <text x="30" y="38" font-size="13" font-weight="700" fill="currentColor">Review SH010 in RV</text>
+  <text x="30" y="64" font-size="15" font-weight="600" fill="currentColor">What do you want to look at for SH010?</text>
+  <text x="30" y="84" font-size="11" fill="var(--text-2)">Tick one to play it. Tick several to load them as a playlist and compare them.</text>
+  <rect x="30" y="96" width="500" height="134" fill="var(--panel)" stroke="var(--line)"/>
+  <g font-size="11" font-weight="700" letter-spacing="1" fill="var(--text-dim)"><text x="74" y="116">LAYER</text><text x="200" y="116">VERSION</text><text x="300" y="116">FRAMES / FILE</text></g>
+  <line x1="30" y1="124" x2="530" y2="124" stroke="var(--line)"/>
+  <g font-size="13" fill="currentColor">
+    <rect x="44" y="134" width="14" height="14" rx="2" fill="var(--studio)"/><path d="M47 141 l3 3 l6 -6" fill="none" stroke="var(--panel)" stroke-width="2"/><text x="74" y="146">Scan</text><text x="200" y="146">v001</text><text x="300" y="146">1001&#8211;1096 (96 f)</text>
+    <rect x="44" y="164" width="14" height="14" rx="2" fill="var(--studio)"/><path d="M47 171 l3 3 l6 -6" fill="none" stroke="var(--panel)" stroke-width="2"/><text x="74" y="176">Comp</text><text x="200" y="176">v004</text><text x="300" y="176">1001&#8211;1096 (96 f)</text>
+    <rect x="44" y="194" width="14" height="14" rx="2" fill="none" stroke="var(--text-2)" stroke-width="1.5"/><text x="74" y="206">Roto</text><text x="200" y="206">v002</text><text x="300" y="206">1001&#8211;1096 (96 f)</text>
+  </g>
+  <g font-size="12" text-anchor="middle">
+    <rect x="30" y="252" width="80" height="30" rx="5" fill="var(--panel)" stroke="var(--line)"/><text x="70" y="272" fill="currentColor">Tick all</text>
+    <rect x="120" y="252" width="90" height="30" rx="5" fill="var(--panel)" stroke="var(--line)"/><text x="165" y="272" fill="currentColor">Untick all</text>
+    <rect x="320" y="252" width="80" height="30" rx="5" fill="var(--panel)" stroke="var(--line)"/><text x="360" y="272" fill="currentColor">Cancel</text>
+    <rect x="410" y="252" width="120" height="30" rx="5" fill="var(--studio)"/><text x="470" y="272" fill="var(--panel)" font-weight="700">Open 2 in RV</text>
+  </g>
+  <rect x="580" y="10" width="310" height="300" rx="10" fill="#111114" stroke="var(--line)" stroke-width="1.5"/>
+  <text x="600" y="38" font-size="13" font-weight="700" fill="#E8E6E1">RV</text>
+  <text x="640" y="38" font-size="13" fill="#E8E6E1">File  View  <tspan font-weight="700" fill="#6BA4C9">Slate</tspan></text>
+  <rect x="700" y="48" width="180" height="104" rx="6" fill="#1D1D22" stroke="#2C2C34"/>
+  <g font-size="12" fill="#E8E6E1"><text x="712" y="72">Approve Current Shot</text><text x="712" y="98">Retake Current Shot</text><text x="712" y="138">Send Note on This Frame...</text></g>
+  <line x1="708" y1="114" x2="872" y2="114" stroke="#2C2C34"/>
+  <g font-size="12" fill="var(--text-2)">
+    <text x="600" y="186" fill="#B4B1AA">For supervisors and coordinators.</text>
+    <text x="600" y="206" fill="#B4B1AA">The verdict is saved on the version,</text>
+    <text x="600" y="226" fill="#B4B1AA">which leaves the Review queue, and</text>
+    <text x="600" y="246" fill="#B4B1AA">changes the shot. A note keeps the</text>
+    <text x="600" y="266" fill="#B4B1AA">frame and any drawing.</text>
+  </g>
+</svg>
+<figcaption>If nothing is on disk yet, Slate says "Nothing to review for SH010 yet". If RV does not start, the message says to tell IT.</figcaption>
+</figure>
+<div class="note"><b>Artists and the Slate menu in RV</b>The <strong>Slate</strong> menu inside RV is for verdicts. If you use it as an artist, Slate refuses with "a supervisor or coordinator sets review verdicts in Slate". To say your work is ready, set your cell to <strong>SENT FOR REVIEW</strong> on the dashboard.</div>
+<div class="note ok"><b>The bell tells you the verdict</b>When a supervisor's verdict changes your shot, in Slate or from RV, your bell says so: for example "SH010 (Comp) is now RETAKE." Open the shot and read the <strong>Feedback</strong> tabs.</div>
+
+<h3>The Review queue</h3>
+<p>On the dashboard, <b>Reports &rarr; Review queue</b> lists versions sent for review and still waiting for a verdict, oldest first. As an artist you see your own shots only. Select one and press <b>Open in player</b>, or double-click it, to watch it. Approve and Retake are not shown to artists.</p>
+
+<h3>The Timeline Viewer (leads, supervisors, editors, production)</h3>
+<p>Not every role has it. It shows the edit as the dashboard knows it: plates in reel order, with each department's render as a layer on top.</p>
+<div class="tablewrap"><table>
+  <tr><th>On screen</th><th>What it does</th></tr>
+  <tr><td><b>Refresh from Dashboard</b></td><td>Reads the project the dashboard is set to. Shots without a scan are greyed out.</td></tr>
+  <tr><td><b>All reels</b>, <b>Search shots&#8230;</b>, tick boxes</td><td>Choose which shots are in the lineup. <b>Tick all</b> / <b>Untick all</b>.</td></tr>
+  <tr><td><b>Layer</b> and <b>Play lineup</b></td><td>Choose a department and play shot after shot. A shot without that render shows its plate.</td></tr>
+  <tr><td><b>Make proxy</b> / <b>Make review proxies</b></td><td>Make small MP4 copies so heavy EXR shots play smoothly.</td></tr>
+  <tr><td><b>Open in RV</b></td><td>Plays the ticked shots in RV, in edit order, at the chosen layer. <b>Use proxies in RV</b> plays the proxies instead of the frames.</td></tr>
+  <tr><td><b>Export EDL</b></td><td>Writes EDLs for editorial (Resolve, Premiere, Avid) into the project's <code>editorial\lineups</code> folder.</td></tr>
+</table></div>
+</section>
+
+<!-- ============================================================ -->
+<section class="studio">
+<h2 id="stock">Stock Viewer</h2>
+<p class="lede">The studio's library of footage, elements and textures: anything reused across jobs. You can look, search, play and copy. Leads and supervisors add to it.</p>
+
+<figure>
+<svg viewBox="0 0 900 330" role="img" aria-label="Stock Viewer: on the left Categories with All, Favourites, Studio picks and the categories; in the middle the search box, Look, Sort and All, Images, Videos with a grid of cards; on the right the preview with Favourite, Copy path, Show in Explorer and facts.">
+  <rect x="10" y="10" width="880" height="310" rx="10" fill="var(--raised)" stroke="var(--line)" stroke-width="1.5"/>
+  <rect x="24" y="24" width="170" height="282" rx="8" fill="var(--panel)" stroke="var(--line)"/>
+  <text x="38" y="48" font-size="12" font-weight="700" letter-spacing="1" fill="var(--text-dim)">CATEGORIES</text>
+  <g font-size="13" fill="currentColor"><text x="38" y="76">All  (350)</text><text x="38" y="102" fill="var(--warn)">&#9733; Favourites</text><text x="38" y="128">Studio picks</text><text x="38" y="160">Explosions  (42)</text><text x="38" y="186">Smoke  (61)</text><text x="38" y="212">Liquids  (27)</text><text x="38" y="238">&#8230;</text></g>
+  <rect x="38" y="268" width="80" height="26" rx="5" fill="var(--panel)" stroke="var(--line)"/><text x="78" y="286" text-anchor="middle" font-size="12" fill="currentColor">Reload</text>
+  <rect x="208" y="24" width="440" height="30" rx="5" fill="var(--panel)" stroke="var(--line)"/>
+  <text x="220" y="44" font-size="12" fill="var(--text-dim)">Search name, tag, 4K, 24fps, folder&#8230;</text>
+  <g font-size="12" fill="currentColor">
+    <rect x="208" y="62" width="104" height="26" rx="5" fill="var(--panel)" stroke="var(--line)"/><text x="218" y="80">Any look &#9662;</text>
+    <rect x="320" y="62" width="128" height="26" rx="5" fill="var(--panel)" stroke="var(--line)"/><text x="330" y="80">Newest first &#9662;</text>
+    <rect x="456" y="62" width="192" height="26" rx="5" fill="var(--panel)" stroke="var(--line)"/><text x="468" y="80">All  |  Images  |  Videos</text>
+  </g>
+  <g fill="#1B1B1F" stroke="var(--line)">
+    <rect x="208" y="100" width="100" height="70" rx="5"/><rect x="320" y="100" width="100" height="70" rx="5" stroke="var(--studio)" stroke-width="3"/><rect x="432" y="100" width="100" height="70" rx="5"/><rect x="544" y="100" width="100" height="70" rx="5"/>
+    <rect x="208" y="200" width="100" height="70" rx="5"/><rect x="320" y="200" width="100" height="70" rx="5"/><rect x="432" y="200" width="100" height="70" rx="5"/><rect x="544" y="200" width="100" height="70" rx="5"/>
+  </g>
+  <g font-size="11" fill="var(--text-2)"><text x="208" y="186">fire_burst_01</text><text x="320" y="186">smoke_plume_04</text><text x="432" y="186">debris_fall_02</text><text x="544" y="186">dust_hit_11</text></g>
+  <text x="300" y="114" font-size="14" fill="var(--warn)">&#9733;</text>
+  <text x="208" y="296" font-size="12" fill="var(--text-2)">350 assets</text>
+  <rect x="662" y="24" width="214" height="282" rx="8" fill="var(--panel)" stroke="var(--line)"/>
+  <rect x="676" y="38" width="186" height="104" rx="4" fill="#1B1B1F"/>
+  <path d="M760 74 l18 16 l-18 16 z" fill="#E8E6E1"/>
+  <g font-size="12" text-anchor="middle">
+    <rect x="676" y="152" width="90" height="26" rx="5" fill="var(--panel)" stroke="var(--line)"/><text x="721" y="170" fill="currentColor">Favourite</text>
+    <rect x="772" y="152" width="90" height="26" rx="5" fill="var(--panel)" stroke="var(--line)"/><text x="817" y="170" fill="currentColor">Copy path</text>
+    <rect x="676" y="184" width="186" height="26" rx="5" fill="var(--panel)" stroke="var(--line)"/><text x="769" y="202" fill="currentColor">Show in Explorer</text>
+  </g>
+  <g font-size="12" fill="var(--text-2)"><text x="676" y="232">Type      Movie</text><text x="676" y="252">Resolution  3840x2160</text><text x="676" y="272">Frame rate  24</text><text x="676" y="292">Codec     ProRes</text></g>
+</svg>
+<figcaption>Categories on the left, the gallery in the middle, the preview and the facts on the right. The count says how many assets there are, or "Showing 12 of 350 assets" when something narrows the list.</figcaption>
+</figure>
+
+<h3>Finding something</h3>
+<ul>
+  <li><b>Search</b> looks at names, tags, categories, folder names and what was read from the file: resolution (<code>4K</code>, <code>1920</code>), frame rate (<code>24fps</code>), codec and kind (<code>movie</code>, <code>image sequence</code>). Each word must match the <b>start</b> of a word: <code>HD</code> finds HD clips, not UHD ones. <b>Esc</b> clears it.</li>
+  <li><b>Look</b> narrows to Dark, Bright, Warm, Cold, Green Screen or Blue Screen pictures. <b>Sort</b> orders the whole library.</li>
+  <li><b>Favourites</b> are yours alone: click the star on a card, press <b>Favourite</b>, or press <b>Ctrl+D</b>. <b>Studio picks</b> are shared with everybody and chosen by the people who can ingest stock.</li>
+</ul>
+
+<h3>Looking at an asset</h3>
+<div class="tablewrap"><table>
+  <tr><th>Key or button</th><th>What it does</th></tr>
+  <tr><td><b>Enter</b> or double-click</td><td>Play. <b>Play when selected</b> plays as you click through.</td></tr>
+  <tr><td><b>Space</b></td><td>Quick Look: the asset large. Page Up / Page Down for the previous and next, Space to play, Esc to close.</td></tr>
+  <tr><td><b>,</b> and <b>.</b></td><td>Step one frame back or forward. <b>K</b> pauses, <b>L</b> plays, <b>M</b> mutes, <b>F</b> full screen.</td></tr>
+  <tr><td>Picture icon under the player</td><td>Saves the frame on screen at full size to <code>Pictures\Slate_Snaps</code>. Right-click it to choose another folder.</td></tr>
+  <tr><td><b>Copy path</b> / <b>Show in Explorer</b></td><td>Use the file in your shot. The file itself stays where it is.</td></tr>
+</table></div>
+<p>Clips play with sound. A card that says <b>File not found</b> points at a file that is no longer there. <b>Could not read</b> means Slate could not open the file. Camera raw (.r3d, .ari) has no preview; press <b>Open with its own program</b>.</p>
+<div class="note"><b>Want something added?</b>Only people whose role has <strong>Ingest stock</strong> can add to the library, tag assets or delete them. By default that is leads, supervisors and production heads, not artists. Dropping a folder on the gallery says "Only people with the Ingest stock ability can ingest stock." Ask your lead.</div>
+</section>
+
+<!-- ============================================================ -->
+<section class="studio">
+<h2 id="rename">CAP Rename</h2>
+<p class="lede">Rename many files at once. Slate builds a full preview first. Read the preview before you press the button.</p>
+
+<figure>
+<svg viewBox="0 0 900 330" role="img" aria-label="CAP Rename: two tabs, Find and replace and Number as a sequence; Find and Replace with boxes and options; a preview table with Original name, New name and Status showing Will rename, Unchanged and Conflict; buttons Undo last rename and Rename files.">
+  <rect x="10" y="10" width="880" height="310" rx="10" fill="var(--raised)" stroke="var(--line)" stroke-width="1.5"/>
+  <rect x="24" y="22" width="150" height="30" rx="5" fill="var(--studio-soft)" stroke="var(--studio)"/><text x="99" y="42" text-anchor="middle" font-size="13" font-weight="600" fill="var(--studio)">Find and replace</text>
+  <rect x="180" y="22" width="190" height="30" rx="5" fill="var(--panel)" stroke="var(--line)"/><text x="275" y="42" text-anchor="middle" font-size="13" fill="currentColor">Number as a sequence</text>
+  <g font-size="12" fill="currentColor"><text x="24" y="80">Find</text><text x="24" y="116">Replace with</text></g>
+  <g fill="var(--panel)" stroke="var(--line)"><rect x="120" y="64" width="250" height="26" rx="4"/><rect x="120" y="100" width="250" height="26" rx="4"/></g>
+  <g font-size="12" font-family="Consolas, monospace" fill="currentColor"><text x="130" y="82">_v003</text><text x="130" y="118">_v004</text></g>
+  <g font-size="12" fill="currentColor">
+    <rect x="400" y="68" width="12" height="12" rx="2" fill="none" stroke="var(--text-2)"/><text x="418" y="79">Use regex</text>
+    <rect x="510" y="68" width="12" height="12" rx="2" fill="none" stroke="var(--text-2)"/><text x="528" y="79">Case sensitive</text>
+    <rect x="650" y="68" width="12" height="12" rx="2" fill="var(--studio)"/><text x="668" y="79">Keep extension</text>
+    <rect x="400" y="104" width="12" height="12" rx="2" fill="none" stroke="var(--text-2)"/><text x="418" y="115">To lowercase</text>
+    <rect x="510" y="104" width="12" height="12" rx="2" fill="none" stroke="var(--text-2)"/><text x="528" y="115">Sanitize</text>
+    <rect x="650" y="104" width="12" height="12" rx="2" fill="none" stroke="var(--text-2)"/><text x="668" y="115">Re-pad numbers to 4 digits</text>
+  </g>
+  <rect x="24" y="140" width="852" height="124" fill="var(--panel)" stroke="var(--line)"/>
+  <g font-size="11" font-weight="700" letter-spacing="1" fill="var(--text-dim)"><text x="36" y="160">ORIGINAL NAME</text><text x="330" y="160">NEW NAME</text><text x="620" y="160">STATUS</text></g>
+  <line x1="24" y1="168" x2="876" y2="168" stroke="var(--line)"/>
+  <g font-size="12" font-family="Consolas, monospace" fill="currentColor">
+    <text x="36" y="190">SH010_comp_v003.1001.exr</text><text x="330" y="190">SH010_comp_v004.1001.exr</text>
+    <text x="36" y="216">SH010_comp_v003.1002.exr</text><text x="330" y="216">SH010_comp_v004.1002.exr</text>
+    <text x="36" y="242">notes.txt</text><text x="330" y="242">notes.txt</text>
+  </g>
+  <g font-size="12" font-weight="600"><text x="620" y="190" fill="var(--ok)">Will rename</text><text x="620" y="216" fill="var(--bad)">Conflict - name already in folder</text><text x="620" y="242" fill="var(--text-2)">Unchanged</text></g>
+  <text x="24" y="290" font-size="12" fill="var(--text-2)">3 files  &#183;  1 will be renamed  &#183;  1 conflict</text>
+  <g font-size="13" text-anchor="middle">
+    <rect x="560" y="274" width="150" height="32" rx="5" fill="var(--panel)" stroke="var(--line)"/><text x="635" y="295" fill="currentColor">Undo last rename</text>
+    <rect x="720" y="274" width="156" height="32" rx="5" fill="var(--studio)"/><text x="798" y="295" font-weight="700" fill="var(--panel)">Rename files</text>
+  </g>
+</svg>
+<figcaption>Any conflict stops the whole rename until you fix it. The Status column says why: two files landing on one name, a file of that name already in the folder, a name Windows refuses, or a path that is too long.</figcaption>
+</figure>
+
+<h3>Find and replace</h3>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><path d="M8 12 h12 l4 4 h12 v20 h-28 z" fill="none" stroke="currentColor" stroke-width="3"/><line x1="22" y1="22" x2="22" y2="32" stroke="currentColor" stroke-width="3"/><line x1="17" y1="27" x2="27" y2="27" stroke="currentColor" stroke-width="3"/></svg><b>Add the files</b><span><strong>Add files&#8230;</strong>, <strong>Add folder&#8230;</strong>, or drop them on the list.</span></li>
+  <li><svg viewBox="0 0 44 44"><circle cx="19" cy="19" r="10" fill="none" stroke="currentColor" stroke-width="3"/><line x1="26" y1="26" x2="36" y2="36" stroke="currentColor" stroke-width="3"/></svg><b>Type Find and Replace with</b><span>For example <code>_v003</code> and <code>_v004</code>. <strong>Keep extension</strong> is on, so <code>.exr</code> is left alone.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="8" width="32" height="28" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="12" y1="18" x2="32" y2="18" stroke="var(--ok)" stroke-width="3"/><line x1="12" y1="27" x2="32" y2="27" stroke="var(--bad)" stroke-width="3"/></svg><b>Read the preview</b><span><strong>Show conflicts</strong> lists only problems. <strong>Remove selected</strong> takes a file out.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="4" y="14" width="36" height="16" rx="4" fill="currentColor"/><text x="22" y="25" text-anchor="middle" font-size="7" fill="var(--panel)" font-weight="700">Rename files</text></svg><b>Rename files</b><span>Slate asks once more: <strong>Rename 2 files</strong>. Then it renames them.</span></li>
+</ol>
+
+<h3>Number as a sequence</h3>
+<p>Every file becomes <b>Base name</b> + a number, in the order of the list. Fill in <b>Base name</b> (for example <code>shot_010_v01_</code>), <b>Start frame</b> (1001 unless you change it), <b>Step</b> (1) and <b>Padding</b> (4 digits). Set the order with <b>Sort by name</b>, <b>Sort by date modified</b>, or the up and down arrows (<b>Custom order</b>). If the numbers outgrow the padding, Slate offers <b>Use 5 digits</b>.</p>
+
+<div class="note ok"><b>All or nothing, and Undo</b>If one file cannot be renamed, for example because it is open in Nuke or RV, no file is renamed and the Status column says which and why. <strong>Undo last rename</strong> puts the old names back exactly, even swapped or shifted names. You see and undo only your own renames; Slate keeps your newest 50. If the files were moved or renamed again since, Undo refuses and changes nothing.</div>
+<p><b>Sanitize</b> cleans names but keeps letters in any language, and keeps the dot before a frame number (<code>plate.1001.exr</code> stays as it is).</p>
+</section>
+
+<!-- ============================================================ -->
+<section class="studio">
+<h2 id="settings">Settings and Workspace Info</h2>
+<p>Both are at the bottom of the list on the left, under <b>SYSTEM</b>. Settings has one bar at the top: <b>Save changes</b>, <b>Discard</b> and <b>Reset to defaults</b>. <b>Unsaved changes</b> shows until you save.</p>
+
+<h3>Your preferences</h3>
+<div class="tablewrap"><table>
+  <tr><th>Setting</th><th>Choices</th><th>What it does</th></tr>
+  <tr><td><b>Remember last folders</b></td><td>On / off</td><td>Opens the folders you last used when Slate starts.</td></tr>
+  <tr><td><b>Theme</b></td><td>Dark, Light</td><td>Dark is the default. Menus change at once; the rest when Slate next starts.</td></tr>
+  <tr><td><b>UI scale</b></td><td>Auto, or a number</td><td>Bigger or smaller text. 0.90 to 1.10 fixes text that overlaps.</td></tr>
+  <tr><td><b>Open Nuke as</b></td><td>NukeX, Nuke, Nuke Studio</td><td>Which Nuke opens when you open a shot in Nuke.</td></tr>
+</table></div>
+<p>Pictures and video are always shown on black, in both themes, so you judge colour the way you would in RV or Nuke.</p>
+
+<h3>Studio policy (read only)</h3>
+<p>The studio's rules for attendance and leave. Only HR and admins change them; you see a summary like this:</p>
+<div class="side">
+  <div class="grp"><div class="h">Studio policy</div>
+    <div class="i">Late after: 10:45</div>
+    <div class="i">Standard day: 9 hours</div>
+    <div class="i">Forgotten punch-out closes at: 19:30</div>
+    <div class="i">Weekly off: Sunday</div>
+  </div>
+  <div class="grp"><div class="h">&nbsp;</div>
+    <div class="i">Leave earned: 2 days a month</div>
+    <div class="i">Carried into next year, at most: 12 days</div>
+    <div class="i">Sandwich rule: on</div>
+    <div class="i">Comp-off: off<small>or its rules, if your studio uses it</small></div>
+  </div>
+</div>
+<p>These are Slate's starting values. Your studio may have changed them; the summary on your screen is the truth.</p>
+
+<h3>Runtime status and Maintenance</h3>
+<p><b>Runtime status</b> says whether this PC reached the studio database and the studio folder, for example "Connected to the studio database." or "Working locally - changes are not shared with other workstations." <b>Open my log folder</b> opens Slate's log files on this PC, for IT.</p>
+
+<h3>Workspace Info: the first thing IT asks for</h3>
+<figure>
+<svg viewBox="0 0 900 340" role="img" aria-label="The Workspace Info screen lists the Slate version, who is signed in, the role, the database and its server, the shared folder and whether it can be reached, and EXR previews, with the buttons Open Settings, Refresh and Copy details.">
+  <rect x="10" y="10" width="880" height="320" rx="10" fill="var(--raised)" stroke="var(--line)" stroke-width="1.5"/>
+  <text x="30" y="44" font-size="20" font-weight="700" fill="currentColor">Workspace Info</text>
+  <text x="30" y="66" font-size="13" fill="var(--text-2)">What IT needs to know about this workstation. Copy it into a ticket.</text>
+  <rect x="26" y="76" width="848" height="210" rx="8" fill="var(--panel)" stroke="var(--line)"/>
+  <g font-size="13" fill="currentColor">
+    <text x="40" y="96" font-weight="600">Slate version</text><text x="250" y="96" fill="var(--text-2)">Version 2.2.0 beta</text>
+    <text x="40" y="122" font-weight="600">Signed in as</text><text x="250" y="122" fill="var(--text-2)">priya.sharma</text>
+    <text x="40" y="148" font-weight="600">Role</text><text x="250" y="148" fill="var(--text-2)">Compositor</text>
+    <text x="40" y="174" font-weight="600">Database</text><text x="250" y="174" fill="var(--text-2)">the studio database, or this machine's local copy (LOCAL MODE)</text>
+    <text x="40" y="200" font-weight="600">Database server</text><text x="250" y="200" fill="var(--text-2)">the Slate Server PC</text>
+    <text x="40" y="226" font-weight="600">Shared folder</text><text x="250" y="226" fill="var(--text-2)">the studio's Slate_Central folder</text>
+    <text x="40" y="252" font-weight="600">Shared folder reachable</text><text x="250" y="252" fill="var(--text-2)">Yes</text>
+    <text x="40" y="278" font-weight="600">EXR previews</text><text x="250" y="278" fill="var(--text-2)">On</text>
+  </g>
+  <g font-size="13" text-anchor="middle">
+    <rect x="530" y="294" width="110" height="28" rx="5" fill="var(--panel)" stroke="var(--line)"/><text x="585" y="313" fill="currentColor">Open Settings</text>
+    <rect x="650" y="294" width="90" height="28" rx="5" fill="var(--panel)" stroke="var(--line)"/><text x="695" y="313" fill="currentColor">Refresh</text>
+    <rect x="750" y="294" width="124" height="28" rx="5" fill="var(--studio)"/><text x="812" y="313" font-weight="700" fill="var(--panel)">Copy details</text>
+  </g>
+</svg>
+<figcaption>The screen also lists where Slate is installed, the settings folder and any add-on screens. The <b>Database</b> line is the one worth a glance.</figcaption>
+</figure>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="16" fill="none" stroke="currentColor" stroke-width="3"/><line x1="22" y1="20" x2="22" y2="32" stroke="currentColor" stroke-width="3"/><circle cx="22" cy="14" r="2.5" fill="currentColor"/></svg><b>Open Workspace Info</b><span>Version, install folder, who is signed in, database, shared folder and whether it is reachable.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="12" y="6" width="22" height="26" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><rect x="6" y="12" width="22" height="26" rx="3" fill="var(--panel)" stroke="currentColor" stroke-width="3"/></svg><b>Copy details</b><span>"Copied. Paste it into your IT ticket." No password is ever shown.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M6 16 h32 v6 a3 3 0 0 0 0 6 v6 h-32 v-6 a3 3 0 0 0 0 -6 z" fill="none" stroke="currentColor" stroke-width="3"/></svg><b>Paste it in your ticket</b><span>It saves a round trip. Many faults are a PC that never took an update.</span></li>
+</ol>
+<div class="note warn"><b>Database: this machine's local copy (LOCAL MODE)</b>If Workspace Info says this, your PC cannot reach the studio database. Everything seems to work, but nobody else sees your changes. Raise a ticket.</div>
+</section>
+
+<!-- ============================================================ -->
+<section class="ops">
+<h2 id="attendance">Attendance</h2>
+<p class="lede">In Slate Operations, which is on your PC beside Slate Studio. Punch in when you start and out when you finish. Slate shows only the next button that makes sense.</p>
+
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="16" fill="none" stroke="currentColor" stroke-width="3"/><line x1="22" y1="22" x2="22" y2="12" stroke="currentColor" stroke-width="3"/><line x1="22" y1="22" x2="29" y2="26" stroke="currentColor" stroke-width="3"/></svg><b>Morning: sign in</b><span>Signing in to Slate Operations punches you in: "Punched in at 09:40." Or press <strong>Punch in</strong> on Home or Attendance.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M6 22 L22 8 L38 22" fill="none" stroke="currentColor" stroke-width="3"/><rect x="11" y="20" width="22" height="18" fill="none" stroke="currentColor" stroke-width="3"/></svg><b>From home: tick the box</b><span><strong>Working from home today</strong> on Attendance, before or after punching in. The day follows the box.</span></li>
+  <li><svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="16" fill="none" stroke="currentColor" stroke-width="3"/><line x1="22" y1="22" x2="22" y2="12" stroke="currentColor" stroke-width="3"/><line x1="22" y1="22" x2="15" y2="28" stroke="currentColor" stroke-width="3"/></svg><b>Evening: Punch out</b><span>Slate asks first: "Punch out at 18:42?" Closing Slate does not punch you out.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M10 22 a12 12 0 1 1 4 9" fill="none" stroke="currentColor" stroke-width="3"/><path d="M6 30 l8 2 l2 -8" fill="none" stroke="currentColor" stroke-width="3"/></svg><b>Back again: Punch in again</b><span>Starts a second session. The day's hours add both together.</span></li>
+</ol>
+
+<figure>
+<svg viewBox="0 0 900 300" role="img" aria-label="Four example days on a time line from 08:00 to 22:00. A normal day: in at 09:40 on sign-in, out at 18:42, in again at 20:00. Forgot to punch out: the day is closed at 19:30 when you next punch in and marked Auto punch-out. In after 19:30 and never out: marked Missing punch-out for HR. A day of approved full-day leave: signing in does not punch you in.">
+  <g stroke="var(--line)" stroke-width="1"><line x1="200" y1="40" x2="200" y2="270"/><line x1="346" y1="40" x2="346" y2="270"/><line x1="491" y1="40" x2="491" y2="270"/><line x1="637" y1="40" x2="637" y2="270"/><line x1="783" y1="40" x2="783" y2="270"/></g>
+  <g font-size="12" fill="var(--text-dim)" text-anchor="middle"><text x="200" y="30">08:00</text><text x="346" y="30">11:00</text><text x="491" y="30">14:00</text><text x="637" y="30">17:00</text><text x="783" y="30">20:00</text></g>
+  <line x1="759" y1="40" x2="759" y2="270" stroke="var(--ops)" stroke-width="1.5" stroke-dasharray="4 3"/>
+  <text x="759" y="284" text-anchor="middle" font-size="11" fill="var(--ops)" font-weight="600">19:30</text>
+  <g font-size="13" font-weight="600" fill="currentColor"><text x="16" y="76">A normal day</text><text x="16" y="136">Forgot to punch out</text><text x="16" y="196">In after 19:30, no out</text><text x="16" y="256">Approved leave day</text></g>
+  <rect x="281" y="62" width="439" height="20" rx="4" fill="var(--ok)" fill-opacity="0.25" stroke="var(--ok)"/>
+  <rect x="783" y="62" width="49" height="20" rx="4" fill="var(--ok)" fill-opacity="0.25" stroke="var(--ok)"/>
+  <g font-size="11" fill="var(--text-2)"><text x="281" y="98">in 09:40 (sign-in)</text><text x="720" y="98" text-anchor="end">out 18:42</text><text x="790" y="98">again</text></g>
+  <rect x="281" y="122" width="478" height="20" rx="4" fill="var(--warn)" fill-opacity="0.25" stroke="var(--warn)"/>
+  <text x="281" y="158" font-size="11" fill="var(--text-2)">no punch-out &#8594; closed at 19:30 when you next punch in: <tspan font-weight="700" fill="var(--warn)">Auto punch-out</tspan></text>
+  <rect x="795" y="182" width="85" height="20" rx="4" fill="var(--bad)" fill-opacity="0.2" stroke="var(--bad)" stroke-dasharray="5 3"/>
+  <text x="790" y="218" text-anchor="end" font-size="11" fill="var(--text-2)">in at 20:15, never out: <tspan font-weight="700" fill="var(--bad)">Missing punch-out</tspan>, no hours until HR corrects it</text>
+  <rect x="200" y="242" width="680" height="20" rx="4" fill="var(--idle)" fill-opacity="0.15" stroke="var(--idle)" stroke-dasharray="5 3"/>
+  <text x="540" y="256" text-anchor="middle" font-size="11" fill="var(--text-2)">On leave: signing in to check something does not punch you in</text>
+</svg>
+<figcaption>The times are the studio's starting values: a forgotten day closes at 19:30. Your studio may use other times; see Settings &rarr; Studio policy.</figcaption>
+</figure>
+
+<h3>The rules behind the buttons</h3>
+<ul>
+  <li><b>Signing in punches you in only once a day</b>, and only in Slate Operations. Signing in again, or after you punched out, does nothing. Slate Studio never punches you in.</li>
+  <li><b>On a day of approved full-day leave, signing in does not punch you in.</b> If you press Punch in yourself, Slate asks: "You are on approved leave today (Casual). Punch in anyway?" If you are really working, ask HR to cancel the leave; it stays charged until they do. A half day of leave does not ask, because you work the other half.</li>
+  <li><b>Late</b> means after the late cut-off (10:45 unless your studio changed it), and only on a day you were expected in. A first-half leave day is judged from the afternoon.</li>
+  <li><b>Short day</b> means fewer hours than the standard day (9 hours) on a finished day.</li>
+  <li>In LOCAL MODE the automatic punch-in does not work. Punch in by hand when the connection is back.</li>
+</ul>
+
+<h3>Your month</h3>
+<p>Pick any month under <b>My month</b>. The cards at the top count <b>Present</b>, <b>Late</b>, <b>Hours</b> and <b>WFH</b>. Each day has a colour from the legend:</p>
+<div class="tablewrap"><table>
+  <tr><th>Legend</th><th>Means</th></tr>
+  <tr><td>Present / Late / Short day</td><td>You worked. Late or short as above. A day off you worked shows as Present, written "Worked on a weekly off" or "Worked on a holiday".</td></tr>
+  <tr><td>Working now</td><td>Today, punched in.</td></tr>
+  <tr><td>Auto punch-out</td><td>You forgot to punch out; Slate closed the day at the studio's time.</td></tr>
+  <tr><td>Missing punch</td><td>A punch-in or punch-out is missing. HR corrects it.</td></tr>
+  <tr><td>On leave</td><td>Approved leave. A holiday inside it stays a holiday.</td></tr>
+  <tr><td>Leave pending</td><td>A day you were not in, covered by a leave request nobody has decided yet. It still counts as absent until the leave is approved.</td></tr>
+  <tr><td>Absent</td><td>A working day with no punch and no leave. Nobody is absent before they joined or after their last day.</td></tr>
+  <tr><td>Holiday / weekly off</td><td>The day was not a working day for your office.</td></tr>
+</table></div>
+<div class="note"><b>Wrong time on a day?</b>You cannot edit your own attendance. Ask HR. The <strong>Fix a punch</strong> link on Home opens Attendance; HR's correction keeps who changed it, why, and the old times.</div>
+</section>
+
+<!-- ============================================================ -->
+<section class="ops">
+<h2 id="leave">Leave and comp-off</h2>
+<p class="lede">In Slate Operations, open <b>Leave</b>. You see <b>My leave</b>: your balance and your requests. Your supervisor says yes first, then HR.</p>
+
+<div class="tablewrap"><table>
+  <tr><th>Card</th><th>Means</th></tr>
+  <tr><td><b>PAID LEAVE AVAILABLE</b></td><td>What you can still take. Casual, Sick and Earned share this one balance. Requests waiting and leave booked are already taken off. If it is below zero it says "Overdrawn by &#8230;".</td></tr>
+  <tr><td><b>EARNED</b></td><td>2 days for every whole calendar month since you joined. After a year end: what was carried plus this year. "No joining date recorded - ask HR" means HR must fill it in.</td></tr>
+  <tr><td><b>AWAITING APPROVAL</b></td><td>Days held by requests nobody has decided yet.</td></tr>
+  <tr><td><b>BOOKED</b></td><td>Approved leave still to come.</td></tr>
+  <tr><td><b>COMP OFF</b></td><td>Only where the studio uses comp-off (see below).</td></tr>
+</table></div>
+<p>The month you join is credited only if you worked all of it. At most 12 days carry into the next year; the rest lapses.</p>
+
+<h3>Asking for leave</h3>
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="14" width="32" height="16" rx="4" fill="currentColor"/><text x="22" y="25" text-anchor="middle" font-size="7" fill="var(--panel)" font-weight="700">Request leave</text></svg><b>Request leave</b><span>The <strong>Request leave</strong> window opens.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="8" width="32" height="30" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="6" y1="16" x2="38" y2="16" stroke="currentColor" stroke-width="3"/><rect x="13" y="22" width="7" height="6" fill="currentColor"/></svg><b>Type, From, To, Reason</b><span><strong>Duration</strong>: <strong>Full day</strong>, <strong>First half</strong> or <strong>Second half</strong>. A half day is one date only. Add a short <strong>Reason</strong>: it is required, and your supervisor and HR both see it.</span></li>
+  
+  <li><svg viewBox="0 0 44 44"><text x="22" y="30" text-anchor="middle" font-size="22" font-weight="700" fill="currentColor">3</text><circle cx="22" cy="22" r="17" fill="none" stroke="currentColor" stroke-width="2.5"/></svg><b>Read the cost</b><span>"This will cost <strong>3 days</strong>." If it is more than you expect, the reason is written under it.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M6 22 L38 8 L28 38 L22 26 Z" fill="none" stroke="currentColor" stroke-width="3"/></svg><b>Send request</b><span>"Sent to Ravi Kumar - 3 days." The request now waits on your supervisor.</span></li>
+</ol>
+
+<h3>Why one day off can cost three: the sandwich rule</h3>
+<p>The studio works Monday to Saturday; Sunday is the weekly off. Holidays are free. But if you take off a working day that sits between two non-working days, the days off on both sides are charged too.</p>
+<figure>
+<svg viewBox="0 0 900 290" role="img" aria-label="Three examples. First: Friday is a holiday, Sunday the weekly off; taking Saturday off costs 3 days, Friday, Saturday and Sunday. Second: Friday is a working day; taking Saturday off costs 1 day. Third: taking only half of that Saturday costs half a day; a half day never pulls in the days off.">
+  <g font-size="12" font-weight="700" fill="var(--text-dim)" text-anchor="middle" letter-spacing="1"><text x="250" y="24">THU</text><text x="370" y="24">FRI</text><text x="490" y="24">SAT</text><text x="610" y="24">SUN</text><text x="730" y="24">MON</text></g>
+  <g stroke-width="2">
+    <rect x="195" y="36" width="110" height="50" rx="6" fill="var(--panel)" stroke="var(--line)"/>
+    <rect x="315" y="36" width="110" height="50" rx="6" fill="var(--server-soft)" stroke="var(--ok)"/>
+    <rect x="435" y="36" width="110" height="50" rx="6" fill="var(--ops-soft)" stroke="var(--ops)"/>
+    <rect x="555" y="36" width="110" height="50" rx="6" fill="var(--raised)" stroke="var(--idle)"/>
+    <rect x="675" y="36" width="110" height="50" rx="6" fill="var(--panel)" stroke="var(--line)"/>
+  </g>
+  <g font-size="13" text-anchor="middle" fill="currentColor"><text x="250" y="66">work</text><text x="370" y="66">Holiday</text><text x="490" y="66" font-weight="700">your leave</text><text x="610" y="66">Weekly off</text><text x="730" y="66">work</text></g>
+  <path d="M315 96 v8 h350 v-8" fill="none" stroke="var(--bad)" stroke-width="2.5"/>
+  <text x="490" y="122" text-anchor="middle" font-size="14" font-weight="700" fill="var(--bad)">costs 3 days</text>
+  <text x="16" y="66" font-size="13" font-weight="600" fill="currentColor">Sandwich</text>
+
+  <g stroke-width="2">
+    <rect x="195" y="140" width="110" height="44" rx="6" fill="var(--panel)" stroke="var(--line)"/>
+    <rect x="315" y="140" width="110" height="44" rx="6" fill="var(--panel)" stroke="var(--line)"/>
+    <rect x="435" y="140" width="110" height="44" rx="6" fill="var(--ops-soft)" stroke="var(--ops)"/>
+    <rect x="555" y="140" width="110" height="44" rx="6" fill="var(--raised)" stroke="var(--idle)"/>
+    <rect x="675" y="140" width="110" height="44" rx="6" fill="var(--panel)" stroke="var(--line)"/>
+  </g>
+  <g font-size="13" text-anchor="middle" fill="currentColor"><text x="250" y="167">work</text><text x="370" y="167">work</text><text x="490" y="167" font-weight="700">your leave</text><text x="610" y="167">Weekly off</text><text x="730" y="167">work</text></g>
+  <text x="820" y="167" font-size="14" font-weight="700" fill="var(--ok)">1 day</text>
+  <text x="16" y="167" font-size="13" font-weight="600" fill="currentColor">No sandwich</text>
+
+  <g stroke-width="2">
+    <rect x="195" y="210" width="110" height="44" rx="6" fill="var(--panel)" stroke="var(--line)"/>
+    <rect x="315" y="210" width="110" height="44" rx="6" fill="var(--server-soft)" stroke="var(--ok)"/>
+    <rect x="435" y="210" width="55" height="44" rx="6" fill="var(--ops-soft)" stroke="var(--ops)"/>
+    <rect x="490" y="210" width="55" height="44" rx="6" fill="var(--panel)" stroke="var(--line)"/>
+    <rect x="555" y="210" width="110" height="44" rx="6" fill="var(--raised)" stroke="var(--idle)"/>
+    <rect x="675" y="210" width="110" height="44" rx="6" fill="var(--panel)" stroke="var(--line)"/>
+  </g>
+  <g font-size="13" text-anchor="middle" fill="currentColor"><text x="250" y="237">work</text><text x="370" y="237">Holiday</text><text x="462" y="237" font-weight="700">half</text><text x="517" y="237">work</text><text x="610" y="237">Weekly off</text><text x="730" y="237">work</text></g>
+  <text x="820" y="237" font-size="14" font-weight="700" fill="var(--ok)">0.5 day</text>
+  <text x="16" y="237" font-size="13" font-weight="600" fill="currentColor">Half day</text>
+  <text x="195" y="280" font-size="12" fill="var(--text-2)">A half day never pulls in the days off either side: you still come in for the other half.</text>
+</svg>
+<figcaption>Asking for more days never costs less: Saturday and Sunday together still cost 3 in the first example. The cost is fixed when you send the request. Your studio can switch the rule off; Settings &rarr; Studio policy says "Sandwich rule: on" or "off".</figcaption>
+</figure>
+
+<h3>Leave types</h3>
+<div class="tablewrap"><table>
+  <tr><th>Type</th><th>Plain meaning</th></tr>
+  <tr><td>Casual, Sick, Earned</td><td>Paid days off. All three come from the one <b>Paid leave available</b> balance.</td></tr>
+  <tr><td>Comp Off</td><td>A day back for a day you worked extra. Offered only if your studio uses comp-off.</td></tr>
+  <tr><td>Unpaid</td><td>A day off without pay. No balance needed. Ask for this when your balance runs out.</td></tr>
+  <tr><td>Project Rest</td><td>Rest after a hard delivery. HR grants it; you cannot ask for it. It does not come from your balance.</td></tr>
+</table></div>
+
+<h3>Who says yes</h3>
+<figure>
+<svg viewBox="0 0 900 270" role="img" aria-label="A leave request goes Pending Supervisor, then Pending HR, then Approved. Either can reject it with a reason. If nobody who can approve is your supervisor, it goes straight to HR. Withdraw while waiting makes it Cancelled. Withdrawing approved leave that has not started makes it Cancellation requested, and HR agree or refuse.">
+  <defs><marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+  <g stroke-width="2">
+    <rect x="15" y="70" width="150" height="60" rx="8" fill="var(--ops-soft)" stroke="var(--ops)"/>
+    <rect x="215" y="70" width="170" height="60" rx="8" fill="var(--panel)" stroke="var(--warn)"/>
+    <rect x="435" y="70" width="150" height="60" rx="8" fill="var(--panel)" stroke="var(--warn)"/>
+    <rect x="635" y="70" width="120" height="60" rx="8" fill="var(--server-soft)" stroke="var(--ok)"/>
+    <rect x="330" y="200" width="150" height="44" rx="8" fill="var(--bad-soft)" stroke="var(--bad)"/>
+    <rect x="60" y="200" width="150" height="44" rx="8" fill="var(--panel)" stroke="var(--idle)"/>
+    <rect x="690" y="200" width="200" height="44" rx="8" fill="var(--panel)" stroke="var(--idle)" stroke-dasharray="5 4"/>
+  </g>
+  <g fill="currentColor" font-size="14" font-weight="600" text-anchor="middle">
+    <text x="90" y="97">You ask</text><text x="300" y="97">Pending Supervisor</text><text x="510" y="97">Pending HR</text><text x="695" y="97">Approved</text>
+    <text x="405" y="227">Rejected</text><text x="135" y="227">Cancelled</text><text x="790" y="227">Cancellation requested</text>
+  </g>
+  <g fill="var(--text-2)" font-size="12" text-anchor="middle">
+    <text x="90" y="117">Send request</text><text x="300" y="117">your supervisor decides</text><text x="510" y="117">HR decides</text><text x="695" y="117">days deducted</text>
+  </g>
+  <g stroke="currentColor" stroke-width="2.5" fill="none" marker-end="url(#ar3)">
+    <line x1="165" y1="100" x2="212" y2="100"/><line x1="385" y1="100" x2="432" y2="100"/><line x1="585" y1="100" x2="632" y2="100"/>
+  </g>
+  <path d="M90 70 C90 20 510 20 510 66" fill="none" stroke="var(--ops)" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#ar3)"/>
+  <text x="300" y="22" text-anchor="middle" font-size="12" fill="var(--ops)">no supervisor who can approve: straight to HR</text>
+  <g stroke="var(--bad)" stroke-width="2" fill="none" stroke-dasharray="5 4" marker-end="url(#ar3)">
+    <path d="M300 130 C300 170 360 170 380 197"/><path d="M510 130 C510 170 450 170 430 197"/>
+  </g>
+  <g stroke="var(--idle)" stroke-width="2" fill="none" stroke-dasharray="5 4" marker-end="url(#ar3)">
+    <path d="M90 130 C90 165 120 175 130 197"/><path d="M720 130 C720 165 760 175 770 197"/>
+  </g>
+  <g fill="var(--text-2)" font-size="12" text-anchor="middle"><text x="140" y="165">Withdraw</text><text x="405" y="160">with a reason</text><text x="800" y="165">Withdraw, not started</text></g>
+</svg>
+<figcaption>The <b>Waiting on</b> column names whose desk it is on; <b>Decision</b> shows what the approvers wrote. Your bell rings on every decision: "approved by &#8230; and now waits for HR", "approved", or "rejected", with the reason. Double-click it to open Leave.</figcaption>
+</figure>
+
+<h3>Changing your mind: Withdraw</h3>
+<ul>
+  <li><b>Still waiting:</b> select it and press <b>Withdraw</b>. "The days it is holding go back into your balance straight away." It becomes Cancelled.</li>
+  <li><b>Approved, not started yet:</b> <b>Withdraw</b> asks HR to cancel it ("Sent to HR to cancel."). It shows <b>Cancellation requested</b>, and the days stay deducted until HR agree. If HR refuse, it goes back to Approved.</li>
+  <li><b>Already started:</b> you cannot withdraw it. Ask HR to correct it.</li>
+</ul>
+
+<div class="note warn"><b>"Request not sent. Nothing has been deducted."</b>The box says why. Usually: "You already have a request covering those days" (withdraw that one first, or pick other dates); the dates are before your joining date or in a year HR closed; or "That is 5 days and you have 3 available" (ask for Unpaid instead, or shorten it). If it says your holidays or requests "could not be read", wait a moment and try again; if it keeps happening, tell IT.</div>
+<p>Past dates are allowed. Slate marks them "retrospective" so your approver knows.</p>
+
+<div style="break-inside:avoid">
+<h3>Comp-off: only where the studio uses it</h3>
+<p>Comp-off is switched off in Slate unless your studio turns it on. If it is on, you see the <b>Comp off</b> card and the <b>Comp Off</b> leave type. Look at Settings &rarr; Studio policy for your studio's rules. With Slate's starting values:</p>
+<div class="tablewrap"><table>
+  <tr><th>You worked</th><th>You earn</th></tr>
+  <tr><td>A weekly off or a public holiday, at least half a standard day (4.5 hours)</td><td>1 day</td></tr>
+  <tr><td>A working day of 12 hours or more</td><td>Half a day</td></tr>
+  <tr><td>A working day of 18 hours or more</td><td>1 day</td></tr>
+</table></div>
+</div>
+<ul>
+  <li>It is counted from your attendance, not from a form. Slate Server credits it once a day. A day is never credited twice.</li>
+  <li>A day still open, missing a punch, or closed by the automatic punch-out earns nothing. So punch in and out properly.</li>
+  <li>Unused comp-off lapses 90 days after the day you earned it.</li>
+  <li>Spend it by asking for <b>Comp Off</b> leave. If the leave is cancelled later, the comp-off days come back.</li>
+</ul>
+</section>
+
+<!-- ============================================================ -->
+<section class="ops">
+<h2 id="it">IT Support</h2>
+<p class="lede">In Slate Operations, open <b>IT Support</b>. Report a problem here rather than messaging somebody: a ticket has a clock, a message does not.</p>
+
+<ol class="steps">
+  <li><svg viewBox="0 0 44 44"><rect x="6" y="10" width="32" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="2.5"/><path d="M28 14 l3 3 l3 -3" fill="none" stroke="currentColor" stroke-width="2"/><line x1="10" y1="30" x2="34" y2="30" stroke="currentColor" stroke-width="2"/></svg><b>Report a problem, pick a Category</b><span>Press <strong>Report a problem</strong>. Pick Workstation, Software / Licence, Network, Storage, Render Farm, Peripherals, Access / Account, or Other.</span></li>
+  <li><svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="16" fill="none" stroke="currentColor" stroke-width="3"/><text x="22" y="28" text-anchor="middle" font-size="18" fill="currentColor" font-weight="700">?</text></svg><b>Answer two questions</b><span><strong>Who is affected</strong> and <strong>Can you carry on</strong>. Answer honestly. They decide the priority, not you.</span></li>
+  <li><svg viewBox="0 0 44 44"><rect x="8" y="6" width="28" height="32" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><line x1="14" y1="16" x2="30" y2="16" stroke="currentColor" stroke-width="3"/><line x1="14" y1="24" x2="30" y2="24" stroke="currentColor" stroke-width="3"/></svg><b>Summary and Detail</b><span>One line: what is wrong. Then what you were doing, what happened, what you expected. Shot or project name helps. No attachments yet: paste the error text, or say where a screenshot is on the share.</span></li>
+  <li><svg viewBox="0 0 44 44"><path d="M6 22 L38 8 L28 38 L22 26 Z" fill="none" stroke="currentColor" stroke-width="3"/></svg><b>Send to IT</b><span>"Ticket #57 sent. IT aim to respond within &#8230;" Your machine's name is added if Hardware lists one for you; untick it if the problem is elsewhere.</span></li>
+</ol>
+
+<div class="tablewrap"><table>
+  <tr><th>Who is affected &darr; / Can you carry on &rarr;</th><th>I cannot work at all</th><th>I have a workaround</th><th>I can carry on</th></tr>
+  <tr><td>The whole studio, or a service everyone depends on</td><td><b style="color:var(--bad)">P1</b></td><td><b style="color:var(--warn)">P2</b></td><td><b style="color:var(--warn)">P2</b></td></tr>
+  <tr><td>My department, or several people</td><td><b style="color:var(--warn)">P2</b></td><td><b style="color:var(--info)">P3</b></td><td><b style="color:var(--info)">P3</b></td></tr>
+  <tr><td>Only me</td><td><b style="color:var(--info)">P3</b></td><td><b style="color:var(--info)">P3</b></td><td><b style="color:var(--idle)">P4</b></td></tr>
+</table></div>
+
+<div style="break-inside:avoid">
+<h3>The promise (SLA)</h3>
+<p>IT's clock counts working time: 10:00 to 19:00 on the studio's working days, unless the studio changed it. Sundays and studio holidays do not count. A P1 counts around the clock.</p>
+<div class="tablewrap"><table>
+  <tr><th>Priority</th><th>IT reply within</th><th>Fixed within</th></tr>
+  <tr><td><b style="color:var(--bad)">P1</b> Critical</td><td>15 minutes</td><td>4 hours, day or night</td></tr>
+  <tr><td><b style="color:var(--warn)">P2</b> High</td><td>30 working minutes</td><td>8 working hours</td></tr>
+  <tr><td><b style="color:var(--info)">P3</b> Medium</td><td>2 working hours</td><td>3 working days</td></tr>
+  <tr><td><b style="color:var(--idle)">P4</b> Low</td><td>4 working hours</td><td>5 working days</td></tr>
+</table></div>
+</div>
+
+<figure>
+<svg viewBox="0 0 900 270" role="img" aria-label="A ticket goes Open, In Progress, Waiting on you, Resolved, Closed. Waiting on you means IT asked you something; your reply puts it back with IT. On a resolved ticket, This is fixed closes it and Still broken - reopen sends it back. Withdraw closes a ticket you no longer need.">
+  <defs><marker id="ar4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+  <g stroke-width="2">
+    <rect x="10" y="70" width="150" height="60" rx="8" fill="var(--panel)" stroke="var(--info)"/>
+    <rect x="195" y="70" width="150" height="60" rx="8" fill="var(--panel)" stroke="var(--warn)"/>
+    <rect x="380" y="70" width="150" height="60" rx="8" fill="var(--ops-soft)" stroke="var(--ops)"/>
+    <rect x="565" y="70" width="150" height="60" rx="8" fill="var(--server-soft)" stroke="var(--ok)"/>
+    <rect x="750" y="70" width="140" height="60" rx="8" fill="var(--panel)" stroke="var(--idle)"/>
+  </g>
+  <g stroke="currentColor" stroke-width="2.5" fill="none" marker-end="url(#ar4)">
+    <line x1="160" y1="100" x2="192" y2="100"/><line x1="345" y1="100" x2="377" y2="100"/><line x1="715" y1="100" x2="747" y2="100"/>
+  </g>
+  <path d="M345 112 C420 150 520 150 562 112" fill="none" stroke="currentColor" stroke-width="2.5" marker-end="url(#ar4)"/>
+  <path d="M455 70 C455 30 270 30 270 66" fill="none" stroke="var(--ops)" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#ar4)"/>
+  <path d="M640 130 C640 210 270 210 270 134" fill="none" stroke="var(--bad)" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#ar4)"/>
+  <g fill="currentColor" font-size="14" font-weight="600" text-anchor="middle">
+    <text x="85" y="97">Open</text><text x="270" y="97">In Progress</text><text x="455" y="97">Waiting on you</text><text x="640" y="97">Resolved</text><text x="820" y="97">Closed</text>
+  </g>
+  <g fill="var(--text-2)" font-size="12" text-anchor="middle">
+    <text x="85" y="117">Not yet picked up</text><text x="270" y="117">IT is on it</text><text x="455" y="117">IT needs your answer</text><text x="640" y="117">fixed: check it</text><text x="820" y="117">done</text>
+  </g>
+  <text x="362" y="28" text-anchor="middle" font-size="12" fill="var(--ops)">your reply puts it back with IT</text>
+  <text x="731" y="64" text-anchor="middle" font-size="11" fill="currentColor">This is fixed</text>
+  <text x="455" y="226" text-anchor="middle" font-size="12" fill="var(--bad)">Still broken - reopen (asks what is still wrong)</text>
+  <text x="10" y="258" font-size="12" fill="var(--text-2)"><tspan font-weight="700" fill="currentColor">Withdraw</tspan> closes a ticket you no longer need, from any open state.</text>
+</svg>
+<figcaption>When IT ask you something, the ticket says <b>Waiting on you</b>, sits at the top of your list with a banner "IT need your answer on #57", and IT Support in the left list shows a count. IT's clock is paused until you answer.</figcaption>
+</figure>
+
+<h3>Following your ticket</h3>
+<ul>
+  <li>Your open tickets are listed. Tick <b>Include closed</b> for old ones. A ticket in bold has a reply you have not opened.</li>
+  <li>The <b>With</b> column names who has it, or says <b>Not yet picked up</b>. Point at a row to see "Reply expected by &#8230;" or "Fix expected by &#8230;".</li>
+  <li>Select it and press <b>Open</b> (or double-click) to read the conversation. Type, then <b>Send reply</b> or <b>Ctrl+Enter</b>.</li>
+  <li>The bell tells you when IT pick it up, reply, need your answer, change its priority or resolve it.</li>
+  <li>A reply on a resolved ticket (a thank-you, say) goes to IT and leaves it resolved. To say it is still broken, press <b>Still broken - reopen</b>.</li>
+</ul>
+
+
+
+</section>
+
+<!-- ============================================================ -->
+<h2 id="help">When something goes wrong</h2>
+<div class="tablewrap" style="break-inside:auto"><table>
+  <tr><th>What you see</th><th>What it means</th><th>What to do</th></tr>
+  <tr><td>Sign-in: <b>That user name and password do not match.</b></td><td>Wrong user name or password</td><td>Check both, and Caps Lock. Still stuck: ask your administrator to reset your password.</td></tr>
+  <tr><td>Sign-in: <b>Can't reach the studio database&#8230;</b>, button <b>Database unavailable</b></td><td>Slate Server is off, or the network is down</td><td>Press <b>Try again</b>. If it does not work, tell IT.</td></tr>
+  <tr><td>Sign-in: <b>&#8230;Slate is working on this computer's copy.</b> Header: <b>LOCAL MODE</b></td><td>Slate could not reach the studio database and uses this PC's copy</td><td>You can work, but nobody else sees it until you press <b>Sync</b>. Tell IT. Punch in by hand later.</td></tr>
+  <tr><td>Sign-in: <b>This account is switched off or its last day has passed.</b></td><td>Your account was deactivated</td><td>Ask your administrator or HR.</td></tr>
+  <tr><td>Sign-in: <b>This studio's database is new and has no accounts yet.</b></td><td>A brand-new studio database</td><td>Ask your administrator for your account.</td></tr>
+  <tr><td><b>Choose your password</b> right after signing in</td><td>Your password was reset or is new</td><td>Choose your own, at least 8 characters. Cancel takes you back to sign-in.</td></tr>
+  <tr><td>Pop-up: <b>Studio folder not found</b></td><td>The shared folder is not connected on this PC</td><td>Slate works locally. Check the network cable, or ask IT to map the drive.</td></tr>
+  <tr><td>A screen says <b>Can't reach the studio database</b></td><td>That screen could not read the database just now</td><td>Your work is safe. Press <b>Try again</b>. If it does not come back, tell IT.</td></tr>
+  <tr><td><b>Could not open &#8230;</b> or <b>Could not load &#8230;</b></td><td>Something went wrong on that screen</td><td>Press <b>Try again</b>. If it keeps happening, press <b>Copy details for IT</b> and paste it into a ticket.</td></tr>
+  <tr><td>Home: <b>Nothing assigned to you right now.</b> Dashboard: <b>No shots assigned to you</b></td><td>No shot names you as its artist</td><td>Ask the coordinator to check the shot is assigned to your account.</td></tr>
+  <tr><td>Dashboard: <b>'APPROVED' is a review verdict.</b></td><td>Only a supervisor or coordinator sets APPROVED, RETAKE and OMIT</td><td>Set <b>SENT FOR REVIEW</b> instead.</td></tr>
+  <tr><td>Dashboard: <b>You are not assigned to Roto on SH010.</b></td><td>You can set only the department you are named on</td><td>Ask the coordinator if you should be on it.</td></tr>
+  <tr><td>Dashboard: <b>SH010 was changed by someone else a moment ago.</b></td><td>Two people changed the same shot</td><td>It has been reloaded. Set your status again.</td></tr>
+  <tr><td>Dashboard: red banner, read-only</td><td>The server cannot be reached</td><td>Nothing is lost. Press <b>Try again</b>; wait for IT.</td></tr>
+  <tr><td>RV: <b>&#8230;a supervisor or coordinator sets review verdicts in Slate.</b></td><td>Artists cannot give verdicts from RV</td><td>Set your cell to <b>SENT FOR REVIEW</b>.</td></tr>
+  <tr><td><b>RV is not installed on this machine, or could not start</b></td><td>RV is missing or broken on this PC</td><td>Raise a ticket, category Software / Licence.</td></tr>
+  <tr><td>CAP Rename: a row says <b>Conflict - &#8230;</b></td><td>That new name cannot be used</td><td>Read the reason. Change the pattern or remove the file. Nothing is renamed until all conflicts are gone.</td></tr>
+  <tr><td>CAP Rename: <b>Failed - &#8230;</b> after pressing Rename</td><td>A file was open or locked; nothing was renamed</td><td>Close the file in Nuke or RV and rename again.</td></tr>
+  <tr><td>Attendance: <b>Could not punch you in automatically</b></td><td>The automatic punch-in failed</td><td>Punch in on Home or Attendance.</td></tr>
+  <tr><td>Attendance: <b>You have not punched in today, so there is nothing to punch out of.</b></td><td>No punch-in today</td><td>Ask HR to add today's times.</td></tr>
+  <tr><td>Attendance: a day says <b>Missing punch</b></td><td>A punch-in or punch-out is missing</td><td>Ask HR to correct it. It earns no comp-off until then.</td></tr>
+  <tr><td>Leave: <b>Request not sent</b></td><td>The request was refused; nothing was deducted</td><td>Read the reason. Usually an overlapping request: withdraw it first.</td></tr>
+  <tr><td>Leave: the cost is higher than the days you picked</td><td>The sandwich rule</td><td>Read the line under the cost. Change the dates or ask HR.</td></tr>
+  <tr><td>IT Support: <b>Waiting on you</b></td><td>IT asked you something</td><td>Open the ticket and answer. Until you do, it stays stuck.</td></tr>
+</table></div>
+
+<p style="margin-top:48px;color:var(--text-dim);font-size:14px">Slate BETA 2.2.0 &middot; Slate Studio Handbook, for everyone in the studio &middot; This page can be printed. Each part starts on a new page.</p>
+</div>

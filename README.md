@@ -365,9 +365,10 @@ runtime\python\python.exe -m pytest tests/ -q
 ## Documentation
 
 **[The studio guide](docs/guide/)** — written for the people who use it, not the
-people who build it: [artists](docs/guide/artists.md) ·
-[supervisors](docs/guide/supervisors.md) · [HR](docs/guide/hr.md) ·
-[IT](docs/guide/it.md).
+people who build it. Five printable handbooks: [everyone](docs/guide/slate-studio-handbook.html) ·
+[supervisors and leads](docs/guide/slate-supervisor-handbook.html) ·
+[production](docs/guide/slate-production-handbook.html) · [HR](docs/guide/slate-hr-handbook.html) ·
+[IT](docs/guide/slate-it-handbook.html).
 
 **[Installing it](docs/install.md)** ·
 **[Architecture](docs/architecture.md)** ·
