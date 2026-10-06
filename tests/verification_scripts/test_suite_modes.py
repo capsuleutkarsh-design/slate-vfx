@@ -137,7 +137,6 @@ def verify_build_and_launch_files():
         root_dir / "deployment" / "setup_slate_ops.iss",
         root_dir / "deployment" / "setup_slate_central_server.iss",
         root_dir / "tools" / "build_pipeline.py",
-        root_dir / "tools" / "build_update_package.py",
         root_dir / "tools" / "slate_console" / "ui" / "build_tab.py",
     ]
     for f in required_files:

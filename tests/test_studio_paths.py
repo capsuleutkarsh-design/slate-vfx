@@ -180,12 +180,14 @@ def test_the_installers_do_not_pre_fill_a_studio_folder():
     The wizard page was pre-filled with X:\\Extra\\Slate_Central, so pressing
     Next without reading it installed a machine pointed at a drive that does
     not exist - and nothing said so until somebody wondered why nothing was
-    being shared.
+    being shared. A workstation update Slate runs silently passes this PC's
+    own answer in SLATE_UPDATE_ROOT; run by hand, the page is blank.
     """
     for name in ("setup_slate_client.iss", "setup_slate_ops.iss",
                  "setup_slate_server.iss"):
         text = (ROOT / "deployment" / name).read_text(encoding="utf-8")
-        assert "ServerPathPage.Values[0] := '';" in text, \
+        assert ("ServerPathPage.Values[0] := '';" in text or
+                "ServerPathPage.Values[0] := ExpandConstant('{%SLATE_UPDATE_ROOT|}');" in text), \
             "%s still pre-fills the studio folder" % name
         assert "StudioFolderAccepted" in text, \
             "%s accepts a blank studio folder" % name

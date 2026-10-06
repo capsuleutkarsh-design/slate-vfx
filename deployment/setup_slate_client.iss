@@ -118,10 +118,12 @@ begin
     'Select the network folder where the shared databases and caches will be stored, then click Next.'#13#10#13#10'For best compatibility with older VFX tools, mapping your server to a Drive Letter (like Z:\) is recommended.',
     False, 'New Folder');
   ServerPathPage.Add('Server Root Path (e.g., Z:\Slate_Central or \\Server\Shared\Slate_Central):');
-  // Deliberately blank. A pre-filled drive letter is one studio's
+  // Blank when run by hand. A pre-filled drive letter is one studio's
   // answer to a question every studio answers differently, and it
-  // reads as a setting rather than as a guess.
-  ServerPathPage.Values[0] := '';
+  // reads as a setting rather than as a guess. An update Slate runs
+  // silently sets SLATE_UPDATE_ROOT to this PC's own answer
+  // (slate/core/updater/update_checker.py, launch).
+  ServerPathPage.Values[0] := ExpandConstant('{%SLATE_UPDATE_ROOT|}');
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;

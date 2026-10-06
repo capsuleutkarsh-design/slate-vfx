@@ -211,31 +211,6 @@ def test_licence_renewal_window_is_a_studio_card_setting(qtbot, mock_db, monkeyp
     assert editor.renewal_days.value() == 30
 
 
-def test_staging_an_update_runs_off_the_ui_thread(make_tab, qtbot, monkeypatch):
-    """Shell note: the update toast hands 'Download & install' to _stage_update - a worker, not the UI thread."""
-    import threading
-    from slate.core.updater import sidecar_engine
-    seen = {}
-
-    class FakeEngine:
-        def __init__(self, manifest):
-            self.manifest = manifest
-
-        def stage_update(self):
-            seen["thread"] = threading.get_ident()
-            return True
-
-    monkeypatch.setattr(sidecar_engine, "SidecarEngine", FakeEngine)
-    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: seen.setdefault("told", a[2]))
-    tab = make_tab(["Admin"])
-    job = tab._stage_update({"version": "9.9.9"})
-    assert not tab.btn_update.isEnabled()
-    qtbot.waitUntil(lambda: "told" in seen, timeout=5000)
-    job.wait(2000)
-    assert seen["thread"] != threading.get_ident()
-    assert tab.btn_update.isEnabled() and "downloaded" in seen["told"]
-
-
 def test_studio_policy_edits_are_tracked_and_saved_by_the_bar(make_tab, qtbot, monkeypatch):
     from slate.gui.components import work_guard
     tab = make_tab(["Admin"])

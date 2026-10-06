@@ -9,7 +9,6 @@ recovery lab in test_recovery_lab.py):
     hide_password_hashes: on / log_only / off,      test_hide_password_hashes_*
       a refused precheck, a rollback
     signed_fleet_commands: the key, who gets it     test_the_fleet_key_*, test_signed_fleet_commands_*
-    signed_updates: refused without a release key   test_signed_updates_*
 """
 
 import json
@@ -333,21 +332,3 @@ def test_signed_fleet_commands_refused_or_failing_changes_nothing(healthy, monke
     monkeypatch.setattr(secure_schema, "install", real)
     lab.bootstrap()                                    # the next server start mends it
     assert _refused(_app(lab), "SELECT private_key FROM slate_secure.keys")
-
-
-# ============================================================ signed_updates
-
-@slow
-def test_signed_updates_is_not_turned_on_without_a_release_key(healthy, monkeypatch):
-    from slate.core.updater import release_key
-    lab = healthy
-    monkeypatch.setattr(release_key, "PUBLIC_KEY", "")
-    with pytest.raises(actions.RecoveryRefused) as refused:
-        lab.session(lab.key).turn_on("signed_updates")
-    assert "no release key" in str(refused.value)
-    assert _mode(lab, "signed_updates") == "off"
-    lab.session(lab.key).turn_on("signed_updates", "log_only")       # only logs: allowed
-    assert _mode(lab, "signed_updates") == "log_only"
-    monkeypatch.setattr(release_key, "PUBLIC_KEY", "ab" * 32)
-    lab.session(lab.key).turn_on("signed_updates")
-    assert _mode(lab, "signed_updates") == "on"

@@ -6,9 +6,9 @@ Three installers, one per machine role. Install the server first, then the works
 
 | Installer | Install on | What it holds |
 |---|---|---|
-| `setup_Slate Server_vBETA 2.2.0.exe` | the one machine that runs the studio database | Slate Server, PostgreSQL 17, PgBouncer, Recover Slate, the updater |
-| `setup_Slate_Studio_vBETA 2.2.0.exe` | artist, lead and supervisor workstations | Slate Studio, ffmpeg, OpenRV, the updater |
-| `setup_Slate_Ops_vBETA 2.2.0.exe` | HR, IT and production office machines | Slate Operations, ffmpeg, the updater |
+| `setup_Slate Server_vBETA 2.2.0.exe` | the one machine that runs the studio database | Slate Server, PostgreSQL 17, PgBouncer, Recover Slate |
+| `setup_Slate_Studio_vBETA 2.2.0.exe` | artist, lead and supervisor workstations | Slate Studio, ffmpeg, OpenRV |
+| `setup_Slate_Ops_vBETA 2.2.0.exe` | HR, IT and production office machines | Slate Operations, ffmpeg |
 
 Nothing needs an internet connection. Every dependency is inside the installer, and updates are picked up from the studio's shared folder.
 
@@ -26,7 +26,8 @@ The database is upgraded on the first start, as described under **Upgrading from
 - **Everything prepared for 2.1.0.** Every screen was gone through twice, and about 1,750 problems were fixed. This includes a Light theme, one way to save on the VFX Dashboard, a Gantt timeline, bid line items, ₹ INR money and the Timeline Viewer's own player. See **Also in this release** below.
 - **Security:** the holes found in the 5 October review are closed, without any way to lock you out. Fixes that could stop somebody signing in sit behind switches that start **off**.
 - **Errors are no longer hidden** where they cost money or data: leave and comp-off balances, the attendance export, the stock library, permissions and backups.
-- **Bugs found by testing with the real tools:** RV, ffmpeg, PostgreSQL, the share and the updater. Several features had never worked.
+- **Updates come from Slate Server.** Publish the new installers there once; every workstation asks its artist **Update now** or **When I close Slate**. See **Updates** below.
+- **Bugs found by testing with the real tools:** RV, ffmpeg, PostgreSQL and the share. Several features had never worked.
 - **Slate Server backs up on its own** every day, and keeps to the retention set on the Operations screen.
 - **Olive is removed.** The Timeline Viewer plays the lineup in RV and exports EDLs for editorial.
 - **OpenRV is updated to 4.0.2.** The 2.0.0 build shipped before was missing RV's Python plug-ins, so no RV add-on, including the Slate verdict menu, could load.
@@ -102,7 +103,6 @@ Open **Recover Slate** on the server PC, unlock it with the Recovery Key, and us
 | `no_sqlite_fallback` | When the server is down, workstations do not open the local copy, which has its own admin/admin123. | With this on, nobody can work while the server is down. |
 | `hide_password_hashes` | Password hashes leave the accounts table for a part of the database the workstations cannot read; the database checks passwords itself. The Data Center, the SQL console and tricks like `row_to_json` show nothing. | **Every workstation must run 2.2.0 first:** an older Slate cannot check a hidden password. A workstation cut off from the server cannot sign anybody in from its local copy while this is on. Turning it on proves a real sign-in before and after with a temporary account, and that no stored password changed; turning it off moves the hashes back. |
 | `signed_fleet_commands` | Broadcasts, restarts and shut downs carry a signature; workstations ignore any command file without a valid one. Anyone who can only write to the share can no longer send them. | Every admin's Slate must be 2.2.0. The admin types their own password once per session before the first command; only active administrators get the studio's signing key. Use **Log only** first and look for "would be refused" in the workstations' logs. |
-| `signed_updates` | Workstations install only updates signed with the owner's release key. | Make the release key and ship its public half in a build first (`docs/development.md`, "Signing updates"); turning this on is refused until the build has one. The installer always works by hand. |
 | `pgbouncer_hba` | The connection pool's admin console works from the server PC only, and workstations reach only the studio database through the pool. The running pool picks it up at once. | Refused while somebody uses the pool's console from another PC. |
 
 ### Still open (planned)
@@ -130,7 +130,6 @@ These were checked against the real programs, not stand-ins, and each check now 
 - **Restart pool on Slate Server always failed.** It works now.
 - **Broadcast messages from the Admin Panel never arrived.** Two commands sent in the same second also overwrote each other.
 - **The settings file written by `setup.bat` was ignored, password included,** because of an invisible marker at its start. Every reader now accepts it.
-- **The updater could delete a file it had just installed** when only its capitalisation had changed.
 - **If the server's Cache folder can't be written,** Slate now says so instead of saving per-PC picture paths into the shared library.
 
 **Screens**
@@ -171,6 +170,29 @@ These were checked against the real programs, not stand-ins, and each check now 
   - put back the last snapshot.
 
   Slate never removes, demotes or switches off the last administrator.
+
+## Updates
+
+From 2.2.0 on, you install Slate by hand once. After that, the workstations update themselves from the studio's shared folder. Nothing goes to the internet.
+
+**To publish an update** (on the server PC):
+1. Open **Slate Server → Settings → Publish update…**.
+2. Choose the new `setup_Slate_Studio_v….exe` and/or `setup_Slate_Ops_v….exe`. Other files are refused.
+3. Tick **Required** first if nobody may put it off.
+
+Slate Server copies the installers into `Slate_Central\Updates\releases`, checks them, and removes the older ones. Publishing an older installer rolls the studio back to it.
+
+**What artists see:**
+- Within 5 minutes Slate finds the update and copies it to the PC in the background. To spare the network, each PC first waits a random few minutes (up to 10).
+- Slate then asks: **Update now** closes Slate, installs the update and opens Slate again. **When I close Slate** installs it the next time Slate is closed.
+- **Settings → Check for updates** looks straight away.
+- A copy that does not match what was published is deleted and never installed.
+
+**Required updates:** Slate shows "Slate must update" with a 5-minute countdown and an **Update now** button, but no "later". Artists save their work, then Slate closes and updates by itself. To make an update already published required, press **Require the current update now**. PCs whose artist chose "later" get the countdown at their next check, within 5 minutes.
+
+**The server:** **Update this server…** runs the new `setup_Slate Server_v….exe` with its own window and closes Slate Server.
+
+**If Slate will not start on a PC,** run the installer from `Slate_Central\Updates\releases` on that PC by hand. It keeps the PC's settings.
 
 ## One rule each
 
@@ -214,7 +236,6 @@ The test database no longer has its own copy of the dashboard's save code, so th
 
 **Installing and updating**
 - **setup.bat writes `config.json` without the invisible marker** at its start that older Slate versions could not read.
-- **An update's safety copy now keeps folders inside the program** that happen to be called `database`, `logs`, `tmp`, `Cache` or `Backups`. Only the ones at the top of the install folder (the studio's own files) are left out.
 
 ## Removed
 
@@ -229,6 +250,8 @@ The test database no longer has its own copy of the dashboard's save code, so th
 - **Code that nothing used,** including an unused "similar assets" search. Before rollout about 45 more unused files went: old scripts, a video exporter, a continuity checker, an unused notification pop-up, an asset tracker for a table that never existed, and unused parts of the dashboard, attendance, scheduling and bidding code. Nothing anybody can see or use has changed.
 - **Five settings in `default_config.json` that nothing read** (`THEME`, `update_manifest_url`, `network_timeout_ms`, `max_semantic_connections`, `gatekeeper_enabled`).
 - **`update_notify`**, a workstation command nothing sent or handled.
+- **The old update system:** update zips, the Launch Console's "Build update package", `SlateUpdater.exe`, the emergency updater (`Emergency_Update.bat`) and the release publisher. The installer is now the update (see **Updates**).
+- **The `signed_updates` switch.** Updates come only from the owner's GitHub releases, published from Slate Server; `signed_fleet_commands` stays.
 
 ## Known limits of 2.2.0
 
@@ -449,7 +472,7 @@ On each machine, a settings file damaged by the old `&` / apostrophe bug is also
 - When the database cannot be reached, screens say **"Can't reach the studio database. Your work is safe…"** with Try again. When a screen could not load, it says so, instead of showing an empty list.
 - **Workspace Info** shows the version, install folder, database and server, shared folder (and whether it can be reached, checked in the background), settings folder, all your roles and plugins, with **Copy details**.
 - **Diagnostics** (Ctrl+Shift+D) shows exactly the same facts, with a Copy button.
-- **Updates:** when an update is found, a note appears with **See what's new**. "Remind me later" really waits a day, and the "check on start-up" setting is honoured.
+- **Updates:** the "check on start-up" setting is honoured. (How updates work now is under **Updates** above.)
 - Starting Slate again while it is already open brings the open window to the front.
 - Slate opens about twice as fast after sign-in, because screens are loaded when you first open them.
 - The window remembers its size and position.
@@ -463,7 +486,6 @@ On each machine, a settings file damaged by the old `&` / apostrophe bug is also
   - asks before closing while the database runs, with an option to keep running in the tray. Stopping the server on close shows "Stopping the database…" instead of freezing;
   - the Projects and Stock Assets cards work;
   - Analytics fits smaller windows;
-  - updates download in the background. **Apply update** says how many workstations are connected, with **Restart now** or **Later**;
   - **Restore from file…** sits apart from **Back up now** and asks you to type `RESTORE`;
   - **Open Web Dashboard** waits until the server is running, and the data folder is shown even while the server is off.
 
@@ -1026,7 +1048,6 @@ On each machine, a settings file damaged by the old `&` / apostrophe bug is also
 - On a 1600×900 screen an admin's **expanded sidebar** still scrolls a little (about 58 px), so the last entries sit just below the fold. The icon-only rail fits.
 - Long shot names on Home are shortened to a fixed width, not to the space actually free.
 - The **Slate Server window** cannot be made narrower than 1120 px, so that Analytics and Operations fit. The Analytics cards do not rearrange themselves for narrow windows.
-- **Check for updates** in Settings always shows a found update, even after "Remind me later". This is deliberate, since you asked.
 
 **VFX Dashboard**
 - **Opening a big project still loads on the main screen**, so Slate can pause for a moment. Filtering, the board and thumbnails no longer cause pauses, and 262 shots open fine.

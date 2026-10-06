@@ -405,14 +405,8 @@ def check_updates(report, cfg):
                        "the manifest names %s, which is not there" % manifest["package_name"])
             continue
         report.add(OK, "%s update" % target,
-                   "v%s, %s" % (manifest["version"], manifest["package_name"]))
-
-    # Without this the update stages and can never apply.
-    here = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path.cwd()
-    updater = here / "SlateUpdater.exe"
-    if getattr(sys, "frozen", False) and not updater.exists():
-        report.add(FAIL, "SlateUpdater.exe", "missing from %s" % here)
-        report.note("Updates will download and verify, then fail to install.")
+                   "v%s, %s%s" % (manifest["version"], manifest["package_name"],
+                                  " (required)" if manifest.get("required") else ""))
 
 
 # ----------------------------------------------------------------------- main

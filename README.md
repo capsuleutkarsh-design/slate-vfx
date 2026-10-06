@@ -160,9 +160,11 @@ Your data is only removed if you **uninstall** and answer **Yes** to *"Delete it
 settings and data as well?"* The default answer is **No**. On the server
 computer, **Yes deletes the studio's whole database and its backups**.
 
-Studios that put update packages in their shared folder
-(`Slate_Central\Updates\releases`) can also update from
-**Settings → System Maintenance → Check Updates**.
+After the first install, workstations can update themselves: on the server PC,
+**Slate Server → Settings → Publish update…** takes the new Studio and Ops
+installers, and every workstation offers them to its artist within 5 minutes
+(**Update now** or **When I close Slate**). Tick **Required** for an update
+nobody may put off. **Update this server…** runs the new server installer.
 
 ### Backing up and restoring the database
 

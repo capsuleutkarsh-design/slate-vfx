@@ -1,4 +1,5 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QFormLayout, QFrame
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
+                               QFormLayout, QFrame, QCheckBox)
 from PySide6.QtCore import Qt, Signal
 
 from ..design_system import C, T
@@ -233,34 +234,46 @@ class SettingsView(QWidget):
                 border-radius: 12px;
             }}
         """)
-        update_layout = QHBoxLayout(update_panel)
+        update_layout = QVBoxLayout(update_panel)
         update_layout.setContentsMargins(24, 24, 24, 24)
 
-        self.lbl_update_status = QLabel("Ready to check for updates.")
+        self.lbl_update_status = QLabel(
+            "Publish a Slate Studio or Slate Ops installer here and every workstation "
+            "offers it to its artist.")
+        self.lbl_update_status.setWordWrap(True)
         self.lbl_update_status.setStyleSheet(f"font-size: 14px; color: {C.TEXT_SECONDARY}; border: none;")
-
-        self.btn_check_update = QPushButton("Check for updates")
-        self.btn_check_update.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_check_update.setMinimumWidth(160)
-        self.btn_check_update.setFixedHeight(40)
-        self.btn_check_update.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {C.BG_SURFACE};
-                color: {C.TEXT_PRIMARY};
-                border: 1px solid {C.BORDER_DEFAULT};
-                border-radius: 6px;
-                font-size: 14px;
-                font-weight: {T.WEIGHT_BOLD};
-            }}
-            QPushButton:hover {{
-                background-color: {C.BG_SURFACE_HOVER};
-                border: 1px solid {C.BORDER_FOCUS};
-            }}
-        """)
-
         update_layout.addWidget(self.lbl_update_status)
-        update_layout.addStretch()
-        update_layout.addWidget(self.btn_check_update)
+
+        self.chk_required = QCheckBox("Required (installs even if the artist chose later)")
+        self.chk_required.setStyleSheet(f"color: {C.TEXT_PRIMARY}; border: none;")
+        row = QHBoxLayout()
+        row.addWidget(self.chk_required)
+        row.addStretch()
+        for name, text in (("btn_publish_update", "Publish update…"),
+                           ("btn_require_update", "Require the current update now"),
+                           ("btn_update_server", "Update this server…")):
+            button = QPushButton(text)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setMinimumWidth(160)
+            button.setFixedHeight(40)
+            button.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {C.BG_SURFACE};
+                    color: {C.TEXT_PRIMARY};
+                    border: 1px solid {C.BORDER_DEFAULT};
+                    border-radius: 6px;
+                    padding: 0px 14px;
+                    font-size: 14px;
+                    font-weight: {T.WEIGHT_BOLD};
+                }}
+                QPushButton:hover {{
+                    background-color: {C.BG_SURFACE_HOVER};
+                    border: 1px solid {C.BORDER_FOCUS};
+                }}
+            """)
+            setattr(self, name, button)
+            row.addWidget(button)
+        update_layout.addLayout(row)
 
         main_layout.addWidget(update_panel)
         main_layout.addStretch()

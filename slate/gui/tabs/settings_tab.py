@@ -30,7 +30,7 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QGridLayout, QLabel,
     QMessageBox, QInputDialog, QFileDialog, QFrame, QLineEdit,
-    QScrollArea, QApplication, QDoubleSpinBox, QComboBox
+    QScrollArea, QDoubleSpinBox, QComboBox
 )
 from PySide6.QtCore import Signal, Qt, QUrl, QThread
 from PySide6.QtGui import QPixmap, QDesktopServices, QIntValidator, QFontMetrics
@@ -42,8 +42,6 @@ from ...core.infra.config_manager import ConfigManager
 from ...utils.error_handler import error_handler
 from ...core.infra.theme_manager import ThemeManager
 from ...core.infra.global_config import GlobalConfig
-from ...core.updater.update_checker import UpdateChecker
-from ..dialogs.update_available_dialog import UpdateAvailableDialog
 
 # Import design tokens for theming
 from ...core.infra.design_tokens import ColorTokens as C, TypographyTokens as T, SpacingTokens as S, RadiusTokens as R
@@ -228,8 +226,6 @@ class SettingsTab(QWidget):
         self.config_manager = config_manager or ConfigManager()
         self.settings = self.config_manager.settings
         self.global_settings = self.settings.get("global_settings", self.config_manager.default_global_settings)
-        self.update_checker = None
-        self.sidecar_engine = None
         self.report_worker = None
         self._jobs = set()
         self._loading = False
@@ -282,17 +278,6 @@ class SettingsTab(QWidget):
         except RuntimeError as exc:
             logging.debug("Report worker deleteLater skipped: %s", exc)
         self.report_worker = None
-
-    def _cleanup_update_checker(self):
-        checker = self.update_checker
-        if checker is None:
-            return
-        self._safe_stop_thread(checker, timeout_ms=2000)
-        try:
-            checker.deleteLater()
-        except RuntimeError as exc:
-            logging.debug("Update checker deleteLater skipped: %s", exc)
-        self.update_checker = None
 
     def _run_job(self, fn, on_done):
         """fn() on a worker thread; on_done(result, error) back on the UI thread."""
@@ -1024,101 +1009,13 @@ class SettingsTab(QWidget):
         return bool(callable(shower) and shower("Audit Logs"))
 
     def check_for_updates(self):
-        """Manual update check."""
+        """Manual update check: the window's own update flow, without the wait."""
         if not self.can_studio:
-            return
-        if self.sidecar_engine and hasattr(self.sidecar_engine, 'temp_updater'):
-            self._apply_staged_update()
-            return
-
-        self.btn_update.update_content("refresh", "Checking…", "Looking for a newer Slate")
-        self._cleanup_update_checker()
-        self.update_checker = UpdateChecker(self, manual_mode=True, target="client")
-        self.update_checker.update_available.connect(self.on_update_found)
-        self.update_checker.update_not_found.connect(self.on_no_update)
-        self.update_checker.finished.connect(self._cleanup_update_checker)
-        self.update_checker.start()
-
-    def _reset_update_card(self):
-        self.btn_update.update_content("download", "Check for updates", "See whether a newer Slate is available")
-
-    def on_update_found(self, manifest):
-        self._reset_update_card()
-        dlg = UpdateAvailableDialog(manifest, self)
-        if dlg.exec():
-            self._stage_update(manifest)
-
-    def _stage_update(self, manifest):
-        """Download and verify the update on a worker; the window stays usable."""
-        from ...core.updater.sidecar_engine import SidecarEngine
-
-        self.btn_update.setEnabled(False)
-        self.btn_update.update_content("download", "Downloading…", "Getting the update ready")
-        self.sidecar_engine = SidecarEngine(manifest)
-        engine = self.sidecar_engine
-
-        def finished(success, error):
-            self.btn_update.setEnabled(True)
-            if success and not error:
-                self.btn_update.update_content("check", "Restart to apply", "Update ready. Click to restart.")
-                self.btn_update.setStyleSheet(f"""
-                    ActionCard {{ background-color: {Gate.OK_SURFACE}; border: 1px solid {Gate.OK}; border-radius: 8px; text-align: left; padding: 15px; }}
-                    ActionCard:hover {{ background-color: {Gate.OK}; border: 1px solid {Gate.OK}; }}
-                """)
-                QMessageBox.information(self, "Check for updates",
-                                        "The update is downloaded and verified. Click 'Restart to apply' when you are ready.")
-            else:
-                self.sidecar_engine = None
-                self._reset_update_card()
-                QMessageBox.warning(self, "Check for updates",
-                                    "The update could not be prepared" + (f":\n{error}" if error else "."))
-        return self._run_job(engine.stage_update, finished)
-
-    def _apply_staged_update(self):
-        if not self.sidecar_engine:
-            return
-
-        reply = QMessageBox.question(self, "Apply update", "Slate will restart to apply the update. Continue?",
-                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        if reply == QMessageBox.StandardButton.Yes:
-            try:
-                database_manager.force_shutdown()
-            except Exception:
-                pass
-            self.sidecar_engine.apply_update()
-
-            app = QApplication.instance()
-            top = self.window()
-            if top and hasattr(top, "close"):
-                top.close()
-            elif app:
-                app.quit()
-
-    def on_no_update(self, current_ver):
-        self._reset_update_card()
-        reason = ""
-        if self.update_checker:
-            reason = str(getattr(self.update_checker, "last_result_reason", "") or "")
-
-        if reason == "missing_latest_pointer" or reason == "manifest_missing":
-            QMessageBox.information(
-                self,
-                "Check for updates",
-                f"No update information was found at:\n{GlobalConfig.server_root() / 'Updates' / 'releases' / 'manifest_client.json'}\n\n"
-                f"This is Slate {current_ver}.",
-            )
-            return
-
-        if reason == "invalid_manifest":
-            QMessageBox.information(
-                self,
-                "Check for updates",
-                "The update information is incomplete (Updates/releases/manifest_client.json). "
-                "Ask IT to publish the release again.",
-            )
-            return
-
-        QMessageBox.information(self, "Check for updates", f"Slate {current_ver} is the latest version.")
+            return None
+        checker = getattr(self.window(), "check_for_updates", None)
+        if not callable(checker):
+            return None
+        return checker(manual=True)
 
     @staticmethod
     def project_choices(projects):
@@ -1163,7 +1060,6 @@ class SettingsTab(QWidget):
 
     def closeEvent(self, event):
         self._cleanup_report_worker()
-        self._cleanup_update_checker()
         for job in list(self._jobs):
             job.wait(2000)
         super().closeEvent(event)

@@ -66,11 +66,11 @@ def test_the_local_file_forces_a_switch_off_without_the_database(mock_db, clean_
 
 
 def test_all_off_and_a_corrupt_file_both_mean_every_switch_off(mock_db, clean_switches):
-    switches.set_mode("signed_updates", switches.ON, db=mock_db)
+    switches.set_mode("readonly_sql_console", switches.ON, db=mock_db)
     switches.force_off_locally(None, clean_switches)
-    assert switches.mode("signed_updates", db=mock_db, override_path=clean_switches) == switches.OFF
+    assert switches.mode("readonly_sql_console", db=mock_db, override_path=clean_switches) == switches.OFF
     clean_switches.write_text("{not json", encoding="utf-8")
-    assert switches.mode("signed_updates", db=mock_db, override_path=clean_switches) == switches.OFF
+    assert switches.mode("readonly_sql_console", db=mock_db, override_path=clean_switches) == switches.OFF
 
 
 # ============================================================ the admin guard

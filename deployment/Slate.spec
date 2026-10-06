@@ -250,53 +250,6 @@ legacy_exe = EXE(
     icon=[R('slate', 'icons', 'app_icon.ico')],
 )
 
-# 5. The sidecar updater.
-#
-# This has to be its own executable rather than part of the app, because its job
-# is to overwrite the app: it runs after Slate has exited, replaces the files and
-# starts the new build. A process cannot replace itself while it is running.
-#
-# sidecar_engine.py looks for it as SlateUpdater.exe next to the running
-# executable, and logs "expected in dev but fatal in production" when it is
-# missing - the update then stages and can never apply. So it is built here and
-# collected into the same folder as the rest.
-#
-# updater_script.py is deliberately nothing but the standard library, so this
-# Analysis stays small and does not drag Qt or the database drivers into a tool
-# that only copies files around.
-updater_a = Analysis(
-    [R('slate', 'core', 'updater', 'updater_script.py')],
-    pathex=[],
-    binaries=[],
-    datas=[],
-    hiddenimports=[],
-    hookspath=[],
-    hooksconfig={},
-    runtime_hooks=[],
-    excludes=common_excludes,
-    noarchive=False,
-    optimize=0,
-)
-updater_pyz = PYZ(updater_a.pure)
-updater_exe = EXE(
-    updater_pyz,
-    updater_a.scripts,
-    [],
-    exclude_binaries=True,
-    name='SlateUpdater',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=False,
-    console=False,
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-    icon=[R('slate', 'icons', 'app_icon.ico')],
-)
-
 # Collective distribution folder containing all executables and shared dependencies
 coll = COLLECT(
     vfx_exe,
@@ -308,9 +261,6 @@ coll = COLLECT(
     legacy_exe,
     legacy_a.binaries,
     legacy_a.datas,
-    updater_exe,
-    updater_a.binaries,
-    updater_a.datas,
     strip=False,
     upx=False,
     upx_exclude=[],

@@ -270,6 +270,7 @@ class TestLeaveRequestsOnPostgres:
 
         repo = LeaveRepository(db=pg_db)
         start = date.today() + timedelta(days=40)
+        start += timedelta(days=7 - start.weekday() if start.weekday() >= 5 else 0)  # a working day
         assert repo.submit("EMP0090", "Casual", start, start, True, "dentist"), "saved (an Outcome, truthy)"
 
         rows = pg_db.execute_query(

@@ -54,12 +54,6 @@ class TestTheServerIsBuiltAsAFolder:
         assert 'os.path.join("dist", "Slate_Server")' in pipeline
         assert "stamp_before" in pipeline and "was not rewritten" in pipeline
 
-    def test_the_update_package_carries_the_whole_folder(self):
-        tool = (ROOT / "tools" / "build_update_package.py").read_text(encoding="utf-8")
-        assert 'project_root / "dist" / "Slate_Server"' in tool
-        assert "shutil.copytree(server_dir, dist_dir)" in tool
-        assert 'shutil.copy2(server_exe, dist_dir / "Slate_Server.exe")' not in tool
-
 
 class TestTheSettingsCheckReadsTheFolder:
 
@@ -114,10 +108,6 @@ class TestTheServerInstallerShipsTheFolder:
         iss = read("setup_slate_server.iss")
         install_delete = iss.split("[InstallDelete]")[1].split("[")[0]
         assert 'Type: filesandordirs; Name: "{app}\\_internal"' in install_delete
-
-    def test_the_updater_still_sits_beside_the_executable(self):
-        iss = read("setup_slate_server.iss")
-        assert 'Source: "{#SourceDistDir}\\Slate\\SlateUpdater.exe"; DestDir: "{app}"' in iss
 
     def test_the_server_finds_postgres_where_a_folder_build_puts_it(self):
         """

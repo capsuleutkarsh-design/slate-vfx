@@ -78,8 +78,6 @@ Before turning these on:
 - `signed_fleet_commands`: every admin's Slate must be 2.2.0 or later. The admin types their own
   password once per session, before the first broadcast, restart or shut down. That unlocks
   the studio's signing key, which otherwise never leaves the database.
-- `signed_updates`: the build must carry the owner's release key (see `docs/development.md`,
-  "Signing updates"). Updates can always be installed by hand with the installer.
 
 ### Changing the workstations' password (app password)
 

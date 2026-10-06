@@ -174,9 +174,9 @@ class TestTheUpdateCheck:
         from slate.core.updater.manifest import build, manifest_name
 
         releases = self._channel(tmp_path)
-        (releases / manifest_name("client")).write_text(json.dumps(build(
+        (releases / manifest_name("studio")).write_text(json.dumps(build(
             version="1.0.0", package_name="nothing_here.zip",
-            hash_sha256="a" * 64, target="client")), encoding="utf-8")
+            hash_sha256="a" * 64, target="studio")), encoding="utf-8")
 
         doctor.check_updates(report, {"SERVER_ROOT": str(tmp_path)})
         assert any("package" in f[2] for f in report.failed)
@@ -185,10 +185,10 @@ class TestTheUpdateCheck:
         from slate.core.updater.manifest import build, manifest_name
 
         releases = self._channel(tmp_path)
-        (releases / "Slate_Client_Update.zip").write_bytes(b"x")
-        (releases / manifest_name("client")).write_text(json.dumps(build(
-            version="1.0.0", package_name="Slate_Client_Update.zip",
-            hash_sha256="a" * 64, target="client")), encoding="utf-8")
+        (releases / "setup_Slate_Studio_v1.0.0.exe").write_bytes(b"x")
+        (releases / manifest_name("studio")).write_text(json.dumps(build(
+            version="1.0.0", package_name="setup_Slate_Studio_v1.0.0.exe",
+            hash_sha256="a" * 64, target="studio")), encoding="utf-8")
 
         doctor.check_updates(report, {"SERVER_ROOT": str(tmp_path)})
         assert report.failed == []

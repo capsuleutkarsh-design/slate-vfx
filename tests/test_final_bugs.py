@@ -225,28 +225,6 @@ def test_a_dashboard_thumbnail_cut_short_leaves_no_stump(monkeypatch, tmp_path):
     assert list(tmp_path.iterdir()) == [final]
 
 
-def test_the_rollback_backup_keeps_nested_folders_named_like_studio_files(tmp_path):
-    """
-    Item 9. The updater's backup skipped "database", "logs", "tmp", "Cache"
-    and "Backups" at any depth, so such a folder inside the build was gone
-    after a rollback. Only the install folder's own top level is the studio's.
-    """
-    import shutil
-    from slate.core.updater.updater_script import backup_ignore
-
-    install = tmp_path / "Slate"
-    for rel in ("logs/today.log", "database/slate.db", "Cache/x.jpg", "Slate.exe",
-                "_internal/lib/database/schema.sql", "_internal/tmp/keep.txt",
-                "_internal/Cache/keep.bin", "_internal/notes.log"):
-        (install / rel).parent.mkdir(parents=True, exist_ok=True)
-        (install / rel).write_text("x")
-    backup = tmp_path / "Backup"
-    shutil.copytree(install, backup, ignore=backup_ignore(install))
-    got = sorted(p.relative_to(backup).as_posix() for p in backup.rglob("*") if p.is_file())
-    assert got == ["Slate.exe", "_internal/Cache/keep.bin", "_internal/lib/database/schema.sql",
-                   "_internal/notes.log", "_internal/tmp/keep.txt"]
-
-
 def test_signing_in_on_approved_leave_is_not_a_punch_in(mock_db, monkeypatch):
     """Item 12 (owner's decision). The punch-in at sign-in skips a day of approved full-day leave."""
     from slate.core.domain.central_attendance import CentralAttendance

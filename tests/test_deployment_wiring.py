@@ -132,7 +132,7 @@ KNOWN_CONSTANTS = {
     "app", "sys", "win", "localappdata", "userappdata", "commonappdata",
     "userdocs", "commondocs", "pf", "pf32", "pf64", "commonpf", "commonpf32",
     "autoprograms", "autodesktop", "userdesktop", "commonprograms", "tmp",
-    "src", "srcexe", "uninstallexe", "cm", "%USERPROFILE",
+    "src", "srcexe", "uninstallexe", "cm", "%USERPROFILE", "%SLATE_UPDATE_ROOT",
 }
 
 
@@ -279,14 +279,6 @@ def test_nothing_is_shipped_twice():
     assert "'pgAdmin 4'" in spec, "the server does not run pgAdmin; do not unpack it on every start"
 
 
-def test_the_server_installer_ships_the_updater():
-    """
-    The sidecar looks for SlateUpdater.exe beside the running executable. A
-    server installed without it stages every update and applies none.
-    """
-    assert "SlateUpdater.exe" in read("setup_slate_server.iss")
-
-
 @pytest.mark.parametrize("name", INSTALLERS)
 def test_programs_are_not_installed_into_the_settings_folder(name):
     """
@@ -306,17 +298,6 @@ def test_a_studio_upgrade_leaves_the_settings_folder_alone():
                    for l in live)
     assert "RemoveOldProgramFiles" in text
     assert "procedure RemoveOldProgramFiles" in read("inc_slate_data.iss")
-
-
-def test_update_packages_carry_the_real_version():
-    """
-    "latest" is newer than anything to the update checker, so a package that
-    said so was offered again after every install, forever.
-    """
-    tool = (ROOT / "tools" / "build_update_package.py").read_text(encoding="utf-8")
-    assert 'version="latest"' not in tool
-    assert "current_version" in tool
-    assert "returncode" in tool, "a failed server build must not be packaged"
 
 
 def test_one_writer_for_the_version():

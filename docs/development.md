@@ -144,21 +144,32 @@ connecting as nobody and failing later.
 find yourself adding a secret to it, the answer is `slate/config.json`, which
 `.gitignore` already covers.
 
-### Signing updates (`signed_updates`)
+### Publishing an update
 
-Update manifests are signed with the owner's Ed25519 release key. The private half
-never goes in this repository or on the studio share; keep it on a USB stick or in a
-password manager, with a second copy somewhere safe. Losing it means making a new key
-and installing that build by hand everywhere.
+The update is the installer itself. There is no separate update package.
 
-1. Once: `python tools/release_publisher.py --new-key E:\keys\slate_release.key`.
-   This writes the private key to that file (refused inside the Slate folder) and the
-   public half into `slate/core/updater/release_key.py`. Commit that file, build and
-   install the build everywhere.
-2. Every release: `python tools/release_publisher.py --key E:\keys\slate_release.key`
-   (or set `SLATE_RELEASE_KEY` to the file; `tools/build_update_package.py` signs
-   too when it is set).
-3. Only then turn `signed_updates` to log only, read the logs, and turn it on.
+1. Build the installers as usual (`tools/build_pipeline.py`, or **Full build** in the
+   Launch Console). Take them from the owner's GitHub release.
+2. On the server PC, open **Slate Server > Settings > Publish update…** and choose
+   `setup_Slate_Studio_v<version>.exe` and/or `setup_Slate_Ops_v<version>.exe`. Any other
+   file name is refused. Tick **Required** first if nobody may put it off.
+3. Slate Server copies each installer into `Slate_Central\Updates\releases`, hashes the
+   copy, then writes `manifest_studio.json` / `manifest_ops.json` (version, file name,
+   SHA-256, `required`, `published_at`), then deletes that app's older installers.
+4. Each workstation finds it within 5 minutes (code: `slate/core/updater/update_checker.py`).
+   It waits a random 0–10 minutes so the PCs do not all copy at once (none for a required
+   update), copies the installer to `%TEMP%\SlateUpdate`, checks the hash, and asks
+   **Update now** or **When I close Slate**. A required update counts down 5 minutes.
+   The installer runs silently from a small `.cmd` (`/VERYSILENT`), and Update now starts
+   Slate again afterwards.
+
+Any version different from the running one is offered, so publishing an older installer
+rolls the studio back. **Require the current update now** makes what is published required.
+**Update this server…** runs a `setup_Slate Server_v<version>.exe` with its own window and
+closes Slate Server.
+
+If Slate will not start on a PC, run the installer from `Slate_Central\Updates\releases`
+on that PC by hand. It keeps the PC's settings.
 
 ---
 

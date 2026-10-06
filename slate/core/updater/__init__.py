@@ -1,6 +1,1 @@
-"""
-Slate - Sidecar Update System
-"""
-
-# Phase 3 Feature: SidecarGenerator for offline update packaging
-# from .sidecar_generator import SidecarGenerator
+"""Slate updates: the studio publishes an installer on the share, workstations run it."""

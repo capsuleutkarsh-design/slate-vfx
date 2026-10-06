@@ -147,21 +147,31 @@ STAT_QUERIES = {
 }
 
 
-class StageUpdateWorker(QThread):
-    """SidecarEngine.stage_update() off the UI thread."""
-    done = Signal(bool)
+class PublishWorker(QThread):
+    """Publishes workstation installers (hundreds of MB each) off the UI thread."""
+    progress = Signal(str)
+    done = Signal(str)          # the outcome, in plain words
 
-    def __init__(self, engine):
+    def __init__(self, paths, releases, required):
         super().__init__()
-        self.engine = engine
+        self.paths, self.releases, self.required = list(paths), releases, bool(required)
 
     def run(self):
-        try:
-            ok = bool(self.engine.stage_update())
-        except Exception as exc:
-            logging.warning("Staging the update failed: %s", exc)
-            ok = False
-        self.done.emit(ok)
+        from slate.core.updater.manifest import publish
+        lines = []
+        for path in self.paths:
+            name = os.path.basename(path)
+            try:
+                m = publish(path, self.releases, self.required, progress=self.progress.emit)
+                lines.append("Slate %s %s is now offered to every %s workstation%s." % (
+                    "Studio" if m["target"] == "studio" else "Ops", m["version"],
+                    "Slate Studio" if m["target"] == "studio" else "Slate Ops",
+                    ", as a required update" if self.required else ""))
+            except Exception as exc:
+                logging.warning("Publishing %s failed: %s", name, exc)
+                lines.append("%s was not published: %s" % (name, exc))
+        lines.append("Folder: %s" % self.releases)
+        self.done.emit("\n".join(lines))
 
 
 def poll_facts(port: int, pooler_port: int = 0) -> dict:
@@ -377,13 +387,12 @@ class UTServerWindow(QMainWindow):
         self.dashboard.btn_restart_pool.clicked.connect(self._on_restart_pool)
         self.settings_view.btn_save.clicked.connect(self._on_save_settings)
         self.settings_view.btn_firewall.clicked.connect(self._on_allow_firewall)
-        self.settings_view.btn_check_update.clicked.connect(self._on_check_update)
+        self.settings_view.btn_publish_update.clicked.connect(self._on_publish_update)
+        self.settings_view.btn_require_update.clicked.connect(self._on_require_update)
+        self.settings_view.btn_update_server.clicked.connect(self._on_update_server)
 
         self.worker = None
         self.broadcaster = None
-
-        self.update_checker = None
-        self.sidecar_engine = None
 
         self.analytics_view.card_projects.clicked.connect(self._on_stat_card_clicked)
         self.analytics_view.card_assets.clicked.connect(self._on_stat_card_clicked)
@@ -1696,114 +1705,97 @@ class UTServerWindow(QMainWindow):
         self.dashboard.toggle_power.blockSignals(False)
         self.close()
 
-    # --- UPDATE FLOW ---
-    def _on_check_update(self):
-        if self.sidecar_engine and hasattr(self.sidecar_engine, 'temp_updater'):
-            self._apply_staged_update()
-            return
+    # --- UPDATES: publish installers for the workstations, update this server ---
+    def _releases(self):
+        from slate.core.infra.global_config import GlobalConfig
+        from slate.core.updater.manifest import releases_dir
+        return releases_dir(GlobalConfig.server_root() / "Updates")
 
-        self.settings_view.btn_check_update.setText("Checking\u2026")
-        self.settings_view.btn_check_update.setEnabled(False)
-        self.settings_view.lbl_update_status.setText("Looking for updates\u2026")
+    def _on_publish_update(self):
+        """Copy workstation installers to the share; every workstation then offers them."""
+        from slate.core.updater.manifest import installer_target
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Choose the Slate Studio / Slate Ops installers", "",
+            "Slate workstation installers (setup_Slate_Studio_v*.exe setup_Slate_Ops_v*.exe)")
+        if not paths:
+            return None
+        try:
+            for path in paths:
+                installer_target(path)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Publish update", str(exc))
+            return None
+        job = getattr(self, "_publish_worker", None)
+        if job is not None and job.isRunning():
+            return None
+        view = self.settings_view
+        view.btn_publish_update.setEnabled(False)
+        job = PublishWorker(paths, self._releases(), view.chk_required.isChecked())
+        job.progress.connect(view.lbl_update_status.setText)
+        job.done.connect(self._on_published)
+        self._publish_worker = job
+        job.start()
+        return job
 
-        if self.update_checker:
-            self.update_checker.stop()
-            self.update_checker.deleteLater()
+    def _on_published(self, outcome):
+        self.settings_view.btn_publish_update.setEnabled(True)
+        self.settings_view.lbl_update_status.setText(outcome)
+        self._log("> " + outcome.replace("\n", " "))
+        QMessageBox.information(self, "Publish update", outcome)
 
-        from slate.core.updater.update_checker import UpdateChecker
-        self.update_checker = UpdateChecker(self, manual_mode=True, target="server")
-        self.update_checker.update_available.connect(self.on_update_found)
-        self.update_checker.update_not_found.connect(self.on_no_update)
+    def _on_require_update(self):
+        """Make the published update(s) required: workstations install within 5 minutes."""
+        if QMessageBox.question(
+                self, "Require the current update",
+                "Make the published update required?\n\nEvery workstation that has not "
+                "installed it gets a 5-minute countdown at its next check (within 5 minutes), "
+                "then Slate closes and updates, even if the artist chose later.") \
+                != QMessageBox.StandardButton.Yes:
+            return []
+        from slate.core.updater.manifest import require_now
+        try:
+            done = require_now(self._releases())
+        except OSError as exc:
+            QMessageBox.warning(self, "Require the current update",
+                                "The update could not be made required: %s" % exc)
+            return []
+        text = ("Required now: %s." % ", ".join(done)) if done else \
+            "Nothing is published yet, so there is nothing to require."
+        self.settings_view.lbl_update_status.setText(text)
+        self._log("> " + text)
+        return done
 
-        def cleanup():
-            self.settings_view.btn_check_update.setEnabled(True)
-            if self.settings_view.btn_check_update.text() == "Checking\u2026":
-                self.settings_view.btn_check_update.setText("Check for updates")
-        self.update_checker.finished.connect(cleanup)
-        self.update_checker.start()
+    def _on_update_server(self):
+        """Run the Slate Server installer (with its own window) and close this window."""
+        import re
+        path, _ = QFileDialog.getOpenFileName(self, "Choose the new Slate Server installer", "",
+                                              "Slate Server installer (setup_Slate*Server_v*.exe)")
+        if not path:
+            return False
+        if not re.fullmatch(r"setup_Slate[ _]Server_v.+\.exe", os.path.basename(path), re.I):
+            QMessageBox.warning(self, "Update this server",
+                                "Choose a file named setup_Slate Server_v<version>.exe.")
+            return False
+        if QMessageBox.question(
+                self, "Update this server",
+                "Run %s now?\n\n%s. The installer stops the studio database while it "
+                "updates; workstations reconnect by themselves afterwards. The database, "
+                "backups and settings are kept. This window closes."
+                % (os.path.basename(path), self._who_is_connected())) \
+                != QMessageBox.StandardButton.Yes:
+            return False
+        try:
+            subprocess.Popen([path], close_fds=True)
+        except OSError as exc:
+            QMessageBox.warning(self, "Update this server", "The installer could not start: %s" % exc)
+            return False
+        self.quit_for_update()
+        return True
 
-    def on_update_found(self, manifest):
-        self.settings_view.btn_check_update.setText("Check for updates")
-        self.settings_view.lbl_update_status.setText(f"Update found: {manifest.get('version')}")
-        from slate.gui.dialogs.update_available_dialog import UpdateAvailableDialog
-        dlg = UpdateAvailableDialog(manifest, self)
-        if dlg.exec():
-            self._stage_update(manifest)
-
-    def _stage_update(self, manifest):
-        """
-        Download and verify the update on a worker thread - it ran on the UI
-        thread, and the window froze for the whole download.
-        """
-        from slate.core.updater.sidecar_engine import SidecarEngine
-
-        self.settings_view.btn_check_update.setEnabled(False)
-        self.settings_view.btn_check_update.setText("Downloading\u2026")
-        self.settings_view.lbl_update_status.setText("Downloading the update in the background\u2026")
-        self.sidecar_engine = SidecarEngine(manifest)
-        self._stage_worker = StageUpdateWorker(self.sidecar_engine)
-        self._stage_worker.done.connect(self._on_update_staged)
-        self._stage_worker.start()
-        return self._stage_worker
-
-    def _on_update_staged(self, success):
-        self.settings_view.btn_check_update.setEnabled(True)
-        if success:
-            self.settings_view.btn_check_update.setText("Restart to apply")
-            self.settings_view.lbl_update_status.setText("Update downloaded and checked. Restart to apply it.")
-            QMessageBox.information(self, "Update ready", "The update is downloaded and checked. Choose 'Restart to apply'.")
-        else:
-            self.settings_view.btn_check_update.setText("Check for updates")
-            self.settings_view.lbl_update_status.setText("The update could not be downloaded.")
-            QMessageBox.warning(self, "Update not downloaded",
-                                "The update could not be downloaded or checked. The server log says why.")
-
-    def _apply_staged_update(self):
-        if not self.sidecar_engine:
-            return
-
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Warning)
-        box.setWindowTitle("Apply the update")
-        box.setText("Restart Slate Server to apply the update?")
-        box.setInformativeText(
-            "%s. Restarting stops the studio database, so every workstation "
-            "goes offline until it is back." % self._who_is_connected())
-        now = box.addButton("Restart now", QMessageBox.ButtonRole.DestructiveRole)
-        later = box.addButton("Later", QMessageBox.ButtonRole.RejectRole)
-        box.setDefaultButton(later)
-        box.setEscapeButton(later)
-        box.exec()
-        if box.clickedButton() is now:
-            if self.dashboard.toggle_power.isChecked():
-                pooler = getattr(self.db_engine, "pooler", None)
-                if pooler is not None:
-                    pooler.stop()
-                self.db_engine.stop()
-            self.sidecar_engine.apply_update()
-            QApplication.quit()
-
-    def on_no_update(self, current_ver):
-        self.settings_view.btn_check_update.setText("Check for updates")
-        reason = ""
-        if self.update_checker:
-            reason = str(getattr(self.update_checker, "last_result_reason", "") or "")
-
-        message, status = self.update_result_text(reason, current_ver)
-        QMessageBox.information(self, "Check for updates", message)
-        self.settings_view.lbl_update_status.setText(status)
-
-    @staticmethod
-    def update_result_text(reason: str, current_ver) -> tuple:
-        """(message, status line) for a check that found no update - or failed."""
-        reason = str(reason or "")
-        if reason in ("missing_latest_pointer", "manifest_missing"):
-            return ("No update information was found for the server.", "Could not check for updates")
-        if reason == "invalid_manifest":
-            return ("The update information is damaged, so no update can be offered.",
-                    "Could not check for updates")
-        if reason in ("", "up_to_date", "no_update", "current", "latest"):
-            return (f"The server is up to date (version {current_ver}).", f"Up to date: v{current_ver}")
-        # 'error' and anything else is a failed check, not "latest version".
-        return ("Could not check for updates. Check the network and the update "
-                "folder, then try again.", "Could not check for updates")
+    def quit_for_update(self):
+        """The installer replaces this program: close the normal way, without asking."""
+        self._closing_confirmed = True
+        app = QApplication.instance()
+        if app is not None:
+            app.setQuitOnLastWindowClosed(True)
+        self.close()

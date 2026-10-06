@@ -2,26 +2,17 @@
 The studio share (SERVER_ROOT) on a real temp folder:
 
     Commands      ServerHub.post_command  ->  gatekeeper's CommandCheckWorker
-    Updates       a real release zip + manifest  ->  UpdateChecker, SidecarEngine,
-                  and the updater's swap into a sandbox install folder
     Logs/Audit    AuditLogger and the Admin Panel log  ->  the Audit Logs screen
     Cache         where thumbnails and proxies go
 """
 
-import ctypes
-import hashlib
-import importlib.util
 import json
 import shutil
 import subprocess
-import sys
 import time
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
-ROOT = Path(__file__).resolve().parents[2]
 
 pytestmark = pytest.mark.realtools
 
@@ -139,175 +130,6 @@ def test_a_missing_share_does_not_break_the_command_poll(share, monkeypatch):
     hub = ServerHub()
     shutil.rmtree(share)
     assert _workstation_receives(hub) == []
-
-
-# ================================================================= updates
-
-def _load_tool(name):
-    spec = importlib.util.spec_from_file_location("rt_" + name, ROOT / "tools" / f"{name}.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def _publish_release(share, tmp_path, version, files):
-    """What tools/build_update_package.py does after PyInstaller, for real, into the share."""
-    from slate.core.updater.manifest import build, manifest_name
-    tool = _load_tool("build_update_package")
-    dist = tmp_path / "dist" / "Slate"
-    for rel, content in files.items():
-        (dist / rel).parent.mkdir(parents=True, exist_ok=True)
-        (dist / rel).write_bytes(content)
-    releases = tmp_path / "releases"
-    releases.mkdir(exist_ok=True)
-    shutil.make_archive(str(releases / "Slate_Client_Update"), "zip", dist)
-    zip_path = releases / "Slate_Client_Update.zip"
-    manifest = build(version=version, package_name=zip_path.name,
-                     hash_sha256=tool.generate_file_hash(zip_path), target="client",
-                     built_from="vfx")
-    manifest_path = releases / manifest_name("client")
-    manifest_path.write_text(json.dumps(manifest, indent=4), encoding="utf-8")
-    published = tool.publish(zip_path, manifest_path, tmp_path)
-    assert published == share / "Updates" / "releases"
-    return manifest
-
-
-def _check(target="client"):
-    from slate.core.updater.update_checker import UpdateChecker
-    checker = UpdateChecker(manual_mode=True, target=target)
-    offered, current = [], []
-    checker.update_available.connect(offered.append)
-    checker.update_not_found.connect(current.append)
-    checker.run()
-    return checker.last_result_reason, offered
-
-
-NEW_BUILD = {"Slate.exe": b"new exe", "_internal/new.dll": b"new dll",
-             "_internal/lib/core.pyd": b"new core"}
-
-
-def test_a_published_release_is_found_verified_and_staged(share, tmp_path, monkeypatch):
-    from slate.core.updater.sidecar_engine import SidecarEngine
-    monkeypatch.setenv("TEMP", str(tmp_path / "temp"))
-
-    assert _check()[0] == "manifest_missing"
-    manifest = _publish_release(share, tmp_path, "99.0.0", NEW_BUILD)
-    reason, offered = _check()
-    assert reason == "update_available" and offered[0]["version"] == "99.0.0"
-
-    engine = SidecarEngine(offered[0])
-    errors = []
-    engine.update_error.connect(errors.append)
-    assert engine.stage_update(), errors
-    staged = tmp_path / "temp" / "SlateUpdate" / manifest["package_name"]
-    assert hashlib.sha256(staged.read_bytes()).hexdigest() == manifest["hash_sha256"]
-
-    # The same version as this build is not offered again.
-    from slate import __version__
-    _publish_release(share, tmp_path, __version__.replace("BETA ", ""), NEW_BUILD)
-    assert _check() == ("up_to_date", [])
-
-
-def test_a_package_changed_after_publishing_is_refused(share, tmp_path, monkeypatch):
-    from slate.core.updater.sidecar_engine import SidecarEngine
-    monkeypatch.setenv("TEMP", str(tmp_path / "temp"))
-    manifest = _publish_release(share, tmp_path, "99.0.0", NEW_BUILD)
-    package = share / "Updates" / "releases" / manifest["package_name"]
-    with open(package, "ab") as f:
-        f.write(b"tampered")
-    engine = SidecarEngine(manifest)
-    errors = []
-    engine.update_error.connect(errors.append)
-    assert not engine.stage_update()
-    assert "Hash mismatch" in errors[0]
-    assert not (tmp_path / "temp" / "SlateUpdate" / manifest["package_name"]).exists()
-
-    # A manifest with its hash under the wrong key is refused before copying.
-    bad = dict(manifest)
-    bad["sha256"] = bad.pop("hash_sha256")
-    engine = SidecarEngine(bad)
-    errors = []
-    engine.update_error.connect(errors.append)
-    assert not engine.stage_update() and "hash_sha256" in errors[0]
-
-
-def _old_install(tmp_path):
-    install = tmp_path / "Program" / "Slate"
-    old = {"Slate.exe": b"old exe", "_internal/old_only.dll": b"old dll",
-           "_internal/lib/core.pyd": b"old core", "slate_server_config.json": b"{}",
-           "client_config.json": b'{"db_host": "10.0.0.5"}', "LocalDatabase/PG_VERSION": b"17",
-           "logs/today.log": b"log"}
-    for rel, content in old.items():
-        (install / rel).parent.mkdir(parents=True, exist_ok=True)
-        (install / rel).write_bytes(content)
-    return install
-
-
-def _run_updater(monkeypatch, zip_path, install, exe="Slate.exe"):
-    """updater_script.main() as SlateUpdater.exe runs it, minus the message box and relaunch."""
-    from slate.core.updater import updater_script
-    boxes, launched = [], []
-    monkeypatch.setattr(ctypes.windll.user32, "MessageBoxW",
-                        lambda *a: boxes.append(a[1]) or 1)
-    monkeypatch.setattr(updater_script.subprocess, "Popen",
-                        lambda cmd, **k: launched.append(cmd))
-    monkeypatch.setattr(sys, "argv", ["SlateUpdater.exe", "0", str(zip_path), str(install), exe])
-    with pytest.raises(SystemExit) as exit_info:
-        updater_script.main()
-    return exit_info.value.code, boxes, launched
-
-
-def test_the_updater_swaps_a_sandbox_install_and_keeps_the_studios_files(share, tmp_path,
-                                                                          monkeypatch):
-    from slate.core.updater.sidecar_engine import SidecarEngine
-    monkeypatch.setenv("TEMP", str(tmp_path / "temp"))
-    manifest = _publish_release(share, tmp_path, "99.0.0", NEW_BUILD)
-    engine = SidecarEngine(manifest)
-    assert engine.stage_update()
-    install = _old_install(tmp_path)
-
-    code, boxes, launched = _run_updater(monkeypatch, engine.local_zip, install)
-    assert code == 0 and boxes == []
-    assert launched == [[str(install / "Slate.exe")]]
-    assert (install / "Slate.exe").read_bytes() == b"new exe"
-    assert (install / "_internal" / "new.dll").exists()
-    assert (install / "_internal" / "lib" / "core.pyd").read_bytes() == b"new core"
-    assert not (install / "_internal" / "old_only.dll").exists(), "old build files go"
-    for kept in ("slate_server_config.json", "client_config.json",
-                 "LocalDatabase/PG_VERSION", "logs/today.log"):
-        assert (install / kept).exists(), kept
-    backups = list((install.parent / "Backups").iterdir())
-    assert len(backups) == 1 and (backups[0] / "Slate.exe").read_bytes() == b"old exe"
-    assert not (backups[0] / "client_config.json").exists()
-
-
-def test_a_broken_package_is_rolled_back_and_the_studios_files_survive(tmp_path,
-                                                                       monkeypatch):
-    install = _old_install(tmp_path)
-    broken = tmp_path / "broken.zip"
-    broken.write_bytes(b"PK\x03\x04 this is not a zip")
-    code, boxes, launched = _run_updater(monkeypatch, broken, install)
-    assert code == 1 and "Rollback completed" in boxes[0]
-    assert (install / "Slate.exe").read_bytes() == b"old exe"
-    assert (install / "_internal" / "old_only.dll").exists()
-    assert (install / "client_config.json").read_bytes() == b'{"db_host": "10.0.0.5"}'
-    assert (install / "LocalDatabase" / "PG_VERSION").exists()
-
-
-def test_a_file_whose_name_changed_case_survives_the_update(tmp_path, monkeypatch):
-    """Windows names are case-blind: the cleanup must not delete what it just unpacked."""
-    install = _old_install(tmp_path)
-    (install / "_internal" / "Qt6Core.DLL").write_bytes(b"old qt")
-    dist = tmp_path / "dist"
-    for rel, content in {"Slate.exe": b"new exe", "_internal/Qt6Core.dll": b"new qt"}.items():
-        (dist / rel).parent.mkdir(parents=True, exist_ok=True)
-        (dist / rel).write_bytes(content)
-    package = Path(shutil.make_archive(str(tmp_path / "pkg"), "zip", dist))
-    code, boxes, _ = _run_updater(monkeypatch, package, install)
-    assert code == 0, boxes
-    survivors = [p.name for p in (install / "_internal").iterdir()]
-    assert [n for n in survivors if n.lower() == "qt6core.dll"], survivors
-    assert (install / "_internal" / "Qt6Core.dll").read_bytes() == b"new qt"
 
 
 # ============================================================== audit logs
