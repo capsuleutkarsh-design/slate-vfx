@@ -235,7 +235,8 @@ def test_approved_leave_reaches_attendance(mock_db):
 
 def test_a_correction_clears_the_auto_and_missing_flags(att):
     today = date.today()
-    auto_day, late_day = today - timedelta(days=3), today - timedelta(days=2)
+    monday = today - timedelta(days=7 + today.weekday())       # last week: always past weekdays
+    auto_day, late_day = monday + timedelta(days=1), monday + timedelta(days=2)
     _put(att, "asha", auto_day, "09:30:00")
     _put(att, "asha", late_day, "20:15:00")
     lp.set_overrides({"auto_logout_time": "19:30"})

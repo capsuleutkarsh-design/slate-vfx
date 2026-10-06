@@ -293,11 +293,11 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
             if manual:
                 self.show_feedback("Slate is already checking for an update.", "info")
             return None
-        dialog = self._update_dialog
         if job is not None:
             job.deleteLater()              # the last check, finished: one every 5 minutes adds up
             self.update_checker = None
-        if getattr(self, "_is_closing", False) or (dialog is not None and dialog.isVisible()):
+        # An open offer does not stop the check: the update may have been made required since.
+        if getattr(self, "_is_closing", False) or self._required_update_showing():
             return None
         job = updates.UpdateChecker(updates.target_for(self.app_mode), self,
                                     put_off="" if manual else self._update_put_off,
@@ -329,14 +329,23 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         """A checked installer: Update now / When I close Slate, or a countdown when required."""
         from .dialogs.update_available_dialog import UpdateAvailableDialog
         old = self._update_dialog
-        if getattr(self, "_is_closing", False) or (old is not None and old.isVisible()):
+        if getattr(self, "_is_closing", False) or self._required_update_showing():
             return None
+        if old is not None and old.isVisible():
+            if old.version == str(manifest.get("version")) and not manifest.get("required"):
+                return None           # the same offer is already on screen
+            old.blockSignals(True)    # replaced by a newer or required one: not a "later"
+            old.close()
         dialog = UpdateAvailableDialog(manifest, self)
         dialog.accepted.connect(lambda: self._install_update_now(manifest, installer))
         dialog.rejected.connect(lambda: self._install_update_at_close(manifest, installer))
         self._update_dialog = dialog
         dialog.show()                 # not modal: the artist can save their work first
         return dialog
+
+    def _required_update_showing(self) -> bool:
+        dialog = self._update_dialog
+        return dialog is not None and dialog.isVisible() and dialog.required
 
     def _install_update_at_close(self, manifest, installer):
         self._update_on_close = installer

@@ -15,6 +15,7 @@ class UpdateAvailableDialog(QDialog):
     def __init__(self, manifest, parent=None, seconds=REQUIRED_SECONDS):
         super().__init__(parent)
         self.required = bool(manifest.get("required"))
+        self.version = str(manifest.get("version"))
         self.remaining = int(seconds)
         self.setWindowTitle("Update Slate")
         self.setMinimumWidth(460)

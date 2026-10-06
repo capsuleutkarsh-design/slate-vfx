@@ -128,6 +128,10 @@ def launch(installer, relaunch: bool, popen=subprocess.Popen) -> Path:
         "chcp 65001 >nul",
         # The installers fill in the studio folder from this when run silently.
         'set "SLATE_UPDATE_ROOT=%s"' % cmd_text(GlobalConfig.server_root()),
+        # Let Slate finish closing (saving, signing out) before the installer replaces it.
+        ":wait",
+        'tasklist /FI "PID eq %d" /NH | find " %d " >nul && (ping -n 2 127.0.0.1 >nul & goto wait)'
+        % (os.getpid(), os.getpid()),
         'start "" /wait "%s" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS'
         % cmd_text(installer),
     ]

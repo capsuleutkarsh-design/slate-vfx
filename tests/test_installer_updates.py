@@ -13,6 +13,7 @@ Nothing here runs an installer.
 """
 
 import json
+import os
 import subprocess
 import sys
 
@@ -132,6 +133,9 @@ def test_launch_writes_the_cmd_and_starts_it_detached(tmp_path, monkeypatch):
     assert ('start "" /wait "%s" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS'
             % installer) in lines
     assert lines[-1] == r'start "" "C:\Programs\Slate Studio\Slate_Studio.exe"'
+    wait = lines.index(":wait")
+    assert '"PID eq %d"' % os.getpid() in lines[wait + 1], "the installer waits for Slate to exit"
+    assert wait < lines.index(next(l for l in lines if "/VERYSILENT" in l))
     (args, kwargs), = started
     assert args == (["cmd.exe", "/c", str(script)],)
     assert kwargs["creationflags"] & subprocess.CREATE_NO_WINDOW
@@ -166,3 +170,20 @@ def test_the_window_runs_it_now_or_at_close_but_not_at_sign_out(monkeypatch):
     launched.clear()
     assert App._install_update_now(win, {"version": "2.4", "required": True}, "b.exe")
     assert launched == [("b.exe", True), "closed"]
+
+
+def test_a_required_update_replaces_an_offer_left_open(qtbot):
+    from PySide6.QtWidgets import QWidget
+    from slate.gui.main_window import VFXFolderCreatorApp as App
+    win = QWidget()                                    # the dialogs' parent
+    qtbot.addWidget(win)
+    win._update_dialog = None
+    win._install_update_now = win._install_update_at_close = lambda *a: None
+    win._required_update_showing = lambda: App._required_update_showing(win)
+    offer = App._on_update_ready(win, {"version": "2.3"}, "a.exe")
+    qtbot.addWidget(offer)
+    assert App._on_update_ready(win, {"version": "2.3"}, "a.exe") is None, "same offer: kept"
+    forced = App._on_update_ready(win, {"version": "2.3", "required": True}, "a.exe")
+    qtbot.addWidget(forced)
+    assert forced.required and not offer.isVisible() and win._update_dialog is forced
+    assert App._on_update_ready(win, {"version": "2.4"}, "b.exe") is None, "required stays"
