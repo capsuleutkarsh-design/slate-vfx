@@ -66,11 +66,16 @@ def test_the_local_file_forces_a_switch_off_without_the_database(mock_db, clean_
 
 
 def test_all_off_and_a_corrupt_file_both_mean_every_switch_off(mock_db, clean_switches):
-    switches.set_mode("readonly_sql_console", switches.ON, db=mock_db)
+    switches.set_mode("no_default_accounts", switches.ON, db=mock_db)
     switches.force_off_locally(None, clean_switches)
-    assert switches.mode("readonly_sql_console", db=mock_db, override_path=clean_switches) == switches.OFF
+    assert switches.mode("no_default_accounts", db=mock_db, override_path=clean_switches) == switches.OFF
     clean_switches.write_text("{not json", encoding="utf-8")
-    assert switches.mode("readonly_sql_console", db=mock_db, override_path=clean_switches) == switches.OFF
+    assert switches.mode("no_default_accounts", db=mock_db, override_path=clean_switches) == switches.OFF
+
+
+def test_no_switch_that_does_nothing():
+    # C4: the SQL console is always read-only; this switch changed nothing.
+    assert "readonly_sql_console" not in switches.CATALOGUE
 
 
 # ============================================================ the admin guard

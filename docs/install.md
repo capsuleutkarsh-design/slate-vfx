@@ -47,7 +47,7 @@ script reads it rather than hard-coding anything.
 | **Python 3.10** | required | `runtime/python` — portable, not system-wide |
 | **pip** | required | bootstrapped into that runtime |
 | **FFmpeg** | required | `slate/bin/ffmpeg.exe` — thumbnails, proxies, playback |
-| **PostgreSQL 16** | server only | `slate_server/bin/pgsql` — skipped without `/server` |
+| **PostgreSQL 17** | server only | `slate_server/bin/pgsql` — skipped without `/server` |
 | **OpenRV** | manual | `OpenRV/` — no public Windows build; drop yours in and Slate finds it |
 
 None of it is committed. These are third-party builds with their own licences
@@ -63,7 +63,7 @@ Once, at the end:
 ```
 Database host  [localhost]
 Port           [5440]
-Database name  [slate]
+Database name  [ut_vfx]
 Database user  [ut_vfx_app]
 Database password
 ```
@@ -88,9 +88,15 @@ Setup writes three launchers:
 
 | | |
 |---|---|
-| `Slate.bat` | the main client |
-| `Slate Ops.bat` | the operations shell |
+| `Slate.bat` | Slate Studio, the production client |
+| `Slate Ops.bat` | Slate Operations: Attendance, Leave, IT Support and the other people screens |
 | `Slate Server.bat` | Central Server — PostgreSQL, the PgBouncer pooler, sync |
+
+Attendance, Leave and IT Support are only in Slate Operations. Artists, leads,
+coordinators and supervisors need **both** Slate Studio and Slate Operations;
+HR, IT and production office machines need only Slate Operations. With the
+installers it is the same: artist, lead, coordinator and supervisor PCs get
+both the Studio and the Ops installer.
 
 ---
 

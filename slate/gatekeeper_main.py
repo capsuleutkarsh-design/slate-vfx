@@ -415,39 +415,17 @@ class ApplicationEntry:
             flag_path.parent.mkdir(parents=True, exist_ok=True)
             flag_path.write_text("configured=true\n", encoding="utf-8")
 
+            # No account is offered here: the EMP0001/admin123 offer reset that
+            # account to a known password (C2). The ways in are the seeded
+            # admin and Recover Slate.
             users_file = Path(values["SERVER_ROOT"]) / "Config" / "users.json"
             from slate.core.security import switches
-            no_defaults = switches.mode("no_default_accounts")
-            if not users_file.exists() and no_defaults != switches.OFF:
-                logging.warning("no_default_accounts is %s: the EMP0001/admin123 offer %s",
-                                no_defaults, "is not shown" if no_defaults == switches.ON
-                                else "would not be shown")
-            if not users_file.exists() and no_defaults == switches.ON:
+            if not users_file.exists() and switches.mode("no_default_accounts") == switches.ON:
                 QMessageBox.information(
                     None, "Setup Notice",
                     "Slate does not create a default administrator on this studio.\n\n"
                     "To make the first administrator, open Recover Slate on the server PC "
                     "and use Accounts > Create or restore administrator.")
-            elif not users_file.exists():
-                reply = QMessageBox.question(
-                    None,
-                    "Setup Notice",
-                    f"users.json was not found at:\n{users_file}\n\n"
-                    "Create default admin user EMP0001 now?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                    QMessageBox.StandardButton.Yes,
-                )
-                if reply == QMessageBox.StandardButton.Yes:
-                    try:
-                        self.app_context.user_manager().add_user(
-                            "EMP0001",
-                            "admin123",
-                            ["Developer"],
-                            "Administrator",
-                            "Admin",
-                        )
-                    except Exception as create_exc:
-                        logging.warning("Could not auto-create default user: %s", create_exc)
             return True
         except Exception as exc:
             logging.exception("First-run setup failed: %s", exc, exc_info=True)

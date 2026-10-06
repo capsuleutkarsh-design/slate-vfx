@@ -282,8 +282,8 @@ function Write-LocalConfig {
     if (-not $host_) { $host_ = "localhost" }
     $port     = Read-Host "  Port           [5440]"
     if (-not $port)  { $port = "5440" }
-    $dbname   = Read-Host "  Database name  [slate]"
-    if (-not $dbname) { $dbname = "slate" }
+    $dbname   = Read-Host "  Database name  [ut_vfx]"
+    if (-not $dbname) { $dbname = "ut_vfx" }
     $dbuser   = Read-Host "  Database user  [ut_vfx_app]"
     if (-not $dbuser) { $dbuser = "ut_vfx_app" }
 
