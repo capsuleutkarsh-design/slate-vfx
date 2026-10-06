@@ -278,6 +278,10 @@ def test_the_fleet_key_goes_only_to_an_administrator_with_their_password(healthy
     lab.sql("UPDATE ut_users SET active=0 WHERE username='admin'")
     assert signing.fleet_private_key("admin", "first-admin-pass", db) is None, "switched off"
     lab.sql("UPDATE ut_users SET active=1 WHERE username='admin'")
+    # Roles store abilities as 'can:<name>': a custom role that may restart workstations counts.
+    lab.sql("INSERT INTO ut_roles (role_name, permissions) VALUES ('Desk IT', '[\"can:fleet_control\"]')")
+    lab.sql("UPDATE ut_users SET roles='[\"Desk IT\"]' WHERE username='aarav'")
+    assert signing.fleet_private_key("aarav", "artist-pass", db) == private
     # Hidden passwords are checked the same way.
     lab.session(lab.key).turn_on("hide_password_hashes")
     assert signing.fleet_private_key("admin", "first-admin-pass", db) == private

@@ -141,8 +141,9 @@ CREATE TABLE IF NOT EXISTS slate_secure.keys (
 REVOKE ALL ON slate_secure.keys FROM PUBLIC, {app};
 GRANT SELECT (name, public_key, made_at) ON slate_secure.keys TO {app};
 
--- Full access (a role holding ALL, or named admin / developer) or
--- manage_system: who may restart or shut down workstations in the Admin Panel.
+-- Full access (a role holding ALL, or named admin / developer), or a role holding
+-- manage_system or fleet_control (stored as 'can:<name>'): who may restart or shut
+-- down workstations in the Admin Panel.
 CREATE OR REPLACE FUNCTION slate_secure.is_administrator(account jsonb) RETURNS boolean
 LANGUAGE plpgsql STABLE SET search_path = pg_catalog, pg_temp AS $fn$
 DECLARE held jsonb;
@@ -166,7 +167,8 @@ BEGIN
         WHERE lower(r.role) IN ('admin', 'developer')
            OR (g.permissions ~ '^\s*\[' AND EXISTS (
                 SELECT 1 FROM jsonb_array_elements_text(g.permissions::jsonb) AS p(perm)
-                WHERE upper(p.perm) = 'ALL' OR lower(p.perm) = 'manage_system')));
+                WHERE upper(p.perm) = 'ALL' OR lower(p.perm) IN
+                      ('manage_system', 'can:manage_system', 'can:fleet_control'))));
 EXCEPTION WHEN others THEN
     RETURN false;
 END $fn$;
