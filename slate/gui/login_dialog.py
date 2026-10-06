@@ -50,7 +50,7 @@ class LoginAuthWorker(QThread):
 
 
 # Said under the fields when Slate is working on this computer's own copy.
-OFFLINE_TEXT = ("Cannot reach the studio database, so Slate is working on this computer's copy. "
+OFFLINE_TEXT = ("Can't reach the studio database, so Slate is working on this computer's copy. "
                 "Your changes are kept here and sent with Sync when the connection is back.")
 
 
@@ -87,7 +87,7 @@ def friendly_auth_error(error_text: str) -> str:
                    "server closed", "timeout", "timed out", "no route", "network",
                    "could not translate host", "operationalerror", "connection")
     if any(word in text for word in unreachable):
-        return "Cannot reach the studio database right now. Try again in a moment."
+        return "Can't reach the studio database right now. Try again in a moment."
     return "Something went wrong signing in. Try again - the details are in the log."
 
 
@@ -428,7 +428,7 @@ class LoginDialog(QDialog):
         self.retry_btn.setEnabled(True)
         self.retry_btn.setText("Try again")
         self._show_status(
-            "Cannot reach the studio database, so nobody can be signed in yet. "
+            "Can't reach the studio database, so nobody can be signed in yet. "
             "Check that Slate Server is running, then choose Try again. If the "
             "server has moved, use Reconfigure below.", "info")
 
@@ -490,7 +490,7 @@ class LoginDialog(QDialog):
         self._say_the_database_is_down()
         if retried:
             self._show_status(
-                "Still cannot reach the studio database. Check that Slate Server "
+                "Still can't reach the studio database. Check that Slate Server "
                 "is running, then choose Try again.", "error")
 
     def _on_connected(self, result):

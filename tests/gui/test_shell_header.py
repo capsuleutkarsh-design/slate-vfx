@@ -116,7 +116,7 @@ def test_the_latency_dot_listens_and_never_queries(qtbot, monkeypatch):
     dot.set_status(True, 80)
     assert dot.current_color.name() != slow            # Fair and Slow differ
     dot.set_status(False, 0)
-    assert "Cannot reach" in dot.toolTip()
+    assert "Can't reach" in dot.toolTip()
 
 
 def test_the_header_forwards_the_monitor_reading(qtbot):

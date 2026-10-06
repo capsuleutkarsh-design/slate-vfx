@@ -55,3 +55,13 @@ def test_an_unreachable_server_still_gets_the_network_checks():
 
     assert "ping 10.100.104.82" in advice
     assert "firewall allows port 5440" in advice
+
+
+def test_one_wording_for_an_unreachable_database():
+    """A12: the sign-in window said "Cannot reach..." and other screens "Can't reach..."."""
+    import re
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1] / "slate"
+    odd = [str(p.relative_to(root)) for p in root.rglob("*.py")
+           if re.search(r"cannot reach the studio database", p.read_text(encoding="utf-8"), re.I)]
+    assert not odd, odd

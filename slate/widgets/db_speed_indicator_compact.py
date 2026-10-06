@@ -96,7 +96,7 @@ class DBSpeedIndicatorCompact(QWidget):
         self.speed_label.setText("Offline")
         self.speed_label.setStyleSheet(f"font-size: 11px; color: {Gate.BAD};")
         # The tooltip used to keep the last good reading.
-        self.setToolTip("Cannot reach the studio database.\n"
+        self.setToolTip("Can't reach the studio database.\n"
                         "Slate keeps trying every few seconds.")
 
     def update_tooltip(self):
