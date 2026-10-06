@@ -23,6 +23,7 @@ Coverage:
 Total Tests: 15
 """
 
+import os
 import pytest
 import tempfile
 from pathlib import Path
@@ -76,7 +77,8 @@ class TestBackupManager:
         backup_dir = manager.backup_directory
         
         assert backup_dir.exists()
-        assert "AppData" in str(backup_dir) or ".slate" in str(backup_dir)
+        local = os.environ.get("LOCALAPPDATA", "")      # a sandbox in tests, AppData for a person
+        assert (local and str(backup_dir).startswith(local)) or ".slate" in str(backup_dir)
         assert "system32" not in str(backup_dir).lower()
         assert "WINDOWS" not in str(backup_dir)
     
