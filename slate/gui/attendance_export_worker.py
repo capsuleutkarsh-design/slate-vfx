@@ -27,7 +27,7 @@ from slate.core.domain import leave_policy as lp
 
 CODES = {
     rules.PRESENT: "P", rules.WORKED_OFF: "P", rules.LATE: "L", rules.SHORT: "S",
-    rules.ABSENT: "A", rules.LEAVE: "LV", rules.HOLIDAY: "H", rules.WEEKLY_OFF: "WO",
+    rules.ABSENT: "A", rules.LEAVE_PENDING: "LP", rules.LEAVE: "LV", rules.HOLIDAY: "H", rules.WEEKLY_OFF: "WO",
     rules.MISSING_OUT: "M", rules.MISSING_IN: "M", rules.AUTO: "AU", rules.WORKING: "W",
     rules.FUTURE: "", rules.NONE: "",
 }
@@ -126,7 +126,7 @@ def build_workbook(path, year, month, rows, data, leave=None, now=None, studio_h
                 cell.fill = fill(FILL["late"])
             elif state == rules.AUTO:
                 cell.fill = fill(FILL["auto"])
-            elif state == rules.ABSENT:
+            elif state in (rules.ABSENT, rules.LEAVE_PENDING):
                 cell.fill = fill(FILL["absent"])
             elif state == rules.LEAVE:
                 cell.fill = fill(FILL["leave"])
@@ -146,7 +146,8 @@ def build_workbook(path, year, month, rows, data, leave=None, now=None, studio_h
 
     notes = r + 1
     ws.cell(row=notes, column=1,
-            value="Codes: P present, L late, S short day, A absent, LV leave, H holiday, "
+            value="Codes: P present, L late, S short day, A absent, LP leave pending (asked for, not "
+                  "yet decided - counted as absent), LV leave, H holiday, "
                   "WO weekly off, M missing punch, W still working, AU closed by the automatic "
                   "punch-out (hours end at the cutoff), * corrected by HR. The number is hours.")
     if open_today:

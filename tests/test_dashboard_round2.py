@@ -307,6 +307,14 @@ class TestVersions:
             lead.update_version(comp.id, status=STATUS_APPROVED)
         assert lead.update_version(roto.id, status=STATUS_APPROVED)
 
+    def test_the_screen_reads_a_leads_department_where_saving_does(self):
+        """B3: only the Department box (job_title) on the person's own record."""
+        from types import SimpleNamespace
+        from slate.gui.tabs.vfx_dashboard_pro.ui.dashboard_widget import DashboardWidget
+        detect = DashboardWidget._detect_user_department_family
+        assert detect(SimpleNamespace(user_data={"job_title": "Producer", "department": "Roto"})) is None
+        assert detect(SimpleNamespace(user_data={"job_title": "Roto Lead"})) == "roto"
+
     def test_a_new_version_cannot_be_born_approved_without_the_right(self, mock_db):
         """DSH2-068."""
         from slate.core.domain.versions import STATUS_APPROVED, VersionStore

@@ -433,12 +433,15 @@ class UTServerWindow(QMainWindow):
         self.comp_off_timer.timeout.connect(self._credit_comp_off)
         # The daily backup the Operations screen promised was only ever taken
         # by hand (Maintenance.due() had no caller). Same beat, plus once soon
-        # after start so a server left off overnight catches up.
+        # after start so a server left off overnight catches up - comp off
+        # too: its first run was six hours after start, so a server opened
+        # for a morning's work never earned or lapsed anything.
         self.comp_off_timer.timeout.connect(self._scheduled_backup)
         self.comp_off_timer.start(6 * 60 * 60 * 1000)   # every six hours
         self._backup_worker = None
         if not os.environ.get("HEADLESS_TESTING"):
             QTimer.singleShot(5 * 60 * 1000, self._scheduled_backup)
+            QTimer.singleShot(5 * 60 * 1000, self._credit_comp_off)
 
         # Setup Sidebar after views are ready
         self.setup_sidebar()
@@ -749,6 +752,10 @@ class UTServerWindow(QMainWindow):
         # GlobalConfig.set() saves the whole client configuration back to the
         # per-machine file - the server was rewriting the workstation settings
         # file once a day to store one date.
+        # Not while the database is down: a failed run counts as today's, so
+        # the catch-up soon after start would have used up the day.
+        if not self.server_running():
+            return
         try:
             jobs = self._maintenance()
             if jobs.log.ran_today("comp_off"):

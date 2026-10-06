@@ -224,6 +224,8 @@ def note_target(note):
         return ("screen", "Licences")
     if kind == "ticket" or "ticket #" in message:
         return ("screen", "IT Support")
+    if kind == "leave":
+        return ("screen", "Leave")
     return None
 
 

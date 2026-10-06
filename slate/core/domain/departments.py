@@ -205,8 +205,12 @@ DEPARTMENT_WORDS = {
 }
 
 
-def family_of(job_title, department="") -> Optional[str]:
-    """The department family a job title (and department) names, or None."""
+def family_of(job_title) -> Optional[str]:
+    """
+    The department family a job title names, or None. The job title is the
+    Department box on the person's own Users & Roles record (ut_users) - the
+    only place a lead's department comes from.
+    """
     import re
 
     def words(text):
@@ -214,7 +218,7 @@ def family_of(job_title, department="") -> Optional[str]:
 
     # Whole words only: 'ai' is inside 'paint' and 'trainee', which put a
     # Paint Lead in the AI department.
-    title = f" {words(str(job_title or '').strip() + ' ' + str(department or '').strip())} "
+    title = f" {words(job_title)} "
     if not title.strip():
         return None
     for d in load_departments():

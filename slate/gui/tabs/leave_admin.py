@@ -491,21 +491,16 @@ class CompOffReviewDialog(QDialog):
         from datetime import timedelta
 
         rules = lp.policy(None)
+        days = self.window_pick.currentData() or 90
+        since = date.today() - timedelta(days=int(days))
+        self._entries = self._service().review(since) if rules.get("comp_off_enabled") else []
+
         if not rules.get("comp_off_enabled"):
             self.note.setText(
                 "This studio does not operate comp off, so nothing is earned back "
                 "for working a day off. HR or an admin can turn it on in "
                 "Settings > Studio Policy > Comp-off.")
-            self.btn_credit.setEnabled(False)
-            self.table.setRowCount(0)
-            self._entries = []
-            return
-
-        days = self.window_pick.currentData() or 90
-        since = date.today() - timedelta(days=int(days))
-        self._entries = self._service().review(since)
-
-        if not self._entries:
+        elif not self._entries:
             self.note.setText(
                 "Nothing in the last %d days qualifies. %s" % (days, self._rule()))
         else:
@@ -537,6 +532,20 @@ class CompOffReviewDialog(QDialog):
                         Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 if c == 3:
                     item.setForeground(QColor(Gate.OK))
+                self.table.setItem(r, c, item)
+        # Second credits for one day, found by the upgrade: shown read-only
+        # and counted nowhere. Nothing is deleted - taking them back is HR's call.
+        for dup in self.repo.comp_off_duplicates():
+            r = self.table.rowCount()
+            self.table.insertRow(r)
+            cells = [people.display_name(dup.get("user_id")),
+                     format_date(dup.get("earned_on"), weekday=True), "",
+                     "%g" % float(dup.get("days") or 0),
+                     ("Duplicate - not counted. %s" % (dup.get("reason") or "")).strip()]
+            for c, text in enumerate(cells):
+                item = QTableWidgetItem(text)
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                item.setForeground(QColor(Gate.TEXT_DIM))
                 self.table.setItem(r, c, item)
         self.table.blockSignals(False)
         self._sync_credit()

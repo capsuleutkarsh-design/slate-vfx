@@ -147,7 +147,7 @@ These were checked against the real programs, not stand-ins, and each check now 
   - If the holiday list cannot be read, a leave request is not saved, instead of charging the holidays as leave days.
   - Overlapping leave cannot slip through the same way.
 - **Comp-off:**
-  - A day cannot be credited twice. Duplicates already in the ledger are relabelled, not deleted, so balances do not change; HR can review them.
+  - A day cannot be credited twice. Duplicates already in the ledger are relabelled, not deleted, and count towards no balance, spend or expiry. HR see them, read-only and marked as duplicates, at the bottom of **Comp off earned**.
   - Approving or cancelling leave changes the comp-off balance completely, or not at all.
 - **Year end** names anyone it could not close.
 - **Attendance:** the monthly export is refused with a message if holidays or approved leave could not be read, instead of marking those days Absent.
@@ -209,7 +209,7 @@ The test database no longer has its own copy of the dashboard's save code, so th
 
 **Signing in and the server**
 - **Reconfigure server / database on the sign-in screen now sticks.** On a machine set up with `setup.bat`, the new server went back to the old one at the next start. It is now saved in the same file setup.bat and Settings use.
-- **Slate Server's daily comp-off job really runs.** It never read the studio's own rules, so it always thought comp off was switched off, and it could look in the wrong database. It now reads the studio database. In the same daily run, comp off nobody used in time lapses, with "(lapsed unused)" in the ledger.
+- **Slate Server's daily comp-off job really runs.** It never read the studio's own rules, so it always thought comp off was switched off, and it could look in the wrong database. It now reads the studio database. In the same daily run, comp off nobody used in time lapses, with "(lapsed unused)" in the ledger. Like the backup, it now first runs a few minutes after Slate Server opens (it waited six hours), then once a day; running it twice in a day does nothing more.
 
 **Restart, shut down and messages to workstations**
 - **The person at the PC is told who asked and why.** Restart and Shut down said "No reason provided" every time. The admin's name is now sent, and the admin is asked for a reason (optional) that is shown on the PC.
@@ -220,10 +220,14 @@ The test database no longer has its own copy of the dashboard's save code, so th
 - **Users & Roles is offered only to people who can use it.** A role with only the HR tab saw it in the sidebar and opened it onto "You do not have permission".
 - **No empty "ADMINISTRATION" heading** in the sidebar for people with nothing under it.
 - **The studio logo is one logo for the whole studio.** It was saved per workstation, so each PC showed its own or none. A logo set on a PC before this release still shows there until someone saves one in Settings. Use a path every PC can reach, such as `\\server\share\logo.png`.
-- **A lead's department comes from their own record in Users & Roles**, not from what the screen sends.
+- **A lead's department comes from their own record in Users & Roles**, not from what the screen sends. Saving and the VFX Dashboard both read only the **Department** box; the dashboard used to read a second field as well, so it could offer a department saving then refused.
+
+**Leave**
+- **Leave decisions ring the bell.** The person who asked is told of each approval or rejection, with the reason for a rejection. When a supervisor approves, the HR approvers are told a request is waiting for them.
 
 **Attendance**
 - **Signing in on a day of approved full-day leave no longer punches you in.** Punching in by hand still works, after asking.
+- **Leave still waiting for a decision shows as "Leave pending"**, not "Absent", in My month, the team grid and the export (code LP). It still counts as absent until it is approved, so payroll figures do not change.
 
 **VFX Dashboard, Timeline Viewer and exports**
 - **Each project has its own frame rate for image sequences** (Edit project → Frame rate, 24 until changed). The lineup, EDLs, review proxies and the player use it. Movies keep their own rate. After changing it, use "Rebuild all" for proxies made at the old rate.

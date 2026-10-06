@@ -221,10 +221,11 @@ class CompOffService:
         still shows it was earned and why it went - which is what somebody will
         ask about.
         """
+        from ..infra.leave_repository import COMP_OFF_COUNTED
         try:
             rows = self.db.execute_query(
                 "SELECT id, days, consumed, expires_on FROM comp_off_ledger "
-                "WHERE expires_on IS NOT NULL", fetch="all") or []
+                "WHERE expires_on IS NOT NULL AND " + COMP_OFF_COUNTED, fetch="all") or []
         except DatabaseUnavailableError:
             raise
         except Exception:
