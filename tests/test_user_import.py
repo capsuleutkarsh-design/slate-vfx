@@ -175,7 +175,7 @@ def test_users_and_roles_shows_each_person_their_half(users, monkeypatch):
     assert titles(hr) == ["Users", "Roles & Permissions"]
 
     it = AdminUsersTab(user_role="IT", user_data={"user_id": "it1", "roles": ["IT"]})
-    assert titles(it) == ["Roles & Permissions"]
+    assert titles(it) == ["Users", "Roles & Permissions"]     # A13: IT makes the accounts
 
     artist = AdminUsersTab(user_role="Compositor", user_data={"user_id": "c1", "roles": ["Compositor"]})
     assert artist.users_panel is None and artist.role_editor is None
