@@ -69,6 +69,14 @@ def test_the_table_filters_and_leaves_out_unticked_shots(qtbot, editor, tmp_path
     assert len(editor.preview.entries) == 2
 
 
+def test_make_review_proxies_needs_a_ticked_shot(qtbot, editor, tmp_path):
+    """A7: it could be pressed with nothing ticked."""
+    _load(qtbot, editor, tmp_path, [_shot(tmp_path, "SH010")])
+    assert editor.btn_proxy.isEnabled()
+    editor.table.item(0, 0).setCheckState(Qt.CheckState.Unchecked)
+    assert not editor.btn_proxy.isEnabled()
+
+
 def test_export_writes_edls_into_the_project(qtbot, editor, tmp_path, monkeypatch):
     from slate.gui.tabs.shot_review import lineup_editor_mode as mod
     shots = [_shot(tmp_path, "SH010")] + [_shot(tmp_path, f"X{i:02d}", scan=False) for i in range(25)]
