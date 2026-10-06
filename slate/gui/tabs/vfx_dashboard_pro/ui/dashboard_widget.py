@@ -1706,9 +1706,15 @@ class DashboardWidget(
         return [s for s in shot_status.WORKFLOW if s in allowed]
 
     def _detect_user_department_family(self) -> Optional[str]:
+        """
+        The department this person leads: the Department box (job_title) on
+        their own Users & Roles record - the one field saving checks
+        (SQLiteHandler._department_family). A second 'department' field was
+        read here too, so the screen could offer a department saving refused.
+        """
         from slate.core.domain.departments import family_of
         user_data = getattr(self, "user_data", {}) or {}
-        return family_of(user_data.get("job_title"), user_data.get("department"))
+        return family_of(user_data.get("job_title"))
 
     @staticmethod
     def _family_name(family: str) -> str:

@@ -214,3 +214,22 @@ def test_signing_in_never_punches_in_a_service_account(att):
     assert att.log_action("admin", "in", automatic=True) is None
     assert att.today_state("admin")["state"] == "out"
     people.refresh()
+
+
+# ------------------------------------------------------------- handbook B5
+
+def test_leave_waiting_for_a_decision_shows_as_leave_pending_and_still_counts_absent(mock_db):
+    from slate.core.infra.leave_repository import LeaveRepository
+    repo = LeaveRepository(mock_db)
+    mock_db.execute_update(
+        "INSERT INTO leave_requests (user_id, start_date, end_date, type, status, half_day, "
+        "days_charged) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+        ("vihaan", date(2026, 9, 21), date(2026, 9, 21), "Casual", lp.STATUS_PENDING_HR, False, 1.0))
+    september = (date(2026, 9, 1), date(2026, 9, 30), ["vihaan"])
+    assert repo.approved_leave(*september) == {}                     # not approved leave
+    leave = repo.approved_leave(*september, pending=True)["vihaan"]
+    summary = rules.month_summary({}, 2026, 9, leave=leave, today=date(2026, 10, 6))
+    monday = summary["days"][20]
+    assert monday["state"] == rules.LEAVE_PENDING and monday["leave"] is None
+    plain = rules.month_summary({}, 2026, 9, today=date(2026, 10, 6))
+    assert (summary["absent"], summary["leave"]) == (plain["absent"], plain["leave"])

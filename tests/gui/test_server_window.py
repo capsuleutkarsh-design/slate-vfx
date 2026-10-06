@@ -453,3 +453,24 @@ def test_the_daily_backup_runs_by_itself_and_keeps_to_the_retention(qtbot):
     fake.server_running = lambda: False                  # database down: not attempted
     fake._maintenance = lambda: Jobs(["backup"])
     assert module.UTServerWindow._scheduled_backup(fake) is None
+
+
+def test_comp_off_catches_up_soon_after_start_like_the_backup(qtbot):
+    """B2: its first run was six hours after start; never while the database is down."""
+    from pathlib import Path
+    from types import SimpleNamespace
+    from slate_server.gui import app_window as module
+
+    source = Path(module.__file__).read_text(encoding="utf-8")
+    assert "QTimer.singleShot(5 * 60 * 1000, self._credit_comp_off)" in source
+
+    ran = []
+    jobs = SimpleNamespace(log=SimpleNamespace(ran_today=lambda job: False),
+                           credit_comp_off=lambda: ran.append(1) or {"ok": True, "skipped": True})
+    fake = SimpleNamespace(server_running=lambda: False, _maintenance=lambda: jobs,
+                           _log=lambda message: None)
+    module.UTServerWindow._credit_comp_off(fake)
+    assert ran == []
+    fake.server_running = lambda: True
+    module.UTServerWindow._credit_comp_off(fake)
+    assert ran == [1]

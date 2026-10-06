@@ -73,6 +73,7 @@ def state_styles() -> dict:
         rules.MISSING_IN: (Gate.mix(base, Gate.BAD, 0.38), "Missing punch"),
         rules.LEAVE: (Gate.mix(base, Gate.IDLE, 0.40), "On leave"),
         rules.ABSENT: (Gate.mix(base, Gate.BAD, 0.14), "Absent"),
+        rules.LEAVE_PENDING: (Gate.mix(base, Gate.IDLE, 0.20), "Leave pending"),
         rules.HOLIDAY: (off, "Holiday / weekly off"),
         rules.WEEKLY_OFF: (off, "Holiday / weekly off"),
         rules.FUTURE: (base, ""),
@@ -84,7 +85,7 @@ def legend_entries() -> list:
     """(colour, label) once per label, in the order a person reads a day."""
     seen, out = set(), []
     order = (rules.PRESENT, rules.LATE, rules.SHORT, rules.WORKING, rules.AUTO,
-             rules.MISSING_OUT, rules.LEAVE, rules.ABSENT, rules.HOLIDAY)
+             rules.MISSING_OUT, rules.LEAVE, rules.LEAVE_PENDING, rules.ABSENT, rules.HOLIDAY)
     styles = state_styles()
     for state in order:
         colour, label = styles[state]
@@ -946,10 +947,10 @@ class AttendanceTab(QWidget):
         """A day nobody was expected in: a weekly off or a public holiday."""
         return not lp.is_working_day(day, self._holidays(day.year))
 
-    def _leave(self, start, end, users=None) -> dict:
+    def _leave(self, start, end, users=None, pending=False) -> dict:
         try:
             from slate.core.infra.leave_repository import LeaveRepository
-            return LeaveRepository().approved_leave(start, end, users)
+            return LeaveRepository().approved_leave(start, end, users, pending)
         except Exception as exc:
             logging.warning("Attendance could not read approved leave: %s", exc)
             self._unread = "approved leave"
@@ -996,7 +997,7 @@ class AttendanceTab(QWidget):
         user_log = self.attendance.get_user_month(self.username, year, month)
         days_in_month = calendar.monthrange(year, month)[1]
         first, last = date(year, month, 1), date(year, month, days_in_month)
-        leave = self._leave(first, last, [self.username]).get(self.username.lower(), {})
+        leave = self._leave(first, last, [self.username], pending=True).get(self.username.lower(), {})
         holidays = self._holidays(year)
 
         streak = self.calculate_streak()
@@ -1359,7 +1360,7 @@ class AttendanceTab(QWidget):
             self.lbl_last_refresh.setText("Updated %s" % now_dt.strftime("%H:%M"))
             cached = ((year, month), self.user_manager.get_all_users() or {},
                       self.attendance.get_full_month_data(year, month),
-                      self._leave(first, last))
+                      self._leave(first, last, pending=True))
             # A failed leave read is not kept for the next filter change.
             self._team_read = None if self._unread else cached
         _, users, data, leave = cached
@@ -1442,6 +1443,8 @@ class AttendanceTab(QWidget):
                     text = "Leave\n%s" % day_leave["type"]
                 elif state == rules.ABSENT:
                     text = "Absent"
+                elif state == rules.LEAVE_PENDING:
+                    text = "Leave\npending"
                 item = QTableWidgetItem(text)
                 item.setBackground(QColor(styles[state][0]))
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1517,12 +1520,15 @@ class AttendanceTab(QWidget):
         entry = self._team_data.get(uid.lower(), {}).get(f"{day_idx:02d}", {})
         sessions = [(rules.hhmm(a), rules.hhmm(b)) for a, b in rules.sessions_of(entry)]
         t_in = sessions[0][0] if sessions else ""
+        leave = getattr(self, "_team_leave", {}).get(uid.lower(), {}).get(target)
+        if leave and leave.get("pending"):
+            leave = None    # waiting for a decision: not approved leave yet
         self.show_edit_dialog(uid, rec.get('display_name') or uid, year, month, day_idx,
                               t_in, entry.get("out", ""), overnight=entry.get("overnight", False),
                               has_record=bool(entry), sessions=sessions,
                               auto_cutoff=(entry.get("cutoff") or entry.get("out", ""))
                               if entry.get("auto_logout") else "",
-                              leave=getattr(self, "_team_leave", {}).get(uid.lower(), {}).get(target))
+                              leave=leave)
 
     def show_edit_dialog(self, uid, name, year, month, day, t_in, t_out, overnight=False,
                          has_record=False, sessions=None, auto_cutoff="", leave=None):
@@ -1620,7 +1626,7 @@ class AttendanceTab(QWidget):
                          "holidays": self._holidays(year, location),
                          "expected": self._expected(uid, rec)})
         data = self.attendance.get_full_month_data(year, month)
-        leave = self._leave(first, last, [u for u, _ in chosen])
+        leave = self._leave(first, last, [u for u, _ in chosen], pending=True)
         studio_holidays = self._holidays(year, "All")
         what, self._unread = self._unread, None
         if what:

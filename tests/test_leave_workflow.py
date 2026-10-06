@@ -501,3 +501,37 @@ def test_an_open_or_short_sunday_earns_no_comp_off(repo):
     _attendance(repo, "riya", sunday, "10:00:00", "17:00:00")         # a real day
     found = CompOffService(repo.db, repo).review(sunday - timedelta(days=1))
     assert [(e["user_id"], e["days"]) for e in found] == [("riya", 1.0)]
+
+
+# --------------------------------------------------------------- handbook B1
+
+def test_a_duplicate_comp_off_credit_counts_for_nothing_but_hr_can_see_it(repo):
+    lp.set_overrides({"comp_off_enabled": True})
+    _team(repo)
+    earned = date.today() - timedelta(days=3)
+    assert repo.credit_comp_off("jo", earned, 1.0, "Sunday")
+    # What the upgrade leaves behind for a day credited twice.
+    repo.db.execute_update(
+        "INSERT INTO comp_off_ledger (user_id, earned_on, days, reason, expires_on, source) "
+        "VALUES (%s, %s, %s, %s, %s, 'attendance-duplicate')",
+        ("jo", earned, 1.0, "Sunday", earned + timedelta(days=90)))
+    assert repo.comp_off_balance("jo") == 1.0
+    assert [(d["user_id"], d["days"]) for d in repo.comp_off_duplicates()] == [("jo", 1)]
+
+
+# --------------------------------------------------------------- handbook B4
+
+def test_leave_decisions_ring_the_bell(repo):
+    from slate.core.domain.notification_manager import NotificationManager
+    _team(repo)
+    day = _future_monday()
+    bell = NotificationManager(repo.db)
+    sent = repo.submit("jo", "Casual", day, day, False, "a")
+    assert repo.decide(sent.request_id, "Supervisor", True, "sam")
+    assert "waits for HR" in bell.get_unread("jo")[0]["message"]
+    for hr in ("hr.meera", "hr.kavya"):
+        assert "Jo's Casual leave" in bell.get_unread(hr)[0]["message"]
+
+    other = repo.submit("alex", "Casual", day, day, False, "b")
+    assert repo.decide(other.request_id, "Supervisor", False, "sam", "deadline week")
+    assert bell.get_unread("alex")[0]["message"].endswith("rejected by Sam: deadline week")

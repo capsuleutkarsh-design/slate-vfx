@@ -51,6 +51,7 @@ HOLIDAY = "holiday"
 WEEKLY_OFF = "weekly_off"
 WORKED_OFF = "worked_off"           # punched in on a holiday or weekly off
 ABSENT = "absent"                   # a past working day with nothing at all
+LEAVE_PENDING = "leave_pending"     # an absence covered by leave still waiting for a decision
 SHORT = "short"                     # fewer hours than a standard day
 FUTURE = "future"
 NONE = ""
@@ -67,6 +68,7 @@ STATE_LABELS = {
     WEEKLY_OFF: "Weekly off",
     WORKED_OFF: "Worked a day off",
     ABSENT: "Absent",
+    LEAVE_PENDING: "Leave pending",
     SHORT: "Short day",
     FUTURE: "",
     NONE: "",
@@ -353,7 +355,14 @@ def month_summary(log, year: int, month: int, holidays=None, leave=None, expecte
         day = date(year, month, d)
         entry = log.get(f"{d:02d}") or {}
         day_leave = leave.get(day)
+        # Leave still waiting for a decision is not leave yet: the day counts
+        # as absent (payroll's figure), shown as "Leave pending", not "Absent".
+        waiting = bool(day_leave and day_leave.get("pending"))
+        if waiting:
+            day_leave = None
         state = day_state(entry, day, today, holidays, day_leave, rules, expected)
+        if waiting and state == ABSENT:
+            state = LEAVE_PENDING
         hours = day_hours(entry, now, open_counts=(day == today))
         late = arrived_late(entry, day, holidays, day_leave, rules)
         sessions = sessions_of(entry)
@@ -363,7 +372,7 @@ def month_summary(log, year: int, month: int, holidays=None, leave=None, expecte
             if day == today and sessions[-1][1] is None:
                 out["open_today"] = True
         out["late"] += late
-        out["absent"] += state == ABSENT
+        out["absent"] += state in (ABSENT, LEAVE_PENDING)
         out["missing"] += state in (MISSING_OUT, MISSING_IN)
         if day_leave and not (expected and not expected[0] <= day <= expected[1]):
             out["leave"] += float(day_leave.get("days") or 1.0)

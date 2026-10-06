@@ -39,6 +39,12 @@ logger = logging.getLogger(__name__)
 NOT_READ = ("The leave records could not be read, so nothing was saved. "
             "Try again in a moment; if it keeps happening, tell IT.")
 
+# A day credited twice before the one-credit-per-day index existed: the
+# upgrade relabels the later copy (workplace_schema._one_credit_per_day).
+# It is kept for HR to see, and no balance, spend or expiry counts it.
+COMP_OFF_DUPLICATE = "attendance-duplicate"
+COMP_OFF_COUNTED = "COALESCE(source, '') <> '%s'" % COMP_OFF_DUPLICATE
+
 
 def _days(value) -> str:
     """'1 day', '0.5 days'."""
@@ -777,6 +783,7 @@ class LeaveRepository:
                     return STALE
                 if new_status == lp.STATUS_APPROVED:
                     self.spend_comp_off(tx, existing)
+            self._tell_decision(existing, new_status, by_whom, note)
             return Outcome(True, "", "decided", status=new_status)
         except _Refused as stop:
             return stop.outcome
@@ -785,6 +792,45 @@ class LeaveRepository:
         except Exception:
             logger.exception("decide failed")
             return Outcome(False, "The decision was not saved.", "not_saved")
+
+    def hr_approvers(self) -> list:
+        """Usernames of the active people (not service accounts) who decide at the HR stage."""
+        from slate.core.domain import access
+        rows = self.db.execute_query("SELECT * FROM ut_users", fetch="all") or []
+        stored = access._role_permission_lists()
+        return [str(r.get("username")) for r in map(dict, rows)
+                if not is_service_record(r) and self._kind_of(r, stored) == "hr"]
+
+    def _tell_decision(self, row, status, by_whom, note) -> None:
+        """
+        The bell for a decision: the person who asked hears every one (with
+        the reason for a no), and HR hear when a request reaches them. Only
+        My leave used to show it. Sent after the decision is saved; a bell
+        that fails is logged and does not undo it.
+        """
+        try:
+            from slate.core.domain import people
+            from slate.core.domain.dates import format_range
+            from slate.core.domain.notification_manager import NotificationManager
+            what = "%s leave (%s)" % (str(row.get("type") or "Leave").strip().title(),
+                                      format_range(row.get("start_date"), row.get("end_date")))
+            who = people.display_name(by_whom, self.db)
+            if status == lp.STATUS_REJECTED:
+                text = "Your %s was rejected by %s: %s" % (what, who, note) if note else \
+                    "Your %s was rejected by %s. No reason was given." % (what, who)
+            elif status == lp.STATUS_PENDING_HR:
+                text = "Your %s was approved by %s and now waits for HR." % (what, who)
+            else:
+                text = "Your %s was approved by %s." % (what, who)
+            bell = NotificationManager(self.db)
+            bell.notify(row.get("user_id"), text, "leave")
+            if status == lp.STATUS_PENDING_HR:
+                skip = {str(row.get("user_id") or "").lower(), str(by_whom or "").lower()}
+                bell.notify([u for u in self.hr_approvers() if u.lower() not in skip],
+                            "%s's %s is waiting for HR." % (
+                                people.display_name(row.get("user_id"), self.db), what), "leave")
+        except Exception:
+            logger.exception("The leave decision was saved but its notification was not sent")
 
     def cancel(self, request_id, username) -> "Outcome":
         """
@@ -958,10 +1004,14 @@ class LeaveRepository:
         return changed
 
     # ------------------------------------------------------------ attendance
-    def approved_leave(self, start: date, end: date, users=None) -> dict:
+    def approved_leave(self, start: date, end: date, users=None, pending=False) -> dict:
         """
         Granted leave over a date range, day by day, for the attendance screens:
         {user (lower-case): {date: {"type", "half", "days", "id"}}}.
+
+        pending: also the days of requests still waiting for a decision, marked
+        "pending": True (granted leave wins a day both cover), so attendance
+        can say "Leave pending" rather than "Absent" (month_summary).
 
         Attendance did not know about leave at all, so an approved sick day
         looked exactly like an unexplained absence and a punch on a day of
@@ -976,7 +1026,9 @@ class LeaveRepository:
         out, holidays_of = {}, {}
         for row in rows:
             row = dict(row)
-            if lp.normalise_status(row.get("status")) not in lp.GRANTED_STATUSES:
+            status = lp.normalise_status(row.get("status"))
+            granted = status in lp.GRANTED_STATUSES
+            if not granted and not (pending and status in lp.PENDING_STATUSES):
                 continue
             who = str(row.get("user_id") or "").strip().lower()
             if wanted is not None and who not in wanted:
@@ -997,11 +1049,14 @@ class LeaveRepository:
             for day in sorted(set(charge["working_days"]) | set(charge["sandwich_days"])):
                 if not start <= day <= end:
                     continue
+                if not granted and day in out.get(who, {}):
+                    continue
                 out.setdefault(who, {})[day] = {
                     "type": (row.get("type") or "Leave").title(),
                     "half": lp.half_day_label(row.get("half_day_part")) if half else "",
                     "days": 0.5 if half else 1.0,
                     "id": row.get("id"),
+                    "pending": not granted,
                 }
         return out
 
@@ -1070,8 +1125,19 @@ class LeaveRepository:
     # ---------------------------------------------------------------- comp-off
     _LEDGER_SQL = (
         "SELECT id, days, consumed, expires_on FROM comp_off_ledger "
-        "WHERE LOWER(user_id) = LOWER(%s) "
+        "WHERE LOWER(user_id) = LOWER(%s) AND " + COMP_OFF_COUNTED + " "
         "ORDER BY CASE WHEN expires_on IS NULL THEN 1 ELSE 0 END, expires_on, id")
+
+    def comp_off_duplicates(self) -> list:
+        """
+        Ledger rows the upgrade marked as a second credit for the same day.
+        They are kept for HR to see, and count towards nothing.
+        """
+        rows = self.db.execute_query(
+            "SELECT user_id, earned_on, days, consumed, reason FROM comp_off_ledger "
+            "WHERE source = %s ORDER BY earned_on, id", (COMP_OFF_DUPLICATE,),
+            fetch="all", strict=True) or []
+        return [dict(r) for r in rows]
 
     def _comp_off_ledger(self, username) -> list:
         try:
