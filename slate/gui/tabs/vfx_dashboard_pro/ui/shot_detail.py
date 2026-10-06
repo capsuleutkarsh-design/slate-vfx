@@ -746,6 +746,16 @@ class ShotDetailWidget(QWidget):
         if not changes:
             self.show_apply_result(True, "Nothing changed.")
             return
+        # An artist is a person in Slate (saved under their own name) or nobody:
+        # a typo was saved as an artist's name.
+        people = {str(n).strip().lower(): str(n).strip() for n in self.all_users}
+        for path, value in changes.items():
+            if path.endswith(".artist") and value:
+                if value.lower() not in people:
+                    self.show_apply_result(False, f"\"{value}\" is not a person in Slate. Pick a name "
+                                                  "from the list, or leave it blank for nobody.")
+                    return
+                changes[path] = people[value.lower()]
         self.apply_requested.emit(self.shot, changes)
 
     def show_apply_result(self, ok: bool, message: str):
