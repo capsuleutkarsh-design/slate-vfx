@@ -23,6 +23,9 @@ class ProxyManager:
     # made in a cache on this computer that other computers cannot see.
     local_only = False
 
+    # A review proxy's ffmpeg limit: a minute plus this per frame of the shot.
+    SECONDS_PER_FRAME = 2
+
     def __init__(self):
         self.ffmpeg_path = self._find_ffmpeg()
         self.cache_dir = self._get_cache_dir()
@@ -393,6 +396,7 @@ class ProxyManager:
         if not overwrite and self._usable(output_proxy): return True, output_proxy
         partial = self._partial_name(output_proxy)
 
+        seq = None
         try:
             cmd = [self.ffmpeg_path, "-y"]
             
@@ -434,9 +438,11 @@ class ProxyManager:
             if sys.platform == 'win32':
                 creationflags = subprocess.BELOW_NORMAL_PRIORITY_CLASS | subprocess.CREATE_NO_WINDOW
 
-            # Add timeout to prevent hang
+            # A hung ffmpeg is stopped, but a flat minute failed long EXR
+            # shots: the limit grows with the frames.
+            limit = 60 + self.SECONDS_PER_FRAME * (seq.frame_count if seq is not None else 0)
             try:
-                result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, startupinfo=startupinfo, creationflags=creationflags, timeout=60)
+                result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, startupinfo=startupinfo, creationflags=creationflags, timeout=limit)
             finally:
                 self._discard(partial.with_suffix(".txt"))  # a gap-filling frame list
             if result.returncode == 0 and self._commit_partial(partial, output_proxy):
