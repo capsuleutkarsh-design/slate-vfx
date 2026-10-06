@@ -379,7 +379,7 @@ class IngestPreflightDialog(QDialog):
             out.append(f"{self._long_paths} file(s) will have a path longer than 260 characters. Slate "
                        f"copies them, but Explorer and some older tools cannot open them.")
         if self._shot_folders_defaulted:
-            out.append("The template has no shot folders - every shot gets 01_Scan, 07_Comp and 08_Output.")
+            out.append("The template has no shot folders - every shot gets 01_Scan, 07_Comp and 08_Deliver.")
         if survey.structure_only:
             out.append("The drive has folders but no files: Slate builds the shot folders only.")
         if self._project_exists and not nothing:

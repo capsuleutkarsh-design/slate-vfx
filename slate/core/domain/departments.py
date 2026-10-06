@@ -82,7 +82,7 @@ _DEFAULTS: List[Dict] = [
     {"key": "comp", "label": "Comp", "name": "Comp",
      "folder": "07_Comp", "family": "comp", "order": 60},
     {"key": "slapcomp", "label": "Slap", "name": "Slap Comp",
-     "folder": "08_Output/SLAPCOMP", "family": "comp", "order": 70},
+     "folder": "07_Comp/Slapcomp", "family": "comp", "order": 70},
     {"key": "deage", "label": "Face", "name": "Face / De-age",
      "folder": "09_Deage", "family": "deage", "order": 80},
     {"key": "ai", "label": "AI", "name": "AI",

@@ -417,3 +417,33 @@ def test_dashboard_retry_reconnects(monkeypatch):
     monkeypatch.setattr(access, "is_offline_fallback", lambda: True)
     module.DashboardWidget.retry_connection(FakeDashboard())
     assert calls == ["reload", "success", "refresh"]
+
+
+def test_nuke_load_prep_and_slapcomp_use_the_template_folders(monkeypatch, tmp_path):
+    """Load Prep looked in 05_Prep/Render and Load Slapcomp in 08_Output/SLAPCOMP - neither is in the template."""
+    import sys
+    created = []
+
+    class Knob:
+        def fromUserText(self, value):
+            created.append(value)
+
+        def setValue(self, value):
+            pass
+
+    from unittest.mock import MagicMock
+    fake = MagicMock(createNode=lambda *_: {"file": Knob(), "name": Knob()},
+                     message=lambda text: created.append("message: " + text))
+    monkeypatch.setitem(sys.modules, "nuke", fake)
+    monkeypatch.delitem(sys.modules, "slate.plugins.dcc.nuke.menu", raising=False)
+    from slate.plugins.dcc.nuke import menu
+
+    shot = tmp_path / "sh010"
+    for folder in ("01_Scan", "05_Prep/Output", "07_Comp/Slapcomp/Output"):
+        (shot / folder).mkdir(parents=True)
+        (shot / folder / "sh010.1001.exr").write_bytes(b"x")
+    monkeypatch.setenv("SLATE_SCAN_PATH", str(shot / "01_Scan"))
+    menu.load_plate("prep")
+    menu.load_plate("slapcomp")
+    assert created == [(shot / "05_Prep/Output").as_posix(),
+                       (shot / "07_Comp/Slapcomp/Output").as_posix()]

@@ -61,15 +61,13 @@ def load_plate(hotkey_type):
         target_folder = str(shot_root / "01_Scan")
         node_name = "Scan_Plate"
     elif hotkey_type == "prep":
-        target_folder = str(shot_root / "05_Prep" / "Render")
-        if not os.path.exists(target_folder):
-            target_folder = str(shot_root / "05_Prep" / "Prep_out")
+        target_folder = str(shot_root / "05_Prep" / "Output")  # the template's folders
         node_name = "Prep_Plate"
     elif hotkey_type == "deage":
         target_folder = str(shot_root / "09_Deage" / "Output")
         node_name = "Deage_Plate"
     elif hotkey_type == "slapcomp":
-        target_folder = str(shot_root / "08_Output" / "SLAPCOMP")
+        target_folder = str(shot_root / "07_Comp" / "Slapcomp" / "Output")
         node_name = "Slapcomp_Plate"
         
     seq_path = find_sequence(target_folder)
