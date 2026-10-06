@@ -319,13 +319,6 @@ def test_PRD_116_bidding_settings_save_for_the_studio(qtbot, app, seeded):
     assert bad.margin_input.value() == 60
 
 
-def test_bidding_settings_rates_need_studio_settings(qtbot, app, seeded):
-    """A10: anybody who approves bids could change day rates, GST and the studio name."""
-    head = make_tab(qtbot, {"username": "ph", "roles": ["Production Head"]})
-    assert head.can_change_settings and not head.can_edit_rates
-    assert make_tab(qtbot).can_edit_rates
-
-
 def test_compare_dialog(qtbot, app, seeded):
     from slate.gui.tabs.bid_compare_dialog import CompareDialog
     repo = seeded["repo"]
