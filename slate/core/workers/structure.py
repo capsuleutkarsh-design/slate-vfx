@@ -47,7 +47,7 @@ __all__ = ["FolderCreationWorker", "ShotSubfoldersWorker", "is_junk_file",
 
 # The shot folders every shot gets when a template names none. One list, so
 # the preview, the pre-flight and the run agree about what will be created.
-DEFAULT_SHOT_FOLDERS = ["01_Scan", "07_Comp", "08_Output"]
+DEFAULT_SHOT_FOLDERS = ["01_Scan", "07_Comp", "08_Deliver"]
 # What goes inside every scan version when a template does not say. A
 # template that lists none gets none.
 DEFAULT_VERSION_FOLDERS = ["Denoise"]
@@ -987,7 +987,7 @@ class FolderCreationWorker(QThread):
         <scan root>/<version>[/<part>]/<FORMAT>.
 
         A template folder named after the format inside the scan root wins;
-        "08_Output/EXR" - the folder work goes OUT of - never matches.
+        "08_Deliver/EXR" - the folder work goes OUT of - never matches.
         """
         target_sub = None
         scan_prefix = f"{scan_root.lower()}/"

@@ -268,7 +268,8 @@ class LineupEditorMode(QWidget):
         has_lineup = bool(self.included_lineup()) and self._scan_job is None
         self.btn_rv.setEnabled(has_lineup)
         self.btn_edl.setEnabled(has_lineup)
-        self.btn_proxy.setEnabled(bool(self.lineup) and self._scan_job is None)
+        if self._plan_job is None and self.btn_proxy.text() == "Make review proxies":
+            self.btn_proxy.setEnabled(has_lineup)   # a ticked shot is needed; as Stop it stays
 
     def set_project_context(self, project_name: str = "", project_path: Path = None):
         self.project_name = (project_name or "").strip()
@@ -553,7 +554,7 @@ class LineupEditorMode(QWidget):
         from slate.core.domain.lineup import plural
         from ...components.feedback import confirm
         self._plan_job = None
-        self.btn_proxy.setEnabled(True)
+        self._update_actions()
         if error is not None:
             self.proxy_status.setText("The shot folders could not be read.")
             return
@@ -572,6 +573,7 @@ class LineupEditorMode(QWidget):
             self.proxy_status.setText("")
             return
         self.btn_proxy.setText("Stop making proxies")
+        self.btn_proxy.setEnabled(True)
         self.proxy_worker = ProxyBuildWorker(jobs, self, overwrite=rebuild,
                                              fps=self.sequence_fps)
         self.proxy_worker.progress_signal.connect(self._on_proxy_progress)
@@ -584,7 +586,7 @@ class LineupEditorMode(QWidget):
     def _on_proxy_finished(self, result):
         from ...components.feedback import toast
         self.btn_proxy.setText("Make review proxies")
-        self.btn_proxy.setEnabled(True)
+        self._update_actions()
         self.proxy_status.setText(result.summary())
         if result.error:
             toast(self, result.error, "error")

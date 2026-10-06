@@ -273,3 +273,55 @@ def test_server_buttons_only_while_running_and_plain_counts(qtbot):
     assert not hasattr(view, "btn_api_dashboard")
     assert (every(1), every(7), age(0), age(1), age(30)) == ("Every day", "Every 7 days", "today",
                                                              "1 day", "30 days")
+
+
+def test_an_rv_note_says_note_and_a_verdict_judges_the_version(qtbot, mock_db, monkeypatch, tmp_path):
+    """A4: a note showed 'RV: SH010 marked . Not saved yet'. A5: a verdict left the version waiting."""
+    from slate.core.domain import rv_feedback, versions
+    from slate.gui.main_window import VFXFolderCreatorApp
+    win = VFXFolderCreatorApp({"username": "admin", "user_id": "admin", "display_name": "Admin",
+                               "roles": ["Developer"], "role": "Developer"}, app_mode="vfx")
+    qtbot.addWidget(win)
+    shot = SimpleNamespace(shot_name="SH010", status="Review")
+    judged = []
+
+    class Model:
+        def apply_edit(self, shots, fn, description):
+            return True
+
+    tab = SimpleNamespace(all_shots=[shot], current_project=None, table_model=Model(),
+                          _user_can_edit=lambda: True, undo_last_edit=lambda: None,
+                          _signed_in_name=lambda: "Sanjay",
+                          on_version_verdict=lambda v, status: judged.append((v.id, status)))
+    monkeypatch.setattr(win, "_get_tab_instance", lambda label, create=False: tab)
+    feedback = rv_feedback.RVFeedback(status="note", note="flicker",
+                                      media_path=str(tmp_path / "SH010_comp_v002.mov"))
+    monkeypatch.setattr(rv_feedback, "read_feedback", lambda path: feedback)
+    monkeypatch.setattr(rv_feedback, "match_shot", lambda shots, media: shot)
+    said = []
+    monkeypatch.setattr(win, "show_feedback",
+                        lambda message, level="info", *a, **k: said.append((message, level)))
+
+    win.on_rv_feedback("x")
+    assert said[-1] == ("RV: SH010 given a note. Not saved yet - save it in the VFX Dashboard.", "info")
+
+    version = versions.Version(id=7, shot_name="SH010", version_name="v002", status="In Review")
+    writes = []
+
+    class Store:
+        def __init__(self, **kw):
+            pass
+
+        def list_for_shot(self, *a, **k):
+            return [version]
+
+        def update_version(self, vid, **fields):
+            writes.append((vid, fields))
+            return True
+
+    monkeypatch.setattr(versions, "VersionStore", Store)
+    tab.current_project = SimpleNamespace(code="PRJ", folder_base="")
+    feedback.status, feedback.note = "approved", ""
+    win.on_rv_feedback("x")
+    assert writes == [(7, {"status": "Approved"})] and judged == [(7, "Approved")]
+    assert said[-1] == ("RV: SH010 v002 set to Approved.", "success")

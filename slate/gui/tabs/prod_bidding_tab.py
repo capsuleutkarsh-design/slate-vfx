@@ -127,10 +127,10 @@ class ProdBiddingTab(QWidget):
         self.is_superuser = access.is_superuser(self.user_roles)
         # Without 'Edit bids' the tab is read-only, like Scheduling without its ability.
         self.can_write = access.can(self.user_roles, "bid_write")
-        # Margins, complexities, day rates and GST: whoever approves bids - the
-        # same rule as Settings > Studio Currency (StudioMoneyEditor.MONEY_ABILITY).
-        self.can_edit_rates = self.is_superuser or self.can_approve
-        self.can_change_settings = self.can_edit_rates
+        # Bidding settings: margins and complexities for whoever approves bids;
+        # day rates, GST and the studio name for Studio settings, as Help says.
+        self.can_change_settings = self.is_superuser or self.can_approve
+        self.can_edit_rates = self.is_superuser or access.can(self.user_roles, "studio_settings")
         if repo is None:
             from slate.core.infra.bid_repository import BidRepository
             repo = BidRepository(roles=self.user_roles, username=self.username)

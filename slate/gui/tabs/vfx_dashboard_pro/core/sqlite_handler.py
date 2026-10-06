@@ -410,6 +410,9 @@ class SQLiteHandler:
                                  key, _history_text(old.get(key)), _history_text(new.get(key)), shot)
             if key == "assigned_artist":
                 self._notify_assignment(name, old.get(key) or "", new.get(key) or "")
+            elif key == "status":   # the shot's own status (a verdict on a version with no department)
+                self._notify_status(name, new.get("assigned_artist") or "", old.get(key) or "",
+                                    new.get(key) or "")
 
     # ------------------------------------------------------------------
     # Writing

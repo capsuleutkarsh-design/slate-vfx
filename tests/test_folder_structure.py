@@ -54,6 +54,18 @@ class TestOneWordOneMeaning:
             "08_Output is back - 'Output' now means two different things again"
         )
 
+    def test_fallback_folders_use_the_templates_delivery_name(self):
+        """A template with no shot folders made 08_Output; the template says 08_Deliver."""
+        import inspect
+        from slate.core.infra import config_manager
+        from slate.core.workers.structure import DEFAULT_SHOT_FOLDERS
+        from slate.core.domain import departments
+
+        assert "08_Deliver" in DEFAULT_SHOT_FOLDERS
+        assert "08_Output" not in inspect.getsource(config_manager)
+        built_in = {d["key"]: d["folder"] for d in departments._DEFAULTS}
+        assert built_in["slapcomp"] == "07_Comp/Slapcomp"
+
     def test_client_delivery_has_no_script(self, by_top):
         """Delivery is not a department; nobody works in it."""
         subs = {s.lower() for s in by_top["08_Deliver"]}

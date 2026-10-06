@@ -256,7 +256,7 @@ class ConfigManager:
                     "base_folders": ["01_Frm Client", "02_Edit", "03_References", "04_Production", "05_Reels", "06_Feedback", "07_Archive", "08_To Client"],
                     "production_subfolders": ["01_ARTIST_SOW_SHEET", "02_Contact_sheet"],
                     "outsource_subfolders": ["01_To_Outsource"],
-                    "shot_folders": ["01_Scan", "02_Dmp", "03_Cg", "04_Roto", "05_Prep", "06_Cmm", "07_Comp", "08_Output"]
+                    "shot_folders": ["01_Scan", "02_Dmp", "03_Cg", "04_Roto", "05_Prep", "06_Cmm", "07_Comp", "08_Deliver"]
                 }
             }
         except Exception as e:
@@ -269,7 +269,7 @@ class ConfigManager:
                     "base_folders": ["01_Frm Client", "02_Edit", "03_References", "04_Production", "05_Reels", "06_Feedback", "07_Archive", "08_To Client"],
                     "production_subfolders": ["01_ARTIST_SOW_SHEET", "02_Contact_sheet"],
                     "outsource_subfolders": ["01_To_Outsource"],
-                    "shot_folders": ["01_Scan", "02_Dmp", "03_Cg", "04_Roto", "05_Prep", "06_Cmm", "07_Comp", "08_Output"]
+                    "shot_folders": ["01_Scan", "02_Dmp", "03_Cg", "04_Roto", "05_Prep", "06_Cmm", "07_Comp", "08_Deliver"]
                 }
             }
 

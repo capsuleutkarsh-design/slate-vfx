@@ -39,8 +39,10 @@ class UserManager:
 
         self._ensure_schema()
         self._run_migration()
-        self._ensure_default_roles()
+        # The 2026-09 upgrade is for roles made before it, so it runs before
+        # new roles are seeded: it gave a seeded role with Bidding "Approve bids".
         self._upgrade_role_abilities()
+        self._ensure_default_roles()
         self._upgrade_producer_dashboard()
         self._upgrade_bid_write()
         self._ensure_essential_accounts()

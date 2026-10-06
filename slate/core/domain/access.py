@@ -297,7 +297,7 @@ def can_edit_dashboard(roles) -> bool:
 
 
 def can_use_excel(roles) -> bool:
-    """Import from and export to the project Excel backup."""
+    """Export to the project Excel backup."""
     return _allowed("excel_sync", roles)
 
 

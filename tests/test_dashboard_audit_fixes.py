@@ -253,6 +253,17 @@ class TestSaving:
         fields = {row.get("field_changed") or row.get("field") for row in history}
         assert "status" in fields and "assigned_artist" in fields
 
+    def test_a_shot_status_change_tells_the_shots_artist(self, mock_db):
+        """A6: a verdict on a version with no department moved the shot's status and told nobody."""
+        from types import SimpleNamespace
+        handler = _project(mock_db, [_shot("SH010", assigned_artist="Rahul")])
+        sent = []
+        handler.notifier = SimpleNamespace(add_notification=lambda who, msg, kind: sent.append((who, msg)))
+        shot = handler.read_shots()[0]
+        shot.status = "RETAKE"
+        assert handler.write_shots([shot])
+        assert ("Rahul", "SH010 is now RETAKE.") in sent
+
     def test_a_conflict_names_the_shot_and_its_reel(self, mock_db):
         """DSH-019/112: structured conflicts."""
         handler = _project(mock_db, [_shot("SH010", "R01"), _shot("SH010", "R02")])

@@ -182,6 +182,23 @@ class TestDetailPanel:
         for key in department_keys():
             assert key in panel.depts, f"{key} has no row in the detail panel"
 
+    def test_an_artist_must_be_a_known_person(self, qtbot):
+        """A8: a typo in the Artist box was saved as an artist's name."""
+        from slate.gui.tabs.vfx_dashboard_pro.ui.shot_detail import ShotDetailWidget
+
+        panel = ShotDetailWidget(Shot(shot_name="SH010"), user_role="supervisor",
+                                 all_users=["Rahul", "Vikram Singh"])
+        qtbot.addWidget(panel)
+        applied = []
+        panel.apply_requested.connect(lambda s, changes: applied.append(changes))
+        combo = panel.depts["comp"]["artist_combo"]
+        combo.setEditText("Vikrm")
+        panel.apply_changes()
+        assert not applied and "not a person in Slate" in panel.result_label.text()
+        combo.setEditText("vikram singh")
+        panel.apply_changes()
+        assert applied[-1]["departments.comp.artist"] == "Vikram Singh"
+
     def test_editing_a_new_department_saves_back_to_the_shot(self, qtbot):
         from slate.gui.tabs.vfx_dashboard_pro.ui.shot_detail import ShotDetailWidget
 

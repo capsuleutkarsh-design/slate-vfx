@@ -243,3 +243,15 @@ class TestFastModeIsHonest:
         )
         assert verified is False
         assert "Size mismatch" in reason
+
+
+def test_help_says_who_can_clear_a_leftover_lock():
+    """A11: Help said only an admin could; the starter can, and anyone once it is stale."""
+    import json
+    from pathlib import Path
+    from slate.core.domain.ingest_lock import STALE_AFTER
+    root = Path(__file__).resolve().parents[1]
+    text = json.loads((root / "slate/core/help_content.json").read_text(encoding="utf-8"))
+    page = " ".join(text["folder_creator"]["content"].split())
+    hours = int(STALE_AFTER.total_seconds() // 3600)
+    assert "the person who started it" in page and f"{hours} hours" in page

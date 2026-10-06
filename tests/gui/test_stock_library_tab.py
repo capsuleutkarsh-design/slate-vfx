@@ -364,7 +364,7 @@ def test_artists_are_told_who_can_ingest(qtbot, library, monkeypatch):
     monkeypatch.setattr(tab, "_notify", lambda msg, level="info", **k: notes.append(msg))
     tab.on_folders_dropped(["C:/x"])
     tab.delete_selected_assets()
-    assert len(notes) == 2 and all("Only leads, supervisors and admins" in n for n in notes)  # MED-041
+    assert len(notes) == 2 and all("Only people with the Ingest stock ability" in n for n in notes)  # MED-041
     assert "Developer Mode" not in " ".join(notes)
 
 

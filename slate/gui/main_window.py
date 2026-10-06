@@ -421,7 +421,9 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
 
             filename = os.path.basename(feedback.media_path)
             status = feedback.dashboard_status
-            level = "success" if status == "Approved" else "error"
+            # A note with no verdict is a note, not a change of status.
+            said = f"marked {status}" if status else "given a note"
+            level = {"Approved": "success", "Retake": "error"}.get(status, "info")
 
             tab = self._get_tab_instance("VFX Dashboard", create=False)
             shots = getattr(tab, "all_shots", None) if tab else None
@@ -429,7 +431,7 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
 
             if shot is None:
                 self.show_status(
-                    f"RV: {filename} marked {status}, but no matching shot is "
+                    f"RV: {filename} {said}, but no matching shot is "
                     "open in the dashboard.", "warning", 8000
                 )
                 return
@@ -440,7 +442,7 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
             can_edit = getattr(tab, "_user_can_edit", None)
             if not (callable(can_edit) and can_edit()):
                 self.show_feedback(
-                    f"RV: {shot.shot_name} was not marked {status} - a supervisor or "
+                    f"RV: {shot.shot_name} was not {said} - a supervisor or "
                     "coordinator sets review verdicts in Slate.", "warning", 8000)
                 return
 
@@ -449,6 +451,8 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
             # (It used to call a save method the dashboard does not have, and
             # every verdict ended as "could not be saved - check your permissions".)
             project = getattr(tab, "current_project", None)
+            if project is not None and self._rv_on_version(tab, project, shot, feedback, level):
+                return
             applied = tab.table_model.apply_edit(
                 [shot], lambda s: apply_feedback(
                     s, feedback,
@@ -457,7 +461,7 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
                 f"{shot.shot_name} RV verdict")
             if applied:
                 self.show_feedback(
-                    f"RV: {shot.shot_name} marked {status}. Not saved yet - save it in "
+                    f"RV: {shot.shot_name} {said}. Not saved yet - save it in "
                     "the VFX Dashboard.", level, 8000,
                     action=("Undo", getattr(tab, "undo_last_edit", None)))
             else:
@@ -465,6 +469,49 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
 
         except Exception as e:
             logging.error(f"Error handling RV feedback: {e}")
+
+    def _rv_on_version(self, tab, project, shot, feedback, level) -> bool:
+        """
+        A verdict or note from RV on a version waiting for review does what the
+        Review queue does: the version's status and note are saved, and the
+        shot moves as a pending edit. False when no version can be told, and
+        the verdict goes on the shot alone as before.
+        """
+        from slate.core.domain.rv_feedback import file_annotation, find_version, record_on_version
+        from slate.core.domain.versions import VersionStore
+        scope = getattr(tab, "_department_scope", None)
+        store = VersionStore(roles=getattr(tab, "access_roles", None),
+                             departments=scope() if callable(scope) else None)
+        try:
+            version = find_version(store, project.code, shot, feedback.media_path)
+            if version is None and not feedback.dashboard_status:
+                # A note goes on the newest version, as the shot panel's Add note does.
+                version = store.latest_for_shot(project.code, shot.shot_name,
+                                                reel=str(getattr(shot, "reel_episode", "") or ""))
+        except Exception as exc:
+            logging.warning("RV: the shot's versions could not be read: %s", exc)
+            return False
+        if version is None:
+            return False
+        feedback.annotation_path = file_annotation(
+            shot, feedback, project_root=getattr(project, "folder_base", "") or None,
+            folder_resolver=getattr(tab, "_shot_folder_resolver", None)) or feedback.annotation_path
+        name = f"{shot.shot_name} {version.version_name}"
+        try:
+            saved = record_on_version(store, version, feedback, author=tab._signed_in_name())
+        except PermissionError as exc:
+            self.show_feedback(f"RV: {name} was not changed - {exc}", "warning", 8000)
+            return True
+        status = feedback.dashboard_status
+        if not saved:
+            self.show_feedback(f"RV: the {'verdict' if status else 'note'} on {name} could not be saved.",
+                               "error", 8000)
+        elif status:
+            self.show_feedback(f"RV: {name} set to {status}.", level, 8000)
+            tab.on_version_verdict(version, status)
+        else:
+            self.show_feedback(f"RV: note saved on {name}.", "success", 6000)
+        return True
 
     def statusBar(self):
         """

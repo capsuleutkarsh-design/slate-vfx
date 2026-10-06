@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -245,6 +246,52 @@ def apply_feedback(shot, feedback: RVFeedback, project_root=None,
         return False
 
     _append_note(shot, feedback)
+    return True
+
+
+def find_version(store, project_code: str, shot, media_path: str):
+    """
+    The version waiting for review that this media is, or None when that
+    cannot be told.
+
+    A verdict from RV changed the shot and left its version in the Review
+    queue. The version is the shot's waiting one whose media folder or name
+    (v002) the path carries - else the only one waiting in the media's
+    department.
+    """
+    department = department_from_path(media_path)
+    waiting = [v for v in store.list_for_shot(project_code, shot.shot_name, with_notes=False,
+                                              reel=str(getattr(shot, "reel_episode", "") or ""))
+               if v.awaiting_review and v.department in ("", department)]
+    media = os.path.normcase(os.path.normpath(media_path))
+
+    def named(version) -> bool:
+        own = version.media_path and os.path.normcase(os.path.normpath(version.media_path))
+        if own and (media == own or media.startswith(own + os.sep)):
+            return True
+        name = version.version_name.lower()
+        return bool(name) and re.search(rf"(?<![a-z0-9]){re.escape(name)}(?![0-9])", media) is not None
+
+    hits = [v for v in waiting if named(v)]
+    if len(hits) == 1:
+        return hits[0]
+    same_department = [v for v in waiting if department and v.department == department]
+    return same_department[0] if not hits and len(same_department) == 1 else None
+
+
+def record_on_version(store, version, feedback: RVFeedback, author: str = "") -> bool:
+    """
+    What a verdict given in Slate's own review does: the version's status,
+    then the note on that version. Raises PermissionError as the Review queue does.
+    """
+    from slate.core.domain.versions import SENT_INTERNAL
+    status = feedback.dashboard_status
+    if status:
+        if not store.update_version(version.id, status=status):
+            return False
+        version.status = status
+    if feedback.note or feedback.annotation_path:
+        return bool(store.add_note(version.id, note_text(feedback), source=SENT_INTERNAL, author=author))
     return True
 
 

@@ -110,6 +110,23 @@ class TestProxyManager:
         assert succeeded is False, "reported a proxy for a source that does not exist"
         assert not (produced and Path(produced).exists()), "left a proxy file behind"
 
+    def test_a_long_sequence_gets_more_than_a_flat_minute(self, proxy_manager, tmp_path, monkeypatch):
+        """A 600-frame EXR shot failed at a fixed 60 s ffmpeg limit."""
+        import subprocess
+        for frame in range(1001, 1601):
+            (tmp_path / f"sh010.{frame}.exr").write_bytes(b"x")
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen["timeout"] = kwargs.get("timeout")
+            return subprocess.CompletedProcess(cmd, 1)
+
+        monkeypatch.setattr(proxy_manager, "ffmpeg_path", "ffmpeg")
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        proxy_manager.generate_proxy(tmp_path / "sh010.1001.exr", is_seq=True,
+                                     proxy_path=tmp_path / "p.mp4", overwrite=True)
+        assert seen["timeout"] >= 60 + 600 * ProxyManager.SECONDS_PER_FRAME
+
     def test_resolution_parsing(self, proxy_manager):
         """Test resolution string parsing."""
         test_resolutions = [

@@ -457,7 +457,7 @@ class StockBrowserTab(
 
     def start_ingest(self, fast_mode=False, folders=None):
         if not self.can_ingest:
-            self._notify("Only leads, supervisors and admins can ingest stock.", "warning")
+            self._notify("Only people with the Ingest stock ability can ingest stock.", "warning")
             return False
         return self.ingest_controller.start_ingest(folders, fast_mode=fast_mode)
 
@@ -469,7 +469,7 @@ class StockBrowserTab(
     def on_folders_dropped(self, folders):
         """Every dropped folder goes through the same start as the button (MED-022)."""
         if not self.can_ingest:
-            self._notify("Only leads, supervisors and admins can ingest stock.", "warning")
+            self._notify("Only people with the Ingest stock ability can ingest stock.", "warning")
             return False
         return self.ingest_controller.on_folders_dropped(folders, fast_mode=self._fast_mode())
 

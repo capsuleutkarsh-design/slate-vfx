@@ -136,7 +136,7 @@ class PathTemplateManager:
 
         self.templates['shot_output'] = lucidity.Template(
             'shot_output',
-            '{root}/{project}/05_Reels/{reel}/{shot}/08_Output'
+            '{root}/{project}/05_Reels/{reel}/{shot}/08_Deliver'
         )
 
         self.templates['stock_library'] = lucidity.Template(
