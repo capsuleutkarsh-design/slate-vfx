@@ -23,12 +23,14 @@ The current version is **BETA 2.2.0**. What changed in each version is in the
 | Installer | Install on |
 |---|---|
 | **Slate Server** setup | one always-on machine: it holds the studio database (PostgreSQL is included) |
-| **Slate Studio** setup | artist, lead and supervisor workstations |
-| **Slate Ops** setup | HR, IT and production office machines |
+| **Slate Studio** setup | artist, lead, coordinator and supervisor workstations |
+| **Slate Ops** setup | HR, IT and production office machines, and every Studio workstation too |
+
+Attendance, Leave and IT Support are only in Slate Ops, so artist, lead, coordinator and supervisor PCs need **both** Studio and Ops.
 
 1. Install **Slate Server** first and create the database from its window.
-2. Install **Studio** or **Ops** on the other machines. They find the server on the network by themselves.
-3. Sign in as **admin** with the password **admin123**, change that password straight away, then add people under **Users & Roles** (one by one, or import a CSV / Excel list). See [First sign-in](#first-sign-in).
+2. Install **Studio** and **Ops** on the other machines (Ops only on HR, IT and office machines). They find the server on the network by themselves.
+3. Sign in as **admin** with the password **admin123** and choose a new password when asked, then add people under **Users & Roles** (one by one, or import a CSV / Excel list). See [First sign-in](#first-sign-in).
 
 Windows 10 or 11, 64-bit. The installers are not code-signed yet, so Windows may show *"Windows protected your PC"*: click **More info → Run anyway**.
 
@@ -103,18 +105,18 @@ A brand-new studio database starts with one administrator account:
 |---|---|
 | `admin` | `admin123` |
 
-**Change this password straight away.** Anyone who has read this page knows it.
-Click your name at the top of the Slate window and choose **Change password…**.
+Anyone who has read this page knows it, so the first sign-in with it asks you
+to choose a new password before anything opens.
 
 Then add your people under **Users & Roles**, one by one or with
 **Import from Excel / CSV…**. The same screen has **Reset Password** for anyone
 who forgets theirs.
 
 - The `admin` account cannot be deleted: Slate puts it back the next time it
-  starts, so nobody is ever locked out. Keep its password safe instead.
-- A new database also gets two practice accounts, `artist` / `artist123` and
-  `tester` / `tester123`. Delete them under **Users & Roles** once your real
-  people are in, or give them new passwords.
+  starts, with `admin123` and the same forced change, so nobody is ever locked
+  out. Keep its password safe instead.
+- If nobody can sign in, **Recover Slate** on the server PC, with the Recovery
+  Key, can create or restore an administrator.
 
 ### Opening a shot in Nuke, Blender and other programs
 

@@ -7,8 +7,10 @@ Three installers, one per machine role. Install the server first, then the works
 | Installer | Install on | What it holds |
 |---|---|---|
 | `setup_Slate Server_vBETA 2.2.0.exe` | the one machine that runs the studio database | Slate Server, PostgreSQL 17, PgBouncer, Recover Slate |
-| `setup_Slate_Studio_vBETA 2.2.0.exe` | artist, lead and supervisor workstations | Slate Studio, ffmpeg, OpenRV |
-| `setup_Slate_Ops_vBETA 2.2.0.exe` | HR, IT and production office machines | Slate Operations, ffmpeg |
+| `setup_Slate_Studio_vBETA 2.2.0.exe` | artist, lead, coordinator and supervisor workstations | Slate Studio, ffmpeg, OpenRV |
+| `setup_Slate_Ops_vBETA 2.2.0.exe` | every workstation: HR, IT and production office machines, and the Studio workstations too | Slate Operations, ffmpeg |
+
+Attendance, Leave and IT Support are only in Slate Operations. So artist, lead, coordinator and supervisor PCs need **both** the Studio and the Ops installer; HR, IT and office PCs need only Ops.
 
 Nothing needs an internet connection. Every dependency is inside the installer, and updates are picked up from the studio's shared folder.
 
@@ -71,8 +73,11 @@ A **new** studio needs none of this: the server makes the studio's password itse
 
 **Accounts and sign-in**
 - **A `users.json` or `roles.json` on the share is read only once, on an empty database.** Before, anyone who could write to the share could make themselves a Developer, or reset admin's password, at the next start of any PC.
-- **The shared `admin123` master password no longer approves a fleet-wide restart or shut down.** Admins confirm with their own password, and the setting is removed from the default configuration.
+- **The shared `admin123` master password no longer approves a restart or shut down.** Admins confirm with their own password, and the setting is removed from the default configuration. Restart and shut down work on one PC at a time.
 - **The test accounts artist/artist123 and tester/tester123 are no longer created** on a new database.
+- **The built-in `admin` / `admin123` must choose a new password at its first sign-in.** A new database still has it, so a new studio can get in, but the first sign-in asks for a new password before anything opens. An `admin` that Slate brings back after it was removed gets the same.
+- **First run no longer offers "Create default admin user EMP0001".** Yes, the default, made or reset EMP0001 with the password admin123 and full access. The ways in are the built-in `admin` and **Recover Slate → Create or restore administrator** on the server PC.
+- **A new studio always gets its starting roles** (Supervisor, Lead, Coordinator, Artist and the rest), even when Recover Slate made its first administrator before any workstation opened Slate. A role that already exists is never changed.
 - **Old password formats are upgraded at sign-in.** A password stored as plain text, or in the old unsalted format, is re-stored securely the next time that person signs in.
 - **Every sign-in is recorded** in the audit log: success, and each failure with the reason, but never the password.
 - **The audit trail is in the database, and nothing can change or delete it.** Workstations can only add lines and read them; the database refuses edits and deletions, even by accident, and stamps each line with the server's clock. Only when the database cannot take a line (an older server, an outage) does it go to the file on the share, as before, and the Audit Logs screen shows both. A share that is down no longer slows signing in. Slate Server sets this up when it starts, so **start Slate Server 2.2.0 once before the workstations**.

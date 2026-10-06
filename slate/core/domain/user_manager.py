@@ -103,10 +103,11 @@ class UserManager:
                 logging.info("users.json / roles.json not imported: the database already has accounts.")
             return
 
+        # The starting roles are _ensure_default_roles' (C3), whoever made the
+        # first account.
         if not self.users_file.exists() and not self.roles_file.exists():
             logging.info("Database is empty and no JSON config found. Creating default users.")
             try:
-                self._create_default_roles_sql(db)
                 self._create_default_users_sql(db)
             except Exception as e:
                 logging.error(f"Failed to create default users: {e}")
@@ -125,8 +126,6 @@ class UserManager:
                         tx.write("DELETE FROM ut_roles WHERE role_name=%s", (role_name,))
                         tx.write("INSERT INTO ut_roles (role_name, permissions) VALUES (%s, %s)",
                                  (role_name, json.dumps(permissions)))
-                else:
-                    self._create_default_roles_sql(writer)
 
                 # 2. Users
                 if self.users_file.exists():
@@ -170,6 +169,17 @@ class UserManager:
             logging.error(f"Failed to parse {path}: {e}")
             return {}
 
+    # The starting roles of a new database, besides the ones below. Only a
+    # database never seeded before gets them, so a studio that deleted one
+    # does not see it come back.
+    STARTING_ROLES = {
+        "Developer": ["ALL", "Admin Panel", "Tester Panel"],
+        # "Shot Review" is the Timeline Viewer: the supervisor reviews lineups.
+        "Supervisor": ["Folder Creator", "Move/Scan", "Reports", "Stock Browser", "Rename Tool", "Dashboard", "Settings", "Attendance", "Admin Panel", "Image Editor", "Shot Review"],
+        "Artist": ["Stock Browser", "Rename Tool", "Dashboard", "Settings", "Attendance", "Image Editor"],
+        "Tester": ["Folder Creator", "Move/Scan", "Rename Tool", "Stock Browser", "Tester Panel", "Settings", "Image Editor"],
+    }
+
     # Roles every studio needs. Adding one here makes it appear on existing
     # installations at next start, without touching roles already configured.
     DEFAULT_ROLE_PERMISSIONS = {
@@ -197,6 +207,10 @@ class UserManager:
             existing = {str(r["role_name"]).strip().lower() for r in rows}
             seeded_rows = db.execute_query("SELECT role_name FROM ut_role_seeds", fetch="all") or []
             seeded = {str(r["role_name"]).strip().lower() for r in seeded_rows}
+            if not seeded:
+                # A new database - even one whose first account Recover Slate
+                # made, which used to leave it without these (C3).
+                defaults = {**self.STARTING_ROLES, **defaults}
 
             for role_name, permissions in defaults.items():
                 key = role_name.lower()
@@ -361,24 +375,6 @@ class UserManager:
             add("dashboard_view_all")
         return result
 
-    def _create_default_roles_sql(self, db):
-        defaults = {
-            "Developer": ["ALL", "Admin Panel", "Tester Panel"],
-            # "Shot Review" is the Timeline Viewer: the supervisor reviews lineups.
-            "Supervisor": ["Folder Creator", "Move/Scan", "Reports", "Stock Browser", "Rename Tool", "Dashboard", "Settings", "Attendance", "Admin Panel", "Image Editor", "Shot Review"],
-            "Coordinator": ["Folder Creator", "Move/Scan", "Dashboard", "Reports", "Stock Browser", "Rename Tool", "Settings", "Attendance", "Shot Review"],
-            # A lead runs a department, not the ingest: no Build & Ingest.
-            "Lead": ["Dashboard", "Reports", "Stock Browser", "Rename Tool", "Settings", "Attendance", "Shot Review"],
-            "Artist": ["Stock Browser", "Rename Tool", "Dashboard", "Settings", "Attendance", "Image Editor"],
-            "Tester": ["Folder Creator", "Move/Scan", "Rename Tool", "Stock Browser", "Tester Panel", "Settings", "Image Editor"]
-        }
-        for role_name, permissions in defaults.items():
-            db.execute_update("DELETE FROM ut_roles WHERE role_name=%s", (role_name,))
-            db.execute_update(
-                "INSERT INTO ut_roles (role_name, permissions) VALUES (%s, %s)",
-                (role_name, json.dumps(permissions))
-            )
-
     def _create_default_users_sql(self, db):
         # Only the administrator. artist/artist123 and tester/tester123 were
         # seeded too: two known logins on every new studio (SYS-084).
@@ -389,6 +385,12 @@ class UserManager:
             "INSERT INTO ut_users (username, password_hash, display_name, job_title, roles) VALUES (%s, %s, %s, %s, %s)",
             ("admin", self._hash_password("admin123"), "System Admin", "Dev", json.dumps(["Developer"]))
         )
+        # admin123 is known to everybody: the first sign-in must choose a new
+        # one (C1). Apart from the insert, so the account is made regardless.
+        try:
+            db.execute_update("UPDATE ut_users SET must_change_password=1 WHERE username=%s", ("admin",))
+        except Exception as exc:
+            logging.warning("admin was not marked to change its password: %s", exc)
 
     def _no_default_accounts(self) -> bool:
         """
@@ -417,13 +419,8 @@ class UserManager:
 
             # Check for admin
             admin_row = db.execute_query("SELECT username FROM ut_users WHERE username='admin'", fetch="one")
-            if not admin_row and not self._no_default_accounts():
-                logging.info("Injecting default admin user...")
-                pw_hash = self._hash_password("admin123")
-                db.execute_update(
-                    "INSERT INTO ut_users (username, password_hash, display_name, job_title, roles) VALUES (%s, %s, %s, %s, %s)",
-                    ("admin", pw_hash, "System Admin", "Dev", json.dumps(["Developer"]))
-                )
+            if not admin_row:
+                self._create_default_users_sql(db)
 
             # EMP0012 used to be re-created here on every start, with a known
             # password and Developer rights, so deleting it on the Users tab

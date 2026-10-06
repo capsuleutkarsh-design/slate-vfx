@@ -100,6 +100,33 @@ def test_first_run_find_server_is_a_worker_and_a_missing_folder_is_questioned(qt
     assert dialog.result() == 1
 
 
+def test_first_run_offers_no_account_with_a_known_password(gatekeeper, monkeypatch, tmp_path):
+    """C2: Yes (the default) made or reset EMP0001 with admin123 and full access."""
+    from types import SimpleNamespace
+    from slate.core.security import switches
+    monkeypatch.setattr(gatekeeper.GlobalConfig, "get", classmethod(lambda cls, k, d=None: ""))
+    monkeypatch.setattr(gatekeeper.GlobalConfig, "save_connection", classmethod(lambda cls, v: None))
+    monkeypatch.setattr(switches, "mode", lambda *a, **k: switches.OFF)
+
+    class Setup:
+        def exec(self):
+            return gatekeeper.QDialog.DialogCode.Accepted
+
+        def values(self):
+            return {"SERVER_ROOT": str(tmp_path)}              # no users.json there
+
+    monkeypatch.setattr(gatekeeper, "FirstRunSetupDialog", Setup)
+    asked, made = [], []
+    monkeypatch.setattr(gatekeeper.QMessageBox, "question", staticmethod(
+        lambda *a, **k: asked.append(a) or gatekeeper.QMessageBox.StandardButton.Yes))
+    entry = SimpleNamespace(
+        _get_first_run_flag_path=lambda: tmp_path / ".setup_complete",
+        app_context=SimpleNamespace(user_manager=lambda: SimpleNamespace(
+            add_user=lambda *a, **k: made.append(a))))
+    assert gatekeeper.ApplicationEntry._ensure_first_run_setup(entry) is True
+    assert not asked and not made
+
+
 def test_the_first_run_window_has_no_import_side_effects():
     import subprocess
     code = ("import logging, slate.gui.dialogs.first_run_dialog; "

@@ -45,12 +45,9 @@ class TestDefaultRoles:
     """The default role set must include the people who use the tool."""
 
     def test_coordinator_and_lead_exist_as_default_roles(self):
-        import inspect
         from slate.core.domain.user_manager import UserManager
 
-        source = inspect.getsource(UserManager._create_default_roles_sql)
-        assert '"Coordinator"' in source
-        assert '"Lead"' in source
+        assert {"Coordinator", "Lead"} <= set(UserManager.DEFAULT_ROLE_PERMISSIONS)
 
 
 class TestExcelRoundTrip:

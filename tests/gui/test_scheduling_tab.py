@@ -363,11 +363,9 @@ def test_PRD_061_PRD_125_artists_and_coordinators_do_not_get_bidding():
         assert "Scheduling" not in STUDIO_ROLES[role] and "Bidding" not in STUDIO_ROLES[role]
     assert "Bidding" not in STUDIO_ROLES["Production Coordinator"]
     assert "Scheduling" in STUDIO_ROLES["Production Coordinator"]
-    import inspect
     from slate.core.domain import user_manager
-    source = inspect.getsource(user_manager.UserManager._create_default_roles_sql)
-    artist_line = next(l for l in source.splitlines() if l.strip().startswith('"Artist":'))
-    assert "Scheduling" not in artist_line and "Bidding" not in artist_line
+    artist = user_manager.UserManager.STARTING_ROLES["Artist"]
+    assert "Scheduling" not in artist and "Bidding" not in artist
 
 
 def test_NEW_production_2_delete_wording_is_singular(qtbot, app, seeded, monkeypatch):

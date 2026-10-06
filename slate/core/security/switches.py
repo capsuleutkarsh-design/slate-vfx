@@ -96,8 +96,6 @@ CATALOGUE: Dict[str, str] = {
     "signed_fleet_commands":
         "Fleet commands on the share must carry a valid signature (SEC-022). "
         "Roll out as log_only first.",
-    "readonly_sql_console":
-        "The Data Center SQL console is read-only (SEC-016, SEC-017).",
     "hide_password_hashes":
         "Password hashes move out of the accounts table to where workstations "
         "cannot read them; the database checks passwords itself (SEC-039).",
