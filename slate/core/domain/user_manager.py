@@ -45,6 +45,7 @@ class UserManager:
         self._ensure_default_roles()
         self._upgrade_producer_dashboard()
         self._upgrade_bid_write()
+        self._upgrade_new_defaults()
         self._ensure_essential_accounts()
 
     def _get_db(self):
@@ -274,74 +275,71 @@ class UserManager:
         except Exception as exc:
             logging.warning("Could not upgrade role abilities: %s", exc)
 
-    def _upgrade_producer_dashboard(self):
+    def _upgrade_once(self, name, adds):
         """
-        Once per database: a role named Producer gets the Dashboard tab.
-        access.json gives producers dashboard_write, but a Producer role made
-        before had no Dashboard tab, so they never saw it. Only adds.
+        Once per database (ut_role_upgrades remembers name): for each role,
+        adds(role, perms) names what to add to it. Only adds, never to a
+        full-access role, and a role the studio changes afterwards is left alone.
         """
+        from datetime import datetime
         from slate.core.domain.permissions_catalog import has_all
         try:
             db = self._get_db()
             db.execute_update(
                 "CREATE TABLE IF NOT EXISTS ut_role_upgrades ("
                 "name TEXT PRIMARY KEY, applied_at TEXT)")
-            done = {str(r["name"]) for r in
-                    (db.execute_query("SELECT name FROM ut_role_upgrades", fetch="all") or [])}
-            if "2026-10-producer-dashboard" in done:
-                return
-            rows = db.execute_query("SELECT role_name, permissions FROM ut_roles", fetch="all") or []
-            for row in rows:
-                role = str(row["role_name"])
-                if "producer" not in role.strip().lower():
-                    continue
-                try:
-                    perms = list(json.loads(row["permissions"] or "[]"))
-                except Exception:
-                    continue
-                if has_all(perms) or "Dashboard" in perms:
-                    continue
-                db.execute_update("UPDATE ut_roles SET permissions=%s WHERE role_name=%s",
-                                  (json.dumps(perms + ["Dashboard"]), role))
-                logging.info("Role %s upgraded: Dashboard tab", role)
-            from datetime import datetime
-            db.execute_update("INSERT INTO ut_role_upgrades (name, applied_at) VALUES (%s, %s)",
-                              ("2026-10-producer-dashboard", datetime.now().isoformat(timespec="seconds")))
-        except Exception as exc:
-            logging.warning("Could not give producer roles the Dashboard tab: %s", exc)
-
-    def _upgrade_bid_write(self):
-        """
-        Once per database: every role with the Bidding tab gets "Edit bids"
-        (can:bid_write). Bidding used to let anyone who opened it make and
-        change bids; now that needs the ability, so nobody loses it. Only adds.
-        """
-        from slate.core.domain.permissions_catalog import ability_key, abilities_in, has_all
-        try:
-            db = self._get_db()
-            db.execute_update(
-                "CREATE TABLE IF NOT EXISTS ut_role_upgrades ("
-                "name TEXT PRIMARY KEY, applied_at TEXT)")
-            done = {str(r["name"]) for r in
-                    (db.execute_query("SELECT name FROM ut_role_upgrades", fetch="all") or [])}
-            if "2026-10-bid-write" in done:
+            if db.execute_query("SELECT 1 AS done FROM ut_role_upgrades WHERE name = %s",
+                                (name,), fetch="one"):
                 return
             for row in db.execute_query("SELECT role_name, permissions FROM ut_roles", fetch="all") or []:
                 try:
                     perms = list(json.loads(row["permissions"] or "[]"))
                 except Exception:
                     continue
-                if has_all(perms) or "Bidding" not in perms or "bid_write" in abilities_in(perms):
+                if has_all(perms):
                     continue
-                db.execute_update("UPDATE ut_roles SET permissions=%s WHERE role_name=%s",
-                                  (json.dumps(perms + [ability_key("bid_write")]), row["role_name"]))
-                logging.info("Role %s upgraded: bid_write", row["role_name"])
-            from datetime import datetime
+                extra = [x for x in adds(str(row["role_name"]), perms) if x not in perms]
+                if extra:
+                    db.execute_update("UPDATE ut_roles SET permissions=%s WHERE role_name=%s",
+                                      (json.dumps(perms + extra), row["role_name"]))
+                    logging.info("Role %s upgraded (%s): %s", row["role_name"], name, extra)
             db.execute_update("INSERT INTO ut_role_upgrades (name, applied_at) VALUES (%s, %s)",
-                              ("2026-10-bid-write", datetime.now().isoformat(timespec="seconds")))
+                              (name, datetime.now().isoformat(timespec="seconds")))
             self._forget_cached_abilities()
         except Exception as exc:
-            logging.warning("Could not give Bidding roles the Edit bids ability: %s", exc)
+            logging.warning("Role upgrade %s was not applied: %s", name, exc)
+
+    def _upgrade_producer_dashboard(self):
+        """
+        A role named Producer gets the Dashboard tab. access.json gives producers
+        dashboard_write, but a Producer role made before had no Dashboard tab.
+        """
+        self._upgrade_once("2026-10-producer-dashboard", lambda role, perms:
+                           ["Dashboard"] if "producer" in role.strip().lower() else [])
+
+    def _upgrade_bid_write(self):
+        """
+        Every role with the Bidding tab gets "Edit bids" (can:bid_write).
+        Bidding used to let anyone who opened it make and change bids; now
+        that needs the ability, so nobody loses it.
+        """
+        from slate.core.domain.permissions_catalog import ability_key, abilities_in
+        self._upgrade_once("2026-10-bid-write", lambda role, perms:
+                           [ability_key("bid_write")]
+                           if "Bidding" in perms and "bid_write" not in abilities_in(perms) else [])
+
+    # What the 2.2.0 defaults gave these roles on a new database (STUDIO_ROLES),
+    # given to the same roles on a studio that already had them.
+    def _upgrade_new_defaults(self):
+        from slate.core.domain.permissions_catalog import ability_key
+        bidding = ["Bidding", ability_key("bid_write")]
+        added = {
+            "it": ["Admin Panel", ability_key("manage_users"), ability_key("fleet_control")],
+            "production coordinator": bidding,
+            "producer": bidding,
+        }
+        self._upgrade_once("2026-10-new-defaults", lambda role, perms:
+                           added.get(role.strip().lower(), []))
 
     @classmethod
     def upgraded_permissions(cls, role, perms):

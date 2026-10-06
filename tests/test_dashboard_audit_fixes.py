@@ -699,6 +699,35 @@ class TestVerifierRound:
         perms = json.loads(row["permissions"])
         assert "Dashboard" in perms and "Reports" in perms
 
+    def test_an_existing_studio_gets_the_new_role_defaults_once(self, mock_db):
+        """IT, Production Coordinator and Producer get what a new database gives them; only once."""
+        import json
+        from slate.core.domain.user_manager import UserManager
+        old = {"IT": ["IT", "Settings"], "Production Coordinator": ["Dashboard"],
+               "Producer": ["Dashboard"], "Artist": ["Dashboard"]}
+        for role, perms in old.items():
+            mock_db.execute_update("DELETE FROM ut_roles WHERE role_name=%s", (role,))
+            mock_db.execute_update("INSERT INTO ut_roles (role_name, permissions) VALUES (%s, %s)",
+                                   (role, json.dumps(perms)))
+        mock_db.execute_update("CREATE TABLE IF NOT EXISTS ut_role_upgrades (name TEXT PRIMARY KEY, applied_at TEXT)")
+        mock_db.execute_update("DELETE FROM ut_role_upgrades WHERE name='2026-10-new-defaults'")
+        manager = UserManager.__new__(UserManager)
+        manager._get_db = lambda: mock_db
+
+        def perms(role):
+            row = mock_db.execute_query("SELECT permissions FROM ut_roles WHERE role_name=%s", (role,), fetch="one")
+            return json.loads(row["permissions"])
+
+        manager._upgrade_new_defaults()
+        assert {"Admin Panel", "can:manage_users", "can:fleet_control"} <= set(perms("IT"))
+        assert {"Bidding", "can:bid_write"} <= set(perms("Producer")) & set(perms("Production Coordinator"))
+        assert perms("Artist") == ["Dashboard"], "other roles untouched"
+        # The studio takes Bidding away again: the upgrade does not come back.
+        mock_db.execute_update("UPDATE ut_roles SET permissions=%s WHERE role_name='Producer'",
+                               (json.dumps(["Dashboard"]),))
+        manager._upgrade_new_defaults()
+        assert perms("Producer") == ["Dashboard"]
+
 
 class TestShowMyShotsFromHome:
     """Integration: Home's 'See all my shots' uses the dashboard's own 'my shots' scope."""
