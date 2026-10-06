@@ -100,11 +100,6 @@ class BuildTab(QWidget):
         self.btn_full.setStyleSheet(btn_style + "QPushButton { border: 2px solid #00B4D8; background-color: #1a2a3a; }")
         self.btn_full.clicked.connect(self.run_full_build)
         
-        self.btn_update = QPushButton("Build update package")
-        self.btn_update.setToolTip("Builds and packages an update zip with SHA-256 validation.")
-        self.btn_update.setStyleSheet(btn_style + "QPushButton { border: 2px solid #00D8B4; background-color: #1a3a2a; }")
-        self.btn_update.clicked.connect(self.run_build_update)
-        
         self.btn_vfx = QPushButton("Build Slate VFX")
         self.btn_vfx.setToolTip("Direct full build for Slate Studio (Exe + Setup)")
         self.btn_vfx.setStyleSheet(btn_style)
@@ -128,10 +123,10 @@ class BuildTab(QWidget):
         self.btn_exe.setStyleSheet(btn_style)
         self.btn_exe.clicked.connect(self.run_build_exe)
 
-        # Row 1: Pipeline & Update
+        # Row 1: the full pipeline. Its installers are the update: publish them
+        # from Slate Server > Settings > Publish update.
         row1 = QHBoxLayout()
         row1.addWidget(self.btn_full, 1)
-        row1.addWidget(self.btn_update, 1)
         c_layout.addLayout(row1)
         
         # Row 2: Specialized Components
@@ -271,7 +266,6 @@ class BuildTab(QWidget):
         self.btn_clean.setEnabled(enabled)
         self.btn_full.setEnabled(enabled)
         self.btn_exe.setEnabled(enabled)
-        self.btn_update.setEnabled(enabled)
         if hasattr(self, "btn_vfx"):
             self.btn_vfx.setEnabled(enabled)
         if hasattr(self, "btn_ops"):
@@ -335,10 +329,3 @@ class BuildTab(QWidget):
         cmd = f'{_python()} tools/build_pipeline.py --mode onedir'
         self.start_process(cmd, "Build Executables (Onedir)")
 
-    def run_build_update(self):
-        # Save Config First!
-        if not self.save_config(): return
-        
-        target = self.target_combo.currentData() if hasattr(self, "target_combo") else "all"
-        cmd = f'{_python()} tools/build_update_package.py --target {target}'
-        self.start_process(cmd, f"Build Update Package ({target.upper()})")

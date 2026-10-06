@@ -30,8 +30,8 @@ GOOD_HASH = "a" * 64
 
 
 def a_good_manifest(**overrides):
-    manifest = build(version="1.4.0", package_name="Slate_Client_Update.zip",
-                     hash_sha256=GOOD_HASH, target="client")
+    manifest = build(version="1.4.0", package_name="setup_Slate_Studio_v1.4.0.exe",
+                     hash_sha256=GOOD_HASH, target="studio")
     manifest.update(overrides)
     return manifest
 
@@ -49,7 +49,7 @@ class TestWhatTheReaderRequires:
 
     def test_a_missing_hash_is_refused_rather_than_waived(self):
         """
-        The specific defect. The sidecar used to verify only `if expected_hash`,
+        The specific defect. The old updater used to verify only `if expected_hash`,
         so a manifest without one skipped the check instead of failing it.
         """
         manifest = a_good_manifest()
@@ -58,7 +58,7 @@ class TestWhatTheReaderRequires:
 
     def test_the_wrong_hash_key_is_named_explicitly(self):
         """
-        release_publisher wrote "sha256". Saying so is the difference between a
+        An old publisher wrote "sha256". Saying so is the difference between a
         five minute fix and an afternoon.
         """
         manifest = a_good_manifest()
@@ -79,13 +79,12 @@ class TestWhatThePublishersMayProduce:
     def test_a_manifest_cannot_be_built_without_a_hash(self):
         with pytest.raises(ValueError, match="without being verified"):
             build(version="1.0.0", package_name="x.zip",
-                  hash_sha256="", target="client")
+                  hash_sha256="", target="studio")
 
     def test_a_manifest_cannot_be_built_for_an_unknown_target(self):
         """
-        The build tool knows vfx, ops and server; the application knows client
-        and server. Publishing "manifest_vfx.json" is how the client update path
-        stayed invisible.
+        The application knows studio and ops. Publishing "manifest_vfx.json"
+        is how the client update path once stayed invisible.
         """
         with pytest.raises(ValueError, match="unknown update target"):
             build(version="1.0.0", package_name="x.zip",
@@ -93,14 +92,14 @@ class TestWhatThePublishersMayProduce:
 
     def test_extra_fields_are_carried_but_do_not_break_the_contract(self):
         manifest = build(version="1.0.0", package_name="x.zip",
-                         hash_sha256=GOOD_HASH, target="server",
+                         hash_sha256=GOOD_HASH, target="ops",
                          notes="Fixes the thing", critical=True)
         assert manifest["notes"] == "Fixes the thing"
         assert problems(manifest) == []
 
     def test_what_is_built_survives_a_round_trip_through_json(self, tmp_path):
         """A manifest is read back off disk, not handed over in memory."""
-        path = tmp_path / manifest_name("client")
+        path = tmp_path / manifest_name("studio")
         path.write_text(json.dumps(a_good_manifest()), encoding="utf-8")
         assert problems(json.loads(path.read_text(encoding="utf-8"))) == []
 
@@ -118,14 +117,14 @@ class TestTheNamesMatchTheReader:
 
     def test_the_targets_are_the_ones_the_application_asks_for(self):
         """
-        settings_tab passes target="client"; the server window passes "server".
+        Slate Studio checks "studio", Slate Operations "ops" (update_checker.target_for).
         Anything else names a file nobody opens.
         """
-        assert set(TARGETS) == {"client", "server"}
+        assert set(TARGETS) == {"studio", "ops"}
 
     def test_releases_is_flat(self, tmp_path):
         """
-        The sidecar resolves a package as <releases>/<package_name>, so a
+        A workstation copies the installer from <releases>/<package_name>, so a
         manifest published into a per-version subfolder points at a file the
         downloader cannot reach.
         """

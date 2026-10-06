@@ -449,7 +449,7 @@
   <tr><td>Dashboard</td><td>Switch the database on or off. See IP, port, how many people are connected, which folder holds the data, how many tables.</td><td>Look every morning</td></tr>
   <tr><td>Analytics</td><td>Who is connected right now. Disconnect one stuck session without stopping everyone.</td><td>When something is slow</td></tr>
   <tr><td>Operations</td><td>Back up. Restore. Tidy old backups. Vacuum and reindex. Run Diagnostics. Open or trim the log.</td><td>Back up weekly at least</td></tr>
-  <tr><td>Settings</td><td>Database folder, ports, database name, password, firewall button, Check for Updates.</td><td>Set once</td></tr>
+  <tr><td>Settings</td><td>Database folder, ports, database name, password, firewall button, Publish update, Update this server.</td><td>Set once</td></tr>
 </table></div>
 
 <h3>Every week: take a backup</h3>
@@ -517,7 +517,7 @@
 <div class="note bad"><b>Never run two servers on the same data</b>Two machines serving two copies means two sets of edits nobody can merge. Old off, then new on.</div>
 
 <h3>Updates without internet</h3>
-<p>Build the update package on the developer PC with the Launch Console, "Build update package". It writes the package and a manifest into <code>Slate_Central\Updates\releases</code>. Every workstation checks that folder when it starts and offers the update; the server offers it from Settings &rarr; Check for Updates. Nothing else is needed.</p>
+<p>The update is the installer itself. On the server PC, Slate Server &rarr; Settings &rarr; <b>Publish update&hellip;</b> takes the new <code>setup_Slate_Studio_v&hellip;.exe</code> and <code>setup_Slate_Ops_v&hellip;.exe</code> and copies them into <code>Slate_Central\Updates\releases</code>. Every workstation finds the update within 5 minutes and asks its artist: <b>Update now</b> or <b>When I close Slate</b>. Tick <b>Required</b> (or press <b>Require the current update now</b>) for an update nobody may put off: Slate then counts down 5 minutes and updates by itself. <b>Update this server&hellip;</b> runs the new Slate Server installer. If Slate will not start on a PC, run the installer from that folder by hand.</p>
 
 <h3>Uninstalling</h3>
 <p>The uninstaller removes the program and then asks one question: delete the settings and data too? <b>No</b> keeps everything, and a reinstall picks it straight back up. <b>Yes</b> on the server deletes the database and every backup on that machine. Answer Yes only when you mean to start over.</p>

@@ -33,7 +33,7 @@ from ..utils.error_handler import error_handler
 from ..utils.security import SecurityValidator
 from ..utils.reporting import report_generator
 from ..utils.backup_recovery import BackupManager, RecoveryManager
-from ..core.updater.update_checker import UpdateChecker
+from ..core.updater import update_checker as updates
 
 from ..core.domain.central_attendance import CentralAttendance
 from ..core.infra.telemetry import telemetry
@@ -247,15 +247,18 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
         self.setup_help_shortcuts()
         self.setup_shortcuts()  # NEW: Global keyboard shortcuts (Improvement #9)
 
-        # The update check: only when the studio has not switched it off
-        # (check_updates_on_startup), and its answer is now heard - it was
-        # started, and what it found was thrown away.
+        # Updates: 10 s after start, then every 5 minutes, unless the studio has
+        # switched it off (check_updates_on_startup).
         self.update_checker = None
+        self._update_dialog = None
+        self._update_on_close = None        # the installer to run when Slate closes
+        self._update_put_off = ""           # its version
         if self.update_check_enabled():
-            self.update_checker = UpdateChecker(self)
-            self.update_checker.update_available.connect(self._on_update_available)
-            self.update_checker.start()
-        
+            self.update_timer = QTimer(self)
+            self.update_timer.timeout.connect(self.check_for_updates)
+            self.update_timer.start(5 * 60 * 1000)
+            QTimer.singleShot(10000, self.check_for_updates)
+
         # Reflect DB runtime mode in UI immediately.
         self._refresh_db_runtime_indicator(show_fallback_warning=True)
         
@@ -280,34 +283,91 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
             return value.strip().lower() not in ("0", "false", "no", "off")
         return bool(value)
 
-    def _on_update_available(self, manifest):
-        """A newer version: a toast that does not interrupt, unless put off today."""
-        from .dialogs.update_available_dialog import is_snoozed
-        version = str((manifest or {}).get("version", ""))
-        if is_snoozed(version):
-            logging.info("Update %s was put off; not offering it again yet.", version)
+    def check_for_updates(self, manual=False):
+        """
+        One update check, on a worker. manual (Settings' card): no waiting, a
+        version put off is offered again, and the result is always said.
+        """
+        job = self.update_checker
+        if job is not None and job.isRunning():
+            if manual:
+                self.show_feedback("Slate is already checking for an update.", "info")
+            return None
+        dialog = self._update_dialog
+        if job is not None:
+            job.deleteLater()              # the last check, finished: one every 5 minutes adds up
+            self.update_checker = None
+        if getattr(self, "_is_closing", False) or (dialog is not None and dialog.isVisible()):
+            return None
+        job = updates.UpdateChecker(updates.target_for(self.app_mode), self,
+                                    put_off="" if manual else self._update_put_off,
+                                    jitter=not manual)
+        job.ready.connect(self._on_update_ready)
+        if manual:
+            job.downloading.connect(lambda version: self.show_feedback(
+                f"Downloading Slate {version}…", "info"))
+            job.nothing.connect(self._say_no_update)
+            job.failed.connect(lambda why: QMessageBox.warning(
+                self, "Check for updates", f"The update could not be checked or downloaded.\n\n{why}"))
+        self.update_checker = job
+        job.start()
+        return job
+
+    def _say_no_update(self, reason):
+        from .. import __version__
+        text = {
+            "manifest_missing": "No update has been published for this Slate in "
+                                f"{GlobalConfig.server_root() / 'Updates' / 'releases'}. "
+                                f"This is Slate {__version__}.",
+            "invalid_manifest": "The published update information is damaged, so no update "
+                                "can be offered. Ask whoever publishes Slate updates to "
+                                "publish it again.",
+        }.get(reason, f"Slate {__version__} is the version the studio publishes.")
+        QMessageBox.information(self, "Check for updates", text)
+
+    def _on_update_ready(self, manifest, installer):
+        """A checked installer: Update now / When I close Slate, or a countdown when required."""
+        from .dialogs.update_available_dialog import UpdateAvailableDialog
+        old = self._update_dialog
+        if getattr(self, "_is_closing", False) or (old is not None and old.isVisible()):
+            return None
+        dialog = UpdateAvailableDialog(manifest, self)
+        dialog.accepted.connect(lambda: self._install_update_now(manifest, installer))
+        dialog.rejected.connect(lambda: self._install_update_at_close(manifest, installer))
+        self._update_dialog = dialog
+        dialog.show()                 # not modal: the artist can save their work first
+        return dialog
+
+    def _install_update_at_close(self, manifest, installer):
+        self._update_on_close = installer
+        self._update_put_off = str(manifest.get("version", ""))
+        self.show_feedback("Slate will update when you close it.", "info")
+
+    def _install_update_now(self, manifest, installer):
+        """Start the installer (it opens Slate again afterwards) and close Slate."""
+        required = bool(manifest.get("required"))
+        if not required and not self.confirm_open_work("update Slate"):
+            self._install_update_at_close(manifest, installer)
             return False
-        self._pending_update = manifest
-        self.show_feedback(f"Slate {version} is available.", "info", duration=15000,
-                           action=("See what's new", self.show_update_dialog))
+        try:
+            updates.launch(installer, relaunch=True)
+        except Exception as exc:
+            QMessageBox.warning(self, "Update Slate", str(exc))
+            return False
+        self._update_on_close = None
+        self._work_confirmed = True          # asked above, or required: no second question
+        self.close()
         return True
 
-    def show_update_dialog(self):
-        """The update dialog; Download and install hands over to Settings' installer."""
-        from .dialogs.update_available_dialog import UpdateAvailableDialog
-        manifest = getattr(self, "_pending_update", None)
-        if not manifest:
-            return False
-        dialog = UpdateAvailableDialog(manifest, self)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return False
-        settings = self._get_tab_instance("Settings", create=True)
-        if settings is not None and hasattr(settings, "_stage_update"):
-            self._switch_to_tab_label("Settings")
-            settings._stage_update(manifest)
-            return True
-        self.show_feedback("Open Settings to install the update.", "warning")
-        return False
+    def _install_update_on_quit(self):
+        """At a real close (not a sign-out): the update the artist put off."""
+        if not self._update_on_close or getattr(self, "_logout_requested", False):
+            return
+        try:
+            updates.launch(self._update_on_close, relaunch=False)
+        except Exception as exc:
+            logging.warning("The update was not started at close: %s", exc)
+        self._update_on_close = None
 
     def _setup_rv_listener(self):
         import os, json
@@ -1203,6 +1263,7 @@ class VFXFolderCreatorApp(SessionManagerMixin, SidebarControllerMixin, QuickSear
                 return
         self._is_closing = True
         logging.info("VFXFolderCreatorApp: Starting application shutdown sequence...")
+        self._install_update_on_quit()
 
         # 1. Stop recurring UI timers
         if hasattr(self, 'cleanup_timer') and self.cleanup_timer and self.cleanup_timer.isActive():

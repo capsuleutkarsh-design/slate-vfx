@@ -29,51 +29,12 @@ def gatekeeper(monkeypatch):
 
 # ------------------------------------------------------------------ update
 
-def test_release_notes_are_text(qtbot):
-    from slate.gui.dialogs.update_available_dialog import UpdateAvailableDialog
-    dialog = UpdateAvailableDialog({"version": "2.1.0", "notes": "<b>x</b><img src=x>"})
-    qtbot.addWidget(dialog)
-    assert "<b>x</b>" in dialog.notes_area.toPlainText()
-    assert "<img" not in dialog.notes_area.toHtml().replace("&lt;img", "")
-    assert dialog.btn_update.text() == "Download and install"
-
-
-def test_remind_me_later_waits_a_day(monkeypatch):
-    from slate.core.infra.global_config import GlobalConfig
-    from slate.gui.dialogs import update_available_dialog as module
-    store = {}
-    monkeypatch.setattr(GlobalConfig, "get", classmethod(lambda cls, key, default=None: store.get(key, default)))
-    monkeypatch.setattr(GlobalConfig, "set", classmethod(lambda cls, key, value: store.__setitem__(key, value)))
-    module.snooze("2.1.0", now=1000.0)
-    assert module.is_snoozed("2.1.0", now=1000.0 + 3600)
-    assert not module.is_snoozed("2.1.0", now=1000.0 + module.SNOOZE_SECONDS + 1)
-    assert not module.is_snoozed("2.2.0", now=1001.0)
-
-
 def test_the_startup_check_honours_the_setting(monkeypatch):
     from slate.core.infra.global_config import GlobalConfig
     from slate.gui.main_window import VFXFolderCreatorApp
     monkeypatch.setattr(GlobalConfig, "get", classmethod(
         lambda cls, key, default=None: False if key == "check_updates_on_startup" else default))
     assert VFXFolderCreatorApp.update_check_enabled() is False
-
-
-def test_an_offered_update_is_a_toast_unless_put_off(monkeypatch):
-    from slate.gui import main_window
-    from slate.gui.dialogs import update_available_dialog as module
-    shown = []
-
-    class Fake:
-        def show_feedback(self, message, level="info", duration=None, details="", action=None):
-            shown.append((message, action[0] if action else None))
-
-        show_update_dialog = lambda self: None
-
-    monkeypatch.setattr(module, "is_snoozed", lambda version: version == "9.9")
-    fake = Fake()
-    assert main_window.VFXFolderCreatorApp._on_update_available(fake, {"version": "2.1"})
-    assert shown == [("Slate 2.1 is available.", "See what's new")]
-    assert not main_window.VFXFolderCreatorApp._on_update_available(fake, {"version": "9.9"})
 
 
 # ------------------------------------------------------------------ start-up

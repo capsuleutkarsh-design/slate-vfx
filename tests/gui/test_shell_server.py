@@ -102,36 +102,6 @@ def test_the_firewall_is_only_called_allowed_when_it_is(app):
     assert notes[-1] == "Firewall allowed"
 
 
-def test_a_failed_update_check_is_not_up_to_date():
-    module = _window_module()
-    message, status = module.UTServerWindow.update_result_text("error", "2.0.32")
-    assert "Could not check" in message and "latest" not in message.lower()
-    message, status = module.UTServerWindow.update_result_text("up_to_date", "2.0.32")
-    assert status == "Up to date: v2.0.32"
-
-
-def test_staging_runs_off_the_ui_thread(app, qtbot, monkeypatch):
-    module = _window_module()
-
-    class Engine:
-        def __init__(self, manifest):
-            pass
-
-        def stage_update(self):
-            return True
-
-    import slate.core.updater.sidecar_engine as sidecar
-    monkeypatch.setattr(sidecar, "SidecarEngine", Engine)
-    from PySide6.QtWidgets import QLabel, QPushButton
-    staged = []
-    fake = types.SimpleNamespace(
-        settings_view=types.SimpleNamespace(btn_check_update=QPushButton(), lbl_update_status=QLabel()),
-        _on_update_staged=staged.append)
-    worker = module.UTServerWindow._stage_update(fake, {"version": "9"})
-    assert isinstance(worker, module.StageUpdateWorker)
-    qtbot.waitUntil(lambda: staged == [True], timeout=3000)
-
-
 def test_saving_while_running_keeps_the_engine(app, qtbot, tmp_path, monkeypatch):
     """The engine is not swapped under a running server (SHL-165)."""
     import inspect

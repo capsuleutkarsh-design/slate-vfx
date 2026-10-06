@@ -77,10 +77,6 @@ Source: "..\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 ; that unpacked all of that into %TEMP% on every start; cleaning %TEMP% while
 ; the server ran took the database binaries away from under it.
 Source: "{#SourceDistDir}\Slate_Server\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-; The sidecar that applies an update after the server has exited. The engine
-; looks for it beside the running executable, and without it an update on the
-; server machine downloads, verifies, and then fails to install.
-Source: "{#SourceDistDir}\Slate\SlateUpdater.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppExeName}"; Components: central_server
@@ -103,6 +99,7 @@ Filename: "{app}\{#MyAppExeName}"; Description: "Launch Slate Server"; Flags: no
 ; library removed from the build does not linger from an older install.
 Type: filesandordirs; Name: "{app}\_internal"
 Type: files; Name: "{app}\{#MyAppExeName}"
+; Left by builds before 2.2.0, which updated through it.
 Type: files; Name: "{app}\SlateUpdater.exe"
 Type: files; Name: "{app}\pg_server.log"
 

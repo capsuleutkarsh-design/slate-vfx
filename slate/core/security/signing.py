@@ -1,24 +1,18 @@
 """
-Ed25519 signatures for what Slate picks up from the share: fleet commands
-(signed_fleet_commands) and update manifests (signed_updates).
+Ed25519 signatures for the fleet commands Slate picks up from the share
+(signed_fleet_commands).
 
-Anyone who can write to the share can drop a command file or a manifest there.
-A signature says who made it, and the share cannot give anybody the private key:
+Anyone who can write to the share can drop a command file there. A signature
+says who made it, and the share cannot give anybody the private key: the key is
+the studio's, made by the server and kept in the database (slate_secure.keys,
+which the workstations cannot read). slate_secure.fleet_signing_key() hands the
+private half to an administrator who types their own password - the Admin Panel
+asks for it anyway before a restart or shut down. Workstations check with the
+public half, also read from the database, never from the share.
 
-    fleet commands   the key is the studio's, made by the server and kept in the
-                     database (slate_secure.keys, which the workstations cannot
-                     read). slate_secure.fleet_signing_key() hands the private
-                     half to an administrator who types their own password - the
-                     Admin Panel asks for it anyway before a restart or shut
-                     down. Workstations check with the public half, also read
-                     from the database, never from the share.
-    updates          the key is the owner's, kept off every studio PC and out of
-                     git; tools/release_publisher.py signs the manifest and the
-                     public half ships inside the app (updater/release_key.py).
-
-Both switches: off = the old behaviour, log_only = log what is unsigned or
-invalid and act as before, on = refuse it. Nothing here is on the sign-in path,
-and nothing here raises: a check that fails is a "no".
+The switch: off = the old behaviour, log_only = log what is unsigned or invalid
+and act as before, on = refuse it. Nothing here is on the sign-in path, and
+nothing here raises: a check that fails is a "no".
 """
 
 from __future__ import annotations

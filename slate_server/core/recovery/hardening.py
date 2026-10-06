@@ -113,7 +113,6 @@ def apply_hardening_step(name: str, apply: Callable[[], object], *, precheck: di
 #                             proved unchanged. Turning it off moves them back.
 #   signed_fleet_commands     slate_secure and the studio's fleet key exist, and the
 #                             workstations can read its public half only.
-#   signed_updates            (on) this build carries the owner's release key.
 #   pgbouncer_hba             the same for the pool: its admin console from this PC
 #                             only, workstations only into the studio database. The
 #                             running pool re-reads it (RELOAD); logins through the
@@ -304,8 +303,6 @@ def turn_on(layout, name: str, mode: str = "on", by: str = "recovery tool") -> S
                 apply = lambda: secure_schema.install(conn, client["user"])  # noqa: E731
                 verify = lambda: can_still_get_in(db=db, extra={            # noqa: E731
                     "the fleet key": lambda: secure_schema.fleet_key_problem(client)})
-            elif name == "signed_updates" and mode == switches.ON:
-                precheck["extra"] = {"a release key in this build": _release_key_problem}
         else:
             precheck = {"client": client, "server": server}
             if name == "strict_pg_hba":
@@ -353,13 +350,6 @@ def turn_on(layout, name: str, mode: str = "on", by: str = "recovery tool") -> S
                 logger.warning("The sign-in check account was not removed: %s", exc)
         conn.close()
         db_credentials.reload()
-
-
-def _release_key_problem() -> str:
-    from slate.core.updater.release_key import PUBLIC_KEY
-    return "" if PUBLIC_KEY else (
-        "this build has no release key, so every update would be refused. Make one with "
-        "tools/release_publisher.py --new-key, and install that build everywhere first")
 
 
 def _hide_hashes(conn, client, probe):
