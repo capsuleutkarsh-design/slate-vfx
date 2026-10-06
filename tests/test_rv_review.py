@@ -467,3 +467,28 @@ class TestFilingTheAnnotation:
         apply_feedback(shot, feedback, project_root=tmp_path)
 
         assert len(list((shot_root / "00_Annotation").iterdir())) == 1
+
+
+class TestTheVerdictReachesTheVersion:
+    """A5: an RV verdict changed the shot and left its version in the Review queue."""
+
+    def test_the_waiting_version_named_in_the_path_gets_the_verdict_and_note(self):
+        from types import SimpleNamespace
+        from slate.core.domain.rv_feedback import find_version, record_on_version
+        from slate.core.domain.versions import Version
+
+        versions = [Version(id=1, shot_name="SH010", version_name="v001", department="comp", status="Retake"),
+                    Version(id=2, shot_name="SH010", version_name="v002", department="comp", status="In Review"),
+                    Version(id=3, shot_name="SH010", version_name="v003", department="roto", status="In Review")]
+        writes = []
+        store = SimpleNamespace(
+            list_for_shot=lambda *a, **k: versions,
+            update_version=lambda vid, **f: writes.append((vid, f)) or True,
+            add_note=lambda vid, text, **k: writes.append((vid, text)) or True)
+        feedback = RVFeedback(status="approved", note="lovely",
+                              media_path=r"D:\P\SH010\07_Comp\Output\SH010_comp_v002.mov")
+        version = find_version(store, "PRJ", Shot(shot_name="SH010"), feedback.media_path)
+        assert version.id == 2
+        assert record_on_version(store, version, feedback, author="sup")
+        assert writes[0] == (2, {"status": "Approved"}) and "lovely" in writes[1][1]
+        assert version.status == "Approved"
